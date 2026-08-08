@@ -25,5 +25,8 @@ htmlcov/
 # Implementation plans are working docs, not tracked artifacts
 docs/superpowers/plans/
 
+# SDD scratch (ledger, briefs, reports, review packages)
+.superpowers/
+
 # OS
 .DS_Store

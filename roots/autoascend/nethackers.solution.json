@@ -1,0 +1,8 @@
+{
+  "schema": "nethackers.solution/v1",
+  "name": "autoascend",
+  "root": "autoascend",
+  "parents": [],
+  "influences": [],
+  "entrypoint": "bot.py"
+}
