@@ -72,7 +72,10 @@ class NLEEnvironment:
         if character is not None:
             challenge_kwargs["character"] = character
 
-        class DeterministicChallenge(NetHackChallenge):
+        # NetHackChallenge is resolved via importlib (see try/except above) so this
+        # module stays importable without NLE installed; mypy cannot statically
+        # resolve a base class computed at runtime.
+        class DeterministicChallenge(NetHackChallenge):  # type: ignore[valid-type,misc]
             def __init__(self) -> None:
                 super().__init__(**challenge_kwargs)
                 self.options = nethack_options

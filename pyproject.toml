@@ -11,6 +11,7 @@ autoascend = ["numba>=0.60", "opencv-python>=4.9", "scipy>=1.11", "nltk>=3.9", "
 
 [dependency-groups]
 dev = [
+    "mypy>=1.11",
     "numpy>=2.4.6",
     "pytest>=8.4",
     "ruff>=0.12",
@@ -33,6 +34,33 @@ markers = [
   "nle: requires the optional NLE dependency and a real NetHack environment",
   "docker: requires Docker and the built arena image",
 ]
+
+[tool.mypy]
+python_version = "3.11"
+packages = ["nethackers"]
+warn_unused_ignores = true
+# Fixture bots are dynamically loaded one-at-a-time via sys.path + importlib
+# (nethackers.arena.sandbox._load_agent), exactly like a real submission's
+# bot.py -- they are never simultaneously importable as static modules.
+# Without this exclude, mypy's directory walk sees three unrelated
+# tests/fixtures/bots/*/bot.py files (no __init__.py, by design -- they
+# mirror a real submission root) and fails collection with "Duplicate
+# module named 'bot'" before any type checking runs.
+exclude = ["^tests/fixtures/"]
+
+[[tool.mypy.overrides]]
+module = [
+    "nle.*",
+    "numba.*",
+    "cv2.*",
+    "scipy.*",
+    "nltk.*",
+    "toolz.*",
+    "autoascend.*",
+    "arena_adapter.*",
+    "bot",
+]
+ignore_missing_imports = true
 
 [tool.ruff]
 target-version = "py311"
