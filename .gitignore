@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+env/
+
+# Test / lint / type caches
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Environments & secrets (held-out HMAC key, deploy config — never committed)
+.env
+*.env
+!*.env.example
+
+# Implementation plans are working docs, not tracked artifacts
+docs/superpowers/plans/
+
+# OS
+.DS_Store
