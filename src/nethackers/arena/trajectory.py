@@ -48,16 +48,17 @@ def run_trajectory(
     submission_path: str | Path,
     spec: TrajectorySpec,
     objective: Objective,
-    action_count: int,
 ) -> TrajectoryResult:
     """Run one trajectory: a fresh sandboxed bot against a fresh environment.
 
-    Builds the environment from ``objective`` and the sandbox client from
-    ``spec``/``objective``/``action_count``, drives the reset/act/step loop
-    until the episode ends, and always tears both down in a ``finally``. Any
-    exception is mapped to a terminal ``ResultStatus`` instead of propagating,
-    so a caller (e.g. a batch runner) can loop over many trajectories without
-    a single bad episode aborting the run.
+    Builds the environment from ``objective``, then builds the sandbox client
+    from ``spec``/``objective`` and the environment's own ``action_count``
+    (the action-space size isn't known until the environment exists), drives
+    the reset/act/step loop until the episode ends, and always tears both
+    down in a ``finally``. Any exception is mapped to a terminal
+    ``ResultStatus`` instead of propagating, so a caller (e.g. a batch
+    runner) can loop over many trajectories without a single bad episode
+    aborting the run.
     """
     started = time.monotonic()
     environment = None
@@ -70,7 +71,7 @@ def run_trajectory(
         client = AgentClient(
             Path(submission_path),
             bot_seed=spec.bot_seed,
-            action_count=action_count,
+            action_count=environment.action_count,
             timeout_seconds=objective.action_timeout_seconds,
         )
         observation = environment.reset(spec)

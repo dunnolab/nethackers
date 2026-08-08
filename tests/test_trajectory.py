@@ -63,7 +63,7 @@ def test_run_trajectory_maps_a_clean_episode_to_completed(monkeypatch):
         action_timeout_seconds=1.0,
         seed_set="x",
     )
-    res = T.run_trajectory(submission_path="unused", spec=_spec(), objective=obj, action_count=8)
+    res = T.run_trajectory(submission_path="unused", spec=_spec(), objective=obj)
     assert res.status == "completed" and abs(res.progress - 0.3) < 1e-9
 
 
@@ -122,7 +122,7 @@ def test_run_trajectory_zeroes_progress_and_ascended_on_bot_failure(
         action_timeout_seconds=1.0,
         seed_set="x",
     )
-    res = T.run_trajectory(submission_path="unused", spec=_spec(), objective=obj, action_count=8)
+    res = T.run_trajectory(submission_path="unused", spec=_spec(), objective=obj)
     assert res.status == expected_status
     assert res.progress == 0.0
     assert res.ascended is False
