@@ -20,11 +20,21 @@ def _result(
     started: float,
     error: str | None = None,
 ) -> TrajectoryResult:
+    """Build a TrajectoryResult, zeroing progress/ascended on bot failures.
+
+    Per the plan's Global Constraints ("bot errors/timeouts -> progress
+    0.0"), a bot-attributable failure (invalid_action/bot_timeout/bot_error)
+    always scores zero progress and no ascension, regardless of what the
+    environment had recorded before the failure -- matching the sibling's
+    ``_result()``. ``completed``/``trajectory_timeout``/``infrastructure_error``
+    use ``metrics`` as-is.
+    """
+    bot_failure = status in {"invalid_action", "bot_timeout", "bot_error"}
     return TrajectoryResult(
         trajectory_id=trajectory_id,
         status=status,
-        progress=metrics.progress,
-        ascended=metrics.ascended,
+        progress=0.0 if bot_failure else metrics.progress,
+        ascended=False if bot_failure else metrics.ascended,
         steps=steps,
         turns=metrics.turns,
         max_depth=metrics.max_depth,
