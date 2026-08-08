@@ -138,6 +138,7 @@ nle = [
 
 [package.dev-dependencies]
 dev = [
+    { name = "numpy" },
     { name = "pytest" },
     { name = "ruff" },
 ]
@@ -156,6 +157,7 @@ provides-extras = ["nle", "autoascend"]
 
 [package.metadata.requires-dev]
 dev = [
+    { name = "numpy", specifier = ">=2.4.6" },
     { name = "pytest", specifier = ">=8.4" },
     { name = "ruff", specifier = ">=0.12" },
 ]
