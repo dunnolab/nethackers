@@ -17,10 +17,9 @@ import json
 import sys
 from pathlib import Path
 
-from nethackers.arena.environment import make_environment  # noqa: F401 (import ensures NLE present)
 from nethackers.arena.seeds import trajectory_spec
 from nethackers.arena.trajectory import run_trajectory
-from nethackers.contracts.models import Objective
+from nethackers.contracts.models import DEFAULT_MAX_STEPS, DEFAULT_NO_PROGRESS_TIMEOUT, Objective
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -30,8 +29,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--seeds", required=True)  # comma-separated trajectory ids
     p.add_argument("--evaluation-id", required=True)
     p.add_argument("--secret", default="public")
-    p.add_argument("--max-steps", type=int, default=1_000_000)
-    p.add_argument("--no-progress-timeout", type=int, default=10_000)
+    p.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS)
+    p.add_argument("--no-progress-timeout", type=int, default=DEFAULT_NO_PROGRESS_TIMEOUT)
     p.add_argument("--action-timeout", type=float, default=5.0)
     p.add_argument("--out", required=True)
     a = p.parse_args(argv)
