@@ -31,6 +31,8 @@ this task's scope.
 
 from __future__ import annotations
 
+import json
+import os
 from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any
@@ -39,7 +41,7 @@ from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
 from nethackers.contracts.models import Evidence, ObjectiveSpec
-from nethackers.hub.auth import AuthError, AuthProvider
+from nethackers.hub.auth import AuthError, AuthProvider, GitHubAppAuth, LocalStubAuth
 from nethackers.hub.objectives import CATALOG
 from nethackers.hub.store import Store
 from nethackers.hub.validate import (
@@ -189,3 +191,40 @@ def create_app(
         return asdict(result)
 
     return app
+
+
+def create_default_app() -> FastAPI:
+    """The uvicorn entrypoint: ``uvicorn nethackers.hub.api:create_default_app
+    --factory`` (see ``hub/Dockerfile``'s ``CMD``). A **factory**, not a
+    module-level ``app`` -- called once at server startup, never at import
+    time, so importing this module (as ``tests/hub/test_api.py`` and
+    ``tests/hub/test_fixtures.py`` do, for ``create_app``) never opens a
+    database as a side effect (task-14-context.md's Reconciliation 2).
+
+    Configured entirely from the environment, for the container/dev-compose
+    case (``compose.yaml``):
+
+    - ``NETHACKERS_DB`` (default ``/data/hub.db``): the sqlite file path.
+    - ``NETHACKERS_LOAD_FIXTURES=1``: seed the fresh store via
+      ``nethackers.hub.fixtures.load_fixtures`` (dev/demo only -- imported
+      lazily, only when this flag is actually set).
+    - ``NETHACKERS_STUB_IDENTITIES``: a JSON ``{token: login}`` object --
+      when set, auth is ``LocalStubAuth`` over that map (offline dev/demo).
+      Otherwise auth is ``GitHubAppAuth(NETHACKERS_CLIENT_ID)`` (the real
+      device-flow validator; ``NETHACKERS_CLIENT_ID`` is then required).
+    """
+    db = os.environ.get("NETHACKERS_DB", "/data/hub.db")
+    store = Store(db)
+    store.init_schema()
+    if os.environ.get("NETHACKERS_LOAD_FIXTURES") == "1":
+        from nethackers.hub.fixtures import load_fixtures
+
+        load_fixtures(store)
+
+    stub = os.environ.get("NETHACKERS_STUB_IDENTITIES")
+    auth: AuthProvider
+    if stub:
+        auth = LocalStubAuth(json.loads(stub))
+    else:
+        auth = GitHubAppAuth(os.environ["NETHACKERS_CLIENT_ID"])
+    return create_app(store, auth)

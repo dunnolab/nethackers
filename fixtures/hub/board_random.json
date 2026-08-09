@@ -1,0 +1,20 @@
+[
+  {
+    "ascensions": 0,
+    "episodes": 2,
+    "mean_progression": 0.025410477596767095,
+    "median_progression": 0.025410477596767095,
+    "owner": "alice",
+    "rank": 2,
+    "solution_digest": "sha256:fixture-alpha"
+  },
+  {
+    "ascensions": 1,
+    "episodes": 2,
+    "mean_progression": 0.5087697678994835,
+    "median_progression": 0.5087697678994835,
+    "owner": "bob",
+    "rank": 1,
+    "solution_digest": "sha256:fixture-beta"
+  }
+]

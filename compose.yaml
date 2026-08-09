@@ -1,0 +1,20 @@
+# Local hub stack (M2a Task 14): `docker compose up -d --build` brings up
+# the hub API on http://localhost:8000, seeded with the shared fixture
+# dataset (nethackers.hub.fixtures.load_fixtures) and offline dev auth
+# (LocalStubAuth via NETHACKERS_STUB_IDENTITIES -- no GitHub App / network
+# auth needed locally). The sqlite file lives on the named `hubdata` volume
+# so it survives `docker compose restart` (but not `down -v`, used by
+# tests/test_compose_smoke.py to reset between runs).
+services:
+  api:
+    build:
+      context: .
+      dockerfile: hub/Dockerfile
+    ports: ["8000:8000"]
+    volumes: ["hubdata:/data"]
+    environment:
+      NETHACKERS_DB: /data/hub.db
+      NETHACKERS_LOAD_FIXTURES: "1"
+      NETHACKERS_STUB_IDENTITIES: '{"dev-token":"dev"}'
+volumes:
+  hubdata:
