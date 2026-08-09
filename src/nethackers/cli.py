@@ -19,19 +19,31 @@ The hub-facing subcommands are thin wrappers the same way, but over
 ``nethackers.hubclient.client.HubClient`` (reads + register) and
 ``nethackers.hubclient.register.register_solution`` (the GitHub device
 flow) instead -- every one of them builds a ``HubClient(args.hub)`` and
-dispatches straight to one client method, then prints either that method's
-raw JSON response (``--json``, valid for ``jq``) or a beautified render
-from one of the ``render_*`` functions in ``hubclient.client``. ``--hub``
+dispatches straight to one client method, then hands the raw response to
+``nethackers.hubclient.output.emit`` (CLI-UX pass: rich renderers + ``-o``)
+alongside two renderers: a ``rich`` one (``hubclient.render``, imported
+here as ``rich_*``) and the baseline pure-Python one (``hubclient.client``,
+imported here as ``plain_*``) -- ``emit`` itself picks which (if either)
+actually runs, and falls back to raw ``json.dumps`` otherwise. ``--hub``
 (default ``http://localhost:8000``, overridable via ``$NETHACKERS_HUB``)
-and ``--json`` both live on a shared parent parser (``_common_parser``)
-carried by every subcommand, so either flag works whether given before or
-after the subcommand name -- e.g. both ``nethackers --hub URL board
---objective random`` and ``nethackers board --objective random --hub URL``
-work; argparse only re-applies a parent's default when the attribute isn't
-already set on the namespace, so whichever position actually supplies the
-flag wins. tests/test_cli_m2a.py exercises this wiring with
+and ``-o``/``--output`` (default ``"auto"``, overridable via
+``$NETHACKERS_OUTPUT``; replaces the old boolean ``--json``) both live on a
+shared parent parser (``_common_parser``) carried by every subcommand, so
+either flag works whether given before or after the subcommand name --
+e.g. both ``nethackers --hub URL board --objective random`` and
+``nethackers board --objective random --hub URL`` work; argparse only
+re-applies a parent's default when the attribute isn't already set on the
+namespace, so whichever position actually supplies the flag wins.
+tests/test_cli_m2a.py exercises this wiring with
 ``HubClient``/``register_solution`` monkeypatched, so no real HTTP/network
 call is ever made by the test suite either.
+
+All human chrome that isn't a data render -- the ``register`` device
+flow's "visit this URL" prompt, the ``eval``/unknown-objective error --
+goes to ``hubclient.output.err`` (a ``stderr``-bound ``rich`` ``Console``),
+never stdout, so stdout stays machine-clean (in particular, exactly the
+JSON payload and nothing else under ``-o json``) no matter what a
+subcommand does along the way.
 """
 
 from __future__ import annotations
@@ -40,23 +52,31 @@ import argparse
 import datetime
 import json
 import os
-import sys
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any
+
+from rich_argparse import RichHelpFormatter
 
 from nethackers.eval.runner import eval_batch
 from nethackers.hub.objectives import CATALOG
 from nethackers.hubclient.client import (
     HubClient,
-    render_attainment,
-    render_board,
-    render_elites,
-    render_search,
-    render_show,
+    render_attainment as plain_attainment,
+    render_board as plain_board,
+    render_elites as plain_elites,
+    render_search as plain_search,
+    render_show as plain_show,
 )
+from nethackers.hubclient.output import emit, err
 from nethackers.hubclient.pull import pull
 from nethackers.hubclient.register import register_solution
+from nethackers.hubclient.render import (
+    render_attainment as rich_attainment,
+    render_board as rich_board,
+    render_elites as rich_elites,
+    render_search as rich_search,
+    render_show as rich_show,
+)
 
 
 def _now() -> str:
@@ -69,22 +89,23 @@ def _default_hub() -> str:
 
 def _common_parser() -> argparse.ArgumentParser:
     """Parent parser carrying the flags every subcommand accepts: ``--hub``
-    (so it works whether given before or after the subcommand -- see module
-    docstring) and ``--json`` (raw hub JSON instead of the beautified
-    render; only meaningful for the hub-reading subcommands, harmless
-    elsewhere).
+    and ``-o``/``--output`` (both work whether given before or after the
+    subcommand -- see module docstring). ``-o``/``--output`` selects
+    ``hubclient.output.emit``'s format (``"auto"``/``"table"``/``"json"``/
+    ``"plain"``; only meaningful for the hub-reading subcommands, harmless
+    elsewhere) -- it replaces the old boolean ``--json``.
 
-    ``--hub``'s default is ``argparse.SUPPRESS``, not ``_default_hub()``,
-    quite deliberately: when a subparser (built with ``parents=[common]``)
-    parses the tail of argv, it does so into a *fresh* namespace and then
+    Both flags default to ``argparse.SUPPRESS``, not a real value, quite
+    deliberately: when a subparser (built with ``parents=[common]``) parses
+    the tail of argv, it does so into a *fresh* namespace and then
     unconditionally copies every one of its own keys back onto the shared
     namespace the top-level parser already populated (``argparse``'s own
     ``_SubParsersAction.__call__``) -- so a REAL default here would clobber
-    a top-level ``--hub`` on every call, even when the subcommand itself
-    never mentioned ``--hub``. ``SUPPRESS`` means the subparser only ever
-    contributes a ``hub`` key when the user actually typed ``--hub`` after
-    the subcommand, so the top-level value (itself defaulted via
-    ``_default_hub()`` on ``_build_parser``'s own ``--hub``) survives
+    a top-level ``--hub``/``-o`` on every call, even when the subcommand
+    itself never mentioned it. ``SUPPRESS`` means the subparser only ever
+    contributes a ``hub``/``output`` key when the user actually typed the
+    flag after the subcommand, so the top-level value (itself defaulted via
+    ``_default_hub()``/``"auto"`` on ``_build_parser``'s own flags) survives
     untouched otherwise -- giving exactly "subcommand-level wins if given,
     else the top-level value" without hand-rolling the merge.
     """
@@ -96,25 +117,37 @@ def _common_parser() -> argparse.ArgumentParser:
         "http://localhost:8000 or $NETHACKERS_HUB).",
     )
     common.add_argument(
-        "--json",
-        action="store_true",
-        help="Print the raw hub JSON response instead of a beautified render.",
+        "-o",
+        "--output",
+        choices=["auto", "table", "json", "plain"],
+        default=argparse.SUPPRESS,
+        help="Output format (default: the top-level -o/--output, itself "
+        '"auto" or $NETHACKERS_OUTPUT).',
     )
     return common
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="nethackers")
+    parser = argparse.ArgumentParser(prog="nethackers", formatter_class=RichHelpFormatter)
     parser.add_argument(
         "--hub",
         default=_default_hub(),
         help="Hub API base URL (default: %(default)s; or $NETHACKERS_HUB).",
     )
+    parser.add_argument(
+        "-o",
+        "--output",
+        choices=["auto", "table", "json", "plain"],
+        default="auto",
+        help="Output format: auto (table on a terminal, json otherwise), "
+        "table (rich), json (raw, jq-able), or plain (plain-text table). "
+        "Default: %(default)s; or $NETHACKERS_OUTPUT.",
+    )
     sub = parser.add_subparsers(dest="cmd", required=True)
     common = _common_parser()
 
     e = sub.add_parser(
-        "eval", parents=[common],
+        "eval", parents=[common], formatter_class=RichHelpFormatter,
         help="Evaluate a solution against a published objective's batch.",
     )
     e.add_argument("solution", help="Path to the solution directory (mounted read-only).")
@@ -122,40 +155,49 @@ def _build_parser() -> argparse.ArgumentParser:
     e.add_argument("--image", default="nethackers/arena:dev", help="Arena image to run.")
 
     pl = sub.add_parser(
-        "pull", parents=[common], help="Clone a solution repo pinned to an exact commit."
+        "pull", parents=[common], formatter_class=RichHelpFormatter,
+        help="Clone a solution repo pinned to an exact commit.",
     )
     pl.add_argument("repo_at_commit", help="'owner/name@<sha>' or a full URL@<sha>.")
     pl.add_argument("dest", help="Destination directory for the clone.")
 
     m = sub.add_parser(
-        "map", aliases=["attainment"], parents=[common],
+        "map", aliases=["attainment"], parents=[common], formatter_class=RichHelpFormatter,
         help="Show attainment cells (identity x milestone).",
     )
     m.add_argument("--identity", default=None, help="Narrow to one identity (default: all).")
 
     el = sub.add_parser(
-        "elites", parents=[common], help="Show the elite pool for an objective."
+        "elites", parents=[common], formatter_class=RichHelpFormatter,
+        help="Show the elite pool for an objective.",
     )
     el.add_argument("--objective", required=True, help="A catalog objective name.")
 
-    b = sub.add_parser("board", parents=[common], help="Show a ranking board.")
+    b = sub.add_parser(
+        "board", parents=[common], formatter_class=RichHelpFormatter,
+        help="Show a ranking board.",
+    )
     b.add_argument("--objective", default=None, help="A catalog objective name.")
     b.add_argument(
         "--metric", default=None, help="'coverage' or 'firsts' (instead of --objective)."
     )
 
-    se = sub.add_parser("search", parents=[common], help="Search registered solutions.")
+    se = sub.add_parser(
+        "search", parents=[common], formatter_class=RichHelpFormatter,
+        help="Search registered solutions.",
+    )
     se.add_argument("--owner", default=None, help="Narrow to one owner login.")
     se.add_argument("--limit", type=int, default=50)
     se.add_argument("--offset", type=int, default=0)
 
     sh = sub.add_parser(
-        "show", parents=[common], help="Show one registered solution by digest."
+        "show", parents=[common], formatter_class=RichHelpFormatter,
+        help="Show one registered solution by digest.",
     )
     sh.add_argument("digest")
 
     r = sub.add_parser(
-        "register", parents=[common],
+        "register", parents=[common], formatter_class=RichHelpFormatter,
         help="Register a solution with the hub via the GitHub device flow.",
     )
     r.add_argument("--repo", required=True, help="e.g. github.com/owner/name")
@@ -183,22 +225,13 @@ def _load_manifest(args: argparse.Namespace) -> dict[str, Any]:
     return json.loads(path.read_text())
 
 
-def _emit(response: Any, render_fn: Callable[[Any], str], as_json: bool) -> None:
-    """Print a hub read response either raw (``--json``, valid for ``jq``)
-    or through ``render_fn`` -- the beautified human render."""
-    if as_json:
-        print(json.dumps(response, indent=2))
-    else:
-        print(render_fn(response))
-
-
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
 
     if args.cmd == "eval":
         spec = CATALOG.get(args.objective)
         if spec is None:
-            print(f"nethackers eval: unknown objective {args.objective!r}", file=sys.stderr)
+            err.print(f"nethackers eval: unknown objective {args.objective!r}")
             return 2
         evidence = eval_batch(Path(args.solution), spec, args.image, now=_now())
         print(json.dumps(evidence.to_dict(), indent=2))
@@ -210,27 +243,30 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd in ("map", "attainment"):
         client = HubClient(args.hub)
-        _emit(client.attainment(args.identity), render_attainment, args.json)
+        emit(client.attainment(args.identity), args.output, table=rich_attainment,
+             plain=plain_attainment)
         return 0
 
     if args.cmd == "elites":
         client = HubClient(args.hub)
-        _emit(client.elites(args.objective), render_elites, args.json)
+        emit(client.elites(args.objective), args.output, table=rich_elites, plain=plain_elites)
         return 0
 
     if args.cmd == "board":
         client = HubClient(args.hub)
-        _emit(client.board(args.objective, args.metric), render_board, args.json)
+        emit(client.board(args.objective, args.metric), args.output, table=rich_board,
+             plain=plain_board)
         return 0
 
     if args.cmd == "search":
         client = HubClient(args.hub)
-        _emit(client.search(args.owner, args.limit, args.offset), render_search, args.json)
+        emit(client.search(args.owner, args.limit, args.offset), args.output,
+             table=rich_search, plain=plain_search)
         return 0
 
     if args.cmd == "show":
         client = HubClient(args.hub)
-        _emit(client.show(args.digest), render_show, args.json)
+        emit(client.show(args.digest), args.output, table=rich_show, plain=plain_show)
         return 0
 
     if args.cmd == "register":
@@ -239,7 +275,8 @@ def main(argv: list[str] | None = None) -> int:
         manifest = _load_manifest(args)
         evidence = json.loads(Path(args.evidence).read_text())
         result = register_solution(
-            hub=client, reference=reference, manifest=manifest, evidence=evidence
+            hub=client, reference=reference, manifest=manifest, evidence=evidence,
+            prompt=err.print,
         )
         print(json.dumps(result, indent=2))
         return 0

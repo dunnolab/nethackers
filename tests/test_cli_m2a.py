@@ -7,18 +7,41 @@ monkeypatches ``eval_batch``/``pull`` for the pre-existing subcommands. That
 file's ``eval``/``pull`` coverage is untouched and must stay green alongside
 this one.
 
-Final-review fix additions (folding in a CLI-UX pass -- see
-fix-final-review-context.md): ``--hub``/``--json`` on a shared parent
-parser (works before OR after the subcommand), a beautified default render
-for every read subcommand via ``hubclient.client``'s ``_table``/
-``_short_digest``/``_num`` helpers, and the loop-closing regression proving
-CLI ``eval --objective`` evidence is actually registerable (the exact gap
-the final review found).
+CLI-UX pass (folding in ``rich``; see fix-b-rich-output-context.md): the
+boolean ``--json`` is gone, replaced by ``-o``/``--output``
+``{auto,table,json,plain}`` dispatched through
+``nethackers.hubclient.output.emit``. Tests below are grouped to match that
+fix's six required groups:
+
+1. **emit dispatch** -- ``nethackers.hubclient.output.resolve``'s 3-tier
+   precedence (explicit ``-o`` > ``$NETHACKERS_OUTPUT`` > TTY-detected
+   ``"auto"``), unit-tested directly and through the CLI.
+2. **json is raw + jq-able** -- ``-o json`` is exactly
+   ``json.loads``-equal to the stubbed response, ANSI-free, full digests.
+3. **table renders** -- the ``rich`` renderers (``hubclient.render``),
+   tested directly (precise content assertions, captured ANSI-free via a
+   throwaway non-terminal ``Console`` -- ``_render_text`` below) and
+   through the CLI (``-o table`` / forced-terminal ``auto``).
+4. **plain == baseline** -- ``-o plain`` reproduces the baseline
+   pure-Python ``_table`` renders (``hubclient.client``, imported here as
+   ``plain_*``) byte-for-byte; these bodies are the pre-CLI-UX-pass
+   "renders ascii table by default" tests, adapted to the new explicit
+   flag (the *default* is no longer the plain table -- see group 1).
+5. **chrome on stderr** -- ``register``'s device-flow prompt, plus proof
+   that ``-o json`` mode's stdout carries the JSON payload and nothing
+   else.
+6. The loop-closing regression (CLI ``eval --objective`` evidence is
+   actually registerable) and the ``--hub``-after-subcommand test, both
+   **unchanged** per the fix's explicit instruction.
 """
 
 from __future__ import annotations
 
+import io
 import json
+
+import pytest
+from rich.console import Console
 
 import nethackers.cli as C
 from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
@@ -26,14 +49,24 @@ from nethackers.hub.auth import LocalStubAuth
 from nethackers.hub.objectives import CATALOG
 from nethackers.hub.store import Store
 from nethackers.hub.validate import LocalStubGit, SolutionReference, register
+from nethackers.hubclient import output as O
 from nethackers.hubclient.client import (
     _num,
     _short_digest,
     _table,
-    render_board,
-    render_elites,
-    render_search,
-    render_show,
+    render_attainment as plain_attainment,
+    render_board as plain_board,
+    render_elites as plain_elites,
+    render_search as plain_search,
+    render_show as plain_show,
+)
+from nethackers.hubclient.render import (
+    ramp,
+    render_attainment as rich_attainment,
+    render_board as rich_board,
+    render_elites as rich_elites,
+    render_search as rich_search,
+    render_show as rich_show,
 )
 
 
@@ -73,6 +106,19 @@ def _make_fake_hub_client(response_map):
     return FakeHubClient, calls
 
 
+def _render_text(renderable, width=100):
+    """Render a ``rich`` renderable to a plain string through a throwaway,
+    deterministically non-color ``Console`` (``force_terminal=False`` makes
+    ``is_terminal`` -- and so color-system detection -- always ``False``
+    regardless of the real environment, unlike the shared module-level
+    ``console``, whose color system is fixed once at import time from
+    whatever *that* happened to be) -- so assertions never have to account
+    for ANSI escape codes."""
+    buf = io.StringIO()
+    Console(file=buf, force_terminal=False, no_color=True, width=width).print(renderable)
+    return buf.getvalue()
+
+
 # --- Property 3: each subcommand dispatches to the right client method ----
 
 
@@ -100,7 +146,7 @@ def test_cli_elites_dispatches_with_objective(monkeypatch, capsys):
     FakeHubClient, calls = _make_fake_hub_client({"elites": [{"identity": "x"}]})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
 
-    rc = C.main(["elites", "--objective", "random", "--json"])
+    rc = C.main(["elites", "--objective", "random", "-o", "json"])
 
     assert rc == 0
     assert ("elites", "random") in calls
@@ -132,7 +178,7 @@ def test_cli_search_dispatches_with_owner_and_paging(monkeypatch, capsys):
     FakeHubClient, calls = _make_fake_hub_client({"search": [{"digest": "sha256:x"}]})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
 
-    rc = C.main(["search", "--owner", "sam", "--limit", "10", "--offset", "5", "--json"])
+    rc = C.main(["search", "--owner", "sam", "--limit", "10", "--offset", "5", "-o", "json"])
 
     assert rc == 0
     assert ("search", "sam", 10, 5) in calls
@@ -154,7 +200,7 @@ def test_cli_show_dispatches_with_digest(monkeypatch, capsys):
     FakeHubClient, calls = _make_fake_hub_client({"show": {"digest": "sha256:abc"}})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
 
-    rc = C.main(["show", "sha256:abc", "--json"])
+    rc = C.main(["show", "sha256:abc", "-o", "json"])
 
     assert rc == 0
     assert ("show", "sha256:abc") in calls
@@ -179,11 +225,12 @@ def test_cli_register_dispatches_with_gathered_reference_manifest_evidence(
 
     seen = {}
 
-    def fake_register_solution(*, hub, reference, manifest, evidence):
+    def fake_register_solution(*, hub, reference, manifest, evidence, prompt=print):
         seen["hub"] = hub
         seen["reference"] = reference
         seen["manifest"] = manifest
         seen["evidence"] = evidence
+        seen["prompt"] = prompt
         return {"solution_digest": "sha256:abc", "owner": "sam"}
 
     monkeypatch.setattr(C, "register_solution", fake_register_solution)
@@ -207,6 +254,7 @@ def test_cli_register_dispatches_with_gathered_reference_manifest_evidence(
     assert seen["manifest"] == manifest
     assert seen["evidence"] == evidence
     assert isinstance(seen["hub"], FakeHubClient)
+    assert callable(seen["prompt"])  # cli.py must wire a prompt sink -- see Property 5
     payload = json.loads(capsys.readouterr().out)
     assert payload == {"solution_digest": "sha256:abc", "owner": "sam"}
 
@@ -223,7 +271,7 @@ def test_cli_register_accepts_manifest_file_directly(monkeypatch, capsys, tmp_pa
 
     seen = {}
 
-    def fake_register_solution(*, hub, reference, manifest, evidence):
+    def fake_register_solution(*, hub, reference, manifest, evidence, prompt=print):
         seen["manifest"] = manifest
         return {"ok": True}
 
@@ -247,10 +295,369 @@ def test_cli_register_accepts_manifest_file_directly(monkeypatch, capsys, tmp_pa
     assert seen["manifest"] == manifest
 
 
-# --- Property 4: map/board render a beautified table by default ------------
+# --- Group 1: emit dispatch (resolve()'s 3-tier precedence) ----------------
 
 
-def test_cli_map_renders_ascii_table(monkeypatch, capsys):
+def test_resolve_auto_is_table_when_stdout_is_a_terminal(monkeypatch):
+    monkeypatch.setattr(O.console, "_force_terminal", True)
+    assert O.resolve("auto") == "table"
+
+
+def test_resolve_auto_is_json_when_stdout_is_not_a_terminal(monkeypatch):
+    monkeypatch.setattr(O.console, "_force_terminal", False)
+    assert O.resolve("auto") == "json"
+    assert O.resolve(None) == "json"  # missing/unset behaves exactly like "auto"
+
+
+def test_resolve_explicit_non_auto_choices_pass_through(monkeypatch):
+    monkeypatch.setattr(O.console, "_force_terminal", False)  # would be "json" under plain auto
+    assert O.resolve("table") == "table"
+    assert O.resolve("json") == "json"
+    assert O.resolve("plain") == "plain"
+
+
+def test_resolve_env_var_forces_json_even_under_a_tty(monkeypatch):
+    monkeypatch.setattr(O.console, "_force_terminal", True)  # auto would pick "table"
+    monkeypatch.setenv("NETHACKERS_OUTPUT", "json")
+
+    assert O.resolve("auto") == "json"
+    assert O.resolve(None) == "json"
+
+
+def test_resolve_explicit_output_flag_beats_the_env_var(monkeypatch):
+    monkeypatch.setattr(O.console, "_force_terminal", False)
+    monkeypatch.setenv("NETHACKERS_OUTPUT", "json")
+
+    assert O.resolve("table") == "table"
+    assert O.resolve("plain") == "plain"
+
+
+def test_cli_env_var_sets_the_default_output_format(monkeypatch, capsys):
+    FakeHubClient, _calls = _make_fake_hub_client({"board": []})
+    monkeypatch.setattr(C, "HubClient", FakeHubClient)
+    monkeypatch.setenv("NETHACKERS_OUTPUT", "plain")
+
+    rc = C.main(["board", "--objective", "random"])  # no -o given anywhere
+
+    assert rc == 0
+    # plain's empty-board message, not json's "[]" -- proves the env var
+    # actually reached the CLI's own "auto" default, not just resolve()
+    # in isolation.
+    assert capsys.readouterr().out.strip() == "no board entries yet."
+
+
+def test_cli_explicit_output_flag_beats_env_var(monkeypatch, capsys):
+    FakeHubClient, _calls = _make_fake_hub_client({"board": []})
+    monkeypatch.setattr(C, "HubClient", FakeHubClient)
+    monkeypatch.setenv("NETHACKERS_OUTPUT", "plain")
+
+    rc = C.main(["board", "--objective", "random", "-o", "json"])
+
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_cli_output_flag_before_subcommand(monkeypatch, capsys):
+    FakeHubClient, _calls = _make_fake_hub_client({"board": []})
+    monkeypatch.setattr(C, "HubClient", FakeHubClient)
+
+    rc = C.main(["-o", "json", "board", "--objective", "random"])
+
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_cli_output_flag_after_subcommand(monkeypatch, capsys):
+    # Mirrors the --hub-after-subcommand coverage (Property 5 below) for -o.
+    FakeHubClient, _calls = _make_fake_hub_client({"board": []})
+    monkeypatch.setattr(C, "HubClient", FakeHubClient)
+
+    rc = C.main(["board", "--objective", "random", "--output", "json"])
+
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_cli_output_flag_rejects_invalid_choice():
+    with pytest.raises(SystemExit):
+        C.main(["board", "-o", "yaml"])
+
+
+def test_cli_help_uses_rich_formatter_without_crashing(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        C.main(["--help"])
+    assert exc_info.value.code == 0
+    assert "nethackers" in capsys.readouterr().out
+
+
+def test_cli_subcommand_help_without_crashing(capsys):
+    with pytest.raises(SystemExit) as exc_info:
+        C.main(["board", "--help"])
+    assert exc_info.value.code == 0
+    assert "--objective" in capsys.readouterr().out
+
+
+# --- Group 2: json is raw + jq-able (full digests, never ANSI) -------------
+
+
+def test_cli_map_json_on_empty_response_emits_empty_json_array(monkeypatch, capsys):
+    # -o json bypasses any friendly-message/table default entirely -- it
+    # always prints exactly the raw hub response, empty or not.
+    FakeHubClient, _calls = _make_fake_hub_client({"attainment": []})
+    monkeypatch.setattr(C, "HubClient", FakeHubClient)
+
+    rc = C.main(["map", "-o", "json"])
+
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == []
+
+
+def test_cli_board_json_emits_raw_response_equal_to_stub(monkeypatch, capsys):
+    response = [
+        {"rank": 1, "solution_digest": "sha256:0123456789abcdef", "owner": "sam",
+         "episodes": 8, "ascensions": 1, "median_progression": 0.5, "mean_progression": 0.4}
+    ]
+    FakeHubClient, _calls = _make_fake_hub_client({"board": response})
+    monkeypatch.setattr(C, "HubClient", FakeHubClient)
+
+    rc = C.main(["board", "--objective", "random", "-o", "json"])
+
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == response
+
+
+def test_cli_json_output_has_no_ansi_and_full_digest_even_under_forced_terminal(
+    monkeypatch, capsys
+):
+    # The regression this guards: JSON must never go through rich.print_json
+    # (which would color it) even when "auto" would otherwise pick "table".
+    monkeypatch.setattr(O.console, "_force_terminal", True)
+    full_digest = "sha256:" + "a" * 64
+    response = [
+        {"rank": 1, "solution_digest": full_digest, "owner": "sam", "episodes": 8,
+         "ascensions": 1, "median_progression": 0.5087697678994835, "mean_progression": 0.4}
+    ]
+    FakeHubClient, _calls = _make_fake_hub_client({"board": response})
+    monkeypatch.setattr(C, "HubClient", FakeHubClient)
+
+    rc = C.main(["board", "--objective", "random", "-o", "json"])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "\x1b" not in out  # no ANSI/color escapes -- jq-safe
+    assert json.loads(out) == response
+    assert "a" * 64 in out  # the full 64-char digest, not a 12-char short form
+
+
+# --- Group 3: table renders (rich renderers) --------------------------------
+# Direct renderer-function tests: precise content assertions, captured
+# ANSI-free via `_render_text` (a throwaway non-terminal Console).
+
+
+def test_rich_render_board_grading_shape():
+    entries = [
+        {"rank": 1, "solution_digest": "sha256:0123456789abcdef", "owner": "sam",
+         "episodes": 8, "ascensions": 1, "median_progression": 0.5087697678994835,
+         "mean_progression": 0.4}
+    ]
+    out = _render_text(rich_board(entries))
+    assert "solution" in out and "median" in out and "mean" in out  # shape-aware header
+    assert "sam" in out
+    assert _short_digest(entries[0]["solution_digest"]) in out
+    assert "0.509" in out  # rounded
+    assert "0.5087697678994835" not in out  # not full precision
+    # Old papercut: naive `str(digest)[:12]` collapses onto the shared
+    # "sha256:" prefix -- must not appear.
+    assert entries[0]["solution_digest"][:12] not in out
+
+
+def test_rich_render_board_coverage_shape_shows_count_column():
+    entries = [
+        {"rank": 1, "solution_digest": "sha256:0123456789abcdef", "owner": "sam",
+         "cells_held": 3}
+    ]
+    out = _render_text(rich_board(entries))
+    assert "cells" in out  # shape-aware count column header
+    assert "3" in out
+    assert "sam" in out
+
+
+def test_rich_render_board_firsts_shape_shows_count_column():
+    entries = [
+        {"rank": 1, "solution_digest": "sha256:0123456789abcdef", "owner": "sam", "firsts": 7}
+    ]
+    out = _render_text(rich_board(entries))
+    assert "firsts" in out
+    assert "7" in out
+
+
+def test_rich_render_board_empty_is_friendly_not_bare_header():
+    assert _render_text(rich_board([])).strip() == "no board entries yet."
+
+
+def test_rich_render_attainment_pivots_flat_cells_into_heatmap_grid():
+    cells = [
+        {"identity": "val-dwa-law-fem", "milestone": "Dlvl:3", "first_owner": "sam",
+         "holder_count": 2},
+        {"identity": "val-dwa-law-fem", "milestone": "Dlvl:1", "first_owner": "sam",
+         "holder_count": 9},
+        {"identity": "wiz-elf-cha-mal", "milestone": "Dlvl:1", "first_owner": "bob",
+         "holder_count": 1},
+    ]
+    out = _render_text(rich_attainment(cells))
+    assert "val-dwa-law-fem" in out
+    assert "wiz-elf-cha-mal" in out
+    assert "legend" in out
+    assert "2 identities" in out
+    # Milestones ordered easiest-first by ACHIEVEMENTS (Dlvl:1 < Dlvl:3);
+    # the caption spells out that order since the grid itself is 1
+    # character per column.
+    assert out.index("Dlvl:1") < out.index("Dlvl:3")
+
+    lines = out.splitlines()
+    val_row = next(line for line in lines if line.startswith("val-dwa-law-fem"))
+    wiz_row = next(line for line in lines if line.startswith("wiz-elf-cha-mal"))
+    assert val_row.count("█") == 2  # reached both Dlvl:1 and Dlvl:3
+    assert wiz_row.count("█") == 1  # reached only Dlvl:1
+    assert wiz_row.count("·") == 1  # Dlvl:3 unreached for this identity
+
+
+def test_rich_render_attainment_empty_is_friendly_not_bare_grid():
+    assert _render_text(rich_attainment([])).strip() == "no attainment cells yet."
+
+
+def test_rich_render_elites_contains_expected_cells():
+    entries = [
+        {"identity": "val-dwa-law-fem", "solution_digest": "sha256:0123456789abcdef",
+         "score": 0.5087697678994835, "rank": 1}
+    ]
+    out = _render_text(rich_elites(entries))
+    assert "identity" in out and "score" in out  # header
+    assert "val-dwa-law-fem" in out
+    assert _short_digest(entries[0]["solution_digest"]) in out
+    assert "0.509" in out
+    assert "0.5087697678994835" not in out
+
+
+def test_rich_render_elites_empty_is_friendly_not_bare_header():
+    assert _render_text(rich_elites([])).strip() == "no elites recorded yet."
+
+
+def test_rich_render_search_contains_expected_cells():
+    results = [
+        {"digest": "sha256:0123456789abcdef", "owner": "sam",
+         "repo": "github.com/sam/nethacker", "commit_sha": "a" * 40,
+         "registered_at": "2026-01-01T00:00:00Z"}
+    ]
+    out = _render_text(rich_search(results))
+    assert "solution" in out and "owner" in out and "repo" in out
+    assert "sam" in out
+    assert "github.com/sam/nethacker" in out
+    assert _short_digest(results[0]["digest"]) in out
+    assert _short_digest(results[0]["commit_sha"]) in out
+
+
+def test_rich_render_search_empty_is_friendly_not_bare_header():
+    assert _render_text(rich_search([])).strip() == "no solutions found."
+
+
+def test_rich_render_show_contains_expected_cells():
+    full_digest = "sha256:" + ("0123456789abcdef" * 2)
+    solution = {
+        "digest": full_digest, "repo": "github.com/sam/nethacker", "commit_sha": "b" * 40,
+        "owner": "sam", "root": ".", "entrypoint": "bot.py",
+        "registered_at": "2026-01-01T00:00:00Z",
+    }
+    out = _render_text(rich_show(solution))
+    assert "digest" in out
+    assert "owner" in out and "sam" in out
+    assert _short_digest(full_digest) in out
+    assert full_digest.removeprefix("sha256:") not in out  # actually shortened
+
+
+def test_rich_render_show_empty_is_friendly_not_bare_block():
+    assert _render_text(rich_show({})).strip() == "no such solution."
+
+
+def test_ramp_clamps_and_interpolates():
+    assert ramp(0.0) == "rgb(68,1,84)"
+    assert ramp(1.0) == "rgb(253,231,37)"
+    assert ramp(-5.0) == ramp(0.0)  # clamped below
+    assert ramp(5.0) == ramp(1.0)  # clamped above
+    mid = ramp(0.5)
+    assert mid.startswith("rgb(") and mid.endswith(")")
+    assert mid not in (ramp(0.0), ramp(1.0))  # a real interpolation, not just a clamp
+
+
+# CLI-level table smoke tests: prove the wiring (args.output -> emit(...,
+# table=rich_*)) actually reaches the console, not just the renderers
+# in isolation.
+
+
+def test_cli_board_output_table_renders_through_console(monkeypatch, capsys):
+    response = [
+        {"rank": 1, "solution_digest": "sha256:0123456789abcdef", "owner": "sam",
+         "cells_held": 3}
+    ]
+    FakeHubClient, _calls = _make_fake_hub_client({"board": response})
+    monkeypatch.setattr(C, "HubClient", FakeHubClient)
+
+    rc = C.main(["board", "--metric", "coverage", "-o", "table"])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "sam" in out
+    assert "cells" in out
+
+
+def test_cli_map_output_table_renders_heatmap_through_console(monkeypatch, capsys):
+    response = [
+        {"identity": "val-dwa-law-fem", "milestone": "Dlvl:1", "first_owner": "sam",
+         "holder_count": 5},
+        {"identity": "val-dwa-law-fem", "milestone": "Dlvl:3", "first_owner": "sam",
+         "holder_count": 2},
+        {"identity": "wiz-elf-cha-mal", "milestone": "Dlvl:1", "first_owner": "bob",
+         "holder_count": 1},
+    ]
+    FakeHubClient, _calls = _make_fake_hub_client({"attainment": response})
+    monkeypatch.setattr(C, "HubClient", FakeHubClient)
+
+    rc = C.main(["map", "-o", "table"])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "val-dwa-law-fem" in out
+    assert "wiz-elf-cha-mal" in out
+    assert "legend" in out
+
+
+def test_cli_auto_resolves_to_table_under_forced_terminal(monkeypatch, capsys):
+    # No -o given at all -- the CLI's own top-level default ("auto") must
+    # resolve to a rich table (not JSON) once stdout looks like a terminal.
+    monkeypatch.setattr(O.console, "_force_terminal", True)
+    response = [
+        {"rank": 1, "solution_digest": "sha256:0123456789abcdef", "owner": "sam",
+         "cells_held": 3}
+    ]
+    FakeHubClient, _calls = _make_fake_hub_client({"board": response})
+    monkeypatch.setattr(C, "HubClient", FakeHubClient)
+
+    rc = C.main(["board", "--metric", "coverage"])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "sam" in out
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(out)  # proves the table path was taken, not the json fallback
+
+
+# --- Group 4: -o plain reproduces the baseline pure-Python tables ----------
+# (These bodies are the pre-CLI-UX-pass "renders ascii table by default"
+# tests -- the default changed (group 1), but the plain renders themselves
+# didn't, so -o plain must still produce exactly what they used to.)
+
+
+def test_cli_map_output_plain_matches_baseline_table(monkeypatch, capsys):
     response = [
         {
             "identity": "val-dwa-law-fem",
@@ -264,39 +671,27 @@ def test_cli_map_renders_ascii_table(monkeypatch, capsys):
     FakeHubClient, _calls = _make_fake_hub_client({"attainment": response})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
 
-    rc = C.main(["map"])
+    rc = C.main(["map", "-o", "plain"])
 
     assert rc == 0
     out = capsys.readouterr().out
+    assert out == plain_attainment(response) + "\n"  # byte-for-byte the baseline render
     assert "val-dwa-law-fem" in out
     assert "Dlvl:3" in out
     assert "sam" in out
 
 
-def test_cli_map_empty_response_prints_friendly_message_not_crash(monkeypatch, capsys):
+def test_cli_map_output_plain_on_empty_response_prints_friendly_message(monkeypatch, capsys):
     FakeHubClient, _calls = _make_fake_hub_client({"attainment": []})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
 
-    rc = C.main(["map"])
+    rc = C.main(["map", "-o", "plain"])
 
     assert rc == 0
-    out = capsys.readouterr().out.strip()
-    assert out == "no attainment cells yet."
+    assert capsys.readouterr().out.strip() == "no attainment cells yet."
 
 
-def test_cli_map_json_on_empty_response_emits_empty_json_array(monkeypatch, capsys):
-    # --json bypasses the friendly-message default entirely -- it always
-    # prints exactly the raw hub response, empty or not.
-    FakeHubClient, _calls = _make_fake_hub_client({"attainment": []})
-    monkeypatch.setattr(C, "HubClient", FakeHubClient)
-
-    rc = C.main(["map", "--json"])
-
-    assert rc == 0
-    assert json.loads(capsys.readouterr().out) == []
-
-
-def test_cli_board_renders_ascii_table(monkeypatch, capsys):
+def test_cli_board_output_plain_matches_baseline_table(monkeypatch, capsys):
     response = [
         {
             "rank": 1,
@@ -311,10 +706,11 @@ def test_cli_board_renders_ascii_table(monkeypatch, capsys):
     FakeHubClient, _calls = _make_fake_hub_client({"board": response})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
 
-    rc = C.main(["board", "--objective", "random"])
+    rc = C.main(["board", "--objective", "random", "-o", "plain"])
 
     assert rc == 0
     out = capsys.readouterr().out
+    assert out == plain_board(response) + "\n"
     assert "1" in out
     assert "sam" in out
     assert _short_digest(response[0]["solution_digest"]) in out
@@ -323,7 +719,7 @@ def test_cli_board_renders_ascii_table(monkeypatch, capsys):
     assert response[0]["solution_digest"][:12] not in out
 
 
-def test_cli_board_tolerates_coverage_shape_without_crashing(monkeypatch, capsys):
+def test_cli_board_output_plain_tolerates_coverage_shape_without_crashing(monkeypatch, capsys):
     # coverage/firsts board entries carry fewer columns than a grading
     # board entry (no ascensions/median_progression/mean_progression).
     response = [
@@ -333,7 +729,7 @@ def test_cli_board_tolerates_coverage_shape_without_crashing(monkeypatch, capsys
     FakeHubClient, _calls = _make_fake_hub_client({"board": response})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
 
-    rc = C.main(["board", "--metric", "coverage"])
+    rc = C.main(["board", "--metric", "coverage", "-o", "plain"])
 
     assert rc == 0
     out = capsys.readouterr().out
@@ -343,18 +739,81 @@ def test_cli_board_tolerates_coverage_shape_without_crashing(monkeypatch, capsys
     assert "3" in out
 
 
-def test_cli_board_json_emits_raw_response_equal_to_stub(monkeypatch, capsys):
+def test_cli_elites_output_plain_matches_baseline_table(monkeypatch, capsys):
     response = [
-        {"rank": 1, "solution_digest": "sha256:0123456789abcdef", "owner": "sam",
-         "episodes": 8, "ascensions": 1, "median_progression": 0.5, "mean_progression": 0.4}
+        {
+            "identity": "val-dwa-law-fem",
+            "solution_digest": "sha256:0123456789abcdef",
+            "score": 0.5087697678994835,
+            "rank": 1,
+        }
     ]
-    FakeHubClient, _calls = _make_fake_hub_client({"board": response})
+    FakeHubClient, _calls = _make_fake_hub_client({"elites": response})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
 
-    rc = C.main(["board", "--objective", "random", "--json"])
+    rc = C.main(["elites", "--objective", "val-dwa-law-fem", "-o", "plain"])
 
     assert rc == 0
-    assert json.loads(capsys.readouterr().out) == response
+    out = capsys.readouterr().out
+    assert out == plain_elites(response) + "\n"
+    assert "identity" in out and "score" in out  # header
+    assert "val-dwa-law-fem" in out
+    assert _short_digest(response[0]["solution_digest"]) in out
+    assert "0.509" in out  # rounded
+    assert "0.5087697678994835" not in out  # not full precision
+
+
+def test_cli_search_output_plain_matches_baseline_table(monkeypatch, capsys):
+    response = [
+        {
+            "digest": "sha256:0123456789abcdef",
+            "owner": "sam",
+            "repo": "github.com/sam/nethacker",
+            "commit_sha": "a" * 40,
+            "root": ".",
+            "entrypoint": "bot.py",
+            "registered_at": "2026-01-01T00:00:00Z",
+        }
+    ]
+    FakeHubClient, _calls = _make_fake_hub_client({"search": response})
+    monkeypatch.setattr(C, "HubClient", FakeHubClient)
+
+    rc = C.main(["search", "-o", "plain"])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert out == plain_search(response) + "\n"
+    assert "solution" in out and "owner" in out and "repo" in out  # header
+    assert "sam" in out
+    assert "github.com/sam/nethacker" in out
+    assert _short_digest(response[0]["digest"]) in out
+    assert _short_digest(response[0]["commit_sha"]) in out
+
+
+def test_cli_show_output_plain_matches_baseline_table(monkeypatch, capsys):
+    full_digest = "sha256:" + ("0123456789abcdef" * 2)  # 32 hex chars after the prefix
+    response = {
+        "digest": full_digest,
+        "repo": "github.com/sam/nethacker",
+        "commit_sha": "b" * 40,
+        "owner": "sam",
+        "root": ".",
+        "entrypoint": "bot.py",
+        "registered_at": "2026-01-01T00:00:00Z",
+    }
+    FakeHubClient, _calls = _make_fake_hub_client({"show": response})
+    monkeypatch.setattr(C, "HubClient", FakeHubClient)
+
+    rc = C.main(["show", full_digest, "-o", "plain"])
+
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert out == plain_show(response) + "\n"
+    assert "digest" in out
+    assert "owner" in out and "sam" in out
+    assert _short_digest(full_digest) in out
+    # proves it's actually shortened, not just echoed verbatim
+    assert full_digest.removeprefix("sha256:") not in out
 
 
 # --- Property 5: --hub default + override, before AND after the subcommand -
@@ -405,7 +864,61 @@ def test_cli_hub_flag_after_subcommand(monkeypatch):
     assert ("board", "random", None) in calls
 
 
-# --- Property 6: beautified renders + --json (CLI-UX pass) -----------------
+# --- Group 5: human chrome (register's device flow, errors) -> stderr -----
+
+
+def test_cli_register_device_flow_prompt_goes_to_stderr_not_stdout(monkeypatch, capsys, tmp_path):
+    solution_dir = tmp_path / "solution"
+    solution_dir.mkdir()
+    manifest = {"root": ".", "entrypoint": "bot.py"}
+    (solution_dir / "nethackers.solution.json").write_text(json.dumps(manifest))
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(json.dumps({"solution_digest": "sha256:abc"}))
+
+    FakeHubClient, _calls = _make_fake_hub_client({})
+    monkeypatch.setattr(C, "HubClient", FakeHubClient)
+
+    def fake_register_solution(*, hub, reference, manifest, evidence, prompt=print):
+        prompt(
+            "To authorize, open https://github.com/login/device and enter code: ABCD-1234"
+        )
+        return {"solution_digest": "sha256:abc", "owner": "sam"}
+
+    monkeypatch.setattr(C, "register_solution", fake_register_solution)
+
+    rc = C.main(
+        [
+            "register",
+            "--repo", "github.com/sam/nethacker",
+            "--commit", "a" * 40,
+            "--solution", str(solution_dir),
+            "--evidence", str(evidence_path),
+            "-o", "json",
+        ]
+    )
+
+    assert rc == 0
+    captured = capsys.readouterr()
+    assert "To authorize" in captured.err
+    assert "To authorize" not in captured.out
+    # -o json mode: stdout carries ONLY the final JSON result, nothing else.
+    assert json.loads(captured.out) == {"solution_digest": "sha256:abc", "owner": "sam"}
+
+
+def test_cli_eval_unknown_objective_error_goes_to_stderr_via_rich_console(capsys, tmp_path):
+    # Same contract as tests/test_cli.py's coverage of this path, but here
+    # specifically pinning that it now flows through hubclient.output.err
+    # (a rich Console) rather than a bare print(..., file=sys.stderr) --
+    # both land on real stderr, so this must keep passing either way.
+    rc = C.main(["eval", str(tmp_path), "--objective", "not-a-real-objective"])
+
+    assert rc == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "not-a-real-objective" in captured.err
+
+
+# --- Property 6: the shared table/digest/rounding helpers + empty renders --
 
 
 def test_table_helper_right_aligns_pure_numeric_column():
@@ -450,94 +963,20 @@ def test_num_rounds_floats_and_passes_non_floats_through():
     assert _num(None) == "None"
 
 
-def test_render_elites_empty_is_friendly_not_bare_header():
-    assert render_elites([]) == "no elites recorded yet."
+def test_plain_render_elites_empty_is_friendly_not_bare_header():
+    assert plain_elites([]) == "no elites recorded yet."
 
 
-def test_render_board_empty_is_friendly_not_bare_header():
-    assert render_board([]) == "no board entries yet."
+def test_plain_render_board_empty_is_friendly_not_bare_header():
+    assert plain_board([]) == "no board entries yet."
 
 
-def test_render_search_empty_is_friendly_not_bare_header():
-    assert render_search([]) == "no solutions found."
+def test_plain_render_search_empty_is_friendly_not_bare_header():
+    assert plain_search([]) == "no solutions found."
 
 
-def test_render_show_empty_is_friendly_not_bare_header():
-    assert render_show({}) == "no such solution."
-
-
-def test_cli_elites_renders_table_by_default(monkeypatch, capsys):
-    response = [
-        {
-            "identity": "val-dwa-law-fem",
-            "solution_digest": "sha256:0123456789abcdef",
-            "score": 0.5087697678994835,
-            "rank": 1,
-        }
-    ]
-    FakeHubClient, _calls = _make_fake_hub_client({"elites": response})
-    monkeypatch.setattr(C, "HubClient", FakeHubClient)
-
-    rc = C.main(["elites", "--objective", "val-dwa-law-fem"])
-
-    assert rc == 0
-    out = capsys.readouterr().out
-    assert "identity" in out and "score" in out  # header
-    assert "val-dwa-law-fem" in out
-    assert _short_digest(response[0]["solution_digest"]) in out
-    assert "0.509" in out  # rounded
-    assert "0.5087697678994835" not in out  # not full precision
-
-
-def test_cli_search_renders_table_by_default(monkeypatch, capsys):
-    response = [
-        {
-            "digest": "sha256:0123456789abcdef",
-            "owner": "sam",
-            "repo": "github.com/sam/nethacker",
-            "commit_sha": "a" * 40,
-            "root": ".",
-            "entrypoint": "bot.py",
-            "registered_at": "2026-01-01T00:00:00Z",
-        }
-    ]
-    FakeHubClient, _calls = _make_fake_hub_client({"search": response})
-    monkeypatch.setattr(C, "HubClient", FakeHubClient)
-
-    rc = C.main(["search"])
-
-    assert rc == 0
-    out = capsys.readouterr().out
-    assert "solution" in out and "owner" in out and "repo" in out  # header
-    assert "sam" in out
-    assert "github.com/sam/nethacker" in out
-    assert _short_digest(response[0]["digest"]) in out
-    assert _short_digest(response[0]["commit_sha"]) in out
-
-
-def test_cli_show_renders_key_value_by_default(monkeypatch, capsys):
-    full_digest = "sha256:" + ("0123456789abcdef" * 2)  # 32 hex chars after the prefix
-    response = {
-        "digest": full_digest,
-        "repo": "github.com/sam/nethacker",
-        "commit_sha": "b" * 40,
-        "owner": "sam",
-        "root": ".",
-        "entrypoint": "bot.py",
-        "registered_at": "2026-01-01T00:00:00Z",
-    }
-    FakeHubClient, _calls = _make_fake_hub_client({"show": response})
-    monkeypatch.setattr(C, "HubClient", FakeHubClient)
-
-    rc = C.main(["show", full_digest])
-
-    assert rc == 0
-    out = capsys.readouterr().out
-    assert "digest" in out
-    assert "owner" in out and "sam" in out
-    assert _short_digest(full_digest) in out
-    # proves it's actually shortened, not just echoed verbatim
-    assert full_digest.removeprefix("sha256:") not in out
+def test_plain_render_show_empty_is_friendly_not_bare_header():
+    assert plain_show({}) == "no such solution."
 
 
 # --- Property 7: the loop-closing regression --------------------------------

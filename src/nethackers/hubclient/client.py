@@ -8,19 +8,25 @@ anywhere in this module.
 
 ``render_attainment``/``render_elites``/``render_board``/``render_search``/
 ``render_show`` are pure formatters over the JSON a read call returns --
-they don't touch ``HubClient`` at all, so the CLI (``nethackers.cli``) can
-call them straight on whatever a ``HubClient`` method hands back, printing
-that raw JSON instead whenever ``--json`` is given. Built on three shared
-helpers (final-review fix, folding in a CLI-UX pass): ``_table`` (an
-aligned ASCII table -- per-column widths, left-aligned text / right-aligned
-numeric columns, a header + rule, 2-space gutters), ``_short_digest`` (the
-first ~12 characters *after* stripping a leading ``"sha256:"``, so distinct
+they don't touch ``HubClient`` at all. They were the CLI's only renderers
+pre-CLI-UX-pass; now they're the **``plain``** half of
+``nethackers.hubclient.output.emit``'s ``table=``/``plain=`` pair (the
+``rich`` half lives in ``nethackers.hubclient.render``) -- reached via
+``-o plain``, and still exactly what the CLI's raw-JSON modes never touch
+(``emit`` prints ``json.dumps`` of the untouched response for ``-o json``,
+same as this module's callers always could). Built on three shared helpers
+(final-review fix, folding in a CLI-UX pass): ``_table`` (an aligned ASCII
+table -- per-column widths, left-aligned text / right-aligned numeric
+columns, a header + rule, 2-space gutters), ``_short_digest`` (the first
+~12 characters *after* stripping a leading ``"sha256:"``, so distinct
 digests stay visually distinguishable in a column instead of collapsing
 onto the shared prefix), and ``_num`` (floats rounded to 3 decimals, ints
-passed through). Pure Python -- no ``rich``/``tabulate`` dependency; see
-the M2a fix report for why. Every renderer prints a friendly one-line
-message instead of a bare header for an empty response -- never a crash,
-never a table of nothing.
+passed through) -- ``nethackers.hubclient.render``'s ``rich`` renderers
+reuse ``_short_digest``/``_num`` too, rather than duplicating them. Pure
+Python, no ``rich`` dependency here -- see the M2a fix reports for why this
+half stays plain. Every renderer prints a friendly one-line message
+instead of a bare header for an empty response -- never a crash, never a
+table of nothing.
 """
 
 from __future__ import annotations
