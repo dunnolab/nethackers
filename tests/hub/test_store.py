@@ -1,0 +1,196 @@
+"""Tests for ``nethackers.hub.store``: the sqlite data layer over
+solutions/objectives/atoms/lineage (+ the derived-view tables Tasks 7-8
+populate). See task-5-context.md for the schema and Resolution A -- the
+atoms table's dedup key is UNIQUE(solution_digest, objective_digest, seed),
+not the brief's (evidence_digest, trajectory_id), because the Task-1 Atom
+dataclass has neither field and ``seed`` already serves as the trajectory
+id within a published batch.
+"""
+
+from __future__ import annotations
+
+import sqlite3
+
+import pytest
+
+from nethackers.contracts.models import Atom, ObjectiveSpec
+from nethackers.hub.store import Store
+
+SOLUTION_DIGEST = "sha256:solution-a"
+
+OBJECTIVE = ObjectiveSpec(
+    name="val-dwa-law-fem",
+    kind="identity",
+    batch=((0, "val-dwa-law-fem"), (1, "val-dwa-law-fem")),
+    max_steps=1000,
+    no_progress_timeout=100,
+    action_timeout_seconds=5.0,
+    aggregation="mean",
+)
+
+OTHER_OBJECTIVE = ObjectiveSpec(
+    name="wiz-elf-cha-fem",
+    kind="identity",
+    batch=((0, "wiz-elf-cha-fem"),),
+    max_steps=1000,
+    no_progress_timeout=100,
+    action_timeout_seconds=5.0,
+    aggregation="mean",
+)
+
+
+def _atom(**overrides):
+    fields = dict(
+        solution_digest=SOLUTION_DIGEST,
+        objective_digest=OBJECTIVE.digest(),
+        owner="sam",
+        tier="self-reported",
+        identity="val-dwa-law-fem",
+        seed=0,
+        progression=0.3,
+        milestone="Dlvl:3",
+        ascended=False,
+        status="completed",
+        turns=5,
+        steps=10,
+        evaluator_image="img@sha256:x",
+    )
+    fields.update(overrides)
+    return Atom(**fields)
+
+
+def _new_store(tmp_path):
+    db_path = tmp_path / "hub.sqlite3"
+    store = Store(db_path)
+    store.init_schema()
+    return store, db_path
+
+
+def _seed_solution(store, digest=SOLUTION_DIGEST):
+    store.upsert_solution(
+        digest,
+        repo="git@example.com:sam/bot.git",
+        commit_sha="deadbeef",
+        owner="sam",
+        root="bots/sam",
+        entrypoint="bot:main",
+        registered_at="2026-08-09T00:00:00Z",
+    )
+
+
+def _seed_solution_and_objectives(store):
+    _seed_solution(store)
+    store.objectives_upsert(OBJECTIVE)
+    store.objectives_upsert(OTHER_OBJECTIVE)
+
+
+def test_insert_atoms_dedups_and_returns_newly_inserted_count(tmp_path):
+    # Property 1: init_schema -> insert_atoms twice with the same atoms ->
+    # second call's count is 0 (idempotent dedup on the atom natural key).
+    store, _ = _new_store(tmp_path)
+    _seed_solution_and_objectives(store)
+    atoms = [_atom(seed=0), _atom(seed=1)]
+
+    first = store.insert_atoms(atoms)
+    second = store.insert_atoms(atoms)
+
+    assert first == 2
+    assert second == 0
+
+
+def test_iter_atoms_filters_narrow_and_reconstruct_atom_instances(tmp_path):
+    # Property 2: iter_atoms(identity=...) filters; a second filter narrows
+    # further; results are real Atom instances with a real bool ascended.
+    store, _ = _new_store(tmp_path)
+    _seed_solution_and_objectives(store)
+    store.insert_atoms(
+        [
+            _atom(seed=0, identity="val-dwa-law-fem"),
+            _atom(seed=1, identity="val-dwa-law-fem", objective_digest=OTHER_OBJECTIVE.digest()),
+            _atom(seed=0, identity="wiz-elf-cha-fem", objective_digest=OTHER_OBJECTIVE.digest()),
+        ]
+    )
+
+    by_identity = store.iter_atoms(identity="val-dwa-law-fem")
+    assert len(by_identity) == 2
+    assert all(isinstance(a, Atom) for a in by_identity)
+    assert all(a.identity == "val-dwa-law-fem" for a in by_identity)
+    assert all(isinstance(a.ascended, bool) for a in by_identity)
+
+    narrowed = store.iter_atoms(identity="val-dwa-law-fem", objective_digest=OBJECTIVE.digest())
+    assert len(narrowed) == 1
+    assert narrowed[0].seed == 0
+    assert narrowed[0].objective_digest == OBJECTIVE.digest()
+
+
+def test_upsert_solution_is_idempotent_and_get_solution_reads_it_back(tmp_path):
+    # Property 3: upsert_solution(...) twice -> exactly one row;
+    # get_solution(digest) returns it; get_solution("missing") -> None.
+    store, db_path = _new_store(tmp_path)
+    _seed_solution(store)
+    _seed_solution(store)
+
+    conn = sqlite3.connect(db_path)
+    row_count = conn.execute(
+        "SELECT COUNT(*) FROM solutions WHERE digest = ?", (SOLUTION_DIGEST,)
+    ).fetchone()[0]
+    assert row_count == 1
+
+    solution = store.get_solution(SOLUTION_DIGEST)
+    assert solution is not None
+    assert solution["digest"] == SOLUTION_DIGEST
+    assert solution["owner"] == "sam"
+    assert solution["commit_sha"] == "deadbeef"
+
+    assert store.get_solution("missing") is None
+
+
+def test_insert_atoms_raises_integrity_error_for_unregistered_solution(tmp_path):
+    # Property 4: an atom whose solution_digest/objective_digest isn't in
+    # solutions/objectives raises sqlite3.IntegrityError (FK), proving
+    # PRAGMA foreign_keys=ON actually took effect on this connection.
+    store, _ = _new_store(tmp_path)
+    with pytest.raises(sqlite3.IntegrityError):
+        store.insert_atoms([_atom()])
+
+
+def test_objectives_upsert_and_add_lineage_are_idempotent(tmp_path):
+    # Property 5.
+    store, db_path = _new_store(tmp_path)
+    store.objectives_upsert(OBJECTIVE)
+    store.objectives_upsert(OBJECTIVE)
+
+    conn = sqlite3.connect(db_path)
+    objective_count = conn.execute(
+        "SELECT COUNT(*) FROM objectives WHERE objective_digest = ?", (OBJECTIVE.digest(),)
+    ).fetchone()[0]
+    assert objective_count == 1
+
+    _seed_solution(store)
+    store.add_lineage(SOLUTION_DIGEST, "external-base-digest", "parent")
+    store.add_lineage(SOLUTION_DIGEST, "external-base-digest", "parent")
+
+    lineage_count = conn.execute(
+        "SELECT COUNT(*) FROM lineage WHERE child_digest = ? AND parent_digest = ? AND kind = ?",
+        (SOLUTION_DIGEST, "external-base-digest", "parent"),
+    ).fetchone()[0]
+    assert lineage_count == 1
+
+
+def test_iter_atoms_rejects_unknown_filter_keys(tmp_path):
+    # Property 6: an unknown filter key raises rather than being silently
+    # ignored (which would otherwise return an unfiltered scan).
+    store, _ = _new_store(tmp_path)
+    with pytest.raises(ValueError, match="bogus"):
+        store.iter_atoms(bogus="x")
+
+
+def test_init_schema_provisions_but_does_not_populate_derived_view_tables(tmp_path):
+    # Property 7: init_schema creates attainment/attainment_holders/
+    # elite_pool (querying a nonexistent table would raise), but Task 5
+    # never writes to them -- Tasks 7-8 own that.
+    _, db_path = _new_store(tmp_path)
+    conn = sqlite3.connect(db_path)
+    for table in ("attainment", "attainment_holders", "elite_pool"):
+        count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
+        assert count == 0
