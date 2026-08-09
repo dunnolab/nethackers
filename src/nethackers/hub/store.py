@@ -121,6 +121,14 @@ class Store:
         # setting -- required for insert_atoms' FK integrity behavior.
         self._conn.execute("PRAGMA foreign_keys = ON")
 
+    @property
+    def conn(self) -> sqlite3.Connection:
+        """The store's single live connection (FK pragma already set) --
+        the seam the derived views (Tasks 7-9) use to own their own SQL
+        against the ``attainment``/``attainment_holders``/``elite_pool``
+        tables, without opening a second connection to the same db file."""
+        return self._conn
+
     def init_schema(self) -> None:
         """Create every table (idempotent) -- including the derived-view
         tables, which Tasks 7-8 populate, not this class."""
