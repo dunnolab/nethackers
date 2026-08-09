@@ -1,22 +1,24 @@
-"""Local ``eval`` orchestrator: runs a solution through the pinned arena
-Docker image for a set of trajectory ids and wraps the resulting
+"""Local eval orchestrator: runs a solution through the pinned arena Docker
+image against a published ``ObjectiveSpec`` batch and wraps the resulting
 ``list[TrajectoryResult]`` JSON into an ``Evidence`` record.
 
-This module never talks to Docker directly -- ``eval`` shells out via an
-injectable ``runner`` callable (default ``subprocess.run``), so
-tests/test_eval_runner.py exercises the command-building and
+This module never talks to Docker directly -- ``eval_batch`` shells out via
+an injectable ``runner`` callable (default ``subprocess.run``), so
+tests/test_eval_runner_m2a.py exercises the command-building and
 result-wrapping logic with a fake runner and never needs a real Docker
 daemon or the NLE-backed arena image (that full-stack path is
 tests/test_docker_smoke.py, gated behind the ``docker`` marker).
 
-M2a additionally provides ``eval_batch``: runs a published ``ObjectiveSpec``
-batch -- a fixed, ordered ``((seed, character), ...)`` list -- as one episode
-per pair, and records ``evaluator_image`` as the evaluator image's resolved
-content *digest* (via the injectable ``image_digest_resolver``, default
-``_default_image_digest``) rather than its mutable tag, so evidence stays
-attributable to the exact image bytes that produced it. ``eval_batch`` is
-additive alongside the legacy ``eval`` (kept as-is -- see Task 13 for its
-eventual removal once ``cli.py`` migrates to the batch path).
+``eval_batch`` runs a published ``ObjectiveSpec`` batch -- a fixed, ordered
+``((seed, character), ...)`` list -- as one episode per pair, and records
+``evaluator_image`` as the evaluator image's resolved content *digest* (via
+the injectable ``image_digest_resolver``, default ``_default_image_digest``)
+rather than its mutable tag, so evidence stays attributable to the exact
+image bytes that produced it. This is now the only eval path: the legacy
+single-``Objective`` ``eval`` (one character shared across a flat
+``--seeds`` list) has been retired -- ``cli.py``'s ``eval`` subcommand
+resolves a published catalog ``ObjectiveSpec`` (``--objective <name>``) and
+calls this function directly.
 """
 
 from __future__ import annotations
@@ -42,59 +44,6 @@ def _solution_digest(solution_path: Path) -> str:
         h.update(f.relative_to(solution_path).as_posix().encode())
         h.update(f.read_bytes())
     return "sha256:" + h.hexdigest()
-
-
-def eval(
-    solution_path: str | Path,
-    objective: Objective,
-    image: str,
-    *,
-    seed_ids: list[int],
-    now: str,
-    runner=subprocess.run,
-) -> Evidence:
-    """Evaluate ``solution_path`` against ``image`` for ``seed_ids`` and
-    return the resulting ``Evidence``.
-
-    Runs ``docker run --rm --network none`` with the solution bind-mounted
-    read-only at ``/sol`` and a fresh host temp directory bind-mounted at
-    ``/out``, invoking the image's ``nethackers.arena.run`` entrypoint
-    (``arena/Dockerfile``'s ``ENTRYPOINT``) with ``--evaluation-id local``
-    and ``objective``'s parameters. Reads back ``/out/results.json`` (a
-    ``list[TrajectoryResult.to_dict()]``, per ``arena/run.py``) and wraps it
-    into an ``Evidence`` via ``Evidence.from_results`` (tier defaults to
-    ``"self-reported"``), with a content-hash ``solution_digest`` over the
-    solution directory.
-
-    ``runner`` defaults to ``subprocess.run`` but is injectable so tests
-    supply a fake that never launches a real container.
-    """
-    solution_path = Path(solution_path)
-    with tempfile.TemporaryDirectory() as td:
-        out = Path(td) / "results.json"
-        cmd = [
-            "docker", "run", "--rm", "--network", "none",
-            "-v", f"{solution_path}:/sol:ro",
-            "-v", f"{td}:/out",
-            image,
-            "--solution", "/sol",
-            "--character", objective.character or "-",
-            "--seeds", ",".join(str(i) for i in seed_ids),
-            "--evaluation-id", "local",
-            "--max-steps", str(objective.max_steps),
-            "--no-progress-timeout", str(objective.no_progress_timeout),
-            "--action-timeout", str(objective.action_timeout_seconds),
-            "--out", "/out/results.json",
-        ]
-        runner(cmd, check=True)
-        results = [TrajectoryResult.from_dict(r) for r in json.loads(out.read_text())]
-    return Evidence.from_results(
-        solution_digest=_solution_digest(solution_path),
-        objective=objective,
-        evaluator_image=image,
-        results=results,
-        created_at=now,
-    )
 
 
 def _default_image_digest(image: str) -> str:

@@ -6,10 +6,21 @@ URL/params/headers/body the server expects. ``http`` defaults to the real
 every method against a fake recording calls -- no real network access
 anywhere in this module.
 
-``render_attainment``/``render_board`` are pure ASCII-table formatters over
-the JSON a read call returns -- they don't touch ``HubClient`` at all, so
-the CLI (``nethackers.cli``) can call them straight on whatever a
-``HubClient`` method hands back.
+``render_attainment``/``render_elites``/``render_board``/``render_search``/
+``render_show`` are pure formatters over the JSON a read call returns --
+they don't touch ``HubClient`` at all, so the CLI (``nethackers.cli``) can
+call them straight on whatever a ``HubClient`` method hands back, printing
+that raw JSON instead whenever ``--json`` is given. Built on three shared
+helpers (final-review fix, folding in a CLI-UX pass): ``_table`` (an
+aligned ASCII table -- per-column widths, left-aligned text / right-aligned
+numeric columns, a header + rule, 2-space gutters), ``_short_digest`` (the
+first ~12 characters *after* stripping a leading ``"sha256:"``, so distinct
+digests stay visually distinguishable in a column instead of collapsing
+onto the shared prefix), and ``_num`` (floats rounded to 3 decimals, ints
+passed through). Pure Python -- no ``rich``/``tabulate`` dependency; see
+the M2a fix report for why. Every renderer prints a friendly one-line
+message instead of a bare header for an empty response -- never a crash,
+never a table of nothing.
 """
 
 from __future__ import annotations
@@ -96,36 +107,206 @@ class HubClient:
         return response.json()
 
 
-def render_attainment(cells: list[dict[str, Any]]) -> str:
-    """A text table of attainment cells: ``identity | milestone |
-    first_owner | holders``, one row per cell (``holders`` <-
-    ``cell["holder_count"]``). Always at least a header row, even for
-    ``cells == []`` -- never raises on missing keys or empty input."""
-    header = f"{'identity':<20} {'milestone':<12} {'first_owner':<16} {'holders':>7}"
-    lines = [header]
-    for cell in cells:
-        lines.append(
-            f"{str(cell.get('identity', '')):<20} {str(cell.get('milestone', '')):<12} "
-            f"{str(cell.get('first_owner', '')):<16} {str(cell.get('holder_count', '')):>7}"
-        )
+def _is_numeric(cell: str) -> bool:
+    """Whether ``cell`` parses as a number -- ``_table``'s per-column
+    right-align test. Empty cells don't count as numeric (a column of all-
+    blank cells should stay left-aligned, not right-align nothing)."""
+    if cell == "":
+        return False
+    try:
+        float(cell)
+    except ValueError:
+        return False
+    return True
+
+
+def _table(headers: list[str], rows: list[list[str]]) -> str:
+    """An aligned ASCII table: per-column widths sized to the widest of a
+    column's header/cells, text columns left-aligned, columns where every
+    row's cell parses as a number right-aligned, a header row, a ``-``-rule
+    underneath it, and 2-space gutters between columns.
+
+    Always at least the header + rule, even for ``rows == []``; never
+    raises on a short row (a missing trailing cell renders blank)."""
+    ncols = len(headers)
+    widths = [
+        max(len(headers[i]), max((len(r[i]) for r in rows if i < len(r)), default=0))
+        for i in range(ncols)
+    ]
+    numeric = [
+        bool(rows) and all(_is_numeric(r[i]) for r in rows if i < len(r)) for i in range(ncols)
+    ]
+
+    def _row(cells: list[str]) -> str:
+        padded = []
+        for i in range(ncols):
+            cell = cells[i] if i < len(cells) else ""
+            padded.append(cell.rjust(widths[i]) if numeric[i] else cell.ljust(widths[i]))
+        return "  ".join(padded).rstrip()
+
+    lines = [_row(headers), _row(["-" * w for w in widths])]
+    lines.extend(_row(r) for r in rows)
     return "\n".join(lines)
 
 
+def _short_digest(digest: str, n: int = 12) -> str:
+    """Shorten a (possibly ``"sha256:"``-prefixed) digest/hash to its first
+    ``n`` characters *after* stripping that prefix, so distinct digests
+    stay visually distinguishable in a table column. (Slicing the raw
+    ``"sha256:..."`` string instead collapses every digest down to the
+    shared 7-char prefix plus a handful of real characters -- the bug this
+    fixes.)"""
+    s = str(digest)
+    if s.startswith("sha256:"):
+        s = s[len("sha256:") :]
+    return s[:n]
+
+
+def _num(x: Any, nd: int = 3) -> str:
+    """Render a metric for a table cell: floats rounded to ``nd`` decimals
+    (``f"{x:.{nd}f}"``, so ``0.5087697678994835`` -> ``"0.509"``); ints,
+    bools, ``None``, and anything else pass through as plain ``str``."""
+    if isinstance(x, float):
+        return f"{x:.{nd}f}"
+    return str(x)
+
+
+def render_attainment(cells: list[dict[str, Any]]) -> str:
+    """A table of attainment cells: ``identity | milestone | first_owner |
+    holders`` (``holders`` <- ``cell["holder_count"]``). A friendly
+    one-line message instead of a bare header when ``cells == []``."""
+    if not cells:
+        return "no attainment cells yet."
+    headers = ["identity", "milestone", "first_owner", "holders"]
+    rows = [
+        [
+            str(cell.get("identity", "")),
+            str(cell.get("milestone", "")),
+            str(cell.get("first_owner", "")),
+            str(cell.get("holder_count", "")),
+        ]
+        for cell in cells
+    ]
+    return _table(headers, rows)
+
+
+def render_elites(entries: list[dict[str, Any]]) -> str:
+    """A table of elite-pool entries: ``rank | identity | solution |
+    score`` (``solution`` a short digest, ``score`` rounded via ``_num``).
+    A friendly one-line message instead of a bare header when
+    ``entries == []``."""
+    if not entries:
+        return "no elites recorded yet."
+    headers = ["rank", "identity", "solution", "score"]
+    rows = [
+        [
+            str(entry.get("rank", "")),
+            str(entry.get("identity", "")),
+            _short_digest(str(entry.get("solution_digest", ""))),
+            _num(entry.get("score", "")),
+        ]
+        for entry in entries
+    ]
+    return _table(headers, rows)
+
+
 def render_board(entries: list[dict[str, Any]]) -> str:
-    """A text table of board entries: ``rank | solution | owner | asc |
-    median | mean``, ``solution`` a 12-char ``solution_digest`` prefix.
-    Grading-board entries (``asc_median_mean``/``mean`` aggregation) have
-    all six fields; ``coverage``/``firsts`` entries carry fewer columns
-    (``cells_held``/``firsts`` instead of ascensions/median/mean) -- those
-    just render blank in the columns they don't have, never a crash.
-    Always at least a header row, even for ``entries == []``."""
-    header = f"{'rank':>4} {'solution':<14} {'owner':<16} {'asc':>4} {'median':>8} {'mean':>8}"
-    lines = [header]
-    for entry in entries:
-        digest = str(entry.get("solution_digest", ""))[:12]
-        lines.append(
-            f"{str(entry.get('rank', '')):>4} {digest:<14} {str(entry.get('owner', '')):<16} "
-            f"{str(entry.get('ascensions', '')):>4} {str(entry.get('median_progression', '')):>8} "
-            f"{str(entry.get('mean_progression', '')):>8}"
-        )
+    """A table of board entries, shape-aware over which metric produced
+    them (``solution`` is always a short digest):
+
+    - grading board (``asc_median_mean``/``mean`` aggregation -- entries
+      carry ``ascensions``): ``rank | solution | owner | asc | median |
+      mean`` (``median``/``mean`` via ``_num``).
+    - coverage board (entries carry ``cells_held``): ``rank | solution |
+      owner | cells``.
+    - firsts board (entries carry ``firsts``): ``rank | solution | owner |
+      firsts``.
+
+    A friendly one-line message instead of a bare header when
+    ``entries == []`` (there's no shape to detect from zero rows anyway --
+    this also subsumes the old blank-column papercut, since a shape is
+    now always resolved from real entries, never guessed)."""
+    if not entries:
+        return "no board entries yet."
+
+    first = entries[0]
+    if "ascensions" in first:
+        headers = ["rank", "solution", "owner", "asc", "median", "mean"]
+        rows = [
+            [
+                str(e.get("rank", "")),
+                _short_digest(str(e.get("solution_digest", ""))),
+                str(e.get("owner", "")),
+                str(e.get("ascensions", "")),
+                _num(e.get("median_progression", "")),
+                _num(e.get("mean_progression", "")),
+            ]
+            for e in entries
+        ]
+    elif "cells_held" in first:
+        headers = ["rank", "solution", "owner", "cells"]
+        rows = [
+            [
+                str(e.get("rank", "")),
+                _short_digest(str(e.get("solution_digest", ""))),
+                str(e.get("owner", "")),
+                str(e.get("cells_held", "")),
+            ]
+            for e in entries
+        ]
+    elif "firsts" in first:
+        headers = ["rank", "solution", "owner", "firsts"]
+        rows = [
+            [
+                str(e.get("rank", "")),
+                _short_digest(str(e.get("solution_digest", ""))),
+                str(e.get("owner", "")),
+                str(e.get("firsts", "")),
+            ]
+            for e in entries
+        ]
+    else:
+        # Unknown/future board shape: fall back to whatever keys the first
+        # entry actually has rather than guessing -- still never a crash.
+        headers = sorted(first)
+        rows = [[str(e.get(h, "")) for h in headers] for e in entries]
+    return _table(headers, rows)
+
+
+def render_search(results: list[dict[str, Any]]) -> str:
+    """A table of registered solutions: ``solution | owner | repo | commit
+    | registered`` (``solution``/``commit`` short digests). A friendly
+    one-line message instead of a bare header when ``results == []``."""
+    if not results:
+        return "no solutions found."
+    headers = ["solution", "owner", "repo", "commit", "registered"]
+    rows = [
+        [
+            _short_digest(str(r.get("digest", ""))),
+            str(r.get("owner", "")),
+            str(r.get("repo", "")),
+            _short_digest(str(r.get("commit_sha", ""))),
+            str(r.get("registered_at", "")),
+        ]
+        for r in results
+    ]
+    return _table(headers, rows)
+
+
+def render_show(solution: dict[str, Any]) -> str:
+    """An aligned ``key: value`` block describing one registered solution
+    (``digest``/``commit_sha`` shortened). A friendly one-line message
+    instead of an empty block when ``solution`` is empty/missing."""
+    if not solution:
+        return "no such solution."
+    preferred = ["digest", "repo", "commit_sha", "owner", "root", "entrypoint", "registered_at"]
+    keys = [k for k in preferred if k in solution]
+    keys += [k for k in solution if k not in preferred]
+    width = max(len(k) for k in keys)
+    lines = []
+    for key in keys:
+        value = solution[key]
+        if key in ("digest", "commit_sha"):
+            value = _short_digest(str(value))
+        lines.append(f"{key:<{width}}: {value}")
     return "\n".join(lines)

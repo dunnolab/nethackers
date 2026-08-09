@@ -9,9 +9,9 @@ results file.
 that records every call's kwargs and returns a stub whose ``.to_dict()``
 echoes back an identifying dict, so this covers only `main()`'s own
 plumbing -- not NLE, not a real sandboxed bot subprocess, and not the Docker
-image (see tests/test_docker_smoke.py for that). Mirrors
-tests/test_run_entrypoint.py's pattern, which covers the legacy
-``--character``/``--seeds`` path.
+image (see tests/test_docker_smoke.py for that). ``--batch`` is now the
+only supported way in -- the legacy single-character ``--character``/
+``--seeds`` path has been retired.
 """
 
 import json
