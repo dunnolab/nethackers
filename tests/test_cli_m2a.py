@@ -40,6 +40,7 @@ from __future__ import annotations
 import io
 import json
 
+import httpx
 import pytest
 from rich.console import Console
 
@@ -151,6 +152,52 @@ def test_cli_no_args_prints_help_with_project_description(capsys):
     assert "NetHackers" in out  # the project description, not just the bare command list
     assert "solve" in out.lower() and "hub" in out.lower()
     assert "board" in out and "register" in out  # commands still listed
+
+
+def test_cli_unknown_objective_is_friendly_not_a_hub_roundtrip(capsys):
+    # A typo like 'wiz' (the identity is 'wiz-elf-cha-mal') is caught
+    # client-side against the catalog -- a clean message + rc 2, no HTTP call.
+    rc = C.main(["board", "--objective", "wiz"])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "unknown objective" in err and "wiz" in err
+    assert "Traceback" not in err
+
+
+def test_cli_hub_http_error_is_friendly_not_traceback(monkeypatch, capsys):
+    request = httpx.Request("GET", "http://localhost:8000/board?objective=random")
+    response = httpx.Response(404, request=request)
+
+    class FakeHub:
+        def __init__(self, base_url):
+            pass
+
+        def board(self, objective=None, metric=None):
+            raise httpx.HTTPStatusError("404", request=request, response=response)
+
+    monkeypatch.setattr(C, "HubClient", FakeHub)
+    rc = C.main(["board", "--objective", "random"])  # valid name -> reaches the hub call
+    assert rc == 1  # caught: main returns cleanly (an uncaught error would raise here)
+    captured = capsys.readouterr()
+    assert "hub error" in captured.err and "404" in captured.err
+    assert "Traceback" not in captured.err
+    assert captured.out == ""  # nothing half-rendered on stdout
+
+
+def test_cli_hub_connection_error_is_friendly(monkeypatch, capsys):
+    request = httpx.Request("GET", "http://localhost:8000/board")
+
+    class FakeHub:
+        def __init__(self, base_url):
+            pass
+
+        def board(self, objective=None, metric=None):
+            raise httpx.ConnectError("Connection refused", request=request)
+
+    monkeypatch.setattr(C, "HubClient", FakeHub)
+    rc = C.main(["board", "--metric", "coverage"])
+    assert rc == 1
+    assert "cannot reach the hub" in capsys.readouterr().err
 
 
 def test_cli_elites_dispatches_with_objective(monkeypatch, capsys):

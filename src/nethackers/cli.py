@@ -55,6 +55,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+import httpx
 from rich_argparse import RichHelpFormatter
 
 from nethackers.eval.runner import eval_batch
@@ -240,6 +241,33 @@ def _load_manifest(args: argparse.Namespace) -> dict[str, Any]:
     return json.loads(path.read_text())
 
 
+def _unknown_objective(name: str) -> str:
+    return (
+        f"unknown objective {name!r}. Use 'random', 'all', or a full identity such as "
+        f"'wiz-elf-cha-mal' (the hub catalog has {len(CATALOG)} objectives)."
+    )
+
+
+def _hub_read(produce, output, hub_url, *, table, plain) -> int:
+    """Run a hub read (``produce()``) and ``emit`` it, turning expected hub
+    failures into a clean one-line ``stderr`` message + nonzero exit instead
+    of a raw traceback: an HTTP status (e.g. 404 for an unknown objective) or
+    a transport error (hub down / wrong ``--hub``)."""
+    try:
+        data = produce()
+    except httpx.HTTPStatusError as exc:
+        err.print(f"[red]hub error:[/] {exc.response.status_code} for {exc.request.url}")
+        return 1
+    except httpx.RequestError:
+        err.print(
+            f"[red]cannot reach the hub[/] at {hub_url} — is it running? "
+            "(docker compose up -d)"
+        )
+        return 1
+    emit(data, output, table=table, plain=plain)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -263,41 +291,64 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd in ("map", "attainment"):
         client = HubClient(args.hub)
-        emit(client.attainment(args.identity), args.output, table=rich_attainment,
-             plain=plain_attainment)
-        return 0
+        return _hub_read(
+            lambda: client.attainment(args.identity), args.output, args.hub,
+            table=rich_attainment, plain=plain_attainment,
+        )
 
     if args.cmd == "elites":
+        if args.objective not in CATALOG:
+            err.print(_unknown_objective(args.objective))
+            return 2
         client = HubClient(args.hub)
-        emit(client.elites(args.objective), args.output, table=rich_elites, plain=plain_elites)
-        return 0
+        return _hub_read(
+            lambda: client.elites(args.objective), args.output, args.hub,
+            table=rich_elites, plain=plain_elites,
+        )
 
     if args.cmd == "board":
+        if args.objective is not None and args.objective not in CATALOG:
+            err.print(_unknown_objective(args.objective))
+            return 2
         client = HubClient(args.hub)
-        emit(client.board(args.objective, args.metric), args.output, table=rich_board,
-             plain=plain_board)
-        return 0
+        return _hub_read(
+            lambda: client.board(args.objective, args.metric), args.output, args.hub,
+            table=rich_board, plain=plain_board,
+        )
 
     if args.cmd == "search":
         client = HubClient(args.hub)
-        emit(client.search(args.owner, args.limit, args.offset), args.output,
-             table=rich_search, plain=plain_search)
-        return 0
+        return _hub_read(
+            lambda: client.search(args.owner, args.limit, args.offset), args.output, args.hub,
+            table=rich_search, plain=plain_search,
+        )
 
     if args.cmd == "show":
         client = HubClient(args.hub)
-        emit(client.show(args.digest), args.output, table=rich_show, plain=plain_show)
-        return 0
+        return _hub_read(
+            lambda: client.show(args.digest), args.output, args.hub,
+            table=rich_show, plain=plain_show,
+        )
 
     if args.cmd == "register":
         client = HubClient(args.hub)
         reference = {"repo": args.repo, "commit": args.commit}
         manifest = _load_manifest(args)
         evidence = json.loads(Path(args.evidence).read_text())
-        result = register_solution(
-            hub=client, reference=reference, manifest=manifest, evidence=evidence,
-            prompt=err.print,
-        )
+        try:
+            result = register_solution(
+                hub=client, reference=reference, manifest=manifest, evidence=evidence,
+                prompt=err.print,
+            )
+        except httpx.HTTPStatusError as exc:
+            err.print(
+                f"[red]register failed:[/] hub returned {exc.response.status_code} "
+                f"for {exc.request.url}"
+            )
+            return 1
+        except httpx.RequestError:
+            err.print(f"[red]register failed:[/] cannot reach the hub at {args.hub}.")
+            return 1
         print(json.dumps(result, indent=2))
         return 0
 
