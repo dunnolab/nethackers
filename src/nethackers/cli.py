@@ -248,27 +248,10 @@ def _unknown_objective(name: str) -> str:
     )
 
 
-def _hub_read(produce, output, hub_url, *, table, plain) -> int:
-    """Run a hub read (``produce()``) and ``emit`` it, turning expected hub
-    failures into a clean one-line ``stderr`` message + nonzero exit instead
-    of a raw traceback: an HTTP status (e.g. 404 for an unknown objective) or
-    a transport error (hub down / wrong ``--hub``)."""
-    try:
-        data = produce()
-    except httpx.HTTPStatusError as exc:
-        err.print(f"[red]hub error:[/] {exc.response.status_code} for {exc.request.url}")
-        return 1
-    except httpx.RequestError:
-        err.print(
-            f"[red]cannot reach the hub[/] at {hub_url} — is it running? "
-            "(docker compose up -d)"
-        )
-        return 1
-    emit(data, output, table=table, plain=plain)
-    return 0
-
-
-def main(argv: list[str] | None = None) -> int:
+def _run(argv: list[str] | None) -> int:
+    """Parse args and dispatch one subcommand. May raise -- ``main`` is the
+    single place that turns any failure into a clean message, so nothing here
+    needs its own try/except for hub I/O."""
     parser = _build_parser()
     args = parser.parse_args(argv)
 
@@ -279,7 +262,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "eval":
         spec = CATALOG.get(args.objective)
         if spec is None:
-            err.print(f"nethackers eval: unknown objective {args.objective!r}")
+            err.print(_unknown_objective(args.objective))
             return 2
         evidence = eval_batch(Path(args.solution), spec, args.image, now=_now())
         print(json.dumps(evidence.to_dict(), indent=2))
@@ -291,65 +274,83 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.cmd in ("map", "attainment"):
         client = HubClient(args.hub)
-        return _hub_read(
-            lambda: client.attainment(args.identity), args.output, args.hub,
-            table=rich_attainment, plain=plain_attainment,
-        )
+        emit(client.attainment(args.identity), args.output,
+             table=rich_attainment, plain=plain_attainment)
+        return 0
 
     if args.cmd == "elites":
         if args.objective not in CATALOG:
             err.print(_unknown_objective(args.objective))
             return 2
         client = HubClient(args.hub)
-        return _hub_read(
-            lambda: client.elites(args.objective), args.output, args.hub,
-            table=rich_elites, plain=plain_elites,
-        )
+        emit(client.elites(args.objective), args.output, table=rich_elites, plain=plain_elites)
+        return 0
 
     if args.cmd == "board":
         if args.objective is not None and args.objective not in CATALOG:
             err.print(_unknown_objective(args.objective))
             return 2
         client = HubClient(args.hub)
-        return _hub_read(
-            lambda: client.board(args.objective, args.metric), args.output, args.hub,
-            table=rich_board, plain=plain_board,
-        )
+        emit(client.board(args.objective, args.metric), args.output,
+             table=rich_board, plain=plain_board)
+        return 0
 
     if args.cmd == "search":
         client = HubClient(args.hub)
-        return _hub_read(
-            lambda: client.search(args.owner, args.limit, args.offset), args.output, args.hub,
-            table=rich_search, plain=plain_search,
-        )
+        emit(client.search(args.owner, args.limit, args.offset), args.output,
+             table=rich_search, plain=plain_search)
+        return 0
 
     if args.cmd == "show":
         client = HubClient(args.hub)
-        return _hub_read(
-            lambda: client.show(args.digest), args.output, args.hub,
-            table=rich_show, plain=plain_show,
-        )
+        emit(client.show(args.digest), args.output, table=rich_show, plain=plain_show)
+        return 0
 
     if args.cmd == "register":
         client = HubClient(args.hub)
         reference = {"repo": args.repo, "commit": args.commit}
         manifest = _load_manifest(args)
         evidence = json.loads(Path(args.evidence).read_text())
-        try:
-            result = register_solution(
-                hub=client, reference=reference, manifest=manifest, evidence=evidence,
-                prompt=err.print,
-            )
-        except httpx.HTTPStatusError as exc:
-            err.print(
-                f"[red]register failed:[/] hub returned {exc.response.status_code} "
-                f"for {exc.request.url}"
-            )
-            return 1
-        except httpx.RequestError:
-            err.print(f"[red]register failed:[/] cannot reach the hub at {args.hub}.")
-            return 1
+        result = register_solution(
+            hub=client, reference=reference, manifest=manifest, evidence=evidence,
+            prompt=err.print,
+        )
         print(json.dumps(result, indent=2))
         return 0
 
     return 1
+
+
+def main(argv: list[str] | None = None) -> int:
+    """CLI entry point. Runs the dispatch under a single top-level guard so no
+    code path ever dumps a raw traceback at a user: known hub failures
+    (unreachable / bad ``--hub`` URL / HTTP status) and any unexpected error
+    become a one-line ``stderr`` message + a nonzero exit. Set
+    ``NETHACKERS_DEBUG=1`` to re-raise and get the full traceback instead.
+    (argparse usage errors raise ``SystemExit`` and pass straight through --
+    they're already user-friendly.)"""
+    try:
+        return _run(argv)
+    except KeyboardInterrupt:
+        err.print("[yellow]aborted[/]")
+        return 130
+    except httpx.HTTPStatusError as exc:
+        err.print(f"[red]hub error:[/] {exc.response.status_code} for {exc.request.url}")
+        return 1
+    except (httpx.UnsupportedProtocol, httpx.InvalidURL) as exc:
+        err.print(
+            f"[red]invalid hub URL[/]: {exc} — include a scheme, "
+            "e.g. --hub http://localhost:8000"
+        )
+        return 2
+    except httpx.HTTPError as exc:  # RequestError (connect/timeout/…) + any other httpx error
+        target = getattr(getattr(exc, "request", None), "url", None)
+        where = f" ({target})" if target else ""
+        err.print(f"[red]cannot reach the hub[/]{where} — is it running? (docker compose up -d)")
+        return 1
+    except Exception as exc:  # never surface a raw traceback to a user
+        if os.environ.get("NETHACKERS_DEBUG"):
+            raise
+        err.print(f"[red]nethackers: unexpected error[/]: {type(exc).__name__}: {exc}")
+        err.print("[dim](set NETHACKERS_DEBUG=1 for the full traceback)[/]")
+        return 1

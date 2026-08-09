@@ -200,6 +200,51 @@ def test_cli_hub_connection_error_is_friendly(monkeypatch, capsys):
     assert "cannot reach the hub" in capsys.readouterr().err
 
 
+def test_cli_bad_hub_url_is_friendly(monkeypatch, capsys):
+    # e.g. `--hub localhost` (no scheme) -> httpx.UnsupportedProtocol, which the
+    # top-level guard turns into a fix-it hint instead of a transport traceback.
+    class FakeHub:
+        def __init__(self, base_url):
+            pass
+
+        def board(self, objective=None, metric=None):
+            raise httpx.UnsupportedProtocol(
+                "Request URL is missing an 'http://' or 'https://' protocol."
+            )
+
+    monkeypatch.setattr(C, "HubClient", FakeHub)
+    rc = C.main(["board", "--metric", "coverage"])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "invalid hub URL" in err and "http://" in err  # tells the user how to fix it
+    assert "Traceback" not in err
+
+
+def test_cli_unexpected_error_is_caught_unless_debug(monkeypatch, capsys):
+    # Any non-hub error (a bug, a bad response shape, …) must still exit
+    # cleanly, never a raw traceback -- that's the whole point of the guard.
+    class FakeHub:
+        def __init__(self, base_url):
+            pass
+
+        def board(self, objective=None, metric=None):
+            raise ValueError("boom")
+
+    monkeypatch.setattr(C, "HubClient", FakeHub)
+
+    monkeypatch.delenv("NETHACKERS_DEBUG", raising=False)
+    rc = C.main(["board", "--metric", "coverage"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "unexpected error" in err and "ValueError" in err and "boom" in err
+    assert "Traceback" not in err
+
+    # opt-in: NETHACKERS_DEBUG=1 re-raises so a developer gets the full traceback
+    monkeypatch.setenv("NETHACKERS_DEBUG", "1")
+    with pytest.raises(ValueError, match="boom"):
+        C.main(["board", "--metric", "coverage"])
+
+
 def test_cli_elites_dispatches_with_objective(monkeypatch, capsys):
     FakeHubClient, calls = _make_fake_hub_client({"elites": [{"identity": "x"}]})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
