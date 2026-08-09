@@ -681,6 +681,30 @@ def test_rich_render_show_empty_is_friendly_not_bare_block():
     assert _render_text(rich_show({})).strip() == "no such solution."
 
 
+def test_rich_renderers_hyperlink_owner_and_repo_to_github():
+    # OSC-8 hyperlinks are only emitted to a real terminal, so force one; the
+    # URL then appears in the raw output. (Terminals without hyperlink support
+    # just show the plain name; -o json is untouched -- see the json tests.)
+    def term(renderable):
+        buf = io.StringIO()
+        Console(file=buf, force_terminal=True, width=140).print(renderable)
+        return buf.getvalue()
+
+    board = term(rich_board([
+        {"rank": 1, "solution_digest": "sha256:abc", "owner": "octocat",
+         "ascensions": 1, "median_progression": 0.5, "mean_progression": 0.5}
+    ]))
+    assert "https://github.com/octocat" in board  # owner -> profile
+
+    search = term(rich_search([
+        {"digest": "sha256:abc", "owner": "octocat",
+         "repo": "github.com/octocat/nethacker", "commit_sha": "a" * 40,
+         "registered_at": "2026-01-01T00:00:00Z"}
+    ]))
+    assert "https://github.com/octocat" in search  # owner
+    assert "https://github.com/octocat/nethacker" in search  # repo
+
+
 def test_ramp_clamps_and_interpolates():
     assert ramp(0.0) == "rgb(68,1,84)"
     assert ramp(1.0) == "rgb(253,231,37)"

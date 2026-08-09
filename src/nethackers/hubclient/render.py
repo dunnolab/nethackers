@@ -92,6 +92,27 @@ def _empty(message: str) -> Text:
     return Text(message, style="italic dim")
 
 
+def _gh_user(login: str) -> Text:
+    """A GitHub username as an OSC-8 terminal hyperlink to the profile. Owners
+    are GitHub logins (register resolves the auth token -> login and requires
+    the repo owner == login), so ``github.com/<login>`` is always the right
+    target. Terminals without hyperlink support just show the plain name; the
+    ``-o json`` path is untouched (agents get the plain login)."""
+    login = str(login)
+    if not login:
+        return Text("")
+    return Text(login, style=f"link https://github.com/{login}")
+
+
+def _gh_repo(repo: str) -> Text:
+    """A repo reference (e.g. ``github.com/owner/name``) as a clickable link."""
+    repo = str(repo)
+    if not repo:
+        return Text("")
+    url = repo if repo.startswith(("http://", "https://")) else f"https://{repo}"
+    return Text(repo, style=f"link {url}")
+
+
 def render_board(entries: list[dict[str, Any]]) -> RenderableType:
     """A ``rich`` table of board entries, shape-aware over which metric
     produced them (mirrors the baseline ``plain`` ``render_board``'s shape
@@ -123,7 +144,7 @@ def render_board(entries: list[dict[str, Any]]) -> RenderableType:
             table.add_row(
                 str(e.get("rank", "")),
                 _short_digest(str(e.get("solution_digest", ""))),
-                str(e.get("owner", "")),
+                _gh_user(e.get("owner", "")),
                 str(e.get("ascensions", "")),
                 _colored_num(e.get("median_progression", "")),
                 _colored_num(e.get("mean_progression", "")),
@@ -135,7 +156,7 @@ def render_board(entries: list[dict[str, Any]]) -> RenderableType:
             table.add_row(
                 str(e.get("rank", "")),
                 _short_digest(str(e.get("solution_digest", ""))),
-                str(e.get("owner", "")),
+                _gh_user(e.get("owner", "")),
                 str(e.get("cells_held", "")),
             )
     elif "firsts" in first:
@@ -145,7 +166,7 @@ def render_board(entries: list[dict[str, Any]]) -> RenderableType:
             table.add_row(
                 str(e.get("rank", "")),
                 _short_digest(str(e.get("solution_digest", ""))),
-                str(e.get("owner", "")),
+                _gh_user(e.get("owner", "")),
                 str(e.get("firsts", "")),
             )
     else:
@@ -219,7 +240,8 @@ def render_attainment(cells: list[dict[str, Any]]) -> RenderableType:
     table.add_column("first")
     for identity, fraction, deepest, reached, holders, first in rows:
         table.add_row(
-            identity, _bar(fraction), deepest, f"{reached}/{total}", str(holders), first
+            identity, _bar(fraction), deepest, f"{reached}/{total}", str(holders),
+            _gh_user(first),
         )
     return table
 
@@ -261,8 +283,8 @@ def render_search(results: list[dict[str, Any]]) -> RenderableType:
     for r in results:
         table.add_row(
             _short_digest(str(r.get("digest", ""))),
-            str(r.get("owner", "")),
-            str(r.get("repo", "")),
+            _gh_user(r.get("owner", "")),
+            _gh_repo(r.get("repo", "")),
             _short_digest(str(r.get("commit_sha", ""))),
             str(r.get("registered_at", "")),
         )
@@ -287,6 +309,11 @@ def render_show(solution: dict[str, Any]) -> RenderableType:
     for key in keys:
         value = solution[key]
         if key in ("digest", "commit_sha"):
-            value = _short_digest(str(value))
-        grid.add_row(key, str(value))
+            grid.add_row(key, _short_digest(str(value)))
+        elif key == "owner":
+            grid.add_row(key, _gh_user(str(value)))
+        elif key == "repo":
+            grid.add_row(key, _gh_repo(str(value)))
+        else:
+            grid.add_row(key, str(value))
     return grid
