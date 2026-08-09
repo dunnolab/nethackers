@@ -109,10 +109,13 @@ def test_eval_batch_wraps_container_results_into_evidence(tmp_path):
 
     # Resolution B: objective is a synthesized, multi-character descriptor --
     # character=None (no single build represents a batch), seed_set carries
-    # the spec's name so the descriptor is still traceable to its batch.
+    # the spec's name so the descriptor is still traceable to its batch, and
+    # the remaining knobs are straight passthroughs from spec.
     assert ev.objective.character is None
     assert ev.objective.seed_set == _SPEC.name
     assert ev.objective.max_steps == _SPEC.max_steps
+    assert ev.objective.no_progress_timeout == _SPEC.no_progress_timeout
+    assert ev.objective.action_timeout_seconds == _SPEC.action_timeout_seconds
 
     # Command-building: --network none, solution mounted read-only, and the
     # batch passed as [[seed, character], ...] JSON (not --character/--seeds).
