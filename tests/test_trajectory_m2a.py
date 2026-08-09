@@ -1,31 +1,26 @@
-"""Exercise run_trajectory's episode loop and status/scoring mapping against
-fakes.
+"""Exercise run_trajectory's M2a additions: threading `character` through to
+TrajectoryResult and surfacing EnvironmentMetrics.milestone as
+TrajectoryResult.milestone.
 
-No NLE dependency and no real bot subprocess: FakeEnv/FakeClient stand in for
-NLEEnvironment/AgentClient by monkeypatching trajectory.make_environment and
-trajectory.AgentClient. Covers: a clean episode mapping to "completed" with
-env.metrics() passed through unmodified, and InvalidAction/BotTimeout/
-BotError raised from FakeClient.act mapping to their respective statuses
-with progress forced to 0.0 and ascended forced to False even when
-env.metrics() reports real progress (the plan's Global Constraint: "bot
-errors/timeouts -> progress 0.0"). Does not cover infrastructure_error, real
-NetHack observations/actions, or the sandboxed subprocess/timeout behavior
-covered separately by tests/test_sandbox.py.
-
-The fake EnvironmentMetrics now includes a milestone field and
-run_trajectory is called with a character arg (both M2a additions) purely
-for signature compatibility -- their propagation into TrajectoryResult is
-asserted by tests/test_trajectory_m2a.py, not here.
+Extends tests/test_trajectory.py's FakeEnv/FakeClient pattern (no NLE, no
+real bot subprocess) with a `milestone` on the fake EnvironmentMetrics and an
+explicit `character` argument to run_trajectory. Covers: a clean episode
+recording both the passed-in character and the environment's milestone
+unmodified, and the bot-failure statuses (InvalidAction/BotTimeout/BotError)
+still recording character while forcing milestone to None -- extending M1's
+progress=0.0/ascended=False zeroing. Does not re-cover the status/progress
+mapping itself (see tests/test_trajectory.py).
 """
 
 import pytest
 
 import nethackers.arena.trajectory as T
+from nethackers.arena.environment import EnvironmentMetrics
 from nethackers.arena.sandbox import BotError, BotTimeout, InvalidAction
 from nethackers.contracts.models import Objective
 
 
-def test_run_trajectory_maps_a_clean_episode_to_completed(monkeypatch):
+def test_run_trajectory_records_character_and_milestone_on_completion(monkeypatch):
     class FakeEnv:
         action_count = 8
 
@@ -36,8 +31,6 @@ def test_run_trajectory_maps_a_clean_episode_to_completed(monkeypatch):
             return {"blstats": [0] * 27}, 0.0, True, False
 
         def metrics(self):
-            from nethackers.arena.environment import EnvironmentMetrics
-
             return EnvironmentMetrics(0.3, 5, 2, False, "died", "Dlvl:5")
 
         def close(self):
@@ -62,7 +55,7 @@ def test_run_trajectory_maps_a_clean_episode_to_completed(monkeypatch):
     monkeypatch.setattr(T, "make_environment", lambda *a, **k: FakeEnv())
     monkeypatch.setattr(T, "AgentClient", FakeClient)
     obj = Objective(
-        character=None,
+        character="val-dwa-law-fem",
         max_steps=10,
         no_progress_timeout=10,
         action_timeout_seconds=1.0,
@@ -71,7 +64,9 @@ def test_run_trajectory_maps_a_clean_episode_to_completed(monkeypatch):
     res = T.run_trajectory(
         submission_path="unused", spec=_spec(), objective=obj, character="val-dwa-law-fem"
     )
-    assert res.status == "completed" and abs(res.progress - 0.3) < 1e-9
+    assert res.status == "completed"
+    assert res.character == "val-dwa-law-fem"
+    assert res.milestone == "Dlvl:5"
 
 
 @pytest.mark.parametrize(
@@ -82,7 +77,7 @@ def test_run_trajectory_maps_a_clean_episode_to_completed(monkeypatch):
         (BotError, "bot_error"),
     ],
 )
-def test_run_trajectory_zeroes_progress_and_ascended_on_bot_failure(
+def test_run_trajectory_zeroes_milestone_but_keeps_character_on_bot_failure(
     monkeypatch, bot_exception, expected_status
 ):
     class FakeEnv:
@@ -95,10 +90,9 @@ def test_run_trajectory_zeroes_progress_and_ascended_on_bot_failure(
             return {"blstats": [0] * 27}, 0.0, True, False
 
         def metrics(self):
-            from nethackers.arena.environment import EnvironmentMetrics
-
-            # The environment recorded real progress before the bot failed;
-            # the bot-failure statuses must still score zero.
+            # The environment recorded real progress/milestone before the bot
+            # failed; the bot-failure statuses must still zero them out (M1's
+            # progress/ascended rule extended to milestone).
             return EnvironmentMetrics(0.7, 9, 4, True, "ascended", "Astral Plane")
 
         def close(self):
@@ -123,7 +117,7 @@ def test_run_trajectory_zeroes_progress_and_ascended_on_bot_failure(
     monkeypatch.setattr(T, "make_environment", lambda *a, **k: FakeEnv())
     monkeypatch.setattr(T, "AgentClient", FakeClient)
     obj = Objective(
-        character=None,
+        character="val-dwa-law-fem",
         max_steps=10,
         no_progress_timeout=10,
         action_timeout_seconds=1.0,
@@ -135,6 +129,8 @@ def test_run_trajectory_zeroes_progress_and_ascended_on_bot_failure(
     assert res.status == expected_status
     assert res.progress == 0.0
     assert res.ascended is False
+    assert res.milestone is None
+    assert res.character == "val-dwa-law-fem"
 
 
 def _spec():
