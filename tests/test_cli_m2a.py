@@ -44,6 +44,7 @@ import pytest
 from rich.console import Console
 
 import nethackers.cli as C
+from nethackers.arena.progress import ACHIEVEMENTS
 from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
 from nethackers.hub.auth import LocalStubAuth
 from nethackers.hub.objectives import CATALOG
@@ -140,6 +141,16 @@ def test_cli_attainment_alias_dispatches_to_attainment(monkeypatch, capsys):
 
     assert rc == 0
     assert ("attainment", None) in calls
+
+
+def test_cli_no_args_prints_help_with_project_description(capsys):
+    rc = C.main([])
+    assert rc == 0
+    out = capsys.readouterr().out
+    assert "usage" in out.lower()
+    assert "NetHackers" in out  # the project description, not just the bare command list
+    assert "solve" in out.lower() and "hub" in out.lower()
+    assert "board" in out and "register" in out  # commands still listed
 
 
 def test_cli_elites_dispatches_with_objective(monkeypatch, capsys):
@@ -495,7 +506,7 @@ def test_rich_render_board_empty_is_friendly_not_bare_header():
     assert _render_text(rich_board([])).strip() == "no board entries yet."
 
 
-def test_rich_render_attainment_pivots_flat_cells_into_heatmap_grid():
+def test_rich_render_attainment_progress_leaderboard():
     cells = [
         {"identity": "val-dwa-law-fem", "milestone": "Dlvl:3", "first_owner": "sam",
          "holder_count": 2},
@@ -504,22 +515,21 @@ def test_rich_render_attainment_pivots_flat_cells_into_heatmap_grid():
         {"identity": "wiz-elf-cha-mal", "milestone": "Dlvl:1", "first_owner": "bob",
          "holder_count": 1},
     ]
-    out = _render_text(rich_attainment(cells))
-    assert "val-dwa-law-fem" in out
-    assert "wiz-elf-cha-mal" in out
-    assert "legend" in out
-    assert "2 identities" in out
-    # Milestones ordered easiest-first by ACHIEVEMENTS (Dlvl:1 < Dlvl:3);
-    # the caption spells out that order since the grid itself is 1
-    # character per column.
-    assert out.index("Dlvl:1") < out.index("Dlvl:3")
-
-    lines = out.splitlines()
-    val_row = next(line for line in lines if line.startswith("val-dwa-law-fem"))
-    wiz_row = next(line for line in lines if line.startswith("wiz-elf-cha-mal"))
-    assert val_row.count("█") == 2  # reached both Dlvl:1 and Dlvl:3
-    assert wiz_row.count("█") == 1  # reached only Dlvl:1
-    assert wiz_row.count("·") == 1  # Dlvl:3 unreached for this identity
+    out = _render_text(rich_attainment(cells), width=120)
+    # A per-identity progress leaderboard (not an 87-wide heatmap): one row
+    # per identity with a coverage bar + deepest milestone + reached/total.
+    for column in ("identity", "progress", "deepest", "reached", "holders", "first"):
+        assert column in out
+    assert "val-dwa-law-fem" in out and "wiz-elf-cha-mal" in out
+    # deepest reached per identity: val got to Dlvl:3, wiz only Dlvl:1
+    assert "Dlvl:3" in out
+    # reached out of the full ladder: val lit 2 cells, wiz lit 1
+    total = len(ACHIEVEMENTS)
+    assert f"2/{total}" in out and f"1/{total}" in out
+    # who reached each frontier first
+    assert "sam" in out and "bob" in out
+    # sorted most-progressed first: val (deepest Dlvl:3) before wiz (Dlvl:1)
+    assert out.index("val-dwa-law-fem") < out.index("wiz-elf-cha-mal")
 
 
 def test_rich_render_attainment_empty_is_friendly_not_bare_grid():
@@ -610,7 +620,7 @@ def test_cli_board_output_table_renders_through_console(monkeypatch, capsys):
     assert "cells" in out
 
 
-def test_cli_map_output_table_renders_heatmap_through_console(monkeypatch, capsys):
+def test_cli_map_output_table_renders_progress_through_console(monkeypatch, capsys):
     response = [
         {"identity": "val-dwa-law-fem", "milestone": "Dlvl:1", "first_owner": "sam",
          "holder_count": 5},
@@ -621,6 +631,7 @@ def test_cli_map_output_table_renders_heatmap_through_console(monkeypatch, capsy
     ]
     FakeHubClient, _calls = _make_fake_hub_client({"attainment": response})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
+    monkeypatch.setattr(O.console, "_width", 200)  # wide: no truncation
 
     rc = C.main(["map", "-o", "table"])
 
@@ -628,7 +639,7 @@ def test_cli_map_output_table_renders_heatmap_through_console(monkeypatch, capsy
     out = capsys.readouterr().out
     assert "val-dwa-law-fem" in out
     assert "wiz-elf-cha-mal" in out
-    assert "legend" in out
+    assert "deepest" in out  # progress-table header (was a heatmap legend before)
 
 
 def test_cli_auto_resolves_to_table_under_forced_terminal(monkeypatch, capsys):

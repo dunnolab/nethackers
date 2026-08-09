@@ -128,7 +128,22 @@ def _common_parser() -> argparse.ArgumentParser:
 
 
 def _build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="nethackers", formatter_class=RichHelpFormatter)
+    parser = argparse.ArgumentParser(
+        prog="nethackers",
+        formatter_class=RichHelpFormatter,
+        description=(
+            "NetHackers — a distributed effort to 'solve' NetHack by evolving "
+            "deterministic symbolic players (built on AutoAscend), coordinated through "
+            "a shared hub. This CLI browses the hub — the attainment map, ranking "
+            "boards, and elite solutions — and lets you evaluate and register your own. "
+            "Reads print a rich table in a terminal and JSON when piped; use -o to "
+            "force a format."
+        ),
+        epilog=(
+            "Env: NETHACKERS_HUB sets the hub URL; NETHACKERS_OUTPUT sets the default "
+            "-o/--output format."
+        ),
+    )
     parser.add_argument(
         "--hub",
         default=_default_hub(),
@@ -143,7 +158,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "table (rich), json (raw, jq-able), or plain (plain-text table). "
         "Default: %(default)s; or $NETHACKERS_OUTPUT.",
     )
-    sub = parser.add_subparsers(dest="cmd", required=True)
+    sub = parser.add_subparsers(dest="cmd")
     common = _common_parser()
 
     e = sub.add_parser(
@@ -226,7 +241,12 @@ def _load_manifest(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def main(argv: list[str] | None = None) -> int:
-    args = _build_parser().parse_args(argv)
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+
+    if args.cmd is None:  # bare `nethackers` -> friendly help (with the project description)
+        parser.print_help()
+        return 0
 
     if args.cmd == "eval":
         spec = CATALOG.get(args.objective)

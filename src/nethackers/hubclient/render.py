@@ -158,64 +158,70 @@ def render_board(entries: list[dict[str, Any]]) -> RenderableType:
     return table
 
 
+def _bar(fraction: float, width: int = 24) -> Text:
+    """A ``width``-char coverage bar filled to ``fraction`` (clamped to
+    ``[0, 1]``): the filled part colored by ``ramp(fraction)`` (cold->hot
+    with depth), the remainder a dim ``░``. Pure presentation, never raises."""
+    fraction = min(max(float(fraction), 0.0), 1.0)
+    filled = round(fraction * width)
+    bar = Text()
+    bar.append("█" * filled, style=ramp(fraction))
+    bar.append("░" * (width - filled), style="grey30")
+    return bar
+
+
 def render_attainment(cells: list[dict[str, Any]]) -> RenderableType:
-    """The attainment MAP as a colored heatmap grid -- the showcase
-    render. Pivots the flat cell list the hub returns (``[{identity,
-    milestone, first_owner, holder_count}, ...]``) into rows = identities
-    present in the response (sorted) x columns = milestones present
-    (sorted easiest-first by ``nethackers.arena.progress.ACHIEVEMENTS``'s
-    empirical-ascension-probability value, so the grid reads left-to-right
-    as a difficulty ladder).
+    """The attainment MAP as a readable per-identity progress leaderboard,
+    not an 87-wide unlabeled heatmap (which wraps and can't carry column
+    names in a terminal). One row per identity present, sorted
+    most-progressed first: a colored coverage bar, the deepest milestone
+    reached, how many of the full ladder are lit (``reached/total``), the
+    frontier's holder count, and who reached that frontier first.
 
-    Each cell is one character: a solid block (``"█"``) colored by holder
-    density (``ramp(min(holder_count, 8) / 8)`` -- density saturates at 8+
-    holders so one outlier can't wash out the whole gradient) if that
-    identity/milestone was reached by anyone, a dim middle-dot (``"·"``) if
-    not. Below the grid, a one-line color legend and a caption spelling out
-    the exact milestone order (row labels are self-evident; a 1-character-wide
-    column can't also carry its own name, so the caption is where a column
-    index maps back to a milestone).
-
-    This renders only the identities/milestones actually present in the
-    response -- compact and data-driven, not a fixed 73-row grid. Empty
-    input -> a friendly one-line message, never a bare/zero-size grid."""
+    ``fraction`` is the deepest reached milestone's empirical-ascension
+    value from ``nethackers.arena.progress.ACHIEVEMENTS`` (attainment is
+    cumulative -- reaching a deep milestone lights every shallower one -- so
+    the deepest cell is the frontier and its value is the coverage ratio).
+    Full per-cell detail stays available via ``-o json`` (every cell) and
+    ``-o plain`` (the flat cell table). Empty -> a friendly one-liner."""
     if not cells:
         return _empty("no attainment cells yet.")
 
-    identities = sorted({str(c.get("identity", "")) for c in cells})
-    milestones = sorted(
-        {str(c.get("milestone", "")) for c in cells},
-        key=lambda m: ACHIEVEMENTS.get(m, 0.0),
-    )
-    holders: dict[tuple[str, str], int] = {
-        (str(c.get("identity", "")), str(c.get("milestone", ""))): int(c.get("holder_count") or 0)
-        for c in cells
-    }
-    label_width = max(len(identity) for identity in identities)
+    total = len(ACHIEVEMENTS)
+    by_identity: dict[str, list[dict[str, Any]]] = {}
+    for c in cells:
+        by_identity.setdefault(str(c.get("identity", "")), []).append(c)
 
-    grid = Text(no_wrap=True, overflow="crop")
-    for identity in identities:
-        grid.append(identity.ljust(label_width) + "  ")
-        for milestone in milestones:
-            count = holders.get((identity, milestone))
-            if count is None:
-                grid.append("·", style="grey42")  # unreached: dim middle-dot
-            else:
-                grid.append("█", style=ramp(min(count, 8) / 8))  # reached: colored block
-        grid.append("\n")
+    rows: list[tuple[str, float, str, int, int, str]] = []
+    for identity, group in by_identity.items():
+        deepest_cell = max(
+            group, key=lambda c: ACHIEVEMENTS.get(str(c.get("milestone", "")), 0.0)
+        )
+        deepest = str(deepest_cell.get("milestone", ""))
+        rows.append(
+            (
+                identity,
+                ACHIEVEMENTS.get(deepest, 0.0),
+                deepest,
+                len(group),
+                int(deepest_cell.get("holder_count") or 0),
+                str(deepest_cell.get("first_owner", "")),
+            )
+        )
+    rows.sort(key=lambda r: r[1], reverse=True)  # most-progressed identity first
 
-    grid.append("\n")
-    grid.append("legend:  ")
-    grid.append("·", style="grey42")
-    grid.append(" unreached    reached: ")
-    for n in (1, 2, 4, 8):
-        grid.append("█", style=ramp(min(n, 8) / 8))
-    grid.append(" (low→high holders)\n")
-    grid.append(
-        f"{len(identities)} identities x {len(milestones)} milestones: " + ", ".join(milestones),
-        style="dim",
-    )
-    return grid
+    table = Table(header_style="bold", row_styles=["", "on grey11"])
+    table.add_column("identity")
+    table.add_column("progress")
+    table.add_column("deepest")
+    table.add_column("reached", justify="right")
+    table.add_column("holders", justify="right")
+    table.add_column("first")
+    for identity, fraction, deepest, reached, holders, first in rows:
+        table.add_row(
+            identity, _bar(fraction), deepest, f"{reached}/{total}", str(holders), first
+        )
+    return table
 
 
 def render_elites(entries: list[dict[str, Any]]) -> RenderableType:
