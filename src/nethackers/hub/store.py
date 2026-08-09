@@ -214,15 +214,25 @@ class Store:
         IGNORE`` suppresses the UNIQUE dedup conflict, but sqlite always
         enforces FOREIGN KEY violations as ABORT regardless of the
         statement's own conflict-resolution clause.
+
+        Atomic per call: ``with self._conn:`` commits once, only after
+        every atom in the batch has inserted (or been dedup-skipped)
+        without error. If any atom raises partway through (e.g. the FK
+        case above), the connection's context-manager protocol rolls back
+        everything this call did and re-raises -- so a raised call never
+        leaves earlier-in-this-call rows pending on the long-lived
+        connection for some later, unrelated commit to flush (fix round 1:
+        a trailing manual ``commit()`` with no rollback allowed exactly
+        that leak).
         """
         inserted = 0
-        for atom in atoms:
-            values = atom.to_dict()
-            cur = self._conn.execute(
-                _INSERT_ATOM_SQL, tuple(values[column] for column in _ATOM_COLUMNS)
-            )
-            inserted += cur.rowcount
-        self._conn.commit()
+        with self._conn:
+            for atom in atoms:
+                values = atom.to_dict()
+                cur = self._conn.execute(
+                    _INSERT_ATOM_SQL, tuple(values[column] for column in _ATOM_COLUMNS)
+                )
+                inserted += cur.rowcount
         return inserted
 
     def iter_atoms(self, **filters: Any) -> list[Atom]:

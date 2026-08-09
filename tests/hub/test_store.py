@@ -154,6 +154,38 @@ def test_insert_atoms_raises_integrity_error_for_unregistered_solution(tmp_path)
         store.insert_atoms([_atom()])
 
 
+def test_insert_atoms_rolls_back_the_whole_call_on_a_mid_batch_fk_violation(tmp_path):
+    # Regression (fix round 1): insert_atoms used to INSERT OR IGNORE each
+    # atom in a loop then commit() once at the end with no rollback, so a
+    # mid-batch FK violation left the earlier-in-this-call rows pending
+    # (uncommitted but not rolled back either) on the long-lived
+    # connection -- a *later*, unrelated commit (e.g. from add_lineage)
+    # would silently flush them permanently, even though insert_atoms
+    # itself raised and returned no count. insert_atoms must be atomic per
+    # call: nothing from a raised call is ever observable, not even after
+    # a later unrelated commit.
+    store, _ = _new_store(tmp_path)
+    _seed_solution(store)
+    store.objectives_upsert(OBJECTIVE)
+    missing_solution = "sha256:never-registered"
+    batch = [
+        _atom(seed=0),
+        _atom(seed=1),
+        _atom(seed=2, solution_digest=missing_solution),
+    ]
+
+    with pytest.raises(sqlite3.IntegrityError):
+        store.insert_atoms(batch)
+
+    # Immediately: the first two rows must not have leaked in as pending.
+    assert len(store.iter_atoms(solution_digest=SOLUTION_DIGEST)) == 0
+
+    # An unrelated committing write must not flush the rolled-back rows
+    # either -- this is the exact leak the reviewer reproduced.
+    _seed_solution(store, digest="sha256:solution-b")
+    assert len(store.iter_atoms(solution_digest=SOLUTION_DIGEST)) == 0
+
+
 def test_objectives_upsert_and_add_lineage_are_idempotent(tmp_path):
     # Property 5.
     store, db_path = _new_store(tmp_path)
