@@ -703,6 +703,7 @@ def test_rich_renderers_hyperlink_owner_and_repo_to_github():
     ]))
     assert "https://github.com/octocat" in search  # owner
     assert "https://github.com/octocat/nethacker" in search  # repo
+    assert "https://github.com/octocat/nethacker/commit/" + "a" * 40 in search  # commit
 
 
 def test_ramp_clamps_and_interpolates():

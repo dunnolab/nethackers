@@ -113,6 +113,19 @@ def _gh_repo(repo: str) -> Text:
     return Text(repo, style=f"link {url}")
 
 
+def _gh_commit(repo: str, sha: str) -> Text:
+    """A commit sha (shown short via ``_short_digest``) as a link to its GitHub
+    commit page ``<repo>/commit/<full-sha>``. Needs the repo for the URL; falls
+    back to plain short text if either the repo or the sha is missing. (The
+    solution *digest* is NOT linked -- it's a content hash, not a git object.)"""
+    sha, repo = str(sha), str(repo)
+    short = _short_digest(sha)
+    if not sha or not repo:
+        return Text(short)
+    base = repo if repo.startswith(("http://", "https://")) else f"https://{repo}"
+    return Text(short, style=f"link {base}/commit/{sha}")
+
+
 def render_board(entries: list[dict[str, Any]]) -> RenderableType:
     """A ``rich`` table of board entries, shape-aware over which metric
     produced them (mirrors the baseline ``plain`` ``render_board``'s shape
@@ -285,7 +298,7 @@ def render_search(results: list[dict[str, Any]]) -> RenderableType:
             _short_digest(str(r.get("digest", ""))),
             _gh_user(r.get("owner", "")),
             _gh_repo(r.get("repo", "")),
-            _short_digest(str(r.get("commit_sha", ""))),
+            _gh_commit(r.get("repo", ""), r.get("commit_sha", "")),
             str(r.get("registered_at", "")),
         )
     return table
@@ -308,8 +321,10 @@ def render_show(solution: dict[str, Any]) -> RenderableType:
     grid.add_column()
     for key in keys:
         value = solution[key]
-        if key in ("digest", "commit_sha"):
-            grid.add_row(key, _short_digest(str(value)))
+        if key == "digest":
+            grid.add_row(key, _short_digest(str(value)))  # content hash, not a git object
+        elif key == "commit_sha":
+            grid.add_row(key, _gh_commit(str(solution.get("repo", "")), str(value)))
         elif key == "owner":
             grid.add_row(key, _gh_user(str(value)))
         elif key == "repo":
