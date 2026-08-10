@@ -46,8 +46,15 @@ def main(argv: list[str] | None = None) -> int:
     # order. The pair's character drives both the environment (via
     # objective.character) and the recorded result identity (via
     # character=), so the recorded identity matches the played build.
+    batch = json.loads(a.batch)
+    total = len(batch)
+    # Per-episode progress on stderr (flushed) -- `eval_batch` runs this
+    # container with inherited stderr, so these lines stream live to the
+    # harness's terminal, turning a multi-minute silent eval into visible
+    # "episode k/N" progress.
+    print(f"arena · running {total} episode(s)…", file=sys.stderr, flush=True)
     results = []
-    for seed, char in json.loads(a.batch):
+    for i, (seed, char) in enumerate(batch, start=1):
         spec = trajectory_spec(a.secret, a.evaluation_id, int(seed))
         objective = Objective(
             None if char == "-" else char,
@@ -56,11 +63,16 @@ def main(argv: list[str] | None = None) -> int:
             a.action_timeout,
             "runtime",
         )
-        results.append(
-            run_trajectory(
-                submission_path=a.solution, spec=spec, objective=objective, character=char
-            ).to_dict()
+        result = run_trajectory(
+            submission_path=a.solution, spec=spec, objective=objective, character=char
         )
+        print(
+            f"arena · episode {i}/{total} ({char}): progress={result.progress:.3f}"
+            f" {result.status} turns={result.turns} depth={result.max_depth}",
+            file=sys.stderr,
+            flush=True,
+        )
+        results.append(result.to_dict())
     Path(a.out).write_text(json.dumps(results))
     return 0
 
