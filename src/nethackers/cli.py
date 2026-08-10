@@ -57,6 +57,7 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from rich.live import Live
 from rich_argparse import RichHelpFormatter
 
 from nethackers.eval.runner import eval_batch
@@ -72,6 +73,7 @@ from nethackers.hubclient.client import (
     render_search as plain_search,
     render_show as plain_show,
 )
+from nethackers.hubclient.live import EpisodeStream
 from nethackers.hubclient.output import emit, err
 from nethackers.hubclient.pull import pull
 from nethackers.hubclient.register import register_solution
@@ -295,16 +297,22 @@ def _run(argv: list[str] | None) -> int:
             f"evolving [b]{args.objective}[/] · operator={args.operator} · "
             f"{args.iterations} iter · budget {args.token_budget} tok"
         )
-        results = run_loop(
-            objective=args.objective, seed_tree=Path(args.seed),
-            tree_store=LocalTreeStore(Path(args.workdir) / "trees"),
-            operator=operator, hub=HubClient(args.hub), image=args.image,
-            token=args.token, owner=args.owner, iterations=args.iterations,
-            token_budget=args.token_budget, timeout_s=args.timeout,
-            heldout_n=args.heldout_n, now_fn=_now,
-            report=lambda m: err.print(f"{time.monotonic() - t0:7.1f}s  {m}", markup=False),
-            workdir=Path(args.workdir) / "work",
-        )
+        with Live(console=err, auto_refresh=False, transient=False) as live:
+            stream = EpisodeStream(live)
+            results = run_loop(
+                objective=args.objective, seed_tree=Path(args.seed),
+                tree_store=LocalTreeStore(Path(args.workdir) / "trees"),
+                operator=operator, hub=HubClient(args.hub), image=args.image,
+                token=args.token, owner=args.owner, iterations=args.iterations,
+                token_budget=args.token_budget, timeout_s=args.timeout,
+                heldout_n=args.heldout_n, now_fn=_now,
+                report=lambda m: live.console.print(
+                    f"{time.monotonic() - t0:7.1f}s  {m}", markup=False
+                ),
+                on_episode=stream.on_episode,
+                workdir=Path(args.workdir) / "work",
+            )
+            stream.finish()
         n_reg = sum(1 for r in results if r.registered)
         err.print(f"done · [b]{n_reg}[/]/{len(results)} iteration(s) registered a new elite")
         return 0

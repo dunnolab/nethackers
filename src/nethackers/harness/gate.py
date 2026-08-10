@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from collections.abc import Callable
 from pathlib import Path
 
 from nethackers.contracts.models import ObjectiveSpec
@@ -18,6 +19,7 @@ def passes_gate(
     image: str,
     now: str,
     runner=subprocess.run,
+    on_episode: Callable[[dict], None] | None = None,
 ) -> tuple[bool, str]:
     tree = Path(tree)
     manifest_path = tree / "nethackers.solution.json"
@@ -29,7 +31,7 @@ def passes_gate(
         return False, f"entrypoint file missing: {entrypoint!r}"
     if _solution_digest(tree) == parent_digest:
         return False, "child identical to parent"
-    _, evidence = evaluate(tree, smoke_spec, image, now=now, runner=runner)
+    _, evidence = evaluate(tree, smoke_spec, image, now=now, runner=runner, on_episode=on_episode)
     if not evidence.results or evidence.results[0].status != "completed":
         return False, "smoke episode did not complete"
     return True, "ok"

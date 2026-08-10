@@ -126,3 +126,45 @@ def test_eval_batch_wraps_container_results_into_evidence(tmp_path):
     assert cmd[cmd.index("--batch") + 1] == expected_batch_arg
     assert "--character" not in cmd
     assert "--seeds" not in cmd
+
+
+def test_eval_batch_streams_per_episode_when_on_episode_given(tmp_path):
+    # The opt-in streaming path (Popen) forwards each parsed per-episode stderr
+    # line to on_episode; results still come from results.json (display-only).
+    sol = tmp_path / "sol"
+    sol.mkdir()
+    (sol / "bot.py").write_text("x")
+    events: list[dict] = []
+
+    lines = [
+        "arena · running 2 episode(s)…\n",
+        "/sol/autoascend/agent.py:371: RuntimeWarning: overflow ...\n",
+        "arena · episode 1/2 (val-dwa-law-fem): progress=0.5 completed turns=10 depth=2\n",
+        "arena · episode 2/2 (wiz-elf-cha-mal): progress=1.0 ascended turns=20 depth=30\n",
+    ]
+
+    class _FakeProc:
+        def __init__(self, out_dir: str) -> None:
+            Path(out_dir, "results.json").write_text(json.dumps(_RESULTS))
+            self.stderr = iter(lines)
+
+        def wait(self) -> int:
+            return 0
+
+    def fake_popen(cmd, *, stdout, stderr, text, bufsize):
+        out_dir = next(v.removesuffix(":/out") for v in cmd if v.endswith(":/out"))
+        return _FakeProc(out_dir)
+
+    ev = eval_batch(
+        sol, _SPEC, "img:dev", now="2026-08-09T00:00:00Z",
+        on_episode=events.append, popen=fake_popen,
+        image_digest_resolver=lambda img: "img@sha256:x",
+    )
+
+    # Only the two "episode k/N" lines are forwarded; banner + warning ignored.
+    assert [e["index"] for e in events] == [1, 2]
+    assert events[0]["seed"] == _SPEC.batch[0][0]  # seed comes from spec order
+    assert events[0]["character"] == "val-dwa-law-fem"
+    assert events[1]["progress"] == 1.0 and events[1]["depth"] == 30
+    # Authoritative aggregate still comes from results.json.
+    assert ev.episodes == 2 and ev.ascensions == 1

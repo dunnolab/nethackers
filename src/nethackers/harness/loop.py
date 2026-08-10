@@ -53,6 +53,7 @@ def run_loop(
     heldout_n: int,
     now_fn: Callable[[], str],
     report: Callable[[str], None] = lambda _: None,
+    on_episode: Callable[[str, dict], None] | None = None,
     runner=subprocess.run,
     workdir: Path,
 ) -> list[IterationResult]:
@@ -63,13 +64,25 @@ def run_loop(
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
 
+    def _episode_cb(label: str) -> Callable[[dict], None] | None:
+        # None when the caller isn't rendering -> evaluate stays on the plain
+        # (non-streaming) runner path; a bound closure otherwise.
+        if on_episode is None:
+            return None
+        cb = on_episode
+        return lambda ep: cb(label, ep)
+
     # Cold start: the seed (AutoAscend) is the first elite.
     report(f"cold-start · scoring seed: dev {len(dev.batch)}ep + held-out {len(held.batch)}ep…")
     seed_digest = tree_store.save(seed_tree)
     dev_fit0, dev_ev0 = evaluate(
-        tree_store.path(seed_digest), dev, image, now=now_fn(), runner=runner
+        tree_store.path(seed_digest), dev, image, now=now_fn(), runner=runner,
+        on_episode=_episode_cb("cold-start · dev"),
     )
-    ho_fit0, _ = evaluate(tree_store.path(seed_digest), held, image, now=now_fn(), runner=runner)
+    ho_fit0, _ = evaluate(
+        tree_store.path(seed_digest), held, image, now=now_fn(), runner=runner,
+        on_episode=_episode_cb("cold-start · held-out"),
+    )
     elite = EliteState(seed_digest, tree_store.path(seed_digest), dev_fit0, ho_fit0, dev_ev0)
     report(f"cold-start · elite=seed dev={dev_fit0:.3f} held={ho_fit0:.3f}")
 
@@ -88,14 +101,18 @@ def run_loop(
             report(f"{tag} · operator: {op.tokens} tok ({op.stopped_reason}); gating…")
 
             ok, reason = passes_gate(worktree, elite.digest, smoke_spec=smoke,
-                                     image=image, now=now_fn(), runner=runner)
+                                     image=image, now=now_fn(), runner=runner,
+                                     on_episode=_episode_cb(f"{tag} · smoke"))
             if not ok:
                 report(f"{tag} · ✗ gate: {reason}")
                 results.append(IterationResult(False, f"gate:{reason}", tokens=op.tokens))
                 continue
 
             report(f"{tag} · gate ok; dev eval ({len(dev.batch)}ep)…")
-            dev_fit, dev_ev = evaluate(worktree, dev, image, now=now_fn(), runner=runner)
+            dev_fit, dev_ev = evaluate(
+                worktree, dev, image, now=now_fn(), runner=runner,
+                on_episode=_episode_cb(f"{tag} · dev"),
+            )
             if dev_fit <= elite.dev_fitness:
                 report(f"{tag} · ✗ no dev gain: {dev_fit:.3f} ≤ {elite.dev_fitness:.3f}")
                 results.append(IterationResult(False, "no-dev-gain", dev_fitness=dev_fit,
@@ -103,7 +120,10 @@ def run_loop(
                 continue
 
             report(f"{tag} · dev win {dev_fit:.3f}; held-out ({len(held.batch)}ep)…")
-            ho_fit, _ = evaluate(worktree, held, image, now=now_fn(), runner=runner)
+            ho_fit, _ = evaluate(
+                worktree, held, image, now=now_fn(), runner=runner,
+                on_episode=_episode_cb(f"{tag} · held-out"),
+            )
             if ho_fit <= elite.heldout_fitness:
                 report(f"{tag} · ✗ no held-out gain: {ho_fit:.3f} ≤ {elite.heldout_fitness:.3f}")
                 results.append(IterationResult(False, "no-heldout-gain",
