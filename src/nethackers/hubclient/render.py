@@ -101,7 +101,8 @@ def _gh_user(login: str) -> Text:
     login = str(login)
     if not login:
         return Text("")
-    return Text(login, style=f"link https://github.com/{login}")
+    # Display "@ login"; the link target stays github.com/<login> (no "@ ").
+    return Text(f"@ {login}", style=f"link https://github.com/{login}")
 
 
 def _gh_repo(repo: str) -> Text:

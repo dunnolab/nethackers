@@ -694,7 +694,8 @@ def test_rich_renderers_hyperlink_owner_and_repo_to_github():
         {"rank": 1, "solution_digest": "sha256:abc", "owner": "octocat",
          "ascensions": 1, "median_progression": 0.5, "mean_progression": 0.5}
     ]))
-    assert "https://github.com/octocat" in board  # owner -> profile
+    assert "@ octocat" in board  # displayed GitHub-style with a space
+    assert "https://github.com/octocat" in board  # owner -> profile (link target has no @)
 
     search = term(rich_search([
         {"digest": "sha256:abc", "owner": "octocat",
