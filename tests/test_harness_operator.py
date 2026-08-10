@@ -5,6 +5,7 @@ from nethackers.harness.operator import (
     OperatorResult,
     _claude_tokens,
     _codex_tokens,
+    agent_tokens,
     run_with_token_budget,
 )
 
@@ -115,3 +116,29 @@ def test_claude_tokens_message_is_string_does_not_crash():
     assert _claude_tokens('{"message":{"usage":{"input_tokens":3,"output_tokens":4}}}') == 7
     # Usage at the top level (result turn) is summed.
     assert _claude_tokens('{"type":"result","usage":{"input_tokens":5,"output_tokens":6}}') == 11
+
+
+def test_on_line_receives_every_stdout_line(tmp_path):
+    seen: list[str] = []
+    res = run_with_token_budget(
+        ["fake"], tmp_path, token_budget=10_000, timeout_s=999,
+        tokens_from_line=_tokens, backend="fake",
+        popen=_popen_factory(["10", "20", "30"]), on_line=seen.append)
+    assert seen == ["10", "20", "30"]
+    assert res.tokens == 60
+
+
+def test_on_line_sees_the_budget_crossing_line(tmp_path):
+    seen: list[str] = []
+    run_with_token_budget(
+        ["fake"], tmp_path, token_budget=50, timeout_s=999,
+        tokens_from_line=_tokens, backend="fake",
+        popen=_popen_factory(["40", "40", "40"]), on_line=seen.append)
+    assert seen == ["40", "40"]  # the line that crosses is still forwarded
+
+
+def test_agent_tokens_dispatches_by_backend():
+    assert agent_tokens("claude",
+                        '{"message":{"usage":{"input_tokens":3,"output_tokens":4}}}') == 7
+    assert agent_tokens("codex", '{"usage":{"total_tokens":9}}') == 9
+    assert agent_tokens("unknown", "{}") == 0

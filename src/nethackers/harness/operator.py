@@ -30,6 +30,7 @@ def run_with_token_budget(
     timeout_s: float,
     tokens_from_line: Callable[[str], int],
     backend: str,
+    on_line: Callable[[str], None] | None = None,
     popen=subprocess.Popen,
     monotonic=time.monotonic,
 ) -> OperatorResult:
@@ -39,6 +40,8 @@ def run_with_token_budget(
     total = 0
     reason = "completed"
     for line in proc.stdout:
+        if on_line is not None:
+            on_line(line)
         total += tokens_from_line(line)
         if total >= token_budget:
             reason = "budget"
@@ -88,13 +91,14 @@ class ClaudeOperator:
         self._cli = cli
 
     def run(
-        self, worktree: Path, brief: str, *, token_budget: int, timeout_s: float
+        self, worktree: Path, brief: str, *, token_budget: int, timeout_s: float,
+        on_line: Callable[[str], None] | None = None
     ) -> OperatorResult:
         cmd = [self._cli, "-p", brief, "--output-format", "stream-json", "--verbose",
                "--permission-mode", "acceptEdits"]
         return run_with_token_budget(cmd, worktree, token_budget=token_budget,
                                      timeout_s=timeout_s, tokens_from_line=_claude_tokens,
-                                     backend="claude")
+                                     backend="claude", on_line=on_line)
 
 
 def _codex_tokens(line: str) -> int:
@@ -107,14 +111,25 @@ def _codex_tokens(line: str) -> int:
     return _usage_tokens(msg.get("usage"), "total_tokens")
 
 
+def agent_tokens(backend: str, line: str) -> int:
+    """Public dispatch used by the UI to count tokens from the same stream it
+    already receives for the mutation log. Unknown backend -> 0."""
+    if backend == "claude":
+        return _claude_tokens(line)
+    if backend == "codex":
+        return _codex_tokens(line)
+    return 0
+
+
 class CodexOperator:
     def __init__(self, *, cli: str = "codex") -> None:
         self._cli = cli
 
     def run(
-        self, worktree: Path, brief: str, *, token_budget: int, timeout_s: float
+        self, worktree: Path, brief: str, *, token_budget: int, timeout_s: float,
+        on_line: Callable[[str], None] | None = None
     ) -> OperatorResult:
         cmd = [self._cli, "exec", brief, "--json", "--full-auto"]
         return run_with_token_budget(cmd, worktree, token_budget=token_budget,
                                      timeout_s=timeout_s, tokens_from_line=_codex_tokens,
-                                     backend="codex")
+                                     backend="codex", on_line=on_line)
