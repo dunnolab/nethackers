@@ -175,7 +175,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     evolve = sub.add_parser(
         "evolve", parents=[common], formatter_class=RichHelpFormatter,
-        help="evolve a bot for an objective with a headless coding agent",
+        help="Evolve a bot for an objective with a headless coding agent.",
     )
     evolve.add_argument("objective")
     evolve.add_argument("--seed", required=True, help="seed solution root (e.g. roots/autoascend)")
@@ -187,7 +187,7 @@ def _build_parser() -> argparse.ArgumentParser:
     evolve.add_argument("--image", default="nethackers/arena:dev")
     evolve.add_argument("--token", default="dev-token")
     evolve.add_argument("--owner", default="dev")
-    evolve.add_argument("--workdir", default=".nethackers/evolve")
+    evolve.add_argument("--workdir", default=str(Path.home() / ".nethackers" / "evolve"))
 
     pl = sub.add_parser(
         "pull", parents=[common], formatter_class=RichHelpFormatter,

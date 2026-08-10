@@ -1,5 +1,12 @@
 # tests/test_harness_operator.py
-from nethackers.harness.operator import OperatorResult, run_with_token_budget
+import subprocess
+
+from nethackers.harness.operator import (
+    OperatorResult,
+    _claude_tokens,
+    _codex_tokens,
+    run_with_token_budget,
+)
 
 
 class _FakeProc:
@@ -51,3 +58,50 @@ def test_timeout(tmp_path):
         tokens_from_line=_tokens, backend="fake",
         popen=_popen_factory(["10", "10", "10"]), monotonic=lambda: next(ticks))
     assert res.stopped_reason == "timeout"
+
+
+class _FakeProcIgnoresSigterm(_FakeProc):
+    """A process that ignores SIGTERM: the first `.wait(timeout=...)` call
+    times out, so the caller must fall back to `.kill()` + a final wait."""
+
+    def __init__(self, lines):
+        super().__init__(lines)
+        self.killed = False
+        self._wait_calls = 0
+
+    def wait(self, timeout=None):
+        self._wait_calls += 1
+        if self._wait_calls == 1:
+            raise subprocess.TimeoutExpired("x", 30)
+        return 0
+
+    def kill(self):
+        self.killed = True
+
+
+def test_kill_fallback_when_process_ignores_sigterm(tmp_path):
+    proc_box: dict[str, _FakeProcIgnoresSigterm] = {}
+
+    def popen(cmd, cwd, stdout, stderr, text, bufsize):
+        proc = _FakeProcIgnoresSigterm(["10", "20"])
+        proc_box["proc"] = proc
+        return proc
+
+    res = run_with_token_budget(
+        ["fake"], tmp_path, token_budget=10_000, timeout_s=999,
+        tokens_from_line=_tokens, backend="fake", popen=popen)
+    assert isinstance(res, OperatorResult)
+    assert proc_box["proc"].killed is True
+
+
+def test_claude_tokens_non_dict_json_is_zero():
+    assert _claude_tokens("[1,2,3]") == 0
+
+
+def test_claude_tokens_null_input_tokens_is_null_safe():
+    line = '{"message":{"usage":{"input_tokens":null,"output_tokens":5}}}'
+    assert _claude_tokens(line) == 5
+
+
+def test_codex_tokens_non_dict_json_is_zero():
+    assert _codex_tokens("42") == 0

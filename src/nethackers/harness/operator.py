@@ -48,7 +48,11 @@ def run_with_token_budget(
             break
     if reason != "completed":
         proc.terminate()
-    proc.wait(timeout=30)
+    try:
+        proc.wait(timeout=30)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait()
     return OperatorResult(backend=backend, tokens=total, stopped_reason=reason)
 
 
@@ -57,8 +61,10 @@ def _claude_tokens(line: str) -> int:
         msg = json.loads(line)
     except ValueError:
         return 0
+    if not isinstance(msg, dict):
+        return 0
     usage = (msg.get("message", {}) or {}).get("usage", {}) or msg.get("usage", {})
-    return int(usage.get("input_tokens", 0)) + int(usage.get("output_tokens", 0))
+    return int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
 
 
 class ClaudeOperator:
@@ -80,8 +86,10 @@ def _codex_tokens(line: str) -> int:
         msg = json.loads(line)
     except ValueError:
         return 0
+    if not isinstance(msg, dict):
+        return 0
     usage = msg.get("usage", {}) or {}
-    return int(usage.get("total_tokens", 0))
+    return int(usage.get("total_tokens") or 0)
 
 
 class CodexOperator:

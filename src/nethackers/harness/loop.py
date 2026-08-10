@@ -55,7 +55,7 @@ def run_loop(
 ) -> list[IterationResult]:
     dev = dev_spec(objective)
     held = heldout_spec(objective, n=heldout_n, start=1000)
-    smoke = heldout_spec(objective, n=1, start=9000)
+    smoke = heldout_spec(objective, n=1, start=9000, max_steps=2000)
     character = dev.characters()[0]
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
@@ -68,39 +68,44 @@ def run_loop(
 
     results: list[IterationResult] = []
     for k in range(iterations):
-        worktree = workdir / f"iter-{k}"
-        if worktree.exists():
-            shutil.rmtree(worktree)
-        shutil.copytree(elite.tree, worktree)
+        try:
+            worktree = workdir / f"iter-{k}"
+            if worktree.exists():
+                shutil.rmtree(worktree)
+            shutil.copytree(elite.tree, worktree)
 
-        _, parent_ev = evaluate(elite.tree, dev, image, now=now_fn(), runner=runner)
-        brief = build_brief(objective, character, parent_ev)
-        op = operator.run(worktree, brief, token_budget=token_budget, timeout_s=timeout_s)
+            _, parent_ev = evaluate(elite.tree, dev, image, now=now_fn(), runner=runner)
+            brief = build_brief(objective, character, parent_ev)
+            op = operator.run(worktree, brief, token_budget=token_budget, timeout_s=timeout_s)
 
-        ok, reason = passes_gate(worktree, elite.digest, smoke_spec=smoke,
-                                 image=image, now=now_fn(), runner=runner)
-        if not ok:
-            results.append(IterationResult(False, f"gate:{reason}", tokens=op.tokens))
+            ok, reason = passes_gate(worktree, elite.digest, smoke_spec=smoke,
+                                     image=image, now=now_fn(), runner=runner)
+            if not ok:
+                results.append(IterationResult(False, f"gate:{reason}", tokens=op.tokens))
+                continue
+
+            dev_fit, dev_ev = evaluate(worktree, dev, image, now=now_fn(), runner=runner)
+            if dev_fit <= elite.dev_fitness:
+                results.append(IterationResult(False, "no-dev-gain", dev_fitness=dev_fit,
+                                               tokens=op.tokens))
+                continue
+
+            ho_fit, _ = evaluate(worktree, held, image, now=now_fn(), runner=runner)
+            if ho_fit <= elite.heldout_fitness:
+                results.append(IterationResult(False, "no-heldout-gain",
+                                               dev_fitness=dev_fit, heldout_fitness=ho_fit,
+                                               tokens=op.tokens))
+                continue
+
+            digest = tree_store.save(worktree)
+            manifest = json.loads((worktree / "nethackers.solution.json").read_text())
+            register_win(hub, token=token, owner=owner, child_manifest=manifest,
+                         evidence=dev_ev, parent_digest=elite.digest)
+            elite = EliteState(digest, tree_store.path(digest), dev_fit, ho_fit)
+            results.append(IterationResult(True, "registered", dev_fitness=dev_fit,
+                                           heldout_fitness=ho_fit, tokens=op.tokens,
+                                           digest=digest))
+        except Exception as e:
+            results.append(IterationResult(False, f"error:{e}"))
             continue
-
-        dev_fit, dev_ev = evaluate(worktree, dev, image, now=now_fn(), runner=runner)
-        if dev_fit <= elite.dev_fitness:
-            results.append(IterationResult(False, "no-dev-gain", dev_fitness=dev_fit,
-                                           tokens=op.tokens))
-            continue
-
-        ho_fit, _ = evaluate(worktree, held, image, now=now_fn(), runner=runner)
-        if ho_fit <= elite.heldout_fitness:
-            results.append(IterationResult(False, "no-heldout-gain",
-                                           dev_fitness=dev_fit, heldout_fitness=ho_fit,
-                                           tokens=op.tokens))
-            continue
-
-        digest = tree_store.save(worktree)
-        manifest = json.loads((worktree / "nethackers.solution.json").read_text())
-        register_win(hub, token=token, owner=owner, child_manifest=manifest,
-                     evidence=dev_ev, parent_digest=elite.digest)
-        elite = EliteState(digest, tree_store.path(digest), dev_fit, ho_fit)
-        results.append(IterationResult(True, "registered", dev_fitness=dev_fit,
-                                       heldout_fitness=ho_fit, tokens=op.tokens, digest=digest))
     return results

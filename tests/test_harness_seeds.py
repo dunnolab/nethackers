@@ -22,3 +22,12 @@ def test_heldout_is_disjoint_fresh_seeds_same_character():
 def test_unknown_objective_raises():
     with pytest.raises(KeyError):
         dev_spec("nope")
+
+def test_heldout_inherits_dev_max_steps_by_default():
+    dev = dev_spec("val-dwa-law-fem")
+    ho = heldout_spec("val-dwa-law-fem", n=5, start=1000)
+    assert ho.max_steps == dev.max_steps
+
+def test_heldout_max_steps_override_caps_the_spec():
+    ho = heldout_spec("val-dwa-law-fem", n=1, start=9000, max_steps=2000)
+    assert ho.max_steps == 2000

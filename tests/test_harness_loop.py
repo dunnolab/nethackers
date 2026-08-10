@@ -32,6 +32,13 @@ class _ImprovingOperator:
         return OperatorResult(backend="fake", tokens=10, stopped_reason="completed")
 
 
+class _RaisingOperator:
+    """Simulates a mutation step that blows up (e.g. the coding agent's CLI
+    crashes) -- the loop must discard just this iteration, not abort."""
+    def run(self, worktree, brief, *, token_budget, timeout_s):
+        raise RuntimeError("boom")
+
+
 def _fitness_runner(progress_by_version):
     """Fake Docker runner: reads the mounted bot's VERSION, scores by table."""
     def fake(cmd, check):
@@ -70,4 +77,21 @@ def test_loop_discards_a_non_improvement(tmp_path):
         now_fn=lambda: "2026-08-10T00:00:00Z",
         runner=_fitness_runner(lambda v: 0.5), workdir=tmp_path / "work")  # flat: no gain
     assert results[0].registered is False
+    assert hub.registered == []
+
+
+def test_loop_discards_an_iteration_that_raises(tmp_path):
+    """Cold start (fake `runner`) succeeds; the operator raises on the one
+    mutation attempt -- that iteration must be discarded, not propagate."""
+    hub = _FakeHub()
+    results = run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_RaisingOperator(),
+        hub=hub, image="img:dev", token="dev-token", owner="dev", iterations=1,
+        token_budget=1000, timeout_s=999, heldout_n=3,
+        now_fn=lambda: "2026-08-10T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work")
+    assert len(results) == 1
+    assert results[0].registered is False
+    assert results[0].reason.startswith("error:")
     assert hub.registered == []
