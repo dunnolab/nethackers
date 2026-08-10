@@ -108,6 +108,10 @@ def eval_batch(
         out = Path(td) / "results.json"
         cmd = [
             "docker", "run", "--rm", "--network", "none",
+            # Silence AutoAscend's numpy RuntimeWarning flood at interpreter
+            # startup, for every process in the container (a plain in-arena
+            # filter didn't hold -- NLE/AutoAscend resets it).
+            "-e", "PYTHONWARNINGS=ignore::RuntimeWarning",
             "-v", f"{solution_path}:/sol:ro",
             "-v", f"{td}:/out",
             image,
