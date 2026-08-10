@@ -74,11 +74,8 @@ def _codex(obj: dict) -> list[PrettyLine]:
 def prettify(backend: str, line: str) -> list[PrettyLine]:
     try:
         obj = json.loads(line)
-    except (ValueError, TypeError):
-        return []
-    if not isinstance(obj, dict):
-        return []
-    try:
+        if not isinstance(obj, dict):
+            return []
         if backend == "claude":
             return _claude(obj)
         if backend == "codex":

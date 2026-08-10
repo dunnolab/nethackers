@@ -50,3 +50,8 @@ def test_never_crashes_on_bad_shapes():
 
 def test_unknown_backend_is_empty():
     assert prettify("mystery", _asst({"type": "text", "text": "x"})) == []
+
+
+def test_never_raises_on_pathologically_nested_json():
+    line = "[" * 100_000 + "]" * 100_000  # json.loads would RecursionError
+    assert prettify("claude", line) == []
