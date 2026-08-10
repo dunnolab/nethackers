@@ -33,4 +33,5 @@ def test_register_win_builds_payload_and_records_lineage():
     assert call["reference"]["repo"] == "github.com/dev/nethacker-runs"
     assert len(call["reference"]["commit"]) == 40
     assert call["manifest"]["parents"] == ["sha256:PARENT"]     # lineage recorded
+    assert manifest["parents"] == []                            # caller's dict untouched
     assert call["evidence"]["solution_digest"] == "sha256:" + "ab" * 32
