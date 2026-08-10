@@ -25,9 +25,12 @@ class _FakeHub:
 class _ImprovingOperator:
     """Edits bot.py so the child differs; a counter drives rising fitness."""
     def __init__(self): self.n = 0
-    def run(self, worktree, brief, *, token_budget, timeout_s):
+    def run(self, worktree, brief, *, token_budget, timeout_s, on_line=None):
         from nethackers.harness.operator import OperatorResult
         self.n += 1
+        if on_line is not None:
+            on_line('{"type":"assistant","message":{"content":'
+                    '[{"type":"text","text":"editing"}]}}')
         (Path(worktree) / "bot.py").write_text(f"VERSION = {self.n}\n")
         return OperatorResult(backend="fake", tokens=10, stopped_reason="completed")
 
@@ -35,7 +38,7 @@ class _ImprovingOperator:
 class _RaisingOperator:
     """Simulates a mutation step that blows up (e.g. the coding agent's CLI
     crashes) -- the loop must discard just this iteration, not abort."""
-    def run(self, worktree, brief, *, token_budget, timeout_s):
+    def run(self, worktree, brief, *, token_budget, timeout_s, on_line=None):
         raise RuntimeError("boom")
 
 
@@ -112,3 +115,34 @@ def test_loop_reports_progress(tmp_path):
     assert "cold-start" in text      # cold-start scoring announced
     assert "mutating" in text        # per-iteration phases announced
     assert "REGISTERED" in text      # the win is announced live
+
+
+def test_loop_emits_state_transitions(tmp_path):
+    states = []
+    run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+        hub=_FakeHub(), image="img:dev", token="t", owner="o", iterations=1,
+        token_budget=1000, timeout_s=999, heldout_n=3,
+        now_fn=lambda: "2026-08-10T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
+        on_state=states.append)
+    phases = [s["phase"] for s in states]
+    assert phases[0] == "cold-start"
+    assert "mutating" in phases and "registered" in phases and phases[-1] == "done"
+    reg = next(s for s in states if s["phase"] == "registered")
+    assert reg["iteration"] == 1 and reg["wins"] == 1
+    assert reg["best_dev"] > reg["baseline_dev"]  # improved over the seed
+
+
+def test_loop_forwards_tagged_log_lines(tmp_path):
+    logs = []
+    run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+        hub=_FakeHub(), image="img:dev", token="t", owner="o", iterations=1,
+        token_budget=1000, timeout_s=999, heldout_n=3,
+        now_fn=lambda: "2026-08-10T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
+        on_log=lambda tag, line: logs.append((tag, line)))
+    assert logs and logs[0][0] == "iter 1/1" and "editing" in logs[0][1]
