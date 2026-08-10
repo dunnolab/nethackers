@@ -362,6 +362,51 @@ def test_cli_register_dispatches_with_gathered_reference_manifest_evidence(
     assert payload == {"solution_digest": "sha256:abc", "owner": "sam"}
 
 
+def test_cli_register_with_token_skips_device_flow(monkeypatch, capsys, tmp_path):
+    # `--token` registers via the hub client directly (local/CI), NOT the
+    # GitHub device flow.
+    solution_dir = tmp_path / "solution"
+    solution_dir.mkdir()
+    manifest = {"root": ".", "entrypoint": "bot.py"}
+    (solution_dir / "nethackers.solution.json").write_text(json.dumps(manifest))
+    evidence = {"solution_digest": "sha256:abc"}
+    evidence_path = tmp_path / "evidence.json"
+    evidence_path.write_text(json.dumps(evidence))
+
+    seen = {}
+
+    class FakeHub:
+        def __init__(self, base_url):
+            pass
+
+        def register(self, *, token, reference, manifest, evidence):
+            seen.update(token=token, reference=reference, manifest=manifest, evidence=evidence)
+            return {"solution_digest": "sha256:abc", "owner": "dev", "atoms_inserted": 0}
+
+    monkeypatch.setattr(C, "HubClient", FakeHub)
+
+    device_flow = {"used": False}
+
+    def fake_register_solution(**kwargs):
+        device_flow["used"] = True
+        return {}
+
+    monkeypatch.setattr(C, "register_solution", fake_register_solution)
+
+    rc = C.main([
+        "register", "--repo", "github.com/dev/nethacker", "--commit", "a" * 40,
+        "--solution", str(solution_dir), "--evidence", str(evidence_path),
+        "--token", "stub-tok",
+    ])
+
+    assert rc == 0
+    assert device_flow["used"] is False  # device flow skipped
+    assert seen["token"] == "stub-tok"
+    assert seen["reference"] == {"repo": "github.com/dev/nethacker", "commit": "a" * 40}
+    assert seen["manifest"] == manifest and seen["evidence"] == evidence
+    assert json.loads(capsys.readouterr().out)["owner"] == "dev"
+
+
 def test_cli_register_accepts_manifest_file_directly(monkeypatch, capsys, tmp_path):
     manifest = {"root": ".", "entrypoint": "bot.py"}
     manifest_path = tmp_path / "manifest.json"

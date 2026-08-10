@@ -52,6 +52,7 @@ import argparse
 import datetime
 import json
 import os
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -226,6 +227,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--manifest", default=None, help="Path to a manifest JSON file directly."
     )
     r.add_argument("--evidence", required=True, help="Path to a prior `eval` JSON output file.")
+    r.add_argument(
+        "--token", default=None,
+        help="Register with this token directly, skipping the GitHub device flow "
+        "(for local/CI use against a stub-auth hub).",
+    )
 
     return parser
 
@@ -311,10 +317,15 @@ def _run(argv: list[str] | None) -> int:
         reference = {"repo": args.repo, "commit": args.commit}
         manifest = _load_manifest(args)
         evidence = json.loads(Path(args.evidence).read_text())
-        result = register_solution(
-            hub=client, reference=reference, manifest=manifest, evidence=evidence,
-            prompt=err.print,
-        )
+        if args.token:  # local/CI: use the token directly, skip the GitHub device flow
+            result = client.register(
+                token=args.token, reference=reference, manifest=manifest, evidence=evidence
+            )
+        else:
+            result = register_solution(
+                hub=client, reference=reference, manifest=manifest, evidence=evidence,
+                prompt=err.print,
+            )
         print(json.dumps(result, indent=2))
         return 0
 
@@ -347,6 +358,12 @@ def main(argv: list[str] | None = None) -> int:
         target = getattr(getattr(exc, "request", None), "url", None)
         where = f" ({target})" if target else ""
         err.print(f"[red]cannot reach the hub[/]{where} — is it running? (docker compose up -d)")
+        return 1
+    except subprocess.CalledProcessError as exc:  # the arena container / docker run failed
+        err.print(
+            f"[red]eval failed:[/] the arena container exited {exc.returncode} "
+            "(see the docker output above; check the --image is built)"
+        )
         return 1
     except Exception as exc:  # never surface a raw traceback to a user
         if os.environ.get("NETHACKERS_DEBUG"):

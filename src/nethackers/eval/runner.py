@@ -103,7 +103,10 @@ def eval_batch(
     it how the objective is later re-derived (register/store tooling does
     that from the published catalog via ``spec.digest()``).
     """
-    solution_path = Path(solution_path)
+    # Resolve to absolute: docker -v treats a bare relative path as a volume
+    # NAME (cryptic "invalid characters for a local volume name" / exit 125),
+    # so a caller passing e.g. ./my-bot still gets a real host bind mount.
+    solution_path = Path(solution_path).resolve()
     with tempfile.TemporaryDirectory() as td:
         out = Path(td) / "results.json"
         cmd = [

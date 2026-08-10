@@ -121,8 +121,25 @@ def test_eval_batch_wraps_container_results_into_evidence(tmp_path):
     # batch passed as [[seed, character], ...] JSON (not --character/--seeds).
     cmd = calls[0]
     assert cmd[:5] == ["docker", "run", "--rm", "--network", "none"]
-    assert f"{sol}:/sol:ro" in cmd
+    assert f"{sol.resolve()}:/sol:ro" in cmd  # eval_batch resolves to an absolute bind source
     expected_batch_arg = json.dumps([[seed, char] for seed, char in _SPEC.batch])
     assert cmd[cmd.index("--batch") + 1] == expected_batch_arg
     assert "--character" not in cmd
     assert "--seeds" not in cmd
+
+
+def test_eval_batch_resolves_relative_solution_path(tmp_path, monkeypatch):
+    # A relative solution path must be resolved to an absolute bind source:
+    # docker -v misreads a bare relative path as a volume name (exit 125).
+    sol = tmp_path / "relsol"
+    sol.mkdir()
+    (sol / "bot.py").write_text("x")
+    monkeypatch.chdir(tmp_path)  # so "relsol" is a valid relative path from cwd
+    calls = []
+    eval_batch(
+        "relsol", _SPEC, "img:dev", now="2026-08-09T00:00:00Z",
+        runner=_make_fake_docker_run(calls), image_digest_resolver=lambda img: "img@sha256:x",
+    )
+    src = next(v.removesuffix(":/sol:ro") for v in calls[0] if v.endswith(":/sol:ro"))
+    assert Path(src).is_absolute()  # absolute, not the bare "relsol"
+    assert src == str(sol.resolve())
