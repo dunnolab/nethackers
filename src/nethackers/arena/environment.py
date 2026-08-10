@@ -39,6 +39,7 @@ class EnvironmentMetrics:
     max_depth: int
     ascended: bool
     end_status: str | None
+    milestone: str | None
 
 
 class NLEEnvironment:
@@ -99,7 +100,7 @@ class NLEEnvironment:
         self._env = DeterministicChallenge()
         self.action_count = int(self._env.action_space.n)
         self._progress = NetHackProgress()
-        self._metrics = EnvironmentMetrics(0.0, 0, 1, False, None)
+        self._metrics = EnvironmentMetrics(0.0, 0, 1, False, None, None)
 
     def reset(self, spec: TrajectorySpec) -> Mapping[str, Any]:
         self._env.install_seeds(spec)
@@ -124,6 +125,10 @@ class NLEEnvironment:
             ),
             ascended=self._metrics.ascended or bool(info.get("is_ascended", False)),
             end_status=str(info["end_status"]) if info.get("end_status") is not None else None,
+            # self._progress.update(...) above (bound to `progress=`) records the
+            # achievement as a side effect before this line runs -- kwargs are
+            # evaluated left-to-right -- so highest_achievement is already current.
+            milestone=self._progress.highest_achievement,
         )
 
     def metrics(self) -> EnvironmentMetrics:

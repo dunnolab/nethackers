@@ -40,6 +40,13 @@ class TrajectoryResult:
     end_status: str | None
     error: str | None
     wall_seconds: float
+    # Per-episode identity + furthest milestone reached (M2a). Defaulted --
+    # not inserted earlier in the field list -- so M1's existing positional
+    # TrajectoryResult(...) call sites and from_dict(old_dict) (via
+    # cls(**value)) keep working unchanged; arena/trajectory.py populates
+    # them for real starting in Task 2.
+    character: str = ""
+    milestone: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -60,6 +67,33 @@ class Objective:
     def digest(self) -> str:
         payload = json.dumps(asdict(self), sort_keys=True, separators=(",", ":"))
         return "sha256:" + hashlib.sha256(payload.encode()).hexdigest()
+
+
+@dataclass(frozen=True)
+class ObjectiveSpec:
+    """A grading functional over a *published, fixed* ``(seed, character)``
+    batch (M2a §4): ``name``/``kind`` identify it in the hub's objective
+    catalog, ``batch`` is the exact episode list ``eval`` must run so tier-1
+    evidence is comparable, and ``aggregation`` (e.g. ``"asc_median_mean"``,
+    ``"mean"``) says how atoms combine into one ranked score. Distinct from
+    ``Objective``, which is per-trajectory run configuration (character/
+    step/timeout knobs for a single episode)."""
+
+    name: str
+    kind: str
+    batch: tuple[tuple[int, str], ...]
+    max_steps: int
+    no_progress_timeout: int
+    action_timeout_seconds: float
+    aggregation: str
+
+    def digest(self) -> str:
+        payload = json.dumps(asdict(self), sort_keys=True, separators=(",", ":"))
+        return "sha256:" + hashlib.sha256(payload.encode()).hexdigest()
+
+    def characters(self) -> tuple[str, ...]:
+        """The batch's characters, in published batch order."""
+        return tuple(character for _seed, character in self.batch)
 
 
 @dataclass(frozen=True)
@@ -96,3 +130,35 @@ class Evidence:
         v["objective"] = Objective(**v["objective"])
         v["results"] = tuple(TrajectoryResult.from_dict(r) for r in v["results"])
         return cls(**v)
+
+
+@dataclass(frozen=True)
+class Atom:
+    """One episode's stored, immutable result (M2a §3/§5): the hub's only
+    substrate -- every derived view (attainment record, elite pool, boards)
+    is computed from atoms. Flatter than ``Evidence``: it carries a
+    ``solution_digest``/``objective_digest`` pair (references, not nested
+    objects) plus ``owner``/``tier`` provenance, so a whole ``Evidence``
+    becomes one ``Atom`` per ``TrajectoryResult`` (``identity`` <-
+    ``result.character``, ``milestone`` <- ``result.milestone``)."""
+
+    solution_digest: str
+    objective_digest: str
+    owner: str
+    tier: str
+    identity: str
+    seed: int
+    progression: float
+    milestone: str | None
+    ascended: bool
+    status: ResultStatus
+    turns: int
+    steps: int
+    evaluator_image: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> Atom:
+        return cls(**value)
