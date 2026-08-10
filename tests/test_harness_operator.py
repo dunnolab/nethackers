@@ -142,3 +142,40 @@ def test_agent_tokens_dispatches_by_backend():
                         '{"message":{"usage":{"input_tokens":3,"output_tokens":4}}}') == 7
     assert agent_tokens("codex", '{"usage":{"total_tokens":9}}') == 9
     assert agent_tokens("unknown", "{}") == 0
+
+
+def test_on_line_exception_does_not_abort_or_leak(tmp_path):
+    """Verify that a misbehaving on_line callback cannot crash the run or
+    leak the subprocess. The exception must be swallowed, the OperatorResult
+    must still be valid, and the process must still be reaped."""
+
+    class _FakeProcTrackingWait(_FakeProc):
+        def __init__(self, lines):
+            super().__init__(lines)
+            self.wait_called = False
+
+        def wait(self, timeout=None):
+            self.wait_called = True
+            return super().wait(timeout)
+
+    proc_box: dict[str, _FakeProcTrackingWait] = {}
+
+    def popen(cmd, cwd, stdout, stderr, text, bufsize):
+        proc = _FakeProcTrackingWait(["10", "20", "30"])
+        proc_box["proc"] = proc
+        return proc
+
+    def crashing_callback(line: str) -> None:
+        raise ValueError(f"display callback crashed on line: {line}")
+
+    # Despite the callback raising on every line, the run should complete
+    # normally, returning a valid OperatorResult with correct token total
+    res = run_with_token_budget(
+        ["fake"], tmp_path, token_budget=10_000, timeout_s=999,
+        tokens_from_line=_tokens, backend="fake",
+        popen=popen, on_line=crashing_callback)
+
+    # Verify process was reaped (wait was called)
+    assert proc_box["proc"].wait_called is True
+    # Verify OperatorResult is valid with correct token total
+    assert res == OperatorResult(backend="fake", tokens=60, stopped_reason="completed")

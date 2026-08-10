@@ -7,6 +7,7 @@ step is accepted) or a wall-clock timeout trips. Two backends: Claude Code
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import subprocess
 import time
@@ -41,7 +42,8 @@ def run_with_token_budget(
     reason = "completed"
     for line in proc.stdout:
         if on_line is not None:
-            on_line(line)
+            with contextlib.suppress(Exception):
+                on_line(line)
         total += tokens_from_line(line)
         if total >= token_budget:
             reason = "budget"
