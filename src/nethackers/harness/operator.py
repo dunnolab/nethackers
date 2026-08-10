@@ -56,6 +56,21 @@ def run_with_token_budget(
     return OperatorResult(backend=backend, tokens=total, stopped_reason=reason)
 
 
+def _usage_tokens(usage: object, *keys: str) -> int:
+    """Sum ``keys`` from a usage dict, tolerating any non-dict / null / non-int
+    value the agent's stream might emit -- a stray line must never crash the
+    whole mutation. (This is what the "'str' object has no attribute 'get'"
+    crash was: a Claude stream line whose ``message`` field was a string.)"""
+    if not isinstance(usage, dict):
+        return 0
+    total = 0
+    for key in keys:
+        value = usage.get(key)
+        if isinstance(value, (int, float)):
+            total += int(value)
+    return total
+
+
 def _claude_tokens(line: str) -> int:
     try:
         msg = json.loads(line)
@@ -63,8 +78,9 @@ def _claude_tokens(line: str) -> int:
         return 0
     if not isinstance(msg, dict):
         return 0
-    usage = (msg.get("message", {}) or {}).get("usage", {}) or msg.get("usage", {})
-    return int(usage.get("input_tokens") or 0) + int(usage.get("output_tokens") or 0)
+    inner = msg.get("message")
+    usage = inner.get("usage") if isinstance(inner, dict) else msg.get("usage")
+    return _usage_tokens(usage, "input_tokens", "output_tokens")
 
 
 class ClaudeOperator:
@@ -88,8 +104,7 @@ def _codex_tokens(line: str) -> int:
         return 0
     if not isinstance(msg, dict):
         return 0
-    usage = msg.get("usage", {}) or {}
-    return int(usage.get("total_tokens") or 0)
+    return _usage_tokens(msg.get("usage"), "total_tokens")
 
 
 class CodexOperator:

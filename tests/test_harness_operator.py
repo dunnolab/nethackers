@@ -105,3 +105,13 @@ def test_claude_tokens_null_input_tokens_is_null_safe():
 
 def test_codex_tokens_non_dict_json_is_zero():
     assert _codex_tokens("42") == 0
+
+
+def test_claude_tokens_message_is_string_does_not_crash():
+    # The "'str' object has no attribute 'get'" crash: a stream line whose
+    # "message" is a string (not a dict) must yield 0, not raise.
+    assert _claude_tokens('{"type":"system","message":"init"}') == 0
+    # Usage nested under "message" (assistant turn) is summed.
+    assert _claude_tokens('{"message":{"usage":{"input_tokens":3,"output_tokens":4}}}') == 7
+    # Usage at the top level (result turn) is summed.
+    assert _claude_tokens('{"type":"result","usage":{"input_tokens":5,"output_tokens":6}}') == 11

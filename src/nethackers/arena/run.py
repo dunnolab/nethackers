@@ -21,7 +21,9 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+import warnings
 from pathlib import Path
 
 from nethackers.arena.seeds import trajectory_spec
@@ -30,6 +32,11 @@ from nethackers.contracts.models import DEFAULT_MAX_STEPS, DEFAULT_NO_PROGRESS_T
 
 
 def main(argv: list[str] | None = None) -> int:
+    # AutoAscend floods stderr with numpy RuntimeWarnings (e.g. tty_cursor
+    # underflow at agent.py:371). Silence them by default so the per-episode
+    # progress is readable; re-enable with NETHACKERS_ARENA_WARNINGS=1.
+    if os.environ.get("NETHACKERS_ARENA_WARNINGS") != "1":
+        warnings.filterwarnings("ignore", category=RuntimeWarning)
     p = argparse.ArgumentParser()
     p.add_argument("--solution", required=True)
     p.add_argument("--batch", required=True)  # JSON [[seed, character], ...]
