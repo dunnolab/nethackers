@@ -59,6 +59,9 @@ import httpx
 from rich_argparse import RichHelpFormatter
 
 from nethackers.eval.runner import eval_batch
+from nethackers.harness.loop import run_loop
+from nethackers.harness.operator import ClaudeOperator, CodexOperator
+from nethackers.harness.store import LocalTreeStore
 from nethackers.hub.objectives import CATALOG
 from nethackers.hubclient.client import (
     HubClient,
@@ -170,6 +173,22 @@ def _build_parser() -> argparse.ArgumentParser:
     e.add_argument("--objective", required=True, help="A catalog objective name.")
     e.add_argument("--image", default="nethackers/arena:dev", help="Arena image to run.")
 
+    evolve = sub.add_parser(
+        "evolve", parents=[common], formatter_class=RichHelpFormatter,
+        help="evolve a bot for an objective with a headless coding agent",
+    )
+    evolve.add_argument("objective")
+    evolve.add_argument("--seed", required=True, help="seed solution root (e.g. roots/autoascend)")
+    evolve.add_argument("--operator", choices=["codex", "claude"], default="claude")
+    evolve.add_argument("--iterations", type=int, default=1)
+    evolve.add_argument("--token-budget", type=int, default=200_000)
+    evolve.add_argument("--timeout", type=float, default=1800.0)
+    evolve.add_argument("--heldout-n", type=int, default=8)
+    evolve.add_argument("--image", default="nethackers/arena:dev")
+    evolve.add_argument("--token", default="dev-token")
+    evolve.add_argument("--owner", default="dev")
+    evolve.add_argument("--workdir", default=".nethackers/evolve")
+
     pl = sub.add_parser(
         "pull", parents=[common], formatter_class=RichHelpFormatter,
         help="Clone a solution repo pinned to an exact commit.",
@@ -266,6 +285,22 @@ def _run(argv: list[str] | None) -> int:
             return 2
         evidence = eval_batch(Path(args.solution), spec, args.image, now=_now())
         print(json.dumps(evidence.to_dict(), indent=2))
+        return 0
+
+    if args.cmd == "evolve":
+        operator = {"codex": CodexOperator, "claude": ClaudeOperator}[args.operator]()
+        results = run_loop(
+            objective=args.objective, seed_tree=Path(args.seed),
+            tree_store=LocalTreeStore(Path(args.workdir) / "trees"),
+            operator=operator, hub=HubClient(args.hub), image=args.image,
+            token=args.token, owner=args.owner, iterations=args.iterations,
+            token_budget=args.token_budget, timeout_s=args.timeout,
+            heldout_n=args.heldout_n, now_fn=_now, workdir=Path(args.workdir) / "work",
+        )
+        for i, r in enumerate(results):
+            line = (f"iter {i}: {'✓ registered' if r.registered else '· ' + r.reason}"
+                    f" dev={r.dev_fitness} held={r.heldout_fitness} tokens={r.tokens}")
+            err.print(line)
         return 0
 
     if args.cmd == "pull":
