@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from nethackers.contracts.models import Evidence
 from nethackers.harness.brief import build_brief
 from nethackers.harness.evaluate import evaluate
 from nethackers.harness.gate import passes_gate
@@ -23,6 +24,7 @@ class EliteState:
     tree: Path
     dev_fitness: float
     heldout_fitness: float
+    dev_evidence: Evidence  # cached: the brief reuses it instead of re-scoring the parent
 
 
 @dataclass
@@ -64,9 +66,11 @@ def run_loop(
     # Cold start: the seed (AutoAscend) is the first elite.
     report(f"cold-start · scoring seed: dev {len(dev.batch)}ep + held-out {len(held.batch)}ep…")
     seed_digest = tree_store.save(seed_tree)
-    dev_fit0, _ = evaluate(tree_store.path(seed_digest), dev, image, now=now_fn(), runner=runner)
+    dev_fit0, dev_ev0 = evaluate(
+        tree_store.path(seed_digest), dev, image, now=now_fn(), runner=runner
+    )
     ho_fit0, _ = evaluate(tree_store.path(seed_digest), held, image, now=now_fn(), runner=runner)
-    elite = EliteState(seed_digest, tree_store.path(seed_digest), dev_fit0, ho_fit0)
+    elite = EliteState(seed_digest, tree_store.path(seed_digest), dev_fit0, ho_fit0, dev_ev0)
     report(f"cold-start · elite=seed dev={dev_fit0:.3f} held={ho_fit0:.3f}")
 
     results: list[IterationResult] = []
@@ -78,8 +82,7 @@ def run_loop(
                 shutil.rmtree(worktree)
             shutil.copytree(elite.tree, worktree)
 
-            _, parent_ev = evaluate(elite.tree, dev, image, now=now_fn(), runner=runner)
-            brief = build_brief(objective, character, parent_ev)
+            brief = build_brief(objective, character, elite.dev_evidence)
             report(f"{tag} · mutating (budget {token_budget} tok)…")
             op = operator.run(worktree, brief, token_budget=token_budget, timeout_s=timeout_s)
             report(f"{tag} · operator: {op.tokens} tok ({op.stopped_reason}); gating…")
@@ -112,7 +115,7 @@ def run_loop(
             manifest = json.loads((worktree / "nethackers.solution.json").read_text())
             register_win(hub, token=token, owner=owner, child_manifest=manifest,
                          evidence=dev_ev, parent_digest=elite.digest)
-            elite = EliteState(digest, tree_store.path(digest), dev_fit, ho_fit)
+            elite = EliteState(digest, tree_store.path(digest), dev_fit, ho_fit, dev_ev)
             report(f"{tag} · ✓ REGISTERED dev={dev_fit:.3f} held={ho_fit:.3f}")
             results.append(IterationResult(True, "registered", dev_fitness=dev_fit,
                                            heldout_fitness=ho_fit, tokens=op.tokens,
