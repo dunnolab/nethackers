@@ -10,7 +10,7 @@ services:
     build:
       context: .
       dockerfile: hub/Dockerfile
-    ports: ["8000:8000"]
+    ports: ["${NETHACKERS_HUB_PORT:-8000}:8000"]
     volumes: ["hubdata:/data"]
     environment:
       NETHACKERS_DB: /data/hub.db

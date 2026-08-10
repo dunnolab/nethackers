@@ -15,6 +15,7 @@ controller runs it separately (`uv run pytest -m docker`).
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import time
 import urllib.error
@@ -24,15 +25,21 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parents[1]
-BASE_URL = "http://localhost:8000"
+# Isolate the smoke from any running dev hub: its own compose project name,
+# host port, and (project-scoped) volume, so `down -v` here never tears down
+# a `docker compose up` dev stack (default project `nethackers-v1` on :8000).
+SMOKE_PROJECT = "nethackers-smoke"
+SMOKE_PORT = 8811
+BASE_URL = f"http://localhost:{SMOKE_PORT}"
 POLL_ATTEMPTS = 60
 POLL_INTERVAL_SECONDS = 2.0
 
 
 def _compose(*args: str) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
-        ["docker", "compose", *args],
+        ["docker", "compose", "-p", SMOKE_PROJECT, *args],
         cwd=REPO_ROOT,
+        env={**os.environ, "NETHACKERS_HUB_PORT": str(SMOKE_PORT)},
         capture_output=True,
         text=True,
         timeout=600,
