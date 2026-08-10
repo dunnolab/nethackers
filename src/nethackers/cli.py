@@ -52,6 +52,7 @@ import argparse
 import datetime
 import json
 import os
+import time
 from pathlib import Path
 from typing import Any
 
@@ -289,18 +290,23 @@ def _run(argv: list[str] | None) -> int:
 
     if args.cmd == "evolve":
         operator = {"codex": CodexOperator, "claude": ClaudeOperator}[args.operator]()
+        t0 = time.monotonic()
+        err.print(
+            f"evolving [b]{args.objective}[/] · operator={args.operator} · "
+            f"{args.iterations} iter · budget {args.token_budget} tok"
+        )
         results = run_loop(
             objective=args.objective, seed_tree=Path(args.seed),
             tree_store=LocalTreeStore(Path(args.workdir) / "trees"),
             operator=operator, hub=HubClient(args.hub), image=args.image,
             token=args.token, owner=args.owner, iterations=args.iterations,
             token_budget=args.token_budget, timeout_s=args.timeout,
-            heldout_n=args.heldout_n, now_fn=_now, workdir=Path(args.workdir) / "work",
+            heldout_n=args.heldout_n, now_fn=_now,
+            report=lambda m: err.print(f"{time.monotonic() - t0:7.1f}s  {m}", markup=False),
+            workdir=Path(args.workdir) / "work",
         )
-        for i, r in enumerate(results):
-            line = (f"iter {i}: {'✓ registered' if r.registered else '· ' + r.reason}"
-                    f" dev={r.dev_fitness} held={r.heldout_fitness} tokens={r.tokens}")
-            err.print(line)
+        n_reg = sum(1 for r in results if r.registered)
+        err.print(f"done · [b]{n_reg}[/]/{len(results)} iteration(s) registered a new elite")
         return 0
 
     if args.cmd == "pull":

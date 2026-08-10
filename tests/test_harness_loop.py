@@ -95,3 +95,20 @@ def test_loop_discards_an_iteration_that_raises(tmp_path):
     assert results[0].registered is False
     assert results[0].reason.startswith("error:")
     assert hub.registered == []
+
+
+def test_loop_reports_progress(tmp_path):
+    """run_loop streams phase events through the injected `report` callback so
+    a caller can show live progress during the (slow) real loop."""
+    events: list[str] = []
+    run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+        hub=_FakeHub(), image="img:dev", token="dev-token", owner="dev", iterations=1,
+        token_budget=1000, timeout_s=999, heldout_n=3,
+        now_fn=lambda: "2026-08-10T00:00:00Z", report=events.append,
+        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work")
+    text = "\n".join(events)
+    assert "cold-start" in text      # cold-start scoring announced
+    assert "mutating" in text        # per-iteration phases announced
+    assert "REGISTERED" in text      # the win is announced live
