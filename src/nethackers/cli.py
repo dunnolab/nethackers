@@ -54,14 +54,14 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
 from rich.live import Live
 from rich_argparse import RichHelpFormatter
 
 from nethackers.eval.runner import eval_batch
-from nethackers.harness.loop import run_loop
+from nethackers.harness.loop import IterationResult, run_loop
 from nethackers.harness.operator import ClaudeOperator, CodexOperator
 from nethackers.harness.store import LocalTreeStore
 from nethackers.hub.objectives import CATALOG
@@ -84,6 +84,8 @@ from nethackers.hubclient.render import (
     render_search as rich_search,
     render_show as rich_show,
 )
+from nethackers.tui.app import EvolveApp
+from nethackers.tui.status import EvolveConfig
 
 
 def _now() -> str:
@@ -292,27 +294,46 @@ def _run(argv: list[str] | None) -> int:
 
     if args.cmd == "evolve":
         operator = {"codex": CodexOperator, "claude": ClaudeOperator}[args.operator]()
-        t0 = time.monotonic()
-        err.print(
-            f"evolving [b]{args.objective}[/] · operator={args.operator} · "
-            f"{args.iterations} iter · budget {args.token_budget} tok"
-        )
-        with Live(console=err, auto_refresh=False, transient=False) as live:
-            stream = EpisodeStream(live)
-            results = run_loop(
+        cfg = EvolveConfig(objective=args.objective, backend=args.operator,
+                           iterations=args.iterations, token_budget=args.token_budget)
+
+        def _run(callbacks, report=lambda _m: None):
+            return run_loop(
                 objective=args.objective, seed_tree=Path(args.seed),
                 tree_store=LocalTreeStore(Path(args.workdir) / "trees"),
                 operator=operator, hub=HubClient(args.hub), image=args.image,
                 token=args.token, owner=args.owner, iterations=args.iterations,
                 token_budget=args.token_budget, timeout_s=args.timeout,
-                heldout_n=args.heldout_n, now_fn=_now,
-                report=lambda m: live.console.print(
-                    f"{time.monotonic() - t0:7.1f}s  {m}", markup=False
-                ),
-                on_episode=stream.on_episode,
+                heldout_n=args.heldout_n, now_fn=_now, report=report,
+                on_episode=callbacks["on_episode"],
+                on_state=callbacks["on_state"],
+                on_log=callbacks["on_log"],
                 workdir=Path(args.workdir) / "work",
             )
-            stream.finish()
+
+        if err.is_terminal and args.output != "json":
+            app = EvolveApp(cfg, run=lambda callbacks: _run(callbacks))
+            app.run()  # status bar replaces the prose report -> default no-op
+            # EvolveApp.results is typed as `object | None` (it just forwards
+            # whatever `run=` returns); narrow it back to what `_run` actually
+            # produces -- a list of `run_loop`'s IterationResult.
+            results = cast(list[IterationResult], app.results or [])
+        else:
+            t0 = time.monotonic()
+            err.print(
+                f"evolving [b]{args.objective}[/] · operator={args.operator} · "
+                f"{args.iterations} iter · budget {args.token_budget} tok"
+            )
+            with Live(console=err, auto_refresh=False, transient=False) as live:
+                stream = EpisodeStream(live)
+                results = _run(
+                    {"on_state": lambda s: None, "on_episode": stream.on_episode,
+                     "on_log": lambda tag, line: None},
+                    report=lambda m: live.console.print(
+                        f"{time.monotonic() - t0:7.1f}s  {m}", markup=False),
+                ) or []
+                stream.finish()
+
         n_reg = sum(1 for r in results if r.registered)
         err.print(f"done · [b]{n_reg}[/]/{len(results)} iteration(s) registered a new elite")
         return 0
