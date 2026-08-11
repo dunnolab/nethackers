@@ -52,6 +52,7 @@ import argparse
 import datetime
 import json
 import os
+import sys
 import time
 from pathlib import Path
 from typing import Any, cast
@@ -311,9 +312,11 @@ def _run(argv: list[str] | None) -> int:
                 workdir=Path(args.workdir) / "work",
             )
 
-        if err.is_terminal and args.output != "json":
+        if sys.stdout.isatty() and args.output != "json":
             app = EvolveApp(cfg, run=lambda callbacks: _run(callbacks))
             app.run()  # status bar replaces the prose report -> default no-op
+            if app.error is not None:
+                raise app.error  # let main()'s friendly hub/docker handlers fire on the ORIGINAL
             # EvolveApp.results is typed as `object | None` (it just forwards
             # whatever `run=` returns); narrow it back to what `_run` actually
             # produces -- a list of `run_loop`'s IterationResult.

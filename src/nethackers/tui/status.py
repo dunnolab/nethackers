@@ -1,5 +1,5 @@
 """Pure formatting of the evolve status bar's two lines. No Textual, no rich
-widgets -- just strings, so every phase is unit-tested."""
+widgets -- just strings, so it's unit-tested."""
 from __future__ import annotations
 
 from dataclasses import dataclass

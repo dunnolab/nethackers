@@ -74,6 +74,7 @@ class EvolveApp(App):
         self._cfg = cfg
         self._run = run
         self.results: object | None = None
+        self.error: BaseException | None = None
         self._state: dict = dict(_INITIAL)
         self._title = f"evolving {cfg.objective} · {cfg.backend}"
         self._cur_label: str | None = None
@@ -102,14 +103,19 @@ class EvolveApp(App):
         if self._run is not None:
             self._worker()
 
-    @work(thread=True)
+    @work(thread=True, exit_on_error=False)
     def _worker(self) -> None:
         assert self._run is not None
-        self.results = self._run({
-            "on_state": lambda s: self.call_from_thread(self._apply_state, s),
-            "on_episode": lambda label, ep: self.call_from_thread(self._apply_episode, label, ep),
-            "on_log": lambda tag, line: self.call_from_thread(self._apply_log, tag, line),
-        })
+        try:
+            self.results = self._run({
+                "on_state": lambda s: self.call_from_thread(self._apply_state, s),
+                "on_episode": lambda label, ep: self.call_from_thread(
+                    self._apply_episode, label, ep),
+                "on_log": lambda tag, line: self.call_from_thread(self._apply_log, tag, line),
+            })
+        except Exception as exc:
+            self.error = exc
+            self.call_from_thread(self.exit)
 
     # ---- handlers (app thread) ----
     @_guarded
