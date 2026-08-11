@@ -1,10 +1,18 @@
 import asyncio
 
-from nethackers.tui.app import EvolveApp
+from nethackers.tui.app import EvolveApp, _rows_in_order
 from nethackers.tui.status import EvolveConfig
 
 CFG = EvolveConfig(objective="val-dwa-law-fem", backend="claude",
                    iterations=3, token_budget=40_000)
+
+
+def test_rows_in_order_sorts_by_index_regardless_of_arrival():
+    rows = {}
+    for idx in (2, 0, 1):  # out-of-order completion
+        rows[idx] = {"index": idx, "seed": 100 + idx, "progress": 0.1 * idx}
+    ordered = _rows_in_order(rows)
+    assert [r["index"] for r in ordered] == [0, 1, 2]
 
 
 def _state(phase, **kw):
@@ -38,6 +46,28 @@ async def test_episode_mounts_table_and_log_records_line():
         assert app.query("#tables Static")               # a batch table mounted
         assert app._logs["iter 1/3"] == [("assistant", "editing bot")]
         assert app._live_tokens.get("iter 1/3", 0) >= 0  # counter updated, no crash
+
+
+async def test_apply_episode_out_of_order_arrival_sorts_rows_and_counts_done():
+    """M3: parallel eval means episodes can complete out of order (e.g. seed
+    2 before seed 0). The table must still read in batch order, and the
+    status line's eval_step must report how many episodes have actually
+    finished (a true completed-count), not the arriving episode's own
+    (no-longer-monotonic) index."""
+    app = EvolveApp(CFG, run=None)
+    async with app.run_test() as pilot:
+        app._apply_state(_state("evaluating-dev", iteration=1))
+        for idx in (2, 0, 1):  # arrival order != batch order
+            app._apply_episode("iter 1/3 · dev", {
+                "index": idx, "total": 3, "seed": idx, "character": "val-dwa-law-fem",
+                "progress": 0.1 * idx, "status": "completed", "turns": 1, "depth": 1})
+        await pilot.pause()
+
+        assert [r["index"] for r in _rows_in_order(app._cur_rows_by_index)] == [0, 1, 2]
+        assert app._eval_step is not None
+        done, total, mean = app._eval_step
+        assert (done, total) == (3, 3)          # completed-count, not arrival index
+        assert round(mean, 3) == 0.1             # mean(0.0, 0.1, 0.2)
 
 
 async def test_display_handler_exception_is_dropped_not_propagated():
