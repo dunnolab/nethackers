@@ -11,10 +11,14 @@
 # Python's hash randomization from perturbing dict/set iteration order across
 # runs, and the *_NUM_THREADS=1 variables force single-threaded BLAS/OpenMP
 # math so floating-point reduction order (and therefore trajectory outcomes)
-# is stable run-to-run and host-to-host.
+# is stable run-to-run and host-to-host -- this now also protects
+# determinism under M3's in-container parallel eval fan-out (multiple
+# worker processes sharing the host's cores), where an oversubscribed BLAS
+# thread pool could otherwise perturb per-worker floating-point results.
 FROM python:3.11-slim
 
 ENV PYTHONHASHSEED=0 OMP_NUM_THREADS=1 OPENBLAS_NUM_THREADS=1 MKL_NUM_THREADS=1 \
+    NUMEXPR_NUM_THREADS=1 VECLIB_MAXIMUM_THREADS=1 \
     PYTHONUNBUFFERED=1
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
