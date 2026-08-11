@@ -20,15 +20,78 @@ single-character ``--character``/``--seeds`` path (M1) has been retired --
 from __future__ import annotations
 
 import argparse
+import concurrent.futures
 import json
 import os
 import sys
 import warnings
+from collections.abc import Callable
 from pathlib import Path
 
 from nethackers.arena.seeds import trajectory_spec
 from nethackers.arena.trajectory import run_trajectory
-from nethackers.contracts.models import DEFAULT_MAX_STEPS, DEFAULT_NO_PROGRESS_TIMEOUT, Objective
+from nethackers.contracts.models import (
+    DEFAULT_MAX_STEPS,
+    DEFAULT_NO_PROGRESS_TIMEOUT,
+    Objective,
+    TrajectoryResult,
+)
+
+
+def _failed_result(trajectory_id: int, character: str, error: object) -> TrajectoryResult:
+    """A dead worker process (segfault/OOM) never returns a result; synthesize a
+    zero-progress infrastructure_error so the batch still yields N results."""
+    return TrajectoryResult(
+        trajectory_id=trajectory_id, status="infrastructure_error", progress=0.0,
+        ascended=False, steps=0, turns=0, max_depth=1, end_status=None,
+        error=str(error)[-8_000:], wall_seconds=0.0, character=character, milestone=None)
+
+
+def run_batch(
+    submission_path: str,
+    batch: list,
+    *,
+    secret: str,
+    evaluation_id: str,
+    max_steps: int,
+    no_progress_timeout: int,
+    action_timeout: float,
+    max_parallel_evals: int,
+    on_episode: Callable[[int, TrajectoryResult], None] | None = None,
+    run_one: Callable[..., TrajectoryResult] = run_trajectory,
+    executor_factory=concurrent.futures.ProcessPoolExecutor,
+) -> list[TrajectoryResult]:
+    """Run every (seed, character) in ``batch`` concurrently across worker
+    processes, capped at ``min(max_parallel_evals, len(batch))``. Results come
+    back in batch order; ``on_episode(index, result)`` fires as each finishes
+    (out of order). ``run_one``/``executor_factory`` are injected for tests."""
+    n = len(batch)
+    results: list[TrajectoryResult | None] = [None] * n
+    if n == 0:
+        return []
+    workers = max(1, min(max_parallel_evals, n))
+    prepared = []
+    for i, (seed, char) in enumerate(batch):
+        spec = trajectory_spec(secret, evaluation_id, int(seed))
+        objective = Objective(
+            None if char == "-" else char, max_steps, no_progress_timeout,
+            action_timeout, "runtime")
+        prepared.append((i, char, spec, objective))
+    with executor_factory(max_workers=workers) as ex:
+        fut_to_job = {
+            ex.submit(run_one, submission_path, spec, objective, char): (i, char, spec)
+            for (i, char, spec, objective) in prepared
+        }
+        for fut in concurrent.futures.as_completed(fut_to_job):
+            i, char, spec = fut_to_job[fut]
+            try:
+                result = fut.result()
+            except Exception as error:  # worker process died hard
+                result = _failed_result(spec.trajectory_id, char, error)
+            results[i] = result
+            if on_episode is not None:
+                on_episode(i, result)
+    return results  # type: ignore[return-value]
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -14,11 +14,14 @@ only supported way in -- the legacy single-character ``--character``/
 ``--seeds`` path has been retired.
 """
 
+import concurrent.futures as cf
 import json
 
 import pytest
 
 import nethackers.arena.run as R
+from nethackers.arena.run import run_batch
+from nethackers.contracts.models import TrajectoryResult
 
 
 def _fake_run_trajectory(calls):
@@ -125,3 +128,58 @@ def test_neither_batch_nor_seeds_raises_systemexit(tmp_path):
             ]
         )
     assert excinfo.value.code == 2  # argparse's parser.error() exit status
+
+
+def _fake(tid, char, progress=0.5, status="completed"):
+    return TrajectoryResult(
+        trajectory_id=tid, status=status, progress=progress, ascended=False,
+        steps=1, turns=1, max_depth=1, end_status=None, error=None,
+        wall_seconds=0.0, character=char, milestone=None)
+
+
+def test_run_batch_preserves_order_and_streams_true_index():
+    batch = [[0, "tou-hum-neu-mal"], [1, "tou-hum-neu-mal"], [2, "tou-hum-neu-mal"]]
+    seen = []
+
+    def fake_run_one(submission_path, spec, objective, character):
+        return _fake(spec.trajectory_id, character, progress=spec.trajectory_id / 10)
+
+    results = run_batch(
+        "/sol", batch, secret="public", evaluation_id="local", max_steps=100,
+        no_progress_timeout=10, action_timeout=5.0, max_parallel_evals=3,
+        on_episode=lambda i, r: seen.append(i),
+        run_one=fake_run_one, executor_factory=cf.ThreadPoolExecutor)
+
+    assert [r.progress for r in results] == [0.0, 0.1, 0.2]  # batch order preserved
+    assert sorted(seen) == [0, 1, 2]                          # every index streamed
+    assert len(results) == 3
+
+
+def test_run_batch_caps_parallelism_at_batch_size():
+    captured = {}
+
+    class SpyExec(cf.ThreadPoolExecutor):
+        def __init__(self, max_workers):
+            captured["P"] = max_workers
+            super().__init__(max_workers=max_workers)
+
+    run_batch("/sol", [[0, "x"]], secret="s", evaluation_id="e", max_steps=1,
+              no_progress_timeout=1, action_timeout=1.0, max_parallel_evals=8,
+              run_one=lambda *a: _fake(0, "x"), executor_factory=SpyExec)
+    assert captured["P"] == 1
+
+
+def test_run_batch_isolates_a_dead_worker():
+    batch = [[0, "x"], [1, "x"]]
+
+    def flaky(submission_path, spec, objective, character):
+        if spec.trajectory_id == 1:
+            raise RuntimeError("worker segfault")
+        return _fake(spec.trajectory_id, character)
+
+    results = run_batch("/sol", batch, secret="s", evaluation_id="e", max_steps=1,
+                        no_progress_timeout=1, action_timeout=1.0, max_parallel_evals=2,
+                        run_one=flaky, executor_factory=cf.ThreadPoolExecutor)
+    assert results[0].status == "completed"
+    assert results[1].status == "infrastructure_error" and results[1].progress == 0.0
+    assert len(results) == 2
