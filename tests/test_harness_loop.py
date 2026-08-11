@@ -2,7 +2,7 @@
 import json
 from pathlib import Path
 
-from nethackers.harness.loop import run_loop
+from nethackers.harness.loop import IterationResult, run_loop
 from nethackers.harness.store import LocalTreeStore
 
 
@@ -133,6 +133,25 @@ def test_loop_emits_state_transitions(tmp_path):
     reg = next(s for s in states if s["phase"] == "registered")
     assert reg["iteration"] == 1 and reg["wins"] == 1
     assert reg["best_dev"] > reg["baseline_dev"]  # improved over the seed
+
+
+def test_iteration_result_stopped_reason_defaults_to_none():
+    assert IterationResult(False, "baseline").stopped_reason is None
+
+
+def test_on_iteration_fires_for_baseline_and_each_iteration(tmp_path):
+    seen: list[tuple[int, str]] = []
+    run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+        hub=_FakeHub(), image="img:dev", token="t", owner="o", iterations=1,
+        token_budget=1000, timeout_s=999, heldout_n=3,
+        now_fn=lambda: "2026-08-10T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
+        on_iteration=lambda i, r: seen.append((i, r.reason)))
+    assert seen[0][0] == 0 and seen[0][1] == "baseline"     # cold-start baseline
+    assert seen[1][0] == 1                                   # iteration 1 recorded
+    assert any(r == "registered" for _i, r in seen)          # its outcome flowed through
 
 
 def test_loop_forwards_tagged_log_lines(tmp_path):

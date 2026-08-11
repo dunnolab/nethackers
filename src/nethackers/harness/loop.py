@@ -35,6 +35,7 @@ class IterationResult:
     heldout_fitness: float | None = None
     tokens: int | None = None
     digest: str | None = None
+    stopped_reason: str | None = None
 
 
 def run_loop(
@@ -57,6 +58,7 @@ def run_loop(
     on_episode: Callable[[str, dict], None] | None = None,
     on_log: Callable[[str, str], None] | None = None,
     on_state: Callable[[dict], None] | None = None,
+    on_iteration: Callable[[int, IterationResult], None] = lambda _i, _r: None,
     runner=subprocess.run,
     workdir: Path,
 ) -> list[IterationResult]:
@@ -109,8 +111,15 @@ def run_loop(
     base_dev, base_held = dev_fit0, ho_fit0
     report(f"cold-start · elite=seed dev={dev_fit0:.3f} held={ho_fit0:.3f}")
     _emit("cold-start", 0)
+    on_iteration(0, IterationResult(False, "baseline",
+                                    dev_fitness=dev_fit0, heldout_fitness=ho_fit0))
 
     results: list[IterationResult] = []
+
+    def _record(iteration: int, result: IterationResult) -> None:
+        results.append(result)
+        on_iteration(iteration, result)
+
     for k in range(iterations):
         tag = f"iter {k + 1}/{iterations}"
         try:
@@ -133,7 +142,8 @@ def run_loop(
             if not ok:
                 _emit("rejected", k + 1, tokens=op.tokens, detail=f"gate: {reason}")
                 report(f"{tag} · ✗ gate: {reason}")
-                results.append(IterationResult(False, f"gate:{reason}", tokens=op.tokens))
+                _record(k + 1, IterationResult(False, f"gate:{reason}", tokens=op.tokens,
+                                               stopped_reason=op.stopped_reason))
                 continue
 
             _emit("evaluating-dev", k + 1, tokens=op.tokens)
@@ -145,8 +155,8 @@ def run_loop(
             if dev_fit <= elite.dev_fitness:
                 _emit("rejected", k + 1, tokens=op.tokens, detail="no dev gain")
                 report(f"{tag} · ✗ no dev gain: {dev_fit:.3f} ≤ {elite.dev_fitness:.3f}")
-                results.append(IterationResult(False, "no-dev-gain", dev_fitness=dev_fit,
-                                               tokens=op.tokens))
+                _record(k + 1, IterationResult(False, "no-dev-gain", dev_fitness=dev_fit,
+                                               tokens=op.tokens, stopped_reason=op.stopped_reason))
                 continue
 
             _emit("evaluating-held", k + 1, tokens=op.tokens)
@@ -158,9 +168,9 @@ def run_loop(
             if ho_fit <= elite.heldout_fitness:
                 _emit("rejected", k + 1, tokens=op.tokens, detail="no held-out gain")
                 report(f"{tag} · ✗ no held-out gain: {ho_fit:.3f} ≤ {elite.heldout_fitness:.3f}")
-                results.append(IterationResult(False, "no-heldout-gain",
+                _record(k + 1, IterationResult(False, "no-heldout-gain",
                                                dev_fitness=dev_fit, heldout_fitness=ho_fit,
-                                               tokens=op.tokens))
+                                               tokens=op.tokens, stopped_reason=op.stopped_reason))
                 continue
 
             digest = tree_store.save(worktree)
@@ -171,13 +181,13 @@ def run_loop(
             wins += 1
             _emit("registered", k + 1, tokens=op.tokens)
             report(f"{tag} · ✓ REGISTERED dev={dev_fit:.3f} held={ho_fit:.3f}")
-            results.append(IterationResult(True, "registered", dev_fitness=dev_fit,
+            _record(k + 1, IterationResult(True, "registered", dev_fitness=dev_fit,
                                            heldout_fitness=ho_fit, tokens=op.tokens,
-                                           digest=digest))
+                                           digest=digest, stopped_reason=op.stopped_reason))
         except Exception as e:
             _emit("error", k + 1, detail=str(e))
             report(f"{tag} · ✗ error: {e}")
-            results.append(IterationResult(False, f"error:{e}"))
+            _record(k + 1, IterationResult(False, f"error:{e}"))
             continue
     _emit("done", iterations)
     return results
