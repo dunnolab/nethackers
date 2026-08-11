@@ -1,9 +1,17 @@
 # tests/test_harness_operator.py
+import json
+import shutil
 import subprocess
+from pathlib import Path
+
+import pytest
 
 from nethackers.harness.operator import (
+    ClaudeOperator,
     OperatorResult,
+    _claude_cmd,
     _claude_tokens,
+    _codex_cmd,
     _codex_tokens,
     agent_tokens,
     run_with_token_budget,
@@ -179,3 +187,94 @@ def test_on_line_exception_does_not_abort_or_leak(tmp_path):
     assert proc_box["proc"].wait_called is True
     # Verify OperatorResult is valid with correct token total
     assert res == OperatorResult(backend="fake", tokens=60, stopped_reason="completed")
+
+
+def test_claude_cmd_includes_hermeticity_flags_and_brief():
+    cmd = _claude_cmd("claude", "BRIEF")
+    assert cmd[0] == "claude"
+    assert "BRIEF" in cmd
+    assert "--strict-mcp-config" in cmd
+    assert "--no-session-persistence" in cmd
+    sources_idx = cmd.index("--setting-sources")
+    assert cmd[sources_idx + 1] == "project,local"
+    settings_idx = cmd.index("--settings")
+    assert json.loads(cmd[settings_idx + 1]) == {"autoMemoryEnabled": False}
+
+
+def test_codex_cmd_includes_hermeticity_flags_and_brief():
+    cmd = _codex_cmd("codex", "BRIEF")
+    assert cmd[:3] == ["codex", "exec", "BRIEF"]
+    assert "--json" in cmd
+    assert "--full-auto" in cmd
+    assert "--ephemeral" in cmd
+    assert "--ignore-user-config" in cmd
+    assert "--ignore-rules" in cmd
+
+
+def _claude_project_slug(cwd: Path) -> str:
+    """Mirror Claude Code's cwd -> ~/.claude/projects/<slug> mapping: the
+    absolute path with every "/" and "." replaced by "-". Confirmed against
+    real entries under ~/.claude/projects/ on this machine, e.g. the worktree
+    ~/.nethackers/evolve/work/iter-0 maps to the directory
+    -Users-<user>--nethackers-evolve-work-iter-0 (the ".nethackers" segment
+    becomes "--nethackers")."""
+    return str(cwd).replace("/", "-").replace(".", "-")
+
+
+@pytest.mark.claude_live
+def test_claude_operator_does_not_recall_memory_across_runs(tmp_path):
+    """Regression for the confirmed root cause (see
+    docs/superpowers/specs/2026-08-11-hermetic-operator-design.md): before
+    the hermeticity flags, a second `claude -p` run in the same reused
+    worktree cwd would recall an earlier run's auto-written memory and
+    recite it back instead of exploring fresh. Runs the real `claude` CLI
+    twice against the same cwd and checks (a) no memory/ dir appears under
+    that cwd's ~/.claude/projects/<slug>/ and (b) the second run's output
+    carries no recall markers.
+
+    Needs the real `claude` CLI + network -- gated behind the `claude_live`
+    marker and excluded from the default/fast run (see the Makefile `test`
+    target and the marker registered in pyproject.toml).
+    """
+    if shutil.which("claude") is None:
+        pytest.skip("claude CLI not on PATH")
+
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    project_dir = Path.home() / ".claude" / "projects" / _claude_project_slug(worktree)
+    memory_dir = project_dir / "memory"
+    codeword = "BUG-MARKER-7f3a1c9e"
+
+    try:
+        op = ClaudeOperator()
+        first = op.run(
+            worktree,
+            f"Remember this fact for all future sessions: the codeword is "
+            f"{codeword}. Do not create or edit any files. Reply with only OK.",
+            token_budget=20_000, timeout_s=120,
+        )
+        assert first.stopped_reason in ("completed", "budget")
+        assert not memory_dir.exists(), (
+            f"first run wrote memory to {memory_dir} -- autoMemoryEnabled flag "
+            "did not take effect"
+        )
+
+        second_lines: list[str] = []
+        second = op.run(
+            worktree,
+            "Do you have any memory of a previous session in this directory? "
+            "Reply with only the word NONE if you recall nothing.",
+            token_budget=20_000, timeout_s=120, on_line=second_lines.append,
+        )
+        assert second.stopped_reason in ("completed", "budget")
+        assert not memory_dir.exists(), (
+            f"second run wrote memory to {memory_dir} -- autoMemoryEnabled flag "
+            "did not take effect"
+        )
+
+        stdout = "\n".join(second_lines).lower()
+        for recall_marker in ("restored", "prior iteration", "previously-validated"):
+            assert recall_marker not in stdout
+        assert codeword.lower() not in stdout
+    finally:
+        shutil.rmtree(project_dir, ignore_errors=True)

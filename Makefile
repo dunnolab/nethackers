@@ -47,9 +47,10 @@ wait-hub:
 	done; \
 	echo; echo 'hub not ready on :8000' >&2; exit 1
 
-# Fast suite (no NLE/Docker), types+lint, and the isolated docker-compose smoke.
+# Fast suite (no NLE/Docker/live-Claude), types+lint, and the isolated
+# docker-compose smoke.
 test:
-	uv run pytest -m "not nle and not docker" -q
+	uv run pytest -m "not nle and not docker and not claude_live" -q
 check:
 	uv run mypy src/nethackers tests
 	uv run ruff check .
