@@ -25,11 +25,49 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import subprocess
 import tempfile
+from collections.abc import Callable
 from pathlib import Path
 
 from nethackers.contracts.models import Evidence, Objective, ObjectiveSpec, TrajectoryResult
+
+_ARENA_EPISODE = re.compile(
+    r"episode (\d+)/(\d+) \((.*?)\): progress=([0-9.]+) (\S+) turns=(\d+) depth=(\d+)"
+)
+
+
+def _stream_episodes(
+    cmd: list[str], spec: ObjectiveSpec, on_episode: Callable[[dict], None], popen
+) -> None:
+    """Run the arena container, forwarding each parsed per-episode stderr line
+    to ``on_episode`` for live display. Results still come from the mounted
+    results.json -- this is display-only. Raises like ``check=True`` on a
+    non-zero exit; unparseable lines (warnings, the 'running N' banner) are
+    ignored, so the seed comes from ``spec.batch`` order, not the text."""
+    proc = popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, bufsize=1)
+    for line in proc.stderr:
+        m = _ARENA_EPISODE.search(line)
+        if m is None:
+            continue
+        index = int(m.group(1))
+        seed = spec.batch[index - 1][0] if index - 1 < len(spec.batch) else None
+        on_episode(
+            {
+                "index": index,
+                "total": int(m.group(2)),
+                "seed": seed,
+                "character": m.group(3),
+                "progress": float(m.group(4)),
+                "status": m.group(5),
+                "turns": int(m.group(6)),
+                "depth": int(m.group(7)),
+            }
+        )
+    returncode = proc.wait()
+    if returncode != 0:
+        raise subprocess.CalledProcessError(returncode, cmd)
 
 
 def _solution_digest(solution_path: Path) -> str:
@@ -75,6 +113,8 @@ def eval_batch(
     now: str,
     runner=subprocess.run,
     image_digest_resolver=_default_image_digest,
+    on_episode: Callable[[dict], None] | None = None,
+    popen=subprocess.Popen,
 ) -> Evidence:
     """Evaluate ``solution_path`` against ``image`` for ``spec``'s published
     ``(seed, character)`` batch and return the resulting ``Evidence``.
@@ -108,6 +148,10 @@ def eval_batch(
         out = Path(td) / "results.json"
         cmd = [
             "docker", "run", "--rm", "--network", "none",
+            # Silence AutoAscend's numpy RuntimeWarning flood at interpreter
+            # startup, for every process in the container (a plain in-arena
+            # filter didn't hold -- NLE/AutoAscend resets it).
+            "-e", "PYTHONWARNINGS=ignore::RuntimeWarning",
             "-v", f"{solution_path}:/sol:ro",
             "-v", f"{td}:/out",
             image,
@@ -119,7 +163,10 @@ def eval_batch(
             "--action-timeout", str(spec.action_timeout_seconds),
             "--out", "/out/results.json",
         ]
-        runner(cmd, check=True)
+        if on_episode is None:
+            runner(cmd, check=True)
+        else:
+            _stream_episodes(cmd, spec, on_episode, popen)
         results = [TrajectoryResult.from_dict(r) for r in json.loads(out.read_text())]
     objective = Objective(
         character=None,

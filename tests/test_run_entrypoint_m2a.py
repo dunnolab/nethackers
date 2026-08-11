@@ -29,7 +29,19 @@ def _fake_run_trajectory(calls):
     def fake(**kwargs):
         calls.append(kwargs)
         trajectory_id = kwargs["spec"].trajectory_id
-        return type("T", (), {"to_dict": lambda self: {"trajectory_id": trajectory_id}})()
+        # Stub stands in for a real TrajectoryResult: to_dict() for the results
+        # file, plus the fields run.py now reads for its per-episode stderr line.
+        return type(
+            "T",
+            (),
+            {
+                "to_dict": lambda self: {"trajectory_id": trajectory_id},
+                "progress": 0.1,
+                "status": "completed",
+                "turns": 1,
+                "max_depth": 1,
+            },
+        )()
 
     return fake
 

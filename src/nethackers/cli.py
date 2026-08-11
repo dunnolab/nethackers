@@ -52,13 +52,19 @@ import argparse
 import datetime
 import json
 import os
+import sys
+import time
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import httpx
+from rich.live import Live
 from rich_argparse import RichHelpFormatter
 
 from nethackers.eval.runner import eval_batch
+from nethackers.harness.loop import IterationResult, run_loop
+from nethackers.harness.operator import ClaudeOperator, CodexOperator
+from nethackers.harness.store import LocalTreeStore
 from nethackers.hub.objectives import CATALOG
 from nethackers.hubclient.client import (
     HubClient,
@@ -68,6 +74,7 @@ from nethackers.hubclient.client import (
     render_search as plain_search,
     render_show as plain_show,
 )
+from nethackers.hubclient.live import EpisodeStream
 from nethackers.hubclient.output import emit, err
 from nethackers.hubclient.pull import pull
 from nethackers.hubclient.register import register_solution
@@ -78,6 +85,8 @@ from nethackers.hubclient.render import (
     render_search as rich_search,
     render_show as rich_show,
 )
+from nethackers.tui.app import EvolveApp
+from nethackers.tui.status import EvolveConfig
 
 
 def _now() -> str:
@@ -169,6 +178,22 @@ def _build_parser() -> argparse.ArgumentParser:
     e.add_argument("solution", help="Path to the solution directory (mounted read-only).")
     e.add_argument("--objective", required=True, help="A catalog objective name.")
     e.add_argument("--image", default="nethackers/arena:dev", help="Arena image to run.")
+
+    evolve = sub.add_parser(
+        "evolve", parents=[common], formatter_class=RichHelpFormatter,
+        help="Evolve a bot for an objective with a headless coding agent.",
+    )
+    evolve.add_argument("objective")
+    evolve.add_argument("--seed", required=True, help="seed solution root (e.g. roots/autoascend)")
+    evolve.add_argument("--operator", choices=["codex", "claude"], default="claude")
+    evolve.add_argument("--iterations", type=int, default=1)
+    evolve.add_argument("--token-budget", type=int, default=200_000)
+    evolve.add_argument("--timeout", type=float, default=1800.0)
+    evolve.add_argument("--heldout-n", type=int, default=8)
+    evolve.add_argument("--image", default="nethackers/arena:dev")
+    evolve.add_argument("--token", default="dev-token")
+    evolve.add_argument("--owner", default="dev")
+    evolve.add_argument("--workdir", default=str(Path.home() / ".nethackers" / "evolve"))
 
     pl = sub.add_parser(
         "pull", parents=[common], formatter_class=RichHelpFormatter,
@@ -266,6 +291,54 @@ def _run(argv: list[str] | None) -> int:
             return 2
         evidence = eval_batch(Path(args.solution), spec, args.image, now=_now())
         print(json.dumps(evidence.to_dict(), indent=2))
+        return 0
+
+    if args.cmd == "evolve":
+        operator = {"codex": CodexOperator, "claude": ClaudeOperator}[args.operator]()
+        cfg = EvolveConfig(objective=args.objective, backend=args.operator,
+                           iterations=args.iterations, token_budget=args.token_budget)
+
+        def _run(callbacks, report=lambda _m: None):
+            return run_loop(
+                objective=args.objective, seed_tree=Path(args.seed),
+                tree_store=LocalTreeStore(Path(args.workdir) / "trees"),
+                operator=operator, hub=HubClient(args.hub), image=args.image,
+                token=args.token, owner=args.owner, iterations=args.iterations,
+                token_budget=args.token_budget, timeout_s=args.timeout,
+                heldout_n=args.heldout_n, now_fn=_now, report=report,
+                on_episode=callbacks["on_episode"],
+                on_state=callbacks["on_state"],
+                on_log=callbacks["on_log"],
+                workdir=Path(args.workdir) / "work",
+            )
+
+        if sys.stdout.isatty() and args.output != "json":
+            app = EvolveApp(cfg, run=lambda callbacks: _run(callbacks))
+            app.run()  # status bar replaces the prose report -> default no-op
+            if app.error is not None:
+                raise app.error  # let main()'s friendly hub/docker handlers fire on the ORIGINAL
+            # EvolveApp.results is typed as `object | None` (it just forwards
+            # whatever `run=` returns); narrow it back to what `_run` actually
+            # produces -- a list of `run_loop`'s IterationResult.
+            results = cast(list[IterationResult], app.results or [])
+        else:
+            t0 = time.monotonic()
+            err.print(
+                f"evolving [b]{args.objective}[/] · operator={args.operator} · "
+                f"{args.iterations} iter · budget {args.token_budget} tok"
+            )
+            with Live(console=err, auto_refresh=False, transient=False) as live:
+                stream = EpisodeStream(live)
+                results = _run(
+                    {"on_state": lambda s: None, "on_episode": stream.on_episode,
+                     "on_log": lambda tag, line: None},
+                    report=lambda m: live.console.print(
+                        f"{time.monotonic() - t0:7.1f}s  {m}", markup=False),
+                ) or []
+                stream.finish()
+
+        n_reg = sum(1 for r in results if r.registered)
+        err.print(f"done · [b]{n_reg}[/]/{len(results)} iteration(s) registered a new elite")
         return 0
 
     if args.cmd == "pull":
