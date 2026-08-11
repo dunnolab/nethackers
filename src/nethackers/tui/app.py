@@ -4,6 +4,7 @@ logs. The synchronous run_loop runs in a worker thread and feeds the UI via
 callbacks handed off with call_from_thread."""
 from __future__ import annotations
 
+import functools
 import time
 from collections.abc import Callable
 
@@ -35,6 +36,25 @@ _INITIAL = {
 
 def _slug(tag: str) -> str:
     return "log_" + tag.replace(" ", "_").replace("/", "_")
+
+
+def _guarded(method):
+    """Per the M3 evolve TUI design spec's Errors section: "a callback
+    raising is caught and dropped (logged to a debug buffer, never
+    surfaced)". Without this, an exception raised inside a handler body
+    propagates through call_from_thread's future.result() back into the
+    worker thread -- aborting the whole evolve run over a display concern
+    (malformed episode/state dict, bad log line), including at the
+    cold-start/done call sites in run_loop that sit outside its
+    per-iteration try/except."""
+    @functools.wraps(method)
+    def wrapper(self, *args, **kwargs):
+        try:
+            return method(self, *args, **kwargs)
+        except Exception as exc:
+            self.log.error(f"display handler {method.__name__} raised: {exc!r}; dropped")
+            return None
+    return wrapper
 
 
 class EvolveApp(App):
@@ -92,6 +112,7 @@ class EvolveApp(App):
         })
 
     # ---- handlers (app thread) ----
+    @_guarded
     def _apply_state(self, state: dict) -> None:
         prev = self._state.get("phase")
         self._state = state
@@ -104,6 +125,7 @@ class EvolveApp(App):
             self._eval_step = None
         self._refresh_status()
 
+    @_guarded
     def _apply_episode(self, label: str, ep: dict) -> None:
         scroll = self.query_one("#tables", VerticalScroll)
         if label != self._cur_label:
@@ -121,6 +143,7 @@ class EvolveApp(App):
         self._eval_step = (int(ep["index"]), int(ep["total"]), mean)
         self._refresh_status()
 
+    @_guarded
     def _apply_log(self, tag: str, line: str) -> None:
         self._ensure_log(tag)
         pretty = prettify(self._cfg.backend, line)
