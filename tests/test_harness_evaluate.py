@@ -1,6 +1,7 @@
 import json
 from pathlib import Path
 
+from nethackers.harness import evaluate as ev_mod
 from nethackers.harness.evaluate import evaluate
 from nethackers.harness.seeds import dev_spec
 
@@ -29,3 +30,19 @@ def test_evaluate_returns_mean_progress_and_evidence(tmp_path):
     assert fitness == ev.mean_progress
     assert 0.4 < fitness < 0.6
     assert ev.episodes == len(spec.batch)
+
+
+def test_evaluate_forwards_max_parallel_evals(monkeypatch):
+    seen = {}
+
+    def fake_eval_batch(tree, spec, image, **kw):
+        seen.update(kw)
+
+        class _E:  # minimal stand-in for Evidence
+            mean_progress = 0.0
+
+        return _E()
+
+    monkeypatch.setattr(ev_mod, "eval_batch", fake_eval_batch)
+    ev_mod.evaluate("/tree", object(), "img", now="t", max_parallel_evals=6)
+    assert seen["max_parallel_evals"] == 6

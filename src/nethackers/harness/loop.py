@@ -51,6 +51,7 @@ def run_loop(
     token_budget: int,
     timeout_s: float,
     heldout_n: int,
+    max_parallel_evals: int = 8,
     now_fn: Callable[[], str],
     report: Callable[[str], None] = lambda _: None,
     on_episode: Callable[[str, dict], None] | None = None,
@@ -98,11 +99,11 @@ def run_loop(
     seed_digest = tree_store.save(seed_tree)
     dev_fit0, dev_ev0 = evaluate(
         tree_store.path(seed_digest), dev, image, now=now_fn(), runner=runner,
-        on_episode=_episode_cb("cold-start · dev"),
+        on_episode=_episode_cb("cold-start · dev"), max_parallel_evals=max_parallel_evals,
     )
     ho_fit0, _ = evaluate(
         tree_store.path(seed_digest), held, image, now=now_fn(), runner=runner,
-        on_episode=_episode_cb("cold-start · held-out"),
+        on_episode=_episode_cb("cold-start · held-out"), max_parallel_evals=max_parallel_evals,
     )
     elite = EliteState(seed_digest, tree_store.path(seed_digest), dev_fit0, ho_fit0, dev_ev0)
     base_dev, base_held = dev_fit0, ho_fit0
@@ -139,7 +140,7 @@ def run_loop(
             report(f"{tag} · gate ok; dev eval ({len(dev.batch)}ep)…")
             dev_fit, dev_ev = evaluate(
                 worktree, dev, image, now=now_fn(), runner=runner,
-                on_episode=_episode_cb(f"{tag} · dev"),
+                on_episode=_episode_cb(f"{tag} · dev"), max_parallel_evals=max_parallel_evals,
             )
             if dev_fit <= elite.dev_fitness:
                 _emit("rejected", k + 1, tokens=op.tokens, detail="no dev gain")
@@ -152,7 +153,7 @@ def run_loop(
             report(f"{tag} · dev win {dev_fit:.3f}; held-out ({len(held.batch)}ep)…")
             ho_fit, _ = evaluate(
                 worktree, held, image, now=now_fn(), runner=runner,
-                on_episode=_episode_cb(f"{tag} · held-out"),
+                on_episode=_episode_cb(f"{tag} · held-out"), max_parallel_evals=max_parallel_evals,
             )
             if ho_fit <= elite.heldout_fitness:
                 _emit("rejected", k + 1, tokens=op.tokens, detail="no held-out gain")
