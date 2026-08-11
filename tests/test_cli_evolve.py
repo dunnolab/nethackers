@@ -76,3 +76,25 @@ def test_evolve_creates_run_dir_with_config_and_latest_symlink(tmp_path, monkeyp
     assert str(run_dir) in recorded["tree_store_root"]
     assert str(run_dir / "work") == recorded["workdir"]
     assert (runs / "latest").resolve() == run_dir.resolve()   # symlink points at it
+
+
+def test_evolve_on_log_persists_mutation_stream(tmp_path, monkeypatch):
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    (seed / "nethackers.solution.json").write_text(
+        '{"root":".","entrypoint":"bot.py","parents":[],"influences":[]}'
+    )
+    (seed / "bot.py").write_text("x=1\n")
+    captured = {}
+
+    def fake_run_loop(**kwargs):
+        captured["on_log"] = kwargs["on_log"]
+        return []
+    monkeypatch.setattr(cli, "run_loop", fake_run_loop, raising=False)
+    rc = cli._run(["evolve", "random", "--seed", str(seed), "--workdir", str(tmp_path / "w")])
+    assert rc == 0
+    # the CLI wraps on_log to persist each raw stream line under logs/<tag>.log
+    captured["on_log"]("iter 1/3", "AGENT REASONING\n")
+    runs = tmp_path / "w" / "runs"
+    run_dir = next(p for p in runs.iterdir() if p.name != "latest")
+    assert (run_dir / "logs" / "iter-1-3.log").read_text() == "AGENT REASONING\n"

@@ -350,6 +350,9 @@ def _run(argv: list[str] | None) -> int:
                            iterations=args.iterations, token_budget=args.token_budget)
 
         def _run(callbacks, report=lambda _m: None):
+            def _on_log(tag: str, line: str) -> None:
+                runlog.append_log(run_dir, tag, line)  # persist the per-iteration mutation log
+                callbacks["on_log"](tag, line)         # + render live (TUI) / drop (non-TUI)
             return run_loop(
                 objective=args.objective, seed_tree=Path(args.seed),
                 tree_store=LocalTreeStore(run_dir / "trees"),
@@ -360,7 +363,7 @@ def _run(argv: list[str] | None) -> int:
                 now_fn=_now, report=report,
                 on_episode=callbacks["on_episode"],
                 on_state=callbacks["on_state"],
-                on_log=callbacks["on_log"],
+                on_log=_on_log,
                 workdir=run_dir / "work",
                 on_iteration=lambda it, res: runlog.append_metric(
                     run_dir, runlog.metric_record(it, res)),

@@ -27,6 +27,7 @@ Each `evolve` invocation writes to its own run directory (wandb-style) holding t
     <run-id>/
       run.json          # static config, written once at start
       metrics.jsonl     # one line per iteration, appended live
+      logs/iter-N.log   # raw coding-agent stream, per iteration
       work/iter-N/      # worktrees — a fresh cwd per run
       trees/<digest>/   # this run's local elite store (cold-starts from the seed)
     latest -> <run-id>/ # convenience symlink to the newest run
@@ -53,6 +54,9 @@ One line per iteration, plus iteration 0 for the cold-start baseline:
 - `outcome ∈ {baseline, registered, rejected, error}`; `reason` carries the reject/error detail (`no-dev-gain`, `no-heldout-gain`, `gate:<...>`, or the error string).
 - Iteration 0's line records the seed's baseline dev + held-out fitness.
 - Tail-able during a run.
+
+### mutation logs — `logs/<tag>.log`
+The coding-agent's raw per-line stream (its reasoning + tool calls + output) is persisted per iteration. `on_log(tag, line)` — already flowing to the TUI's mutation-log tab — is wrapped once in the CLI so it *also* appends each raw line to `runs/<id>/logs/<slug(tag)>.log` (tag `"iter K/N"` → `iter-k-n.log`). It composes with the TUI (render **and** persist); in non-TUI mode it persists instead of dropping. This matters more now: the hermetic `--no-session-persistence` flag means Claude Code no longer keeps its own transcript, so this file is the only lasting record of *how* a mutation was produced. New helper `runlog.append_log(run_dir, tag, line)`.
 
 ### latest symlink
 `runs/latest` → the new run-id, repointed at each run start (replace any existing). Best-effort — skipped with a warning if the platform/filesystem rejects symlinks.

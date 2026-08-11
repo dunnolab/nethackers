@@ -42,6 +42,19 @@ def append_metric(run_dir: Path, record: dict) -> None:
         f.write(json.dumps(record) + "\n")
 
 
+def append_log(run_dir: Path, tag: str, line: str) -> None:
+    """Persist one raw operator-stream line under ``runs/<id>/logs/<tag>.log``
+    (tag ``"iter K/N"`` -> file ``iter-k-n.log``), so a run's mutation reasoning
+    survives past the live TUI -- the hermetic operator's ``--no-session-
+    persistence`` means Claude Code no longer keeps its own transcript. Written
+    verbatim (the stream line already carries its newline); a missing trailing
+    newline is added so entries stay separated."""
+    logs = run_dir / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    with (logs / f"{_slug(tag)}.log").open("a") as f:
+        f.write(line if line.endswith("\n") else line + "\n")
+
+
 def metric_record(iteration: int, result: IterationResult) -> dict:
     if result.reason == "baseline":
         outcome = "baseline"

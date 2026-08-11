@@ -3,7 +3,13 @@ import json
 from datetime import UTC, datetime
 
 from nethackers.harness.loop import IterationResult
-from nethackers.harness.runlog import append_metric, metric_record, run_id, write_run_config
+from nethackers.harness.runlog import (
+    append_log,
+    append_metric,
+    metric_record,
+    run_id,
+    write_run_config,
+)
 
 _NOW = datetime(2026, 8, 12, 14, 30, 5, tzinfo=UTC)
 
@@ -40,3 +46,12 @@ def test_metric_record_maps_outcome():
     assert metric_record(0, base)["outcome"] == "baseline"
     assert metric_record(2, IterationResult(False, "no-dev-gain"))["outcome"] == "rejected"
     assert metric_record(4, IterationResult(False, "error: boom"))["outcome"] == "error"
+
+
+def test_append_log_writes_per_iteration_file(tmp_path):
+    d = tmp_path / "runs" / "r1"
+    append_log(d, "iter 1/3", '{"a":1}\n')
+    append_log(d, "iter 1/3", "hello\n")
+    append_log(d, "iter 2/3", "no-newline")  # missing trailing \n -> one is added
+    assert (d / "logs" / "iter-1-3.log").read_text() == '{"a":1}\nhello\n'
+    assert (d / "logs" / "iter-2-3.log").read_text() == "no-newline\n"
