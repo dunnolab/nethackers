@@ -1,4 +1,6 @@
 # tests/test_cli_evolve.py
+import json
+
 from nethackers import cli
 
 
@@ -45,3 +47,32 @@ def test_evolve_passes_max_parallel_evals(tmp_path, monkeypatch):
                    "--max-parallel-evals", "4"])
     assert rc == 0
     assert captured["max_parallel_evals"] == 4
+
+
+def test_evolve_creates_run_dir_with_config_and_latest_symlink(tmp_path, monkeypatch):
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    (seed / "nethackers.solution.json").write_text(
+        '{"root":".","entrypoint":"bot.py","parents":[],"influences":[]}'
+    )
+    (seed / "bot.py").write_text("x=1\n")
+    recorded = {}
+
+    def fake_run_loop(**kwargs):
+        recorded["tree_store_root"] = str(kwargs["tree_store"]._root)
+        recorded["workdir"] = str(kwargs["workdir"])
+        return []
+    monkeypatch.setattr(cli, "run_loop", fake_run_loop, raising=False)
+    rc = cli._run(["evolve", "random", "--seed", str(seed), "--workdir", str(tmp_path / "w")])
+    assert rc == 0
+
+    runs = tmp_path / "w" / "runs"
+    created = list(runs.iterdir())
+    run_dir = next(p for p in created if p.name != "latest")
+    assert (run_dir / "run.json").exists()
+    cfg = json.loads((run_dir / "run.json").read_text())
+    assert cfg["objective"] == "random" and "created_at" in cfg
+    # tree-store + worktrees are under the run dir, not the flat workdir:
+    assert str(run_dir) in recorded["tree_store_root"]
+    assert str(run_dir / "work") == recorded["workdir"]
+    assert (runs / "latest").resolve() == run_dir.resolve()   # symlink points at it

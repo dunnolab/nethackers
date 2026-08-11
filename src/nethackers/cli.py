@@ -52,6 +52,7 @@ import argparse
 import datetime
 import json
 import os
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -62,6 +63,7 @@ from rich.live import Live
 from rich_argparse import RichHelpFormatter
 
 from nethackers.eval.runner import eval_batch
+from nethackers.harness import runlog
 from nethackers.harness.loop import IterationResult, run_loop
 from nethackers.harness.operator import ClaudeOperator, CodexOperator
 from nethackers.harness.store import LocalTreeStore
@@ -95,6 +97,26 @@ def _now() -> str:
 
 def _default_hub() -> str:
     return os.environ.get("NETHACKERS_HUB", "http://localhost:8000")
+
+
+def _git_sha() -> str | None:
+    try:
+        out = subprocess.run(
+            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
+        )
+        return out.stdout.strip()
+    except Exception:
+        return None
+
+
+def _point_latest(runs_dir: Path, rid: str) -> None:
+    link = runs_dir / "latest"
+    try:
+        if link.is_symlink() or link.exists():
+            link.unlink()
+        link.symlink_to(rid)  # relative link to the run-id directory
+    except OSError as exc:
+        err.print(f"[dim]could not update 'latest' symlink: {exc}[/dim]")
 
 
 def _common_parser() -> argparse.ArgumentParser:
@@ -202,6 +224,10 @@ def _build_parser() -> argparse.ArgumentParser:
     evolve.add_argument("--token", default="dev-token")
     evolve.add_argument("--owner", default="dev")
     evolve.add_argument("--workdir", default=str(Path.home() / ".nethackers" / "evolve"))
+    evolve.add_argument(
+        "--run-name", default=None,
+        help="Optional label appended to the run-id folder under runs/.",
+    )
 
     pl = sub.add_parser(
         "pull", parents=[common], formatter_class=RichHelpFormatter,
@@ -305,6 +331,20 @@ def _run(argv: list[str] | None) -> int:
         return 0
 
     if args.cmd == "evolve":
+        started = datetime.datetime.now(datetime.UTC)
+        runs_dir = Path(args.workdir) / "runs"
+        rid = runlog.run_id(started, args.run_name,
+                            exists=lambda r: (runs_dir / r).exists())
+        run_dir = runs_dir / rid
+        runlog.write_run_config(run_dir, {
+            "run_id": rid, "created_at": started.isoformat(), "git_sha": _git_sha(),
+            "objective": args.objective, "seed": str(args.seed), "operator": args.operator,
+            "iterations": args.iterations, "token_budget": args.token_budget,
+            "timeout": args.timeout, "heldout_n": args.heldout_n,
+            "max_parallel_evals": args.max_parallel_evals, "image": args.image,
+        })
+        _point_latest(runs_dir, rid)
+
         operator = {"codex": CodexOperator, "claude": ClaudeOperator}[args.operator]()
         cfg = EvolveConfig(objective=args.objective, backend=args.operator,
                            iterations=args.iterations, token_budget=args.token_budget)
@@ -312,7 +352,7 @@ def _run(argv: list[str] | None) -> int:
         def _run(callbacks, report=lambda _m: None):
             return run_loop(
                 objective=args.objective, seed_tree=Path(args.seed),
-                tree_store=LocalTreeStore(Path(args.workdir) / "trees"),
+                tree_store=LocalTreeStore(run_dir / "trees"),
                 operator=operator, hub=HubClient(args.hub), image=args.image,
                 token=args.token, owner=args.owner, iterations=args.iterations,
                 token_budget=args.token_budget, timeout_s=args.timeout,
@@ -321,7 +361,9 @@ def _run(argv: list[str] | None) -> int:
                 on_episode=callbacks["on_episode"],
                 on_state=callbacks["on_state"],
                 on_log=callbacks["on_log"],
-                workdir=Path(args.workdir) / "work",
+                workdir=run_dir / "work",
+                on_iteration=lambda it, res: runlog.append_metric(
+                    run_dir, runlog.metric_record(it, res)),
             )
 
         if sys.stdout.isatty() and args.output != "json":
