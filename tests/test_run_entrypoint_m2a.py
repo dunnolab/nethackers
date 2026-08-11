@@ -1,17 +1,22 @@
-"""Exercises the ``--batch`` branch of ``run.py``'s CLI wiring: one
-``run_trajectory`` call per batch entry in batch order, the headline
-dual-threading (each entry's character drives BOTH ``objective.character``
-and the ``character=`` kwarg recorded on the result), the ``"-"``
-random-draw sentinel, the ``--batch``-or-``--seeds`` guard, and the JSON
-results file.
+"""Exercises ``run.py``'s ``--batch`` CLI wiring end-to-end (``main()``, via
+an injected ``run_batch`` fake) and the concurrent fan-out logic itself
+(``run_batch``/``_failed_result``, via an injected ``run_one`` +
+``executor_factory=ThreadPoolExecutor``).
 
-`nethackers.arena.trajectory.run_trajectory` is monkeypatched with a fake
-that records every call's kwargs and returns a stub whose ``.to_dict()``
-echoes back an identifying dict, so this covers only `main()`'s own
-plumbing -- not NLE, not a real sandboxed bot subprocess, and not the Docker
-image (see tests/test_docker_smoke.py for that). ``--batch`` is now the
-only supported way in -- the legacy single-character ``--character``/
-``--seeds`` path has been retired.
+``main()``'s real path uses a ``ProcessPoolExecutor`` for crash isolation
+(see the module docstring in ``nethackers/arena/run.py``), which cannot run
+a test-local closure (closures aren't picklable, and a worker process
+re-imports modules fresh so it would never see a parent-process monkeypatch
+either way). So the per-entry construction logic -- the headline character
+dual-threading, the ``"-"`` random-draw sentinel, batch-order preservation,
+dead-worker isolation -- is exercised by calling ``run_batch`` directly with
+an injected thread pool instead, matching this file's fake-injection style
+throughout.
+
+Nothing here touches NLE, a real sandboxed bot subprocess, or the Docker
+image (see tests/test_docker_smoke.py for that). ``--batch`` is the only
+supported way in -- the legacy single-character ``--character``/``--seeds``
+path has been retired.
 """
 
 import concurrent.futures as cf
@@ -20,99 +25,68 @@ import json
 import pytest
 
 import nethackers.arena.run as R
+from nethackers.arena import run as run_mod
 from nethackers.arena.run import run_batch
 from nethackers.contracts.models import TrajectoryResult
 
 
-def _fake_run_trajectory(calls):
-    """Record every call's kwargs and return a stub whose ``to_dict()``
-    echoes back the call's ``spec.trajectory_id`` -- enough to check
-    per-entry ordering without a real trajectory run."""
-
-    def fake(**kwargs):
-        calls.append(kwargs)
-        trajectory_id = kwargs["spec"].trajectory_id
-        # Stub stands in for a real TrajectoryResult: to_dict() for the results
-        # file, plus the fields run.py now reads for its per-episode stderr line.
-        return type(
-            "T",
-            (),
-            {
-                "to_dict": lambda self: {"trajectory_id": trajectory_id},
-                "progress": 0.1,
-                "status": "completed",
-                "turns": 1,
-                "max_depth": 1,
-            },
-        )()
-
-    return fake
+def _fake(tid, char, progress=0.5, status="completed"):
+    return TrajectoryResult(
+        trajectory_id=tid, status=status, progress=progress, ascended=False,
+        steps=1, turns=1, max_depth=1, end_status=None, error=None,
+        wall_seconds=0.0, character=char, milestone=None)
 
 
-def test_batch_threads_character_into_objective_and_result(monkeypatch, tmp_path):
-    calls = []
-    monkeypatch.setattr(R, "run_trajectory", _fake_run_trajectory(calls))
-    out = tmp_path / "r.json"
+def test_batch_threads_character_into_objective_and_result():
+    """The headline fix, exercised at ``run_batch`` -- where per-entry
+    Objective/character construction now lives: each batch entry's character
+    drives BOTH ``objective.character`` (env's NLE build selection) AND the
+    ``character=`` kwarg (result identity). A future edit that drops
+    ``character=`` from the ``run_one`` call would fail this assertion
+    (KeyError) even though ``objective.character`` is right."""
+    calls = {}
 
-    rc = R.main(
-        [
-            "--solution",
-            str(tmp_path),
-            "--batch",
-            json.dumps([[0, "val-dwa-law-fem"], [3, "wiz-elf-cha-mal"]]),
-            "--evaluation-id",
-            "e",
-            "--out",
-            str(out),
-        ]
-    )
+    def fake_run_one(submission_path, spec, objective, character):
+        calls[spec.trajectory_id] = {"objective": objective, "character": character}
+        return _fake(spec.trajectory_id, character)
 
-    assert rc == 0
+    results = run_batch(
+        "/sol", [[0, "val-dwa-law-fem"], [3, "wiz-elf-cha-mal"]],
+        secret="public", evaluation_id="e", max_steps=100, no_progress_timeout=10,
+        action_timeout=5.0, max_parallel_evals=8,
+        run_one=fake_run_one, executor_factory=cf.ThreadPoolExecutor)
+
     assert len(calls) == 2
-
-    # One call per batch entry, in batch order.
-    assert calls[0]["spec"].trajectory_id == 0
-    assert calls[1]["spec"].trajectory_id == 3
 
     # The headline fix: each entry's character drives BOTH objective.character
     # (env's NLE build selection) AND the character= kwarg (result identity).
-    # A future edit that drops character= from the run_trajectory call would
-    # fail this assertion (KeyError) even though objective.character is right.
     assert calls[0]["objective"].character == "val-dwa-law-fem"
     assert calls[0]["character"] == "val-dwa-law-fem"
-    assert calls[1]["objective"].character == "wiz-elf-cha-mal"
-    assert calls[1]["character"] == "wiz-elf-cha-mal"
+    assert calls[3]["objective"].character == "wiz-elf-cha-mal"
+    assert calls[3]["character"] == "wiz-elf-cha-mal"
 
-    # Results JSON: one dict per batch entry, in order.
-    results = json.loads(out.read_text())
-    assert len(results) == 2
-    assert [r["trajectory_id"] for r in results] == [0, 3]
+    # Results: one per batch entry, in batch order (index-keyed by
+    # run_batch, not completion order).
+    assert [r.trajectory_id for r in results] == [0, 3]
 
 
-def test_batch_dash_sentinel_means_random_draw_but_is_still_recorded(monkeypatch, tmp_path):
-    calls = []
-    monkeypatch.setattr(R, "run_trajectory", _fake_run_trajectory(calls))
-    out = tmp_path / "r.json"
+def test_batch_dash_sentinel_means_random_draw_but_is_still_recorded():
+    calls = {}
 
-    rc = R.main(
-        [
-            "--solution",
-            str(tmp_path),
-            "--batch",
-            json.dumps([[7, "-"]]),
-            "--evaluation-id",
-            "e",
-            "--out",
-            str(out),
-        ]
-    )
+    def fake_run_one(submission_path, spec, objective, character):
+        calls[spec.trajectory_id] = {"objective": objective, "character": character}
+        return _fake(spec.trajectory_id, character)
 
-    assert rc == 0
+    run_batch(
+        "/sol", [[7, "-"]], secret="public", evaluation_id="e", max_steps=100,
+        no_progress_timeout=10, action_timeout=5.0, max_parallel_evals=8,
+        run_one=fake_run_one, executor_factory=cf.ThreadPoolExecutor)
+
     # "-" configures the environment for NLE's natural random draw...
-    assert calls[0]["objective"].character is None
+    assert calls[7]["objective"].character is None
     # ...but the sentinel itself is still passed through as the recorded
-    # identity (run.py records the literal batch entry, not a resolved build).
-    assert calls[0]["character"] == "-"
+    # identity (run_batch records the literal batch entry, not a resolved build).
+    assert calls[7]["character"] == "-"
 
 
 def test_neither_batch_nor_seeds_raises_systemexit(tmp_path):
@@ -128,13 +102,6 @@ def test_neither_batch_nor_seeds_raises_systemexit(tmp_path):
             ]
         )
     assert excinfo.value.code == 2  # argparse's parser.error() exit status
-
-
-def _fake(tid, char, progress=0.5, status="completed"):
-    return TrajectoryResult(
-        trajectory_id=tid, status=status, progress=progress, ascended=False,
-        steps=1, turns=1, max_depth=1, end_status=None, error=None,
-        wall_seconds=0.0, character=char, milestone=None)
 
 
 def test_run_batch_preserves_order_and_streams_true_index():
@@ -183,3 +150,26 @@ def test_run_batch_isolates_a_dead_worker():
     assert results[0].status == "completed"
     assert results[1].status == "infrastructure_error" and results[1].progress == 0.0
     assert len(results) == 2
+
+
+def test_main_passes_knob_and_writes_batch_order(tmp_path, monkeypatch):
+    calls = {}
+
+    def fake_run_batch(submission_path, batch, **kw):
+        calls.update(kw)
+        calls["batch"] = batch
+        return [TrajectoryResult(trajectory_id=int(s), status="completed", progress=0.1 * k,
+                ascended=False, steps=1, turns=1, max_depth=1, end_status=None, error=None,
+                wall_seconds=0.0, character=c, milestone=None)
+                for k, (s, c) in enumerate(batch)]
+
+    monkeypatch.setattr(run_mod, "run_batch", fake_run_batch)
+    out = tmp_path / "results.json"
+    rc = run_mod.main([
+        "--solution", "/sol",
+        "--batch", json.dumps([[0, "tou-hum-neu-mal"], [1, "tou-hum-neu-mal"]]),
+        "--evaluation-id", "local", "--out", str(out), "--max-parallel-evals", "4"])
+    assert rc == 0
+    assert calls["max_parallel_evals"] == 4
+    written = json.loads(out.read_text())
+    assert [r["trajectory_id"] for r in written] == [0, 1]  # batch order
