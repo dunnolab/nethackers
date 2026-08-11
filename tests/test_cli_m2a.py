@@ -1120,7 +1120,7 @@ def test_cli_eval_objective_produces_registerable_evidence(monkeypatch, capsys, 
     identity = "val-dwa-law-fem"
     spec = CATALOG[identity]
 
-    def fake_eval_batch(solution, spec_arg, image, *, now):
+    def fake_eval_batch(solution, spec_arg, image, *, now, max_parallel_evals=8):
         assert spec_arg is spec  # the CLI resolved exactly this catalog entry
         results = [
             TrajectoryResult(

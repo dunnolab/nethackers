@@ -178,6 +178,10 @@ def _build_parser() -> argparse.ArgumentParser:
     e.add_argument("solution", help="Path to the solution directory (mounted read-only).")
     e.add_argument("--objective", required=True, help="A catalog objective name.")
     e.add_argument("--image", default="nethackers/arena:dev", help="Arena image to run.")
+    e.add_argument(
+        "--max-parallel-evals", type=int, default=8,
+        help="Cap on episodes the arena runs concurrently (default: %(default)s).",
+    )
 
     evolve = sub.add_parser(
         "evolve", parents=[common], formatter_class=RichHelpFormatter,
@@ -190,6 +194,10 @@ def _build_parser() -> argparse.ArgumentParser:
     evolve.add_argument("--token-budget", type=int, default=200_000)
     evolve.add_argument("--timeout", type=float, default=1800.0)
     evolve.add_argument("--heldout-n", type=int, default=8)
+    evolve.add_argument(
+        "--max-parallel-evals", type=int, default=8,
+        help="Cap on episodes the arena runs concurrently per eval (default: %(default)s).",
+    )
     evolve.add_argument("--image", default="nethackers/arena:dev")
     evolve.add_argument("--token", default="dev-token")
     evolve.add_argument("--owner", default="dev")
@@ -289,7 +297,10 @@ def _run(argv: list[str] | None) -> int:
         if spec is None:
             err.print(_unknown_objective(args.objective))
             return 2
-        evidence = eval_batch(Path(args.solution), spec, args.image, now=_now())
+        evidence = eval_batch(
+            Path(args.solution), spec, args.image, now=_now(),
+            max_parallel_evals=args.max_parallel_evals,
+        )
         print(json.dumps(evidence.to_dict(), indent=2))
         return 0
 
@@ -305,7 +316,8 @@ def _run(argv: list[str] | None) -> int:
                 operator=operator, hub=HubClient(args.hub), image=args.image,
                 token=args.token, owner=args.owner, iterations=args.iterations,
                 token_budget=args.token_budget, timeout_s=args.timeout,
-                heldout_n=args.heldout_n, now_fn=_now, report=report,
+                heldout_n=args.heldout_n, max_parallel_evals=args.max_parallel_evals,
+                now_fn=_now, report=report,
                 on_episode=callbacks["on_episode"],
                 on_state=callbacks["on_state"],
                 on_log=callbacks["on_log"],
