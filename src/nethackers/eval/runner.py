@@ -115,6 +115,7 @@ def eval_batch(
     image_digest_resolver=_default_image_digest,
     on_episode: Callable[[dict], None] | None = None,
     popen=subprocess.Popen,
+    max_parallel_evals: int = 8,
 ) -> Evidence:
     """Evaluate ``solution_path`` against ``image`` for ``spec``'s published
     ``(seed, character)`` batch and return the resulting ``Evidence``.
@@ -123,9 +124,12 @@ def eval_batch(
     read-only at ``/sol`` and a fresh host temp directory bind-mounted at
     ``/out``, invoking the image's ``nethackers.arena.run`` entrypoint with
     ``--batch`` (JSON ``[[seed, character], ...]``, replacing the legacy
-    ``--character``/``--seeds``) and ``spec``'s step/timeout parameters.
+    ``--character``/``--seeds``), ``spec``'s step/timeout parameters, and
+    ``--max-parallel-evals`` (``max_parallel_evals``, default 8) -- the cap
+    on how many of the batch's episodes the container runs concurrently.
     Reads back ``/out/results.json`` (a ``list[TrajectoryResult.to_dict()]``,
-    one per batch entry in batch order) and wraps it into an ``Evidence``.
+    one per batch entry in batch order regardless of completion order) and
+    wraps it into an ``Evidence``.
 
     ``evaluator_image`` is set to ``image_digest_resolver(image)`` -- the
     image's resolved content digest, not the (mutable) ``image`` tag passed
@@ -161,6 +165,7 @@ def eval_batch(
             "--max-steps", str(spec.max_steps),
             "--no-progress-timeout", str(spec.no_progress_timeout),
             "--action-timeout", str(spec.action_timeout_seconds),
+            "--max-parallel-evals", str(max_parallel_evals),
             "--out", "/out/results.json",
         ]
         if on_episode is None:

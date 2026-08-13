@@ -38,6 +38,13 @@ def _slug(tag: str) -> str:
     return "log_" + tag.replace(" ", "_").replace("/", "_")
 
 
+def _rows_in_order(rows_by_index: dict[int, dict]) -> list[dict]:
+    """Render a batch's episode rows in index (== batch/seed) order,
+    regardless of the order they actually completed in -- parallel eval
+    (M3) means episode k+1 can finish before episode k."""
+    return [rows_by_index[k] for k in sorted(rows_by_index)]
+
+
 def _guarded(method):
     """Per the M3 evolve TUI design spec's Errors section: "a callback
     raising is caught and dropped (logged to a debug buffer, never
@@ -78,7 +85,7 @@ class EvolveApp(App):
         self._state: dict = dict(_INITIAL)
         self._title = f"evolving {cfg.objective} · {cfg.backend}"
         self._cur_label: str | None = None
-        self._cur_rows: list[dict] = []
+        self._cur_rows_by_index: dict[int, dict] = {}
         self._cur_static: Static | None = None
         self._eval_step: tuple[int, int, float] | None = None
         self._logs: dict[str, list[tuple[str, str]]] = {}
@@ -135,18 +142,30 @@ class EvolveApp(App):
     def _apply_episode(self, label: str, ep: dict) -> None:
         scroll = self.query_one("#tables", VerticalScroll)
         if label != self._cur_label:
-            if self._cur_static is not None and self._cur_rows and self._cur_label is not None:
-                self._cur_static.update(episode_table(self._cur_label, self._cur_rows, done=True))
+            if (
+                self._cur_static is not None
+                and self._cur_rows_by_index
+                and self._cur_label is not None
+            ):
+                self._cur_static.update(episode_table(
+                    self._cur_label, _rows_in_order(self._cur_rows_by_index), done=True))
             self._cur_label = label
-            self._cur_rows = []
+            self._cur_rows_by_index = {}
             self._cur_static = Static()
             scroll.mount(self._cur_static)
-        self._cur_rows.append(ep)
+        # Keyed by index (== batch/seed position), not append order: parallel
+        # eval (M3) means episodes can complete out of order, but the table
+        # should always read left-to-right in batch order.
+        self._cur_rows_by_index[int(ep["index"])] = ep
+        rows = _rows_in_order(self._cur_rows_by_index)
         if self._cur_static is not None:
-            self._cur_static.update(episode_table(label, self._cur_rows, done=False))
+            self._cur_static.update(episode_table(label, rows, done=False))
         scroll.scroll_end(animate=False)
-        mean = sum(float(r["progress"]) for r in self._cur_rows) / len(self._cur_rows)
-        self._eval_step = (int(ep["index"]), int(ep["total"]), mean)
+        mean = sum(float(r["progress"]) for r in rows) / len(rows)
+        # done/total (how many of this batch's episodes have finished), not
+        # the arriving episode's own index -- that's no longer monotonic
+        # once episodes complete out of order.
+        self._eval_step = (len(rows), int(ep["total"]), mean)
         self._refresh_status()
 
     @_guarded

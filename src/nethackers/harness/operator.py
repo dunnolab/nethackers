@@ -88,6 +88,23 @@ def _claude_tokens(line: str) -> int:
     return _usage_tokens(usage, "input_tokens", "output_tokens")
 
 
+def _claude_cmd(cli: str, brief: str) -> list[str]:
+    # Hermeticity flags: the operator must be a pure function of (parent
+    # tree, brief). Claude Code otherwise persists + recalls per-directory
+    # memory under ~/.claude/projects/<cwd-slug>/memory across runs that
+    # reuse a worktree path -- the confirmed cause of the operator recalling
+    # and re-applying its own prior mutation instead of exploring (see
+    # docs/superpowers/specs/2026-08-11-hermetic-operator-design.md).
+    # --setting-sources drops only the *user* settings layer; auth lives in
+    # ~/.claude.json, which is not a setting source, so it still works.
+    return [cli, "-p", brief, "--output-format", "stream-json", "--verbose",
+            "--permission-mode", "acceptEdits",
+            "--settings", '{"autoMemoryEnabled": false}',
+            "--setting-sources", "project,local",
+            "--strict-mcp-config",
+            "--no-session-persistence"]
+
+
 class ClaudeOperator:
     def __init__(self, *, cli: str = "claude") -> None:
         self._cli = cli
@@ -96,8 +113,7 @@ class ClaudeOperator:
         self, worktree: Path, brief: str, *, token_budget: int, timeout_s: float,
         on_line: Callable[[str], None] | None = None
     ) -> OperatorResult:
-        cmd = [self._cli, "-p", brief, "--output-format", "stream-json", "--verbose",
-               "--permission-mode", "acceptEdits"]
+        cmd = _claude_cmd(self._cli, brief)
         return run_with_token_budget(cmd, worktree, token_budget=token_budget,
                                      timeout_s=timeout_s, tokens_from_line=_claude_tokens,
                                      backend="claude", on_line=on_line)
@@ -123,6 +139,16 @@ def agent_tokens(backend: str, line: str) -> int:
     return 0
 
 
+def _codex_cmd(cli: str, brief: str) -> list[str]:
+    # Codex has no auto-memory recall and `codex exec` never auto-resumes,
+    # so these are consistency + hygiene, not a bug fix: stop writing
+    # session/rollout files and drop inherited user config/rules so the
+    # operator stays a pure function of (parent tree, brief). Auth still
+    # works -- --ignore-user-config only drops $CODEX_HOME/config.toml.
+    return [cli, "exec", brief, "--json", "--full-auto",
+            "--ephemeral", "--ignore-user-config", "--ignore-rules"]
+
+
 class CodexOperator:
     def __init__(self, *, cli: str = "codex") -> None:
         self._cli = cli
@@ -131,7 +157,7 @@ class CodexOperator:
         self, worktree: Path, brief: str, *, token_budget: int, timeout_s: float,
         on_line: Callable[[str], None] | None = None
     ) -> OperatorResult:
-        cmd = [self._cli, "exec", brief, "--json", "--full-auto"]
+        cmd = _codex_cmd(self._cli, brief)
         return run_with_token_budget(cmd, worktree, token_budget=token_budget,
                                      timeout_s=timeout_s, tokens_from_line=_codex_tokens,
                                      backend="codex", on_line=on_line)

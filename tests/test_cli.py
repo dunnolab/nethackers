@@ -19,11 +19,12 @@ from nethackers.hub.objectives import CATALOG
 def test_cli_eval_invokes_eval_batch_with_resolved_objective(monkeypatch, capsys, tmp_path):
     seen = {}
 
-    def fake_eval_batch(solution, spec, image, *, now):
+    def fake_eval_batch(solution, spec, image, *, now, max_parallel_evals=8):
         seen["solution"] = solution
         seen["spec"] = spec
         seen["image"] = image
         seen["now"] = now
+        seen["max_parallel_evals"] = max_parallel_evals
         result = TrajectoryResult(0, "completed", 0.1, False, 1, 1, 1, None, None, 0.0)
         objective = Objective(character=None, seed_set=spec.name)
         return Evidence.from_results(
@@ -40,6 +41,7 @@ def test_cli_eval_invokes_eval_batch_with_resolved_objective(monkeypatch, capsys
     assert seen["spec"] is CATALOG["val-dwa-law-fem"]
     assert seen["solution"] == tmp_path
     assert seen["image"] == "nethackers/arena:dev"
+    assert seen["max_parallel_evals"] == 8  # default, unset here
 
     out = json.loads(capsys.readouterr().out)
     assert out["mean_progress"] == 0.1
@@ -50,7 +52,7 @@ def test_cli_eval_invokes_eval_batch_with_resolved_objective(monkeypatch, capsys
 def test_cli_eval_custom_image_is_passed_through(monkeypatch, capsys, tmp_path):
     seen = {}
 
-    def fake_eval_batch(solution, spec, image, *, now):
+    def fake_eval_batch(solution, spec, image, *, now, max_parallel_evals=8):
         seen["image"] = image
         result = TrajectoryResult(0, "completed", 0.1, False, 1, 1, 1, None, None, 0.0)
         objective = Objective(character=None, seed_set=spec.name)
@@ -67,6 +69,28 @@ def test_cli_eval_custom_image_is_passed_through(monkeypatch, capsys, tmp_path):
 
     assert rc == 0
     assert seen["image"] == "custom/arena:tag"
+
+
+def test_cli_eval_custom_max_parallel_evals_is_passed_through(monkeypatch, capsys, tmp_path):
+    seen = {}
+
+    def fake_eval_batch(solution, spec, image, *, now, max_parallel_evals=8):
+        seen["max_parallel_evals"] = max_parallel_evals
+        result = TrajectoryResult(0, "completed", 0.1, False, 1, 1, 1, None, None, 0.0)
+        objective = Objective(character=None, seed_set=spec.name)
+        return Evidence.from_results(
+            solution_digest="sha256:z", objective=objective, evaluator_image=image,
+            results=[result], created_at=now,
+        )
+
+    monkeypatch.setattr(C, "eval_batch", fake_eval_batch)
+
+    rc = C.main(
+        ["eval", str(tmp_path), "--objective", "random", "--max-parallel-evals", "3"]
+    )
+
+    assert rc == 0
+    assert seen["max_parallel_evals"] == 3
 
 
 def test_cli_eval_unknown_objective_errors_without_traceback(capsys, tmp_path):

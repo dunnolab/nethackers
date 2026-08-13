@@ -128,6 +128,30 @@ def test_eval_batch_wraps_container_results_into_evidence(tmp_path):
     assert "--seeds" not in cmd
 
 
+def test_eval_batch_passes_max_parallel_evals(tmp_path):
+    # Mirrors test_eval_batch_wraps_container_results_into_evidence's setup --
+    # this only pins the new --max-parallel-evals docker argv, reusing the
+    # same fake-runner helper (records cmd, writes results.json to /out).
+    sol = tmp_path / "sol"
+    sol.mkdir()
+    (sol / "bot.py").write_text("x")
+    calls = []
+
+    eval_batch(
+        sol,
+        _SPEC,
+        "img:dev",
+        now="2026-08-09T00:00:00Z",
+        runner=_make_fake_docker_run(calls),
+        image_digest_resolver=lambda img: "img@sha256:deadbeef",
+        max_parallel_evals=5,
+    )
+
+    cmd = calls[0]
+    assert "--max-parallel-evals" in cmd
+    assert cmd[cmd.index("--max-parallel-evals") + 1] == "5"
+
+
 def test_eval_batch_streams_per_episode_when_on_episode_given(tmp_path):
     # The opt-in streaming path (Popen) forwards each parsed per-episode stderr
     # line to on_episode; results still come from results.json (display-only).
