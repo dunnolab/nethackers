@@ -130,7 +130,7 @@ def _gh_commit(repo: str, sha: str) -> Text:
     return Text(short, style=f"link {base}/commit/{sha}")
 
 
-def render_board(entries: list[dict[str, Any]], you: str | None = None) -> RenderableType:
+def render_board(entries: list[dict[str, Any]], *, you: str | None = None) -> RenderableType:
     """A ``rich`` table of board entries, shape-aware over which metric
     produced them (mirrors the baseline ``plain`` ``render_board``'s shape
     detection exactly, so ``-o table``/``-o plain`` never disagree on
