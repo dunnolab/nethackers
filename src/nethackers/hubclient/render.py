@@ -92,7 +92,7 @@ def _empty(message: str) -> Text:
     return Text(message, style="italic dim")
 
 
-def _gh_user(login: str) -> Text:
+def _gh_user(login: str, you: str | None = None) -> Text:
     """A GitHub username as an OSC-8 terminal hyperlink to the profile. Owners
     are GitHub logins (register resolves the auth token -> login and requires
     the repo owner == login), so ``github.com/<login>`` is always the right
@@ -101,8 +101,11 @@ def _gh_user(login: str) -> Text:
     login = str(login)
     if not login:
         return Text("")
-    # Display "@ login"; the link target stays github.com/<login> (no "@ ").
-    return Text(f"@ {login}", style=f"link https://github.com/{login}")
+    style = "link https://github.com/" + login
+    if you is not None and login == you:
+        style += " bold reverse"
+    label = f"@ {login}" + (" ◀ you" if you is not None and login == you else "")
+    return Text(label, style=style)
 
 
 def _gh_repo(repo: str) -> Text:
@@ -127,7 +130,7 @@ def _gh_commit(repo: str, sha: str) -> Text:
     return Text(short, style=f"link {base}/commit/{sha}")
 
 
-def render_board(entries: list[dict[str, Any]]) -> RenderableType:
+def render_board(entries: list[dict[str, Any]], you: str | None = None) -> RenderableType:
     """A ``rich`` table of board entries, shape-aware over which metric
     produced them (mirrors the baseline ``plain`` ``render_board``'s shape
     detection exactly, so ``-o table``/``-o plain`` never disagree on
@@ -158,7 +161,7 @@ def render_board(entries: list[dict[str, Any]]) -> RenderableType:
             table.add_row(
                 str(e.get("rank", "")),
                 _short_digest(str(e.get("solution_digest", ""))),
-                _gh_user(e.get("owner", "")),
+                _gh_user(e.get("owner", ""), you=you),
                 str(e.get("ascensions", "")),
                 _colored_num(e.get("median_progression", "")),
                 _colored_num(e.get("mean_progression", "")),
@@ -170,7 +173,7 @@ def render_board(entries: list[dict[str, Any]]) -> RenderableType:
             table.add_row(
                 str(e.get("rank", "")),
                 _short_digest(str(e.get("solution_digest", ""))),
-                _gh_user(e.get("owner", "")),
+                _gh_user(e.get("owner", ""), you=you),
                 str(e.get("cells_held", "")),
             )
     elif "firsts" in first:
@@ -180,7 +183,7 @@ def render_board(entries: list[dict[str, Any]]) -> RenderableType:
             table.add_row(
                 str(e.get("rank", "")),
                 _short_digest(str(e.get("solution_digest", ""))),
-                _gh_user(e.get("owner", "")),
+                _gh_user(e.get("owner", ""), you=you),
                 str(e.get("firsts", "")),
             )
     else:
