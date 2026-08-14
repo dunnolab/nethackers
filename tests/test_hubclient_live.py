@@ -35,11 +35,11 @@ def test_new_batch_freezes_previous_to_scrollback():
     stream.on_episode("cold-start · dev", _ep(2, 2, 1))
     assert live.console.printed == []  # batch still filling -> nothing frozen yet
 
-    stream.on_episode("cold-start · held-out", _ep(1, 2, 1000))  # label change
+    stream.on_episode("cold-start · validation", _ep(1, 2, 1000))  # label change
     assert len(live.console.printed) == 1  # the dev batch frozen exactly once
 
     stream.finish()
-    assert len(live.console.printed) == 2  # the held-out batch frozen at the end
+    assert len(live.console.printed) == 2  # the validation batch frozen at the end
 
 
 def test_updates_live_region_once_per_episode_within_a_batch():

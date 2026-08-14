@@ -215,7 +215,7 @@ def _build_parser() -> argparse.ArgumentParser:
     evolve.add_argument("--iterations", type=int, default=1)
     evolve.add_argument("--token-budget", type=int, default=200_000)
     evolve.add_argument("--timeout", type=float, default=1800.0)
-    evolve.add_argument("--heldout-n", type=int, default=8)
+    evolve.add_argument("--validation-n", type=int, default=15)
     evolve.add_argument(
         "--max-parallel-evals", type=int, default=8,
         help="Cap on episodes the arena runs concurrently per eval (default: %(default)s).",
@@ -340,7 +340,7 @@ def _run(argv: list[str] | None) -> int:
             "run_id": rid, "created_at": started.isoformat(), "git_sha": _git_sha(),
             "objective": args.objective, "seed": str(args.seed), "operator": args.operator,
             "iterations": args.iterations, "token_budget": args.token_budget,
-            "timeout": args.timeout, "heldout_n": args.heldout_n,
+            "timeout": args.timeout, "validation_n": args.validation_n,
             "max_parallel_evals": args.max_parallel_evals, "image": args.image,
         })
         _point_latest(runs_dir, rid)
@@ -359,7 +359,7 @@ def _run(argv: list[str] | None) -> int:
                 operator=operator, hub=HubClient(args.hub), image=args.image,
                 token=args.token, owner=args.owner, iterations=args.iterations,
                 token_budget=args.token_budget, timeout_s=args.timeout,
-                heldout_n=args.heldout_n, max_parallel_evals=args.max_parallel_evals,
+                validation_n=args.validation_n, max_parallel_evals=args.max_parallel_evals,
                 now_fn=_now, report=report,
                 on_episode=callbacks["on_episode"],
                 on_state=callbacks["on_state"],

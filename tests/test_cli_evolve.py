@@ -15,7 +15,7 @@ def test_evolve_parses_and_invokes_loop(tmp_path, monkeypatch):
     def fake_run_loop(**kwargs):
         captured.update(kwargs)
         from nethackers.harness.loop import IterationResult
-        return [IterationResult(True, "registered", dev_fitness=0.6, heldout_fitness=0.6,
+        return [IterationResult(True, "registered", dev_fitness=0.6, validation_fitness=0.6,
                                 tokens=10, digest="sha256:new")]
     monkeypatch.setattr(cli, "run_loop", fake_run_loop, raising=False)
     rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed),
@@ -38,7 +38,7 @@ def test_evolve_passes_max_parallel_evals(tmp_path, monkeypatch):
     def fake_run_loop(**kwargs):
         captured.update(kwargs)
         from nethackers.harness.loop import IterationResult
-        return [IterationResult(True, "registered", dev_fitness=0.6, heldout_fitness=0.6,
+        return [IterationResult(True, "registered", dev_fitness=0.6, validation_fitness=0.6,
                                 tokens=10, digest="sha256:new")]
     monkeypatch.setattr(cli, "run_loop", fake_run_loop, raising=False)
     rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed),
