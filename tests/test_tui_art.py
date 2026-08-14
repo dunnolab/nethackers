@@ -21,9 +21,14 @@ def test_tombstone_contains_rip_and_each_line():
     assert any("|" in line for line in lines), "Side frame '|' not found"
     # Base row is filled with "_"
     assert "_" in lines[-1], "Headstone base '_' not found"
-    # "RIP" sits on its own row (the first line after the top box)
-    rip_line = next(line for line in lines if "RIP" in line)
-    assert rip_line.count("RIP") >= 1, "RIP should appear on its own line"
+    # "RIP" sits on its own row ABOVE the epitaph (not merged)
+    rip_idx = next(i for i, l in enumerate(lines) if "RIP" in l)
+    epitaph_idx = next(i for i, l in enumerate(lines) if "iter 2" in l)
+    assert rip_idx < epitaph_idx, "RIP row should appear above epitaph"
+    assert "iter 2" not in lines[rip_idx], "RIP is NOT merged onto epitaph row"
+    assert (
+        lines[rip_idx].strip().strip("|").strip() == "RIP"
+    ), "RIP should be alone on its row (only frame around it)"
 
 
 def test_tombstone_truncates_long_lines():
