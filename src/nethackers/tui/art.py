@@ -2,6 +2,8 @@
 high-score board table. No Textual; unit-tested as strings/Tables."""
 from __future__ import annotations
 
+from typing import Any
+
 from rich import box
 from rich.table import Table
 from rich.text import Text
@@ -46,7 +48,7 @@ def tombstone(lines: list[str]) -> str:
     return "\n".join(out)
 
 
-def highscore_table(entries: list[dict], you: str | None = None) -> Table:
+def highscore_table(entries: list[dict[str, Any]], you: str | None = None) -> Table:
     """Board rendered in NetHack's high-score idiom. Owner-keyed when rows carry
     ``owner`` (ranking boards); identity-keyed otherwise (elites)."""
     t = Table(box=box.SIMPLE_HEAVY, header_style="bold", pad_edge=False)

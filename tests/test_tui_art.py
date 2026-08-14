@@ -1,4 +1,4 @@
-from nethackers.tui.art import score_to_dlvl, tombstone, highscore_table
+from nethackers.tui.art import highscore_table, score_to_dlvl, tombstone
 
 
 def test_score_to_dlvl_boundaries_and_monotonic():
@@ -12,9 +12,37 @@ def test_score_to_dlvl_boundaries_and_monotonic():
 
 def test_tombstone_contains_rip_and_each_line():
     art = tombstone(["iter 2", "no dev gain"])
+    lines = art.splitlines()
     assert "RIP" in art
     assert "iter 2" in art and "no dev gain" in art
-    assert "_" in art.splitlines()[-1]           # headstone base
+    # Box frame: top line with "/" corner
+    assert any("/" in line for line in lines[:3]), "Top box corner '/' not found"
+    # Side lines contain "|"
+    assert any("|" in line for line in lines), "Side frame '|' not found"
+    # Base row is filled with "_"
+    assert "_" in lines[-1], "Headstone base '_' not found"
+    # "RIP" sits on its own row (the first line after the top box)
+    rip_line = next(line for line in lines if "RIP" in line)
+    assert rip_line.count("RIP") >= 1, "RIP should appear on its own line"
+
+
+def test_tombstone_truncates_long_lines():
+    """Test that epitaph lines longer than inner width (20) are truncated."""
+    long_line = "a" * 30  # Exceeds inner width of 20
+    art = tombstone([long_line])
+    assert long_line not in art, "Long line should be truncated"
+    # The truncated version (first 20 chars) should appear
+    assert long_line[:20] in art, "Truncated line should appear in tombstone"
+
+
+def test_tombstone_clips_to_four_lines():
+    """Test that only first 4 epitaph lines are used (lines[:4] slice)."""
+    five_lines = ["line1", "line2", "line3", "line4", "line5"]
+    art = tombstone(five_lines)
+    # First 4 should be present
+    assert "line1" in art and "line2" in art and "line3" in art and "line4" in art
+    # Fifth should not appear
+    assert "line5" not in art, "Only first 4 epitaph lines should appear"
 
 
 def test_highscore_table_owner_keyed_highlights_you():
@@ -25,7 +53,10 @@ def test_highscore_table_owner_keyed_highlights_you():
     t = highscore_table(entries, you="castiel")
     text = _plain(t)                              # helper below
     assert "@vale" in text and "@castiel" in text
-    assert "◀ you" in text                        # the you-row is marked
+    # Marker attached to correct row as one compound string
+    assert "@castiel ◀ you" in text, "Marker should be on castiel's row"
+    # Other owner should NOT have the marker
+    assert "@vale ◀ you" not in text, "Marker should not be on vale's row"
     assert "Dlvl:26" in text                      # derived from 0.51
 
 
