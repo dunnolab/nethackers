@@ -22,6 +22,27 @@ def test_load_tolerates_garbage(tmp_path, monkeypatch):
     assert cred.load() is None
 
 
+def test_load_tolerates_missing_keys(tmp_path, monkeypatch):
+    p = tmp_path / "credentials.json"
+    p.write_text("{}")
+    monkeypatch.setattr(cred, "path", lambda: p)
+    assert cred.load() is None
+
+
+def test_load_tolerates_missing_token_key(tmp_path, monkeypatch):
+    p = tmp_path / "credentials.json"
+    p.write_text('{"login": "castiel"}')
+    monkeypatch.setattr(cred, "path", lambda: p)
+    assert cred.load() is None
+
+
+def test_load_tolerates_non_dict_json(tmp_path, monkeypatch):
+    p = tmp_path / "credentials.json"
+    p.write_text("[1, 2]")
+    monkeypatch.setattr(cred, "path", lambda: p)
+    assert cred.load() is None
+
+
 def test_whoami_from_token_resolves_login():
     class FakeResp:
         status_code = 200
@@ -31,6 +52,7 @@ def test_whoami_from_token_resolves_login():
 
     class FakeHttp:
         def get(self, url, headers):
+            assert url == "https://api.github.com/user"
             assert headers["Authorization"] == "Bearer tok-abc"
             return FakeResp()
 
