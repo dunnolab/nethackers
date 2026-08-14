@@ -68,6 +68,7 @@ from nethackers.harness.loop import IterationResult, run_loop
 from nethackers.harness.operator import ClaudeOperator, CodexOperator
 from nethackers.harness.store import LocalTreeStore
 from nethackers.hub.objectives import CATALOG
+from nethackers.hubclient import credentials as _cred
 from nethackers.hubclient.client import (
     HubClient,
     render_attainment as plain_attainment,
@@ -76,10 +77,11 @@ from nethackers.hubclient.client import (
     render_search as plain_search,
     render_show as plain_show,
 )
+from nethackers.hubclient.credentials import Credentials, whoami_from_token
 from nethackers.hubclient.live import EpisodeStream
 from nethackers.hubclient.output import emit, err
 from nethackers.hubclient.pull import pull
-from nethackers.hubclient.register import register_solution
+from nethackers.hubclient.register import device_login, register_solution
 from nethackers.hubclient.render import (
     render_attainment as rich_attainment,
     render_board as rich_board,
@@ -117,6 +119,10 @@ def _point_latest(runs_dir: Path, rid: str) -> None:
         link.symlink_to(rid)  # relative link to the run-id directory
     except OSError as exc:
         err.print(f"[dim]could not update 'latest' symlink: {exc}[/dim]")
+
+
+def _load_creds() -> Credentials | None:
+    return _cred.load()
 
 
 def _common_parser() -> argparse.ArgumentParser:
@@ -193,6 +199,19 @@ def _build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="cmd")
     common = _common_parser()
 
+    sub.add_parser(
+        "login", parents=[common], formatter_class=RichHelpFormatter,
+        help="Authenticate via the GitHub device flow and store the resulting credentials.",
+    )
+    sub.add_parser(
+        "logout", parents=[common], formatter_class=RichHelpFormatter,
+        help="Clear stored credentials.",
+    )
+    sub.add_parser(
+        "whoami", parents=[common], formatter_class=RichHelpFormatter,
+        help="Show the currently logged-in identity.",
+    )
+
     e = sub.add_parser(
         "eval", parents=[common], formatter_class=RichHelpFormatter,
         help="Evaluate a solution against a published objective's batch.",
@@ -221,8 +240,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Cap on episodes the arena runs concurrently per eval (default: %(default)s).",
     )
     evolve.add_argument("--image", default="nethackers/arena:dev")
-    evolve.add_argument("--token", default="dev-token")
-    evolve.add_argument("--owner", default="dev")
+    evolve.add_argument(
+        "--token", default=None,
+        help="Attribution token (default: stored `nethackers login` credentials, "
+        "else 'dev-token').",
+    )
+    evolve.add_argument(
+        "--owner", default=None,
+        help="Attribution owner (default: stored `nethackers login` credentials, else 'dev').",
+    )
     evolve.add_argument("--workdir", default=str(Path.home() / ".nethackers" / "evolve"))
     evolve.add_argument(
         "--run-name", default=None,
@@ -318,6 +344,29 @@ def _run(argv: list[str] | None) -> int:
         parser.print_help()
         return 0
 
+    if args.cmd == "login":
+        token = device_login()
+        login = whoami_from_token(token)
+        _cred.save(Credentials(login=login, token=token))
+        err.print(f"logged in as [b]@{login}[/]")
+        return 0
+
+    if args.cmd == "logout":
+        _cred.clear()
+        err.print("logged out")
+        return 0
+
+    if args.cmd == "whoami":
+        c = _load_creds()
+        if c is None:
+            err.print("[yellow]not logged in[/] — run `nethackers login`")
+            return 1
+        if args.output == "json":
+            print(json.dumps({"login": c.login}))
+        else:
+            err.print(f"[b]@{c.login}[/]")
+        return 0
+
     if args.cmd == "eval":
         spec = CATALOG.get(args.objective)
         if spec is None:
@@ -331,6 +380,9 @@ def _run(argv: list[str] | None) -> int:
         return 0
 
     if args.cmd == "evolve":
+        _creds = _load_creds()
+        owner = args.owner or (_creds.login if _creds else "dev")
+        token = args.token or (_creds.token if _creds else "dev-token")
         started = datetime.datetime.now(datetime.UTC)
         runs_dir = Path(args.workdir) / "runs"
         rid = runlog.run_id(started, args.run_name,
@@ -357,7 +409,7 @@ def _run(argv: list[str] | None) -> int:
                 objective=args.objective, seed_tree=Path(args.seed),
                 tree_store=LocalTreeStore(run_dir / "trees"),
                 operator=operator, hub=HubClient(args.hub), image=args.image,
-                token=args.token, owner=args.owner, iterations=args.iterations,
+                token=token, owner=owner, iterations=args.iterations,
                 token_budget=args.token_budget, timeout_s=args.timeout,
                 heldout_n=args.heldout_n, max_parallel_evals=args.max_parallel_evals,
                 now_fn=_now, report=report,
