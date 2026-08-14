@@ -345,6 +345,14 @@ def _run(argv: list[str] | None) -> int:
         })
         _point_latest(runs_dir, rid)
 
+        # Shared machine-wide content cache (dedup by digest, keyed by the
+        # same _solution_digest the arena/register path uses) -- NOT
+        # per-run: a win registered from one run is instantly a cache hit
+        # for the next run's SELECT, and the store never needs cleanup
+        # between runs. Per-run dirs keep only work/ + metrics + logs +
+        # run.json (still under run_dir, below).
+        store = LocalTreeStore(Path(args.workdir) / "store")
+
         operator = {"codex": CodexOperator, "claude": ClaudeOperator}[args.operator]()
         cfg = EvolveConfig(objective=args.objective, backend=args.operator,
                            iterations=args.iterations, token_budget=args.token_budget)
@@ -355,7 +363,7 @@ def _run(argv: list[str] | None) -> int:
                 callbacks["on_log"](tag, line)         # + render live (TUI) / drop (non-TUI)
             return run_loop(
                 objective=args.objective, seed_tree=Path(args.seed),
-                tree_store=LocalTreeStore(run_dir / "trees"),
+                tree_store=store,
                 operator=operator, hub=HubClient(args.hub), image=args.image,
                 token=args.token, owner=args.owner, iterations=args.iterations,
                 token_budget=args.token_budget, timeout_s=args.timeout,
