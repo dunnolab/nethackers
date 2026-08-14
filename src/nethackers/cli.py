@@ -52,6 +52,7 @@ import argparse
 import datetime
 import json
 import os
+import random
 import subprocess
 import sys
 import time
@@ -66,6 +67,7 @@ from nethackers.eval.runner import eval_batch
 from nethackers.harness import runlog
 from nethackers.harness.loop import IterationResult, run_loop
 from nethackers.harness.operator import ClaudeOperator, CodexOperator
+from nethackers.harness.select import select_parent
 from nethackers.harness.store import LocalTreeStore
 from nethackers.hub.objectives import CATALOG
 from nethackers.hubclient.client import (
@@ -211,6 +213,18 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     evolve.add_argument("objective")
     evolve.add_argument("--seed", required=True, help="seed solution root (e.g. roots/autoascend)")
+    evolve.add_argument(
+        "--select-k", type=int, default=1,
+        help="Sample among the top-k trusted elites (1 = exploit/argmax, default: %(default)s).",
+    )
+    evolve.add_argument(
+        "--select-temp", type=float, default=1.0,
+        help="Softmax temperature for --select-k > 1 (default: %(default)s).",
+    )
+    evolve.add_argument(
+        "--from-seed", action="store_true",
+        help="Ignore the hub; cold-start from --seed.",
+    )
     evolve.add_argument("--operator", choices=["codex", "claude"], default="claude")
     evolve.add_argument("--iterations", type=int, default=1)
     evolve.add_argument("--token-budget", type=int, default=200_000)
@@ -336,14 +350,6 @@ def _run(argv: list[str] | None) -> int:
         rid = runlog.run_id(started, args.run_name,
                             exists=lambda r: (runs_dir / r).exists())
         run_dir = runs_dir / rid
-        runlog.write_run_config(run_dir, {
-            "run_id": rid, "created_at": started.isoformat(), "git_sha": _git_sha(),
-            "objective": args.objective, "seed": str(args.seed), "operator": args.operator,
-            "iterations": args.iterations, "token_budget": args.token_budget,
-            "timeout": args.timeout, "validation_n": args.validation_n,
-            "max_parallel_evals": args.max_parallel_evals, "image": args.image,
-        })
-        _point_latest(runs_dir, rid)
 
         # Shared machine-wide content cache (dedup by digest, keyed by the
         # same _solution_digest the arena/register path uses) -- NOT
@@ -352,6 +358,30 @@ def _run(argv: list[str] | None) -> int:
         # between runs. Per-run dirs keep only work/ + metrics + logs +
         # run.json (still under run_dir, below).
         store = LocalTreeStore(Path(args.workdir) / "store")
+
+        # SELECT: start from the objective's top *trusted* elite (so
+        # evolution compounds instead of always restarting from --seed),
+        # unless --from-seed forces a deliberate cold start. The sampling
+        # RNG is seeded from this run's own id, so a given run's parent
+        # choice (only meaningful when --select-k > 1) is reproducible.
+        if args.from_seed:
+            parent_tree, parent_digest = Path(args.seed), None
+        else:
+            parent_tree, parent_digest = select_parent(
+                HubClient(args.hub), args.objective, store, Path(args.seed),
+                owner=args.owner, k=args.select_k, temperature=args.select_temp,
+                rng=random.Random(rid))
+
+        runlog.write_run_config(run_dir, {
+            "run_id": rid, "created_at": started.isoformat(), "git_sha": _git_sha(),
+            "objective": args.objective, "seed": str(args.seed), "operator": args.operator,
+            "iterations": args.iterations, "token_budget": args.token_budget,
+            "timeout": args.timeout, "validation_n": args.validation_n,
+            "max_parallel_evals": args.max_parallel_evals, "image": args.image,
+            "parent": parent_digest or "seed", "select_k": args.select_k,
+            "select_temp": args.select_temp,
+        })
+        _point_latest(runs_dir, rid)
 
         operator = {"codex": CodexOperator, "claude": ClaudeOperator}[args.operator]()
         cfg = EvolveConfig(objective=args.objective, backend=args.operator,
@@ -362,7 +392,7 @@ def _run(argv: list[str] | None) -> int:
                 runlog.append_log(run_dir, tag, line)  # persist the per-iteration mutation log
                 callbacks["on_log"](tag, line)         # + render live (TUI) / drop (non-TUI)
             return run_loop(
-                objective=args.objective, seed_tree=Path(args.seed),
+                objective=args.objective, seed_tree=parent_tree,
                 tree_store=store,
                 operator=operator, hub=HubClient(args.hub), image=args.image,
                 token=args.token, owner=args.owner, iterations=args.iterations,
