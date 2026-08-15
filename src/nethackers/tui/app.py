@@ -22,12 +22,25 @@ launch paths converge on the same pushed-screen mechanics right after this
 """
 from __future__ import annotations
 
+import contextlib
 from collections.abc import Callable
 
+from textual import events
 from textual.app import App, ComposeResult
-from textual.widgets import ContentSwitcher, Static, Tab, Tabs
+from textual.widget import Widget
+from textual.widgets import (
+    Button,
+    ContentSwitcher,
+    Input,
+    OptionList,
+    Select,
+    Static,
+    Tab,
+    Tabs,
+)
 
 from nethackers.hubclient.credentials import Credentials
+from nethackers.tui.nav import dedup_visible, nearest_in_direction
 from nethackers.tui.screens.evolve import EvolveScreen
 from nethackers.tui.screens.evolve_form import EvolveForm
 from nethackers.tui.screens.home import HomeView
@@ -71,12 +84,16 @@ class NetHackersApp(App):
         self._start = start
         self._evolve = evolve
         self._evolve_screen: EvolveScreen | None = None
+        self._nav_mode = "navigate"  # "navigate" (arrows move the cursor) | "interact"
+        self._nav_cursor: Widget | None = None
+        self._idbar_prefix = ""
 
     def compose(self) -> ComposeResult:
         who = f"@{self._creds.login}" if self._creds else "guest"
         host = self._hub.split("//")[-1]
-        yield Static(f" {who} · hub:{host}   —   ← → or 1–6 to switch · q quit",
-                     classes="idbar")
+        self._idbar_prefix = f" {who} · hub:{host}"
+        yield Static(f"{self._idbar_prefix}   —   ↑↓←→ move · enter use · 1–6 jump · q quit",
+                     id="idbar", classes="idbar")
         yield Tabs(*(Tab(label, id=f"tab-{key}") for key, label in _SECTIONS), id="nav")
         login = self._creds.login if self._creds else None
         with ContentSwitcher(initial=self._start, id="body"):
@@ -93,6 +110,8 @@ class NetHackersApp(App):
             cfg, run = self._evolve
             self._evolve_screen = EvolveScreen(cfg, run=run, exit_on_error=True)
             self.push_screen(self._evolve_screen)
+        else:
+            self.call_after_refresh(self._nav_start)
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         """Clicking a tab or moving with ← → (Textual's Tabs) switches the
@@ -132,12 +151,166 @@ class NetHackersApp(App):
     def action_show(self, key: str) -> None:
         # drive the tab bar; its TabActivated switches the ContentSwitcher
         self.query_one("#nav", Tabs).active = f"tab-{key}"
+        if self._nav_cursor is not None:  # keep the keyboard cursor on the tab
+            self._nav_set_cursor(self.query_one(f"#tab-{key}", Tab))
 
     def action_evolve(self) -> None:
         self.action_show("evolve")
 
     def action_login(self) -> None:
         pass  # in-app device flow deferred; `nethackers login` on the CLI works today
+
+    # --- modal 2D keyboard navigation -------------------------------------
+    #
+    # Navigate mode (default): nothing holds real focus, so no field can
+    # swallow a keystroke; a single gold `.-cursor` ring marks the active
+    # element and the arrow keys move it by on-screen position (`tui.nav`).
+    # Enter *interacts* with the cursor element -- a field/list/select takes
+    # real focus (type / pick / open), a button fires, a tab dives into its
+    # content. Esc (and a field's own submit/select) returns to Navigate.
+    # `1`-`6` still jump straight to a section; `q` still quits (it reaches
+    # the App binding precisely because nothing is focused to eat it).
+
+    def _nav_start(self) -> None:
+        self._nav_mode = "navigate"
+        self.set_focus(None)
+        self._nav_set_cursor(self.query_one(f"#tab-{self._start}", Tab))
+        self._nav_update_hint()
+
+    def _nav_update_hint(self) -> None:
+        legend = (
+            "↑↓←→ move · enter use · 1–6 jump · q quit"
+            if self._nav_mode == "navigate"
+            else "▸ editing — esc back to navigation"
+        )
+        with contextlib.suppress(Exception):
+            self.query_one("#idbar", Static).update(f"{self._idbar_prefix}   —   {legend}")
+
+    def _nav_set_cursor(self, widget: Widget | None) -> None:
+        if self._nav_cursor is not None and self._nav_cursor is not widget:
+            self._nav_cursor.remove_class("-cursor")
+        self._nav_cursor = widget
+        if widget is not None:
+            widget.add_class("-cursor")
+            widget.scroll_visible()
+
+    def _nav_targets(self) -> list[Widget]:
+        """Every navigable element on the dashboard right now: the section
+        tabs, plus the visible pane's subtabs / controls / focusable cards."""
+        targets: list[Widget] = list(self.query("#nav Tab"))
+        try:
+            body = self.query_one("#body", ContentSwitcher)
+        except Exception:
+            return dedup_visible(targets)
+        current = body.current
+        if current:
+            pane = body.get_child_by_id(current)
+            targets += list(pane.query("#ftabs Tab"))
+            for kind in (Input, Select, OptionList, Button):
+                targets += list(pane.query(kind))
+            if getattr(pane, "can_focus", False):
+                targets.append(pane)
+            targets += [w for w in pane.query(".panel") if getattr(w, "can_focus", False)]
+        return dedup_visible(targets)
+
+    @staticmethod
+    def _is_nav_tab(widget: Widget) -> bool:
+        return isinstance(widget, Tab) and (widget.id or "").startswith("tab-")
+
+    def _active_section_tab(self) -> Widget | None:
+        body = self.query_one("#body", ContentSwitcher)
+        if body.current:
+            try:
+                return self.query_one(f"#tab-{body.current}", Tab)
+            except Exception:
+                return None
+        return None
+
+    def _nav_move(self, direction: str) -> None:
+        cur = self._nav_cursor
+        if cur is None:
+            self._nav_start()
+            return
+        others = [w for w in self._nav_targets() if w is not cur]
+        nav_tabs = [w for w in others if self._is_nav_tab(w)]
+        content = [w for w in others if not self._is_nav_tab(w)]
+        if self._is_nav_tab(cur):
+            # the top row: left/right along the tabs, down dives into content
+            if direction in ("left", "right"):
+                nxt = nearest_in_direction(cur, nav_tabs, direction)
+            elif direction == "down":
+                nxt = content[0] if content else None  # dive to the section's first element
+            else:
+                nxt = None  # already at the top
+        else:
+            nxt = nearest_in_direction(cur, content, direction)
+            if nxt is None and direction == "up":  # leave the top of the content
+                nxt = self._active_section_tab()   # back to this section's own tab
+        if nxt is None:
+            return
+        self._nav_set_cursor(nxt)
+        self._nav_switch_tab_live(nxt)
+
+    def _nav_switch_tab_live(self, widget: Widget) -> None:
+        """Moving the cursor onto a section/subtab switches to it live."""
+        wid = widget.id or ""
+        if wid.startswith("tab-"):
+            self.query_one("#nav", Tabs).active = wid
+        elif wid.startswith("ft-"):
+            with contextlib.suppress(Exception):
+                self.query_one("#ftabs", Tabs).active = wid
+
+    def _nav_activate(self) -> None:
+        w = self._nav_cursor
+        if w is None:
+            return
+        if isinstance(w, Tab):
+            self._nav_dive()  # into the section's content
+        elif isinstance(w, Button):
+            w.press()
+        else:  # Input / Select / OptionList / a focusable card -> interact
+            self._nav_mode = "interact"
+            w.focus()
+            self._nav_update_hint()
+
+    def _nav_dive(self) -> None:
+        for w in self._nav_targets():
+            if not isinstance(w, Tab):
+                self._nav_set_cursor(w)
+                return
+
+    def _nav_to_navigate(self) -> None:
+        self._nav_mode = "navigate"
+        self.set_focus(None)
+        if self._nav_cursor is not None:
+            self._nav_cursor.add_class("-cursor")
+        self._nav_update_hint()
+
+    def on_key(self, event: events.Key) -> None:
+        if self._nav_mode == "interact":
+            if event.key == "escape":
+                self._nav_to_navigate()
+                event.stop()
+            return  # otherwise the focused widget handles it
+        if event.key in ("up", "down", "left", "right"):
+            self._nav_move(event.key)
+            event.stop()
+        elif event.key == "enter":
+            self._nav_activate()
+            event.stop()
+        # q / 1-6 / e / l are left for the App bindings (nothing is focused)
+
+    def on_input_submitted(self, event: Input.Submitted) -> None:
+        if self._nav_mode == "interact":
+            self._nav_to_navigate()
+
+    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        if self._nav_mode == "interact":
+            self._nav_to_navigate()
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if self._nav_mode == "interact":
+            self._nav_to_navigate()
 
     @property
     def error(self) -> BaseException | None:

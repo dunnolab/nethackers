@@ -124,12 +124,19 @@ Screen {{
    focus -- once you Tab into a panel, the panel is gold and the nav settles
    back to resting amber, so the single gold marker always points at the
    active element. */
-.panel:focus, .panel:focus-within {{
+.panel:focus, .panel:focus-within, .panel.-cursor {{
     border: heavy {_FOCUS};
     background: {_FOCUSBG};
 }}
-Input:focus, Select:focus, OptionList:focus, Button:focus {{
+Input:focus, Select:focus, OptionList:focus, Button:focus,
+Input.-cursor, Select.-cursor, OptionList.-cursor, Button.-cursor {{
     border: heavy {_FOCUS};
+}}
+/* the navigate-mode cursor on a section/subtab: a solid gold chip */
+Tab.-cursor {{
+    background: {_FOCUS};
+    color: {_DUNGEON};
+    text-style: bold;
 }}
 #nav:focus Tab.-active, #ftabs:focus Tab.-active {{
     color: {_FOCUS};

@@ -70,21 +70,30 @@ async def test_escape_leaves_a_focused_field_so_q_can_quit():
         assert not app.is_running  # `q` quits again
 
 
-async def test_home_cards_are_keyboard_reachable():
-    """Home used to be a keyboard dead-end -- its four cards were plain
-    ``Static`` (non-focusable), so Tab never left the nav. They take focus
-    now, so Tab cycles the nav and all four cards (and the focus ring shows
-    which is active)."""
+async def test_home_grid_is_arrow_navigable():
+    """The modal 2D navigator starts on the Home tab holding no real focus
+    (so nothing can eat a keystroke); Down dives into the top-left card and
+    the arrows walk the 2x2 grid, with Up from the top row returning to the
+    section tab."""
     app = NetHackersApp(hub=_DEAD_HUB, creds=Credentials("castiel", "t"))
     async with app.run_test() as pilot:
-        assert isinstance(app.focused, Tabs) and app.focused.id == "nav"  # start on nav
-        seen = []
-        for _ in range(5):  # nav -> yours -> board -> runs -> attain -> nav
-            await pilot.press("tab")
-            await pilot.pause()
-            seen.append(getattr(app.focused, "id", None))
-        assert {"home_yours", "home_board", "home_runs", "home_attain"} <= set(seen)
-        assert seen[-1] == "nav"  # wraps back to the nav
+        await pilot.pause()  # _nav_start runs after the first refresh
+        assert app.focused is None  # navigate mode: no real focus
+        assert app._nav_cursor is not None and app._nav_cursor.id == "tab-home"
+
+        await pilot.press("down")  # dive into the grid's first (top-left) card
+        await pilot.pause()
+        assert app._nav_cursor.id == "home_yours"
+        await pilot.press("right")
+        await pilot.pause()
+        assert app._nav_cursor.id == "home_board"  # top-right
+        await pilot.press("down")
+        await pilot.pause()
+        assert app._nav_cursor.id == "home_attain"  # bottom-right
+        await pilot.press("up")
+        await pilot.press("up")
+        await pilot.pause()
+        assert app._nav_cursor.id == "tab-home"  # up out of the grid, back to the tab
 
 
 # --- .error/.results delegate to the pushed EvolveScreen -------------------
