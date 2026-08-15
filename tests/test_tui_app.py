@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import asyncio
 
-from textual.widgets import ContentSwitcher
+from textual.widgets import ContentSwitcher, Input, Tabs
 
 from nethackers.hubclient.credentials import Credentials
 from nethackers.tui.app import NetHackersApp
@@ -44,6 +44,30 @@ async def test_shell_guest_when_logged_out():
         text = str(app.query_one(".idbar").render())
         assert "guest" in text
         assert "@" not in text  # no stray "@"/"@None" when nobody is logged in
+
+
+async def test_escape_leaves_a_focused_field_so_q_can_quit():
+    """A focused text ``Input`` swallows letters, so the advertised ``q`` quit
+    is dead while you're typing in the Evolve form's objective filter (Textual
+    ``Input`` consumes printable keys before any binding, ``priority`` or not).
+    ``escape`` returns focus to the nav, restoring the global ``q`` / ``1–6``
+    keys -- the way out of the field a stuck user needs."""
+    app = NetHackersApp(hub=_DEAD_HUB, creds=Credentials("castiel", "t"))
+    async with app.run_test() as pilot:
+        await pilot.press("6")  # -> Evolve
+        await pilot.pause()
+        app.query_one("#f_obj_filter", Input).focus()
+        await pilot.pause()
+        assert isinstance(app.focused, Input)  # in a text field, `q` would type
+
+        await pilot.press("escape")
+        await pilot.pause()
+        nav = app.focused
+        assert isinstance(nav, Tabs) and nav.id == "nav"  # escaped back to the nav
+
+        await pilot.press("q")
+        await pilot.pause()
+        assert not app.is_running  # `q` quits again
 
 
 # --- .error/.results delegate to the pushed EvolveScreen -------------------

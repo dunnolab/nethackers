@@ -20,8 +20,9 @@ from pathlib import Path
 from typing import Any
 
 from textual.app import ComposeResult
+from textual.binding import Binding
 from textual.containers import Vertical
-from textual.widgets import Button, Input, Label, OptionList, Select, Static
+from textual.widgets import Button, Input, Label, OptionList, Select, Static, Tabs
 from textual.widgets.option_list import Option
 
 from nethackers.harness.launch import EvolveParams, prepare_evolve
@@ -50,7 +51,15 @@ class EvolveForm(Vertical):
     """The ``⚔ Evolve`` tab: filter-and-pick an objective, choose a seed root
     and operator, set iterations/token-budget, and **Start** -- which builds
     an ``EvolveParams``, calls ``prepare_evolve``, and pushes the live
-    ``EvolveScreen`` monitor over the dashboard."""
+    ``EvolveScreen`` monitor over the dashboard.
+
+    A focused text ``Input`` (the objective filter, iterations, budget)
+    swallows printable keys, so the shell's advertised ``q`` quit -- and the
+    ``1``–``6`` switches -- go dead while you're typing in one. ``escape``
+    (``action_leave_field``) hands focus back to the main nav so those global
+    keys work again: the way out of a field a stuck user reaches for."""
+
+    BINDINGS = [Binding("escape", "leave_field", "Back to menu", show=False)]
 
     DEFAULT_CSS = """
     EvolveForm { align: center middle; }
@@ -70,7 +79,7 @@ class EvolveForm(Vertical):
 
     def compose(self) -> ComposeResult:
         with Vertical(id="form", classes="panel"):
-            yield Label("Objective — type to filter, then pick one")
+            yield Label("Objective — type to filter, then pick one · esc to leave")
             yield Input(placeholder="filter…  e.g. wiz · val · random", id="f_obj_filter")
             yield OptionList(*(Option(o, id=o) for o in _OBJECTIVES), id="f_obj_list")
             yield Static("[dim]none selected[/]", id="f_obj_sel")
@@ -91,6 +100,16 @@ class EvolveForm(Vertical):
 
     def on_mount(self) -> None:
         self.query_one("#form").border_title = "⚔ Start an Evolve Run"
+
+    def action_leave_field(self) -> None:
+        """Return focus to the main nav so the global keys (``q`` to quit,
+        ``1``–``6`` to switch) work again -- a focused ``Input`` otherwise
+        swallows them as text. Falls back to a plain blur if the nav isn't
+        present (e.g. the form mounted outside the dashboard shell)."""
+        try:
+            self.app.query_one("#nav", Tabs).focus()
+        except Exception:
+            self.app.set_focus(None)
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """Narrow the objective list as the filter is typed."""
