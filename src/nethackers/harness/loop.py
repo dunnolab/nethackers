@@ -14,8 +14,8 @@ from nethackers.harness.brief import build_brief
 from nethackers.harness.evaluate import evaluate
 from nethackers.harness.gate import passes_gate
 from nethackers.harness.register import register_win
-from nethackers.harness.select import top_trusted_elite
 from nethackers.harness.seeds import dev_spec, validation_spec
+from nethackers.harness.select import top_trusted_elite
 from nethackers.harness.store import LocalTreeStore
 
 
