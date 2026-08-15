@@ -167,10 +167,7 @@ class NetHackersApp(App):
         active section -- so blur it and reclaim navigate mode."""
         if len(self.screen_stack) > 1:
             return  # still on a pushed screen
-        if self._nav_cursor is None:
-            self._nav_start()
-        else:
-            self._nav_to_navigate()
+        self._nav_to_navigate()  # validates a possibly-stale cursor and re-shows it
 
     def leave_to_nav(self) -> None:
         """Hand control from a focused form field back to the modal keyboard
@@ -426,8 +423,13 @@ class NetHackersApp(App):
     def _nav_to_navigate(self) -> None:
         self._nav_mode = "navigate"
         self.set_focus(None)
-        if self._nav_cursor is not None:
-            self._nav_cursor.add_class("-cursor")
+        cursor = self._nav_cursor
+        if cursor is None or cursor not in self._nav_targets():
+            # the cursor's element vanished (e.g. a run button removed after the
+            # run stopped) -> fall back to the active section's tab
+            cursor = self._active_section_tab()
+        if cursor is not None:
+            self._nav_set_cursor(cursor)
         self._nav_update_hint()
 
     def on_key(self, event: events.Key) -> None:

@@ -74,6 +74,22 @@ async def test_escape_leaves_a_focused_field_so_q_can_quit():
         assert not app.is_running  # `q` quits again
 
 
+async def test_navigate_recovers_when_the_cursor_element_vanished():
+    # regression: opening a run from the Runs list put the cursor on its button;
+    # stopping the run removed that button, so returning to navigate mode re-added
+    # the highlight to a gone widget -> 0 visible cursors. Recover to the section tab.
+    from textual.widgets import Static
+
+    app = NetHackersApp(hub=_DEAD_HUB, creds=Credentials("castiel", "t"), start="runs")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        app._nav_cursor = Static(id="gone")  # a never-mounted (vanished) element
+        app._nav_to_navigate()
+        await pilot.pause()
+        assert len(app.screen.query(".-cursor")) == 1  # exactly one, not zero
+        assert (app._nav_cursor.id or "").startswith("tab-")  # fell back to the section tab
+
+
 async def test_leaving_a_run_monitor_reclaims_navigate_mode():
     # regression: returning to the dashboard from a monitor left #nav focused
     # (Textual restores focus on screen-resume), so its Tabs ate ←/→ and the
