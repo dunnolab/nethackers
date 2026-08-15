@@ -5,6 +5,7 @@ themselves are covered by test_tui_run.py.)"""
 from __future__ import annotations
 
 from textual.app import App
+from textual.widgets import ListView, RichLog
 
 from nethackers.tui.run import Run
 from nethackers.tui.screens.monitor import RunMonitor
@@ -107,6 +108,34 @@ async def test_c_copies_the_selected_iteration_log_to_the_clipboard():
         await pilot.press("c")
         await pilot.pause()
         assert captured["t"] == "line one\nline two"
+
+
+async def test_agent_log_labels_the_iteration_follows_it_and_arrows_swap():
+    _CLAUDE = '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}'
+    run = Run("run-1", CFG)  # CFG.iterations == 3 -> tags are "iter N/3"
+    run.apply_state(_state("mutating", iteration=1))
+    run.apply_log("iter 1/3", _CLAUDE % "one")
+    host = _Host(run)
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        await pilot.pause()  # let call_after_refresh(_highlight_current) run
+        mon = host.screen
+        rl = mon.query_one("#logview", RichLog)
+        lv = mon.query_one("#logs_list", ListView)
+        assert str(rl.border_title) == "iter 1/3"  # the log panel is labeled...
+        assert lv.index == 0                        # ...and its iteration highlighted
+
+        run.apply_state(_state("mutating", iteration=2))  # a new iteration begins
+        run.apply_log("iter 2/3", _CLAUDE % "two")
+        mon.render_log("iter 2/3")
+        await pilot.pause()
+        await pilot.pause()
+        assert str(rl.border_title) == "iter 2/3"  # the view follows the current one
+        assert lv.index == 1
+
+        lv.index = 0  # arrow back to the older iteration
+        await pilot.pause()
+        assert str(rl.border_title) == "iter 1/3" and run.sel_tag == "iter 1/3"
 
 
 async def test_arrows_navigate_tabs_and_panes_then_enter_interacts():

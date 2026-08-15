@@ -45,8 +45,15 @@ class RunMonitor(Screen):
     RunMonitor #navhint { color: #7c745f; height: 1; margin: 0 2; }
     RunMonitor TabbedContent { width: 1fr; height: 1fr; margin: 0 2; }
     #tables { padding: 1 1; }
-    #logs_list { width: 24; border-right: solid #d2a24c; }
-    #logview { padding: 0 1; }
+    #logs_list { width: 24; }
+    /* the highlighted iteration -- amber always (so which log you're viewing is
+       clear even in navigate mode), brighter gold while the list is focused. */
+    #logs_list > ListItem.-highlight { background: #d2a24c; color: #0b0b0e; text-style: bold; }
+    #logs_list:focus > ListItem.-highlight { background: #ffd54a; }
+    #logview {
+        padding: 0 1; border: round #7c745f;
+        border-title-color: #d2a24c; border-title-align: left;
+    }
     /* the modal cursor: a gold chip on a tab, a gold ring (outline -> no
        reflow) on a content pane; :focus keeps the ring while interacting. */
     RunMonitor Tab.-cursor { background: #ffd54a; color: #0b0b0e; text-style: bold; }
@@ -121,6 +128,8 @@ class RunMonitor(Screen):
             static.update(episode_table(batch.label, batch.rows(), done=batch.done))
         if self.run.sel_tag:
             self._select_log(self.run.sel_tag)
+        # highlight the shown iteration in the list once its items have mounted
+        self.call_after_refresh(self._highlight_current)
         self.render_state()
 
     # ---- live renders (forwarded by the app while this screen is on top) ----
@@ -167,8 +176,16 @@ class RunMonitor(Screen):
 
     def render_log(self, tag: str) -> None:
         self._ensure_log_item(tag)
-        if tag == self.run.sel_tag:
-            self._write_new_log_lines(tag)
+        logview = self.query_one("#logview", RichLog)
+        if str(logview.border_title or "") != (self.run.sel_tag or ""):
+            # the shown iteration changed (a new one started, or a fresh pick) ->
+            # switch the view cleanly (retitle + rewrite) and move the highlight,
+            # so lines never accumulate under the wrong iteration label.
+            if self.run.sel_tag:
+                self._select_log(self.run.sel_tag)
+                self.call_after_refresh(self._highlight_current)
+        elif tag == self.run.sel_tag:
+            self._write_new_log_lines(tag)  # same iteration -> append new lines
         self.render_state()
 
     # ---- agent-log list -----------------------------------------------------
@@ -181,9 +198,23 @@ class RunMonitor(Screen):
 
     def _select_log(self, tag: str) -> None:
         self.run.sel_tag = tag
-        self.query_one("#logview", RichLog).clear()
+        logview = self.query_one("#logview", RichLog)
+        logview.border_title = tag  # label WHICH iteration this log belongs to
+        logview.clear()
         self._shown[tag] = 0
         self._write_new_log_lines(tag)
+
+    def _highlight_current(self) -> None:
+        """Highlight the shown iteration in the list (default: the latest) so
+        it's obvious which iteration's log is on the right."""
+        lv = self.query_one("#logs_list", ListView)
+        target = _slug(self.run.sel_tag) if self.run.sel_tag else None
+        for i, item in enumerate(lv.children):
+            if item.id == target:
+                lv.index = i
+                return
+        if lv.children:  # no selection yet -> the most recent iteration
+            lv.index = len(lv.children) - 1
 
     def _write_new_log_lines(self, tag: str) -> None:
         log = self.query_one("#logview", RichLog)
@@ -192,9 +223,12 @@ class RunMonitor(Screen):
             log.write(Text(text, style=_KIND_STYLE.get(kind, "")))
         self._shown[tag] = len(lines)
 
-    def on_list_view_selected(self, event: ListView.Selected) -> None:
-        tag = self._log_items.get(event.item.id or "")
-        if tag is not None:
+    def on_list_view_highlighted(self, event: ListView.Highlighted) -> None:
+        # arrowing the list live-swaps the log on the right -- no Enter needed,
+        # so navigating iterations *is* navigating their logs.
+        item = event.item
+        tag = self._log_items.get(item.id or "") if item is not None else None
+        if tag is not None and tag != self.run.sel_tag:
             self._select_log(tag)
 
     def _tick(self) -> None:
