@@ -108,8 +108,10 @@ class RunMonitor(Screen):
                        f" · {cfg.effort}" if cfg.effort else ""])
         self.query_one("#cockpit").border_title = (
             f"⚔ Evolution · {cfg.objective} · {cfg.backend}{pin}")
-        self._backfill()
-        # after Textual's own initial auto-focus, so navigate mode owns the keys
+        # defer: the TabbedContent's panes (#tables/#logs_list/#logview) aren't
+        # mounted yet during a Screen's on_mount, so backfill would NoMatches.
+        self.call_after_refresh(self._backfill)
+        # then start nav (after Textual's own initial auto-focus too)
         self.call_after_refresh(self._nav_start)
         self.set_interval(1.0, self._tick)
 
@@ -194,8 +196,12 @@ class RunMonitor(Screen):
         slug = _slug(tag)
         if slug in self._log_items:
             return
+        try:
+            lv = self.query_one("#logs_list", ListView)
+        except NoMatches:
+            return  # list not mounted yet; re-ensured on the next render_log
         self._log_items[slug] = tag
-        self.query_one("#logs_list", ListView).append(ListItem(Static(tag), id=slug))
+        lv.append(ListItem(Static(tag), id=slug))
 
     def _select_log(self, tag: str) -> None:
         self.run.sel_tag = tag
@@ -336,6 +342,11 @@ class RunMonitor(Screen):
             self._nav_to_navigate()
         else:
             self.dismiss()
+            # the dashboard resumes with #nav focused (Textual restores it) --
+            # tell it to reclaim navigate mode so ←/→ don't get eaten by Tabs.
+            reassert = getattr(self.app, "reassert_navigate", None)
+            if callable(reassert):
+                self.app.call_after_refresh(reassert)
 
     def action_copy_log(self) -> None:
         lines = self.run.logs.get(self.run.sel_tag or "", [])

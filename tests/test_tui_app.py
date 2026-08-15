@@ -74,6 +74,51 @@ async def test_escape_leaves_a_focused_field_so_q_can_quit():
         assert not app.is_running  # `q` quits again
 
 
+async def test_leaving_a_run_monitor_reclaims_navigate_mode():
+    # regression: returning to the dashboard from a monitor left #nav focused
+    # (Textual restores focus on screen-resume), so its Tabs ate ←/→ and the
+    # cursor desynced -- the "top tabs after quitting the evolve monitor" bug.
+    fired = threading.Event()
+
+    def long_run(callbacks):
+        callbacks["on_state"]({
+            "phase": "mutating", "iteration": 1, "baseline_dev": 0.0, "baseline_held": 0.0,
+            "best_dev": 0.0, "best_held": 0.0, "wins": 0, "tokens": 0, "detail": "",
+            "parent_digest": "seed0", "parent_dev": 0.0, "parent_held": 0.0, "generation": 1})
+        fired.set()
+        callbacks["stop"].wait(timeout=3)
+        return []
+
+    app = NetHackersApp(hub=_DEAD_HUB, creds=Credentials("castiel", "t"), start="runs")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        run = app.start_run(_Plan(long_run))  # opens the monitor
+        for _ in range(200):
+            if fired.is_set():
+                break
+            await asyncio.sleep(0.01)
+        await pilot.pause()
+        assert isinstance(app.screen, RunMonitor)
+
+        await pilot.press("escape")  # leave the monitor -> dashboard
+        await pilot.pause()
+        assert not isinstance(app.screen, RunMonitor)
+        assert app.focused is None                             # navigate mode reclaimed
+        assert len(app.screen.query(".-cursor")) == 1          # exactly one gold cursor
+        before = app._nav_cursor.id
+        await pilot.press("right")                             # arrows move ONE tab...
+        await pilot.pause()
+        after = app._nav_cursor.id
+        assert before != after
+        assert app.query_one("#nav", Tabs).active == after     # ...and stay in sync
+
+        app.stop_run(run.rid)
+        for _ in range(200):
+            if not run.running:
+                break
+            await asyncio.sleep(0.01)
+
+
 async def test_activating_a_tab_externally_syncs_the_keyboard_cursor():
     # regression: a mouse click on a tab (or Textual Tabs' own ←/→ when #nav
     # holds focus) switched the active section but left the gold cursor on the

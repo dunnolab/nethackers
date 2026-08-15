@@ -160,6 +160,18 @@ class NetHackersApp(App):
         # now also syncs the keyboard cursor onto the tab).
         self.query_one("#nav", Tabs).active = f"tab-{key}"
 
+    def reassert_navigate(self) -> None:
+        """Re-take the modal navigate mode after returning to the dashboard from
+        a pushed screen (a run monitor). Textual restores focus to #nav on
+        resume, which would let its Tabs eat ←/→ and desync the cursor from the
+        active section -- so blur it and reclaim navigate mode."""
+        if len(self.screen_stack) > 1:
+            return  # still on a pushed screen
+        if self._nav_cursor is None:
+            self._nav_start()
+        else:
+            self._nav_to_navigate()
+
     def leave_to_nav(self) -> None:
         """Hand control from a focused form field back to the modal keyboard
         nav: navigate mode, nothing focused -- so q / 1-6 and the arrow cursor
