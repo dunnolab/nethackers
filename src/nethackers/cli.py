@@ -231,8 +231,6 @@ def _build_parser() -> argparse.ArgumentParser:
              "iterations (keep a pure single-parent lineage).")
     evolve.add_argument("--operator", choices=["codex", "claude"], default="claude")
     evolve.add_argument("--iterations", type=int, default=1)
-    evolve.add_argument("--token-budget", type=int, default=200_000)
-    evolve.add_argument("--timeout", type=float, default=1800.0)
     evolve.add_argument("--validation-n", type=int, default=15)
     evolve.add_argument(
         "--max-parallel-evals", type=int, default=8,
@@ -379,8 +377,7 @@ def _run(argv: list[str] | None) -> int:
         runlog.write_run_config(run_dir, {
             "run_id": rid, "created_at": started.isoformat(), "git_sha": _git_sha(),
             "objective": args.objective, "seed": str(args.seed), "operator": args.operator,
-            "iterations": args.iterations, "token_budget": args.token_budget,
-            "timeout": args.timeout, "validation_n": args.validation_n,
+            "iterations": args.iterations, "validation_n": args.validation_n,
             "max_parallel_evals": args.max_parallel_evals, "image": args.image,
             "parent": parent_digest or "seed", "select_k": args.select_k,
             "select_temp": args.select_temp, "migrate": not args.no_migrate,
@@ -389,7 +386,7 @@ def _run(argv: list[str] | None) -> int:
 
         operator = {"codex": CodexOperator, "claude": ClaudeOperator}[args.operator]()
         cfg = EvolveConfig(objective=args.objective, backend=args.operator,
-                           iterations=args.iterations, token_budget=args.token_budget)
+                           iterations=args.iterations)
 
         def _run(callbacks, report=lambda _m: None):
             def _on_log(tag: str, line: str) -> None:
@@ -400,9 +397,9 @@ def _run(argv: list[str] | None) -> int:
                 tree_store=store,
                 operator=operator, hub=HubClient(args.hub), image=args.image,
                 token=args.token, owner=args.owner, iterations=args.iterations,
-                token_budget=args.token_budget, timeout_s=args.timeout,
                 validation_n=args.validation_n, max_parallel_evals=args.max_parallel_evals,
                 migrate=not args.no_migrate,
+                stop=callbacks.get("stop"),
                 now_fn=_now, report=report,
                 on_episode=callbacks["on_episode"],
                 on_state=callbacks["on_state"],
@@ -425,7 +422,7 @@ def _run(argv: list[str] | None) -> int:
             t0 = time.monotonic()
             err.print(
                 f"evolving [b]{args.objective}[/] · operator={args.operator} · "
-                f"{args.iterations} iter · budget {args.token_budget} tok"
+                f"{args.iterations} iter"
             )
             with Live(console=err, auto_refresh=False, transient=False) as live:
                 stream = EpisodeStream(live)

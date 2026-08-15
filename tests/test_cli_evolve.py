@@ -1,6 +1,8 @@
 # tests/test_cli_evolve.py
 import json
 
+import pytest
+
 from nethackers import cli
 
 
@@ -21,11 +23,11 @@ def test_evolve_parses_and_invokes_loop(tmp_path, monkeypatch):
     # --from-seed: this test is about run_loop's argument wiring, not SELECT
     # -- forcing cold-start keeps it hermetic (no real hub/network call).
     rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed), "--from-seed",
-                   "--operator", "claude", "--iterations", "1", "--token-budget", "5000",
+                   "--operator", "claude", "--iterations", "1",
                    "--token", "dev-token", "--owner", "dev", "--workdir", str(tmp_path / "w")])
     assert rc == 0
     assert captured["objective"] == "val-dwa-law-fem"
-    assert captured["iterations"] == 1 and captured["token_budget"] == 5000
+    assert captured["iterations"] == 1
     assert captured["max_parallel_evals"] == 8  # default, unset here
 
 
@@ -46,7 +48,7 @@ def test_evolve_passes_max_parallel_evals(tmp_path, monkeypatch):
     # --from-seed: this test is about --max-parallel-evals wiring, not
     # SELECT -- forcing cold-start keeps it hermetic.
     rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed), "--from-seed",
-                   "--operator", "claude", "--iterations", "1", "--token-budget", "5000",
+                   "--operator", "claude", "--iterations", "1",
                    "--token", "dev-token", "--owner", "dev", "--workdir", str(tmp_path / "w"),
                    "--max-parallel-evals", "4"])
     assert rc == 0
@@ -222,3 +224,16 @@ def test_evolve_no_migrate_flag_disables(tmp_path, monkeypatch):
     rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed), "--from-seed",
                    "--no-migrate", "--workdir", str(tmp_path / "w")])
     assert rc == 0 and captured["migrate"] is False
+
+
+def test_evolve_rejects_removed_budget_and_timeout_flags(tmp_path):
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    (seed / "nethackers.solution.json").write_text(
+        '{"root":".","entrypoint":"bot.py","parents":[],"influences":[]}'
+    )
+    (seed / "bot.py").write_text("x=1\n")
+    for removed in ("--token-budget", "--timeout"):
+        with pytest.raises(SystemExit):   # argparse rejects the deleted flag
+            cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed), "--from-seed",
+                      removed, "1", "--workdir", str(tmp_path / "w")])
