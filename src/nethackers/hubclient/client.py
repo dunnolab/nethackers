@@ -90,6 +90,10 @@ class HubClient:
         """``GET /solutions/{digest}``."""
         return self._get(f"/solutions/{digest}")
 
+    def solution_frontier(self, digest: str) -> Any:
+        """``GET /solutions/{digest}/frontier``."""
+        return self._get(f"/solutions/{digest}/frontier")
+
     def register(
         self,
         *,

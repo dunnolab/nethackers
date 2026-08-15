@@ -147,6 +147,16 @@ def test_show_gets_solution_path():
     assert http.calls == [("GET", "http://localhost:8000/solutions/sha256:x", None)]
 
 
+def test_solution_frontier_gets_frontier_path():
+    http = _FakeHttp(response=[{"solution_digest": "sha256:x"}])
+    client = HubClient("http://localhost:8000", http=http)
+
+    result = client.solution_frontier("abc")
+
+    assert result == [{"solution_digest": "sha256:x"}]
+    assert http.calls == [("GET", "http://localhost:8000/solutions/abc/frontier", None)]
+
+
 def test_register_posts_bearer_header_and_three_key_body():
     http = _FakeHttp(response={"solution_digest": "sha256:x"})
     client = HubClient("http://localhost:8000", http=http)
