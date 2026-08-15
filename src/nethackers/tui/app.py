@@ -25,7 +25,7 @@ from __future__ import annotations
 import contextlib
 from collections.abc import Callable
 
-from textual import events
+from textual import events, work
 from textual.app import App, ComposeResult
 from textual.widget import Widget
 from textual.widgets import (
@@ -39,14 +39,15 @@ from textual.widgets import (
     Tabs,
 )
 
+from nethackers.harness.launch import EvolvePlan
 from nethackers.hubclient.credentials import Credentials
 from nethackers.tui.nav import dedup_visible, nearest_in_direction
-from nethackers.tui.screens.evolve import EvolveScreen
+from nethackers.tui.run import Run
 from nethackers.tui.screens.evolve_form import EvolveForm
 from nethackers.tui.screens.home import HomeView
 from nethackers.tui.screens.hub import BoardsView, ElitesView, MapView
+from nethackers.tui.screens.monitor import RunMonitor
 from nethackers.tui.screens.runs import RunsView
-from nethackers.tui.status import EvolveConfig
 from nethackers.tui.theme import CSS
 
 _SECTIONS = [
@@ -76,14 +77,14 @@ class NetHackersApp(App):
         creds: Credentials | None = None,
         *,
         start: str = "home",
-        evolve: tuple[EvolveConfig, Callable[[dict], object] | None] | None = None,
+        evolve: EvolvePlan | None = None,
     ) -> None:
         super().__init__()
         self._hub = hub
         self._creds = creds
         self._start = start
         self._evolve = evolve
-        self._evolve_screen: EvolveScreen | None = None
+        self._runs: dict[str, Run] = {}  # background evolution runs, this session
         self._nav_mode = "navigate"  # "navigate" (arrows move the cursor) | "interact"
         self._nav_cursor: Widget | None = None
         self._idbar_prefix = ""
@@ -106,12 +107,12 @@ class NetHackersApp(App):
 
     def on_mount(self) -> None:
         self.query_one("#nav", Tabs).active = f"tab-{self._start}"
+        self.call_after_refresh(self._nav_start)  # dashboard nav is always ready underneath
         if self._evolve is not None:
-            cfg, run = self._evolve
-            self._evolve_screen = EvolveScreen(cfg, run=run, exit_on_error=True)
-            self.push_screen(self._evolve_screen)
-        else:
-            self.call_after_refresh(self._nav_start)
+            # auto-start the run + open its monitor over the dashboard; esc
+            # detaches to the dashboard (Runs tab) with the run still going.
+            plan = self._evolve
+            self.call_after_refresh(lambda: self.start_run(plan))
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         """Clicking a tab or moving with ← → (Textual's Tabs) switches the
@@ -159,6 +160,84 @@ class NetHackersApp(App):
 
     def action_login(self) -> None:
         pass  # in-app device flow deferred; `nethackers login` on the CLI works today
+
+    # --- background runs ---------------------------------------------------
+    #
+    # A run's worker + accumulated state live on an app-level Run (tui.run),
+    # not on the monitor screen -- so you can open a run's monitor, leave it
+    # (esc), roam the dashboard, and reopen it, all while it keeps running.
+    # Multiple runs can be in flight. Quitting the app stops them (session
+    # scoped, not a detached daemon).
+
+    def start_run(self, plan: EvolvePlan) -> Run:
+        run = Run(plan.rid, plan.cfg)
+        self._runs[run.rid] = run
+        self._run_worker(run, plan.run)
+        self.open_run(run.rid)
+        return run
+
+    @work(thread=True, exit_on_error=False)
+    def _run_worker(self, run: Run, run_fn: Callable[..., object]) -> None:
+        try:
+            results = run_fn({
+                "on_state": lambda s: self.call_from_thread(self._on_run_state, run, s),
+                "on_episode": lambda label, ep: self.call_from_thread(
+                    self._on_run_episode, run, label, ep),
+                "on_log": lambda tag, line: self.call_from_thread(
+                    self._on_run_log, run, tag, line),
+                "stop": run.stop,
+            })
+        except Exception as exc:
+            self.call_from_thread(self._finish_run, run, None, exc)
+        else:
+            self.call_from_thread(self._finish_run, run, results, None)
+
+    def _monitor_for(self, run: Run) -> RunMonitor | None:
+        """The mounted monitor for ``run``, iff it's the screen on top."""
+        scr = self.screen
+        return scr if isinstance(scr, RunMonitor) and scr.run is run else None
+
+    def _on_run_state(self, run: Run, state: dict) -> None:
+        run.apply_state(state)
+        m = self._monitor_for(run)
+        if m is not None:
+            m.render_state()
+
+    def _on_run_episode(self, run: Run, label: str, ep: dict) -> None:
+        run.apply_episode(label, ep)
+        m = self._monitor_for(run)
+        if m is not None:
+            m.render_episode(label, ep)
+
+    def _on_run_log(self, run: Run, tag: str, line: str) -> None:
+        run.apply_log(tag, line)
+        m = self._monitor_for(run)
+        if m is not None:
+            m.render_log(tag)
+
+    def _finish_run(self, run: Run, results: object | None,
+                    error: BaseException | None) -> None:
+        run.finish(results=results, error=error)
+        if error is not None:
+            self.notify(f"run {run.rid} failed: {error}", severity="error", timeout=10)
+        m = self._monitor_for(run)
+        if m is not None:
+            m.render_state()
+
+    def open_run(self, rid: str) -> None:
+        run = self._runs.get(rid)
+        if run is not None:
+            self.push_screen(RunMonitor(run))
+
+    def stop_run(self, rid: str) -> None:
+        run = self._runs.get(rid)
+        if run is not None:
+            run.stop.set()
+
+    def action_quit(self) -> None:  # type: ignore[override]
+        for run in self._runs.values():
+            run.stop.set()  # best-effort: signal the workers before teardown
+        self.exit()
 
     # --- modal 2D keyboard navigation -------------------------------------
     #
@@ -316,12 +395,11 @@ class NetHackersApp(App):
 
     @property
     def error(self) -> BaseException | None:
-        """The pushed ``EvolveScreen``'s ``.error``, or ``None`` when this
-        shell has no evolve run in flight."""
-        return self._evolve_screen.error if self._evolve_screen is not None else None
+        """The first failed run's error, or ``None`` -- what the CLI's
+        headless-fallback path reads after ``app.run()``."""
+        return next((r.error for r in self._runs.values() if r.error is not None), None)
 
     @property
     def results(self) -> object | None:
-        """The pushed ``EvolveScreen``'s ``.results``, or ``None`` -- see
-        ``.error``."""
-        return self._evolve_screen.results if self._evolve_screen is not None else None
+        """The first finished run's results, or ``None``."""
+        return next((r.results for r in self._runs.values() if r.results is not None), None)

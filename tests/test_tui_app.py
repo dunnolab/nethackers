@@ -17,11 +17,13 @@ suite must never depend on -- or accidentally talk to -- one.
 from __future__ import annotations
 
 import asyncio
+import threading
 
 from textual.widgets import ContentSwitcher, Input, Tabs
 
 from nethackers.hubclient.credentials import Credentials
 from nethackers.tui.app import NetHackersApp
+from nethackers.tui.screens.monitor import RunMonitor
 from nethackers.tui.status import EvolveConfig
 
 _DEAD_HUB = "http://127.0.0.1:1"
@@ -111,12 +113,21 @@ async def test_error_and_results_are_none_without_an_evolve_run():
         assert app.results is None
 
 
-async def test_results_delegate_from_the_pushed_evolve_screen():
+class _Plan:
+    """Minimal ``EvolvePlan`` stand-in: ``start_run`` reads ``rid``/``cfg`` and
+    drives ``run`` on the background worker."""
+
+    def __init__(self, run) -> None:
+        self.rid = "r1"
+        self.cfg = EvolveConfig(objective="val-dwa-law-fem", backend="claude", iterations=1)
+        self.run = run
+
+
+async def test_results_reflect_a_finished_background_run():
     def fake_run(callbacks):
         return {"ok": True}
 
-    cfg = EvolveConfig(objective="val-dwa-law-fem", backend="claude", iterations=1)
-    app = NetHackersApp(hub=_DEAD_HUB, creds=None, evolve=(cfg, fake_run))
+    app = NetHackersApp(hub=_DEAD_HUB, creds=None, evolve=_Plan(fake_run))
     async with app.run_test():
         for _ in range(200):  # up to ~2s
             if app.results is not None:
@@ -126,12 +137,11 @@ async def test_results_delegate_from_the_pushed_evolve_screen():
         assert app.error is None
 
 
-async def test_error_delegates_from_the_pushed_evolve_screen_as_the_original_exception():
+async def test_error_reflects_a_failed_background_run_as_the_original_exception():
     def boom(callbacks):
         raise RuntimeError("cold start: hub unreachable")
 
-    cfg = EvolveConfig(objective="val-dwa-law-fem", backend="claude", iterations=1)
-    app = NetHackersApp(hub=_DEAD_HUB, creds=None, evolve=(cfg, boom))
+    app = NetHackersApp(hub=_DEAD_HUB, creds=None, evolve=_Plan(boom))
     async with app.run_test():
         for _ in range(200):  # up to ~2s
             if app.error is not None:
@@ -140,3 +150,49 @@ async def test_error_delegates_from_the_pushed_evolve_screen_as_the_original_exc
         assert isinstance(app.error, RuntimeError)
         assert str(app.error) == "cold start: hub unreachable"
         assert app.results is None
+
+
+async def test_run_survives_leaving_the_monitor_and_can_be_reopened_and_stopped():
+    """The jump-in/out contract: start_run registers the run + opens its
+    monitor; esc detaches to the dashboard WITHOUT stopping it; the run keeps
+    running; it can be reopened; stop_run stops it."""
+    fired = threading.Event()
+
+    def long_run(callbacks):
+        callbacks["on_state"]({
+            "phase": "mutating", "iteration": 1, "baseline_dev": 0.0, "baseline_held": 0.0,
+            "best_dev": 0.0, "best_held": 0.0, "wins": 0, "tokens": 0, "detail": "",
+            "parent_digest": "seed0", "parent_dev": 0.0, "parent_held": 0.0, "generation": 0})
+        fired.set()
+        callbacks["stop"].wait(timeout=3)  # block like a real run until stopped
+        return []
+
+    app = NetHackersApp(hub=_DEAD_HUB, creds=None, start="runs")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        run = app.start_run(_Plan(long_run))
+        await pilot.pause()
+        for _ in range(200):  # wait for the worker to fire on_state
+            if fired.is_set():
+                break
+            await asyncio.sleep(0.01)
+        await pilot.pause()
+
+        assert run.rid in app._runs                      # registered
+        assert isinstance(app.screen, RunMonitor) and app.screen.run is run  # monitor opened
+
+        await pilot.press("escape")                      # leave the monitor
+        await pilot.pause()
+        assert not isinstance(app.screen, RunMonitor)    # detached to the dashboard
+        assert run.running and not run.stop.is_set()     # ... but the run keeps going
+
+        app.open_run(run.rid)                            # jump back in
+        await pilot.pause()
+        assert isinstance(app.screen, RunMonitor) and app.screen.run is run
+
+        app.stop_run(run.rid)                            # explicit stop
+        for _ in range(200):
+            if not run.running:
+                break
+            await asyncio.sleep(0.01)
+        assert run.stop.is_set() and run.status == "stopped"

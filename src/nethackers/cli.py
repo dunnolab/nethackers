@@ -54,7 +54,7 @@ import os
 import sys
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import httpx
 from rich.live import Live
@@ -63,7 +63,6 @@ from rich_argparse import RichHelpFormatter
 
 from nethackers.eval.runner import eval_batch
 from nethackers.harness.launch import EvolveParams, _now, prepare_evolve
-from nethackers.harness.loop import IterationResult
 from nethackers.hub.objectives import CATALOG
 from nethackers.hubclient import credentials as _cred
 from nethackers.hubclient.client import (
@@ -403,33 +402,31 @@ def _run(argv: list[str] | None) -> int:
             from_seed=args.from_seed, select_k=args.select_k, select_temp=args.select_temp,
         )
         plan = prepare_evolve(params)
-        cfg = plan.cfg
 
         if sys.stdout.isatty() and args.output != "json" and not args.no_tui:
-            app = NetHackersApp(hub=args.hub, creds=_creds, start="home", evolve=(cfg, plan.run))
-            app.run()  # status bar replaces the prose report -> default no-op
+            # Interactive session: auto-start the run + open its monitor over
+            # the dashboard; esc roams other tabs while it runs, quit stops it.
+            app = NetHackersApp(hub=args.hub, creds=_creds, start="runs", evolve=plan)
+            app.run()
             if app.error is not None:
-                raise app.error  # let main()'s friendly hub/docker handlers fire on the ORIGINAL
-            # NetHackersApp.results is typed as `object | None` (it just forwards
-            # whatever `run=` returns via the pushed EvolveScreen); narrow it back to
-            # what `plan.run` actually produces -- a list of `run_loop`'s IterationResult.
-            results = cast(list[IterationResult], app.results or [])
-        else:
-            t0 = time.monotonic()
-            err.print(
-                f"evolving [b]{args.objective}[/] · operator={args.operator} · "
-                f"{args.iterations} iter"
-            )
-            with Live(console=err, auto_refresh=False, transient=False) as live:
-                stream = EpisodeStream(live)
-                results = plan.run(
-                    {"on_state": lambda s: None, "on_episode": stream.on_episode,
-                     "on_log": lambda tag, line: None},
-                    report=lambda m: live.console.print(
-                        f"{time.monotonic() - t0:7.1f}s  {m}", markup=False),
-                )
-                stream.finish()
+                raise app.error  # let main()'s friendly hub/docker handlers fire
+            return 0
 
+        # Headless: run to completion + print the summary.
+        t0 = time.monotonic()
+        err.print(
+            f"evolving [b]{args.objective}[/] · operator={args.operator} · "
+            f"{args.iterations} iter"
+        )
+        with Live(console=err, auto_refresh=False, transient=False) as live:
+            stream = EpisodeStream(live)
+            results = plan.run(
+                {"on_state": lambda s: None, "on_episode": stream.on_episode,
+                 "on_log": lambda tag, line: None},
+                report=lambda m: live.console.print(
+                    f"{time.monotonic() - t0:7.1f}s  {m}", markup=False),
+            )
+            stream.finish()
         n_reg = sum(1 for r in results if r.registered)
         err.print(f"done · [b]{n_reg}[/]/{len(results)} iteration(s) registered a new elite")
         return 0

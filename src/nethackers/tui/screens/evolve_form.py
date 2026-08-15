@@ -17,7 +17,7 @@ multi-objective picker awaits loop support and is not wired here.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any, cast
 
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -28,7 +28,9 @@ from textual.widgets.option_list import Option
 from nethackers.harness.launch import EvolveParams, prepare_evolve
 from nethackers.hub.objectives import CATALOG
 from nethackers.hubclient.credentials import Credentials
-from nethackers.tui.screens.evolve import EvolveScreen
+
+if TYPE_CHECKING:
+    from nethackers.tui.app import NetHackersApp
 
 # random first (the north-star), then the identities sorted; drop "all".
 _OBJECTIVES: list[str] = ["random"] + sorted(k for k in CATALOG if k not in ("random", "all"))
@@ -149,4 +151,4 @@ class EvolveForm(Vertical):
             self.query_one("#f_err", Static).update(f"[red]{exc}[/red]")
             return
         plan = prepare_evolve(params)
-        self.app.push_screen(EvolveScreen(plan.cfg, run=plan.run))
+        cast("NetHackersApp", self.app).start_run(plan)  # background run + open its monitor
