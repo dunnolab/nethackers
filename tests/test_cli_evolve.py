@@ -2,6 +2,7 @@
 import json
 
 from nethackers import cli
+from nethackers.harness import launch
 
 
 def test_evolve_parses_and_invokes_loop(tmp_path, monkeypatch):
@@ -17,7 +18,7 @@ def test_evolve_parses_and_invokes_loop(tmp_path, monkeypatch):
         from nethackers.harness.loop import IterationResult
         return [IterationResult(True, "registered", dev_fitness=0.6, heldout_fitness=0.6,
                                 tokens=10, digest="sha256:new")]
-    monkeypatch.setattr(cli, "run_loop", fake_run_loop, raising=False)
+    monkeypatch.setattr(launch, "run_loop", fake_run_loop, raising=False)
     rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed),
                    "--operator", "claude", "--iterations", "1", "--token-budget", "5000",
                    "--token", "dev-token", "--owner", "dev", "--workdir", str(tmp_path / "w")])
@@ -40,7 +41,7 @@ def test_evolve_passes_max_parallel_evals(tmp_path, monkeypatch):
         from nethackers.harness.loop import IterationResult
         return [IterationResult(True, "registered", dev_fitness=0.6, heldout_fitness=0.6,
                                 tokens=10, digest="sha256:new")]
-    monkeypatch.setattr(cli, "run_loop", fake_run_loop, raising=False)
+    monkeypatch.setattr(launch, "run_loop", fake_run_loop, raising=False)
     rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed),
                    "--operator", "claude", "--iterations", "1", "--token-budget", "5000",
                    "--token", "dev-token", "--owner", "dev", "--workdir", str(tmp_path / "w"),
@@ -62,7 +63,7 @@ def test_evolve_creates_run_dir_with_config_and_latest_symlink(tmp_path, monkeyp
         recorded["tree_store_root"] = str(kwargs["tree_store"]._root)
         recorded["workdir"] = str(kwargs["workdir"])
         return []
-    monkeypatch.setattr(cli, "run_loop", fake_run_loop, raising=False)
+    monkeypatch.setattr(launch, "run_loop", fake_run_loop, raising=False)
     rc = cli._run(["evolve", "random", "--seed", str(seed), "--workdir", str(tmp_path / "w")])
     assert rc == 0
 
@@ -90,7 +91,7 @@ def test_evolve_on_log_persists_mutation_stream(tmp_path, monkeypatch):
     def fake_run_loop(**kwargs):
         captured["on_log"] = kwargs["on_log"]
         return []
-    monkeypatch.setattr(cli, "run_loop", fake_run_loop, raising=False)
+    monkeypatch.setattr(launch, "run_loop", fake_run_loop, raising=False)
     rc = cli._run(["evolve", "random", "--seed", str(seed), "--workdir", str(tmp_path / "w")])
     assert rc == 0
     # the CLI wraps on_log to persist each raw stream line under logs/<tag>.log

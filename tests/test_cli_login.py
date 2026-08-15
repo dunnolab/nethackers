@@ -9,6 +9,7 @@
 import json
 
 from nethackers import cli
+from nethackers.harness import launch
 from nethackers.hubclient import credentials as cred
 
 
@@ -115,7 +116,7 @@ def test_evolve_defaults_owner_token_to_stored_creds_when_flags_absent(tmp_path,
         captured.update(kwargs)
         return []
 
-    monkeypatch.setattr(cli, "run_loop", fake_run_loop, raising=False)
+    monkeypatch.setattr(launch, "run_loop", fake_run_loop, raising=False)
     monkeypatch.setattr(cli, "_load_creds", lambda: cred.Credentials("castiel", "stored-tok"))
 
     rc = cli._run(["evolve", "random", "--seed", str(seed), "--workdir", str(tmp_path / "w")])
@@ -133,7 +134,7 @@ def test_evolve_falls_back_to_dev_when_no_creds_and_no_flags(tmp_path, monkeypat
         captured.update(kwargs)
         return []
 
-    monkeypatch.setattr(cli, "run_loop", fake_run_loop, raising=False)
+    monkeypatch.setattr(launch, "run_loop", fake_run_loop, raising=False)
     monkeypatch.setattr(cli, "_load_creds", lambda: None)
 
     rc = cli._run(["evolve", "random", "--seed", str(seed), "--workdir", str(tmp_path / "w")])
@@ -151,7 +152,7 @@ def test_evolve_explicit_flags_win_over_stored_creds(tmp_path, monkeypatch):
         captured.update(kwargs)
         return []
 
-    monkeypatch.setattr(cli, "run_loop", fake_run_loop, raising=False)
+    monkeypatch.setattr(launch, "run_loop", fake_run_loop, raising=False)
     # Stored creds are present, but explicit flags must still win.
     monkeypatch.setattr(cli, "_load_creds", lambda: cred.Credentials("castiel", "stored-tok"))
 
