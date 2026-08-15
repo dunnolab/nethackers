@@ -99,9 +99,11 @@ def run_loop(
             "best_dev": elite.dev_fitness, "best_held": elite.validation_fitness,
             "wins": wins, "tokens": tokens, "detail": detail,
             # parent snapshot for the monitor's PARENT panel + lineage chain
-            # (additive; the in-flight child's digest isn't known here)
+            # (additive; the in-flight child's digest isn't known here).
+            # generation = the iteration being worked (advances every attempt),
+            # not wins -- so the monitor's `gen` visibly moves even before a win.
             "parent_digest": elite.digest, "parent_dev": elite.dev_fitness,
-            "parent_held": elite.validation_fitness, "generation": wins,
+            "parent_held": elite.validation_fitness, "generation": iteration,
         })
 
     def _score_elite(tree_path: Path, digest: str, *, dev_label: str,

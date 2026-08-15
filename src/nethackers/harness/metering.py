@@ -53,6 +53,16 @@ def classify(backend: str, line: str) -> tuple[str, TokenUsage] | None:
         inner = obj.get("message")
         if isinstance(inner, dict) and isinstance(inner.get("usage"), dict):
             return "inc", _usage_from_dict(inner["usage"])
+    # codex-cli (>=0.1x) reports usage once, on `turn.completed` -- it emits NO
+    # `result` line, so without this codex tokens would stay 0 forever. Its
+    # `input_tokens` already includes the cached portion (cached_input_tokens is
+    # a discount, not an addend), and codex's cache keys don't match
+    # _usage_from_dict's, so the (unmatched -> 0) cache fields yield a faithful
+    # input+output total with no double-count. `codex exec` is single-turn, so
+    # this fires once -- total-replace is correct.
+    if (backend == "codex" and obj.get("type") == "turn.completed"
+            and isinstance(obj.get("usage"), dict)):
+        return "total", _usage_from_dict(obj["usage"])
     return None
 
 

@@ -28,6 +28,26 @@ def test_classify_codex_has_no_per_turn_usage():
     assert classify("codex", item) is None
 
 
+# codex-cli reports usage only on turn.completed (no `result` line). Real shape:
+# input_tokens already includes cached_input_tokens, so total = input + output.
+_CX_TURN = ('{"type":"turn.completed","usage":{"input_tokens":303014,'
+            '"cached_input_tokens":255744,"cache_write_input_tokens":0,'
+            '"output_tokens":2862,"reasoning_output_tokens":1033}}')
+
+
+def test_classify_codex_turn_completed_is_total():
+    kind, u = classify("codex", _CX_TURN)
+    assert kind == "total" and u.total == 303014 + 2862
+
+
+def test_meter_codex_updates_on_turn_completed():
+    m = Meter("codex")
+    m.observe('{"type":"item.started","item":{"type":"command_execution"}}')
+    assert m.usage.total == 0  # item events carry no usage
+    m.observe(_CX_TURN)
+    assert m.usage.total == 303014 + 2862
+
+
 def test_classify_never_raises():
     assert classify("claude", "not json") is None
     assert classify("claude", "[1,2,3]") is None
