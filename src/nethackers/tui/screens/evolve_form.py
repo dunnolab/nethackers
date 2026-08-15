@@ -108,7 +108,13 @@ class EvolveForm(Vertical):
             yield Static("", id="f_err")
 
     def on_mount(self) -> None:
-        self.query_one("#form").border_title = "⚔ Start an Evolve Run"
+        form = self.query_one("#form")
+        form.border_title = "⚔ Start an Evolve Run"
+        # the scroll pane holds the fields but is NOT itself a nav stop -- else
+        # the whole-form panel (a focusable .panel) competes with every field
+        # for the cursor. It still scrolls: each field's scroll_visible() drives
+        # it as the cursor lands.
+        form.can_focus = False
 
     def action_leave_field(self) -> None:
         """Return focus to the main nav so the global keys (``q`` to quit,
