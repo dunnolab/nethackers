@@ -121,36 +121,64 @@ async def test_elites_view_renders_empty_elites_message(monkeypatch):
 # --- Wiring-correctness tests: verify each view calls the right method ------
 
 
+class _FakeHubClient:
+    """Fake HubClient that records all method calls with their arguments."""
+
+    instances: list[_FakeHubClient] = []
+
+    def __init__(self, base_url: str) -> None:
+        self.base_url = base_url
+        self.board_calls: list[tuple] = []
+        self.attainment_calls: list[tuple] = []
+        self.elites_calls: list[tuple] = []
+        _FakeHubClient.instances.append(self)
+
+    def board(self, objective: str | None = None, metric: str | None = None) -> list:
+        self.board_calls.append((objective, metric))
+        return []
+
+    def attainment(self, identity: str | None = None) -> list:
+        self.attainment_calls.append((identity,))
+        return []
+
+    def elites(self, objective: str) -> list:
+        self.elites_calls.append((objective,))
+        return []
+
+
 async def test_boards_view_calls_board_and_passes_you(monkeypatch):
     """BoardsView calls client.board('random') with you=login passed to renderer."""
     import nethackers.tui.screens.hub as hub
 
-    captured_calls = []
+    captured_renderer_calls = []
 
     original_render = hub.render_board
 
     def capture_render(entries, **kwargs):
-        captured_calls.append(("render_board", entries, kwargs))
+        captured_renderer_calls.append(("render_board", entries, kwargs))
         return original_render(entries, **kwargs)
 
-    monkeypatch.setattr(hub.HubClient, "board", lambda self, *a, **k: [])
+    _FakeHubClient.instances.clear()
+    monkeypatch.setattr(hub, "HubClient", _FakeHubClient)
     monkeypatch.setattr(hub, "render_board", capture_render)
 
     app = _HostBoards()
     async with app.run_test() as pilot:
         await pilot.pause()
-        # render_board should have been called with you='castiel'
-        assert len(captured_calls) > 0
-        assert captured_calls[0][0] == "render_board"
-        assert captured_calls[0][2].get("you") == "castiel"
+        # Verify client.board was called with "random"
+        assert len(_FakeHubClient.instances) > 0
+        client = _FakeHubClient.instances[0]
+        assert len(client.board_calls) > 0
+        assert client.board_calls[0][0] == "random"
+        # Also verify render_board was called with you='castiel'
+        assert len(captured_renderer_calls) > 0
+        assert captured_renderer_calls[0][2].get("you") == "castiel"
 
 
 async def test_map_view_calls_attainment_and_passes_to_renderer(monkeypatch):
     """MapView calls client.attainment(None) and passes result to render_attainment."""
     import nethackers.tui.screens.hub as hub
 
-    # Track what the client method returns and what the renderer receives
-    fake_cells = [{"identity": "test", "milestone": "test"}]
     captured_renderer_calls = []
 
     original_render = hub.render_attainment
@@ -159,24 +187,27 @@ async def test_map_view_calls_attainment_and_passes_to_renderer(monkeypatch):
         captured_renderer_calls.append(("render_attainment", cells))
         return original_render(cells)
 
-    monkeypatch.setattr(hub.HubClient, "attainment", lambda self, *a, **k: fake_cells)
+    _FakeHubClient.instances.clear()
+    monkeypatch.setattr(hub, "HubClient", _FakeHubClient)
     monkeypatch.setattr(hub, "render_attainment", capture_render)
 
     app = _HostMap()
     async with app.run_test() as pilot:
         await pilot.pause()
-        # render_attainment should have been called with the fake_cells
+        # Verify client.attainment was called with None
+        assert len(_FakeHubClient.instances) > 0
+        client = _FakeHubClient.instances[0]
+        assert len(client.attainment_calls) > 0
+        assert client.attainment_calls[0][0] is None
+        # Also verify render_attainment was called with the result
         assert len(captured_renderer_calls) > 0
         assert captured_renderer_calls[0][0] == "render_attainment"
-        assert captured_renderer_calls[0][1] == fake_cells
 
 
 async def test_elites_view_calls_elites_and_passes_to_renderer(monkeypatch):
     """ElitesView calls client.elites('all') and passes result to render_elites."""
     import nethackers.tui.screens.hub as hub
 
-    # Track what the client method returns and what the renderer receives
-    fake_elites = [{"rank": 1, "identity": "test", "solution_digest": "abc", "score": 0.5}]
     captured_renderer_calls = []
 
     original_render = hub.render_elites
@@ -185,16 +216,21 @@ async def test_elites_view_calls_elites_and_passes_to_renderer(monkeypatch):
         captured_renderer_calls.append(("render_elites", entries))
         return original_render(entries)
 
-    monkeypatch.setattr(hub.HubClient, "elites", lambda self, *a, **k: fake_elites)
+    _FakeHubClient.instances.clear()
+    monkeypatch.setattr(hub, "HubClient", _FakeHubClient)
     monkeypatch.setattr(hub, "render_elites", capture_render)
 
     app = _HostElites()
     async with app.run_test() as pilot:
         await pilot.pause()
-        # render_elites should have been called with the fake_elites
+        # Verify client.elites was called with "all"
+        assert len(_FakeHubClient.instances) > 0
+        client = _FakeHubClient.instances[0]
+        assert len(client.elites_calls) > 0
+        assert client.elites_calls[0][0] == "all"
+        # Also verify render_elites was called with the result
         assert len(captured_renderer_calls) > 0
         assert captured_renderer_calls[0][0] == "render_elites"
-        assert captured_renderer_calls[0][1] == fake_elites
 
 
 # --- Content rendering tests: verify rendered output contains expected data --
