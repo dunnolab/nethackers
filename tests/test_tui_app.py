@@ -196,3 +196,51 @@ async def test_run_survives_leaving_the_monitor_and_can_be_reopened_and_stopped(
                 break
             await asyncio.sleep(0.01)
         assert run.stop.is_set() and run.status == "stopped"
+
+
+async def test_starting_a_second_run_swaps_the_monitor_instead_of_stacking():
+    # regression: start_run/open_run always push_screen'd, so two runs stacked
+    # two monitors -- esc walked back through stale monitors instead of the
+    # dashboard, and opening a run could surface the previous run's monitor.
+    def long_run(callbacks):
+        callbacks["on_state"]({
+            "phase": "mutating", "iteration": 1, "baseline_dev": 0.0, "baseline_held": 0.0,
+            "best_dev": 0.0, "best_held": 0.0, "wins": 0, "tokens": 0, "detail": "",
+            "parent_digest": "seed0", "parent_dev": 0.0, "parent_held": 0.0, "generation": 1})
+        callbacks["stop"].wait(timeout=3)
+        return []
+
+    def monitors(app):
+        return [s for s in app.screen_stack if isinstance(s, RunMonitor)]
+
+    app = NetHackersApp(hub=_DEAD_HUB, creds=None, start="runs")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        pa = _Plan(long_run)
+        pa.rid = "run-A"
+        pb = _Plan(long_run)
+        pb.rid = "run-B"
+        ra = app.start_run(pa)
+        await pilot.pause()
+        rb = app.start_run(pb)  # swaps A's monitor for B's, never stacks
+        await pilot.pause()
+        assert len(monitors(app)) == 1 and monitors(app)[0].run is rb
+
+        await pilot.press("escape")  # a SINGLE esc returns to the dashboard
+        await pilot.pause()
+        assert not isinstance(app.screen, RunMonitor)
+
+        app.open_run("run-A")  # opening A shows A (not a buried monitor)
+        await pilot.pause()
+        assert isinstance(app.screen, RunMonitor) and app.screen.run is ra
+        app.open_run("run-B")  # monitor -> monitor swaps straight to B
+        await pilot.pause()
+        assert isinstance(app.screen, RunMonitor) and app.screen.run is rb
+        assert len(monitors(app)) == 1
+
+        app.stop_run("run-A")
+        app.stop_run("run-B")
+        for _ in range(200):
+            if not (ra.running or rb.running):
+                break
+            await asyncio.sleep(0.01)

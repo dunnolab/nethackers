@@ -226,7 +226,17 @@ class NetHackersApp(App):
 
     def open_run(self, rid: str) -> None:
         run = self._runs.get(rid)
-        if run is not None:
+        if run is None:
+            return
+        scr = self.screen
+        if isinstance(scr, RunMonitor):
+            # a monitor is already up -> SWAP to this run's, never stack (else
+            # starting/opening a 2nd run buries the 1st and esc walks back through
+            # stale monitors instead of returning to the dashboard).
+            if scr.run is run:
+                return  # already showing this run
+            self.switch_screen(RunMonitor(run))
+        else:
             self.push_screen(RunMonitor(run))
 
     def stop_run(self, rid: str) -> None:
