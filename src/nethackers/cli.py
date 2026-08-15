@@ -167,6 +167,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "table (rich), json (raw, jq-able), or plain (plain-text table). "
         "Default: %(default)s; or $NETHACKERS_OUTPUT.",
     )
+    parser.add_argument(
+        "--no-tui",
+        action="store_true",
+        help="Never open the interactive TUI; print help/plain output.",
+    )
     sub = parser.add_subparsers(dest="cmd")
     common = _common_parser()
 
@@ -311,7 +316,17 @@ def _run(argv: list[str] | None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    if args.cmd is None:  # bare `nethackers` -> friendly help (with the project description)
+    if args.cmd is None:
+        # bare `nethackers`: on a TTY (and not --no-tui), open the dashboard
+        # -- agents and pipes get the same friendly help as every other
+        # invocation (with the project description), never Textual escape
+        # codes down a pipe.
+        if sys.stdout.isatty() and not args.no_tui:
+            app = NetHackersApp(hub=args.hub, creds=_load_creds())
+            app.run()
+            if app.error is not None:
+                raise app.error  # let main()'s top-level guard render it
+            return 0
         parser.print_help()
         return 0
 
@@ -363,7 +378,7 @@ def _run(argv: list[str] | None) -> int:
         plan = prepare_evolve(params)
         cfg = plan.cfg
 
-        if sys.stdout.isatty() and args.output != "json":
+        if sys.stdout.isatty() and args.output != "json" and not args.no_tui:
             app = NetHackersApp(hub=args.hub, creds=_creds, start="home", evolve=(cfg, plan.run))
             app.run()  # status bar replaces the prose report -> default no-op
             if app.error is not None:
