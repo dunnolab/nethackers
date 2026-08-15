@@ -4,8 +4,14 @@ Mutation-logs tab. Never raises: any unparseable / unknown shape yields []
 from __future__ import annotations
 
 import json
+import os
+import re
 
 PrettyLine = tuple[str, str]  # (kind, text); kind in {assistant, tool, result, meta}
+
+# codex wraps every shell action as `/bin/zsh -lc "<actual command>"`; show the
+# actual command, not the wrapper.
+_SHELL_WRAP = re.compile(r"^\S*sh\s+-[a-z]*c\s+(.*)$", re.DOTALL)
 
 _CLAUDE_VERB = {"Edit": "edit", "MultiEdit": "edit", "Write": "write",
                 "Read": "read", "Bash": "bash"}
@@ -59,9 +65,49 @@ def _claude(obj: dict) -> list[PrettyLine]:
     return []
 
 
+def _codex_command(command: str) -> str:
+    """The inner shell command, unwrapped from codex's `/bin/zsh -lc "..."`."""
+    inner = command.strip()
+    match = _SHELL_WRAP.match(inner)
+    if match:
+        inner = match.group(1).strip()
+    if len(inner) >= 2 and inner[0] in "\"'" and inner[-1] == inner[0]:
+        inner = inner[1:-1].strip()
+    return inner
+
+
+def _codex_edit(changes: object) -> str:
+    """`edit <basename[, ...]>` from a file_change's ``changes`` list, or ``""``."""
+    if not isinstance(changes, list):
+        return ""
+    names = [os.path.basename(c["path"]) for c in changes
+             if isinstance(c, dict) and isinstance(c.get("path"), str) and c["path"]]
+    return "edit " + ", ".join(names) if names else ""
+
+
 def _codex(obj: dict) -> list[PrettyLine]:
-    # Best-effort; codex's exact event keys are refined during manual
-    # acceptance. Recognized shapes only, else []. Never raises.
+    # codex-cli >=0.1x streams item-lifecycle events with the payload nested
+    # under "item"; each item fires on both item.started and item.completed, so
+    # render each exactly once: commands/edits when they start (live feedback),
+    # the agent's messages when they complete. Never raises; [] on any unknown
+    # shape. The top-level {text,message,command} fallback keeps older codex
+    # (and any future flattened event) working.
+    item = obj.get("item")
+    if isinstance(item, dict):
+        kind, itype = obj.get("type"), item.get("type")
+        if kind == "item.started" and itype == "command_execution":
+            cmd = item.get("command")
+            if isinstance(cmd, str) and cmd.strip():
+                return [("tool", _truncate(_codex_command(cmd)))]
+        if kind == "item.started" and itype == "file_change":
+            edit = _codex_edit(item.get("changes"))
+            if edit:
+                return [("tool", _truncate(edit))]
+        if kind == "item.completed" and itype == "agent_message":
+            msg = item.get("text")
+            if isinstance(msg, str) and msg.strip():
+                return [("assistant", msg.strip())]
+        return []
     text = obj.get("text") or obj.get("message")
     if isinstance(text, str) and text.strip():
         return [("assistant", text.strip())]
