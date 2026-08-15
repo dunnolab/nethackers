@@ -13,6 +13,8 @@ def _summarize(run_dir: Path) -> dict | None:
         cfg = json.loads((run_dir / "run.json").read_text())
     except (OSError, ValueError):
         return None
+    if not isinstance(cfg, dict):
+        return None
     wins, best_dev, best_held = 0, None, None
     mfile = run_dir / "metrics.jsonl"
     if mfile.exists():
@@ -20,6 +22,8 @@ def _summarize(run_dir: Path) -> dict | None:
             try:
                 m = json.loads(line)
             except ValueError:
+                continue
+            if not isinstance(m, dict):
                 continue
             if m.get("outcome") == "registered":
                 wins += 1
