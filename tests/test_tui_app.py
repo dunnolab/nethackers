@@ -70,6 +70,23 @@ async def test_escape_leaves_a_focused_field_so_q_can_quit():
         assert not app.is_running  # `q` quits again
 
 
+async def test_home_cards_are_keyboard_reachable():
+    """Home used to be a keyboard dead-end -- its four cards were plain
+    ``Static`` (non-focusable), so Tab never left the nav. They take focus
+    now, so Tab cycles the nav and all four cards (and the focus ring shows
+    which is active)."""
+    app = NetHackersApp(hub=_DEAD_HUB, creds=Credentials("castiel", "t"))
+    async with app.run_test() as pilot:
+        assert isinstance(app.focused, Tabs) and app.focused.id == "nav"  # start on nav
+        seen = []
+        for _ in range(5):  # nav -> yours -> board -> runs -> attain -> nav
+            await pilot.press("tab")
+            await pilot.pause()
+            seen.append(getattr(app.focused, "id", None))
+        assert {"home_yours", "home_board", "home_runs", "home_attain"} <= set(seen)
+        assert seen[-1] == "nav"  # wraps back to the nav
+
+
 # --- .error/.results delegate to the pushed EvolveScreen -------------------
 #
 # cli.py's evolve TTY branch reads `app.error`/`app.results` straight off

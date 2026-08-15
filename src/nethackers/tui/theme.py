@@ -44,6 +44,8 @@ _PANEL = PALETTE["panel"]
 _PARCHMENT = PALETTE["parchment"]
 _AMBER = PALETTE["amber"]
 _DIM = PALETTE["dim"]
+_FOCUS = "#ffd54a"    # bright lantern-gold: the element that currently holds focus
+_FOCUSBG = "#20202b"  # a faint stone lift behind a focused panel
 
 # App-wide stylesheet. Shared, reusable classes only; per-screen layout lives
 # in each view's DEFAULT_CSS so specificity stays flat.
@@ -51,6 +53,18 @@ CSS: str = f"""
 Screen {{
     background: {_DUNGEON};
     color: {_PARCHMENT};
+}}
+
+/* scrollbars in the amber language, never Textual's blue default. Set on
+   every widget (not just Screen -- the per-widget scrollbar color doesn't
+   inherit down to a scrollable child like a hub view's VerticalScroll). */
+* {{
+    scrollbar-background: {_PANEL};
+    scrollbar-background-hover: {_PANEL};
+    scrollbar-background-active: {_PANEL};
+    scrollbar-color: {_DIM};
+    scrollbar-color-hover: {_AMBER};
+    scrollbar-color-active: {_FOCUS};
 }}
 
 /* top identity band, then the section tab bar (active tab in amber).
@@ -99,6 +113,44 @@ Screen {{
     border-title-color: {_AMBER};
     border-title-style: bold;
     padding: 0 1;
+}}
+
+/* Keyboard focus: whatever holds focus lights up in bright lantern-gold
+   (brighter than the resting amber border), with a faint stone lift on
+   panels, so the active element is visible at all times. `:focus-within`
+   lifts a whole panel when one of its controls (an Input/Select) is focused;
+   `:focus` covers a directly-focused panel (Home's cards, a hub view's
+   scroll). The gold on the active tab shows only while the nav itself holds
+   focus -- once you Tab into a panel, the panel is gold and the nav settles
+   back to resting amber, so the single gold marker always points at the
+   active element. */
+.panel:focus, .panel:focus-within {{
+    border: heavy {_FOCUS};
+    background: {_FOCUSBG};
+}}
+Input:focus, Select:focus, OptionList:focus, Button:focus {{
+    border: heavy {_FOCUS};
+}}
+#nav:focus Tab.-active, #ftabs:focus Tab.-active {{
+    color: {_FOCUS};
+    text-style: bold;
+}}
+#nav:focus Underline > .underline--bar,
+#ftabs:focus Underline > .underline--bar {{
+    color: {_FOCUS};
+}}
+
+/* the highlighted option in a list stays amber (gold once the list itself is
+   focused), never Textual's blue default -- the selection is an active
+   element too. */
+OptionList > .option-list--option-highlighted {{
+    background: {_AMBER};
+    color: {_DUNGEON};
+    text-style: bold;
+}}
+OptionList:focus > .option-list--option-highlighted {{
+    background: {_FOCUS};
+    color: {_DUNGEON};
 }}
 
 /* muted body text for empty/idle states */

@@ -50,6 +50,14 @@ from nethackers.tui.screens.runs import read_runs
 _RUNS_DIR = Path.home() / ".nethackers" / "evolve" / "runs"
 
 
+class _Panel(Static):
+    """A dashboard card that can take keyboard focus, so Tab reaches it and
+    the focus ring shows which card is active (a plain ``Static`` can't be
+    focused, which made Home a keyboard dead-end)."""
+
+    can_focus = True
+
+
 def your_solutions_panel(entries: list[dict[str, Any]]) -> Table:
     """Your own registered solutions, identity-keyed (rows carry no
     ``owner`` -- every row here is already yours, so ``highscore_table``
@@ -130,10 +138,10 @@ class HomeView(Container):
         self._login = login
 
     def compose(self) -> ComposeResult:
-        yield Static(id="home_yours", classes="panel")
-        yield Static(id="home_board", classes="panel")
-        yield Static(id="home_runs", classes="panel")
-        yield Static(id="home_attain", classes="panel")
+        yield _Panel(id="home_yours", classes="panel")
+        yield _Panel(id="home_board", classes="panel")
+        yield _Panel(id="home_runs", classes="panel")
+        yield _Panel(id="home_attain", classes="panel")
 
     def on_mount(self) -> None:
         self.query_one("#home_yours", Static).border_title = "Your Solutions"
