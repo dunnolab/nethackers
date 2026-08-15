@@ -110,6 +110,23 @@ async def test_c_copies_the_selected_iteration_log_to_the_clipboard():
         assert captured["t"] == "line one\nline two"
 
 
+async def test_deferred_callbacks_are_safe_after_the_monitor_is_dismissed():
+    # regression: _highlight_current / _nav_start are call_after_refresh'd from
+    # on_mount; dismissing the monitor (esc, or switch_screen for another run)
+    # before they fire left them querying a gone widget tree -> NoMatches crash.
+    run = _populated_run()
+    host = _Host(run)
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        mon = host.screen
+        assert isinstance(mon, RunMonitor)
+        host.pop_screen()  # dismiss the monitor
+        await pilot.pause()
+        mon._highlight_current()  # guarded no-ops once unmounted -- must not raise
+        mon._nav_start()
+        assert not isinstance(host.screen, RunMonitor)
+
+
 async def test_agent_log_labels_the_iteration_follows_it_and_arrows_swap():
     _CLAUDE = '{"type":"assistant","message":{"content":[{"type":"text","text":"%s"}]}}'
     run = Run("run-1", CFG)  # CFG.iterations == 3 -> tags are "iter N/3"

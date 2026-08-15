@@ -12,6 +12,7 @@ from rich.text import Text
 from textual import events
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.screen import Screen
 from textual.widget import Widget
 from textual.widgets import (
@@ -207,7 +208,11 @@ class RunMonitor(Screen):
     def _highlight_current(self) -> None:
         """Highlight the shown iteration in the list (default: the latest) so
         it's obvious which iteration's log is on the right."""
-        lv = self.query_one("#logs_list", ListView)
+        try:
+            lv = self.query_one("#logs_list", ListView)
+        except NoMatches:
+            return  # a deferred (call_after_refresh) call landed after dismiss
+
         target = _slug(self.run.sel_tag) if self.run.sel_tag else None
         for i, item in enumerate(lv.children):
             if item.id == target:
@@ -262,9 +267,12 @@ class RunMonitor(Screen):
         widget.scroll_visible()
 
     def _nav_start(self) -> None:
+        try:
+            targets = self._nav_targets()  # queries -> NoMatches if already dismissed
+        except NoMatches:
+            return  # deferred from on_mount; the monitor may already be dismissed
         self._nav_mode = "navigate"
         self.set_focus(None)  # navigate mode: nothing focused, so on_key gets arrows
-        targets = self._nav_targets()
         if targets:
             self._nav_set_cursor(targets[0])
 
