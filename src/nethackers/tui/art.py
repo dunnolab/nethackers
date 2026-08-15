@@ -53,9 +53,9 @@ def highscore_table(entries: list[dict[str, Any]], you: str | None = None) -> Ta
     ``owner`` (ranking boards); identity-keyed otherwise (elites)."""
     t = Table(box=box.SIMPLE_HEAVY, header_style="bold", pad_edge=False)
     t.add_column("No", justify="right")
-    t.add_column("Points", justify="right")
-    t.add_column("Dlvl", justify="right")
     t.add_column("Who")
+    t.add_column("Reached", justify="right")  # dungeon depth -- the clear metric
+    t.add_column("Progress", justify="right")  # the raw 0-1 score, secondary
     for e in entries:
         owner = str(e.get("owner", ""))
         score = float(e.get("mean_progression", e.get("score", 0.0)) or 0.0)
@@ -64,6 +64,10 @@ def highscore_table(entries: list[dict[str, Any]], you: str | None = None) -> Ta
         who = f"@{owner}" if owner else _titlecase_identity(str(e.get("identity", "")))
         if is_you:
             who += " ◀ you"
-        t.add_row(str(e.get("rank", "")), f"{score:.3f}", score_to_dlvl(score),
-                  Text(who, style=style))
+        t.add_row(
+            str(e.get("rank", "")),
+            Text(who, style=style),
+            Text(score_to_dlvl(score), style="bold"),
+            Text(f"{score:.2f}", style="dim"),
+        )
     return t

@@ -11,7 +11,7 @@ which this suite must never do."""
 from __future__ import annotations
 
 from textual.app import App, ComposeResult
-from textual.widgets import Input, Static
+from textual.widgets import Static
 
 import nethackers.tui.screens.evolve_form as ef
 from nethackers.hubclient.credentials import Credentials
@@ -47,7 +47,9 @@ async def test_start_builds_params_and_pushes_monitor(monkeypatch):
     monkeypatch.setattr(ef, "prepare_evolve", _fake_prepare_evolve)
     app = _Host(Credentials("castiel", "tok"))
     async with app.run_test(size=(100, 40)) as pilot:
-        app.query_one("#f_obj", Input).value = "wiz-elf-cha-mal"
+        # objective is chosen from the filter+list; set the form's selection
+        # directly (what OptionList.OptionSelected would set)
+        app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
         monkeypatch.setattr(app, "push_screen", lambda s: seen.update(screen=s))
 
         await pilot.click("#f_start")

@@ -78,12 +78,13 @@ def test_recent_runs_panel_shows_objective_and_win_fraction():
 # --- attainment_panel: deepest milestone wins, bar is a real partial gauge
 
 
-def test_attainment_panel_reports_deepest_milestone_with_partial_bar():
+def test_attainment_panel_reports_deepest_milestone_and_count():
     cells = [{"milestone": "Dlvl:12"}, {"milestone": "Dlvl:26"}]
     out = attainment_panel(cells, "wiz-elf-cha-mal")
     assert "Dlvl:26" in out       # the deeper of the two cells wins
-    assert "Dlvl:12" not in out   # the shallower one must not be reported as "best"
-    assert "▓" in out and "░" in out  # a partial gauge -- not all-filled, not all-empty
+    assert "Dlvl:12" not in out   # the shallower one must not be reported as deepest
+    assert "deepest reached" in out
+    assert "milestones lit" in out and "2" in out  # count of milestones reached
 
 
 # --- _your_solutions: the search-digests x global-elites join -------------

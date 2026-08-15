@@ -25,7 +25,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from textual.app import App, ComposeResult
-from textual.widgets import ContentSwitcher, Static
+from textual.widgets import ContentSwitcher, Static, Tab, Tabs
 
 from nethackers.hubclient.credentials import Credentials
 from nethackers.tui.screens.evolve import EvolveScreen
@@ -75,8 +75,9 @@ class NetHackersApp(App):
     def compose(self) -> ComposeResult:
         who = f"@{self._creds.login}" if self._creds else "guest"
         host = self._hub.split("//")[-1]
-        labels = "   ".join(label for _key, label in _SECTIONS)
-        yield Static(f"  {who} · hub:{host}   {labels}", classes="tabbar")
+        yield Static(f" {who} · hub:{host}   —   ← → or 1–6 to switch · q quit",
+                     classes="idbar")
+        yield Tabs(*(Tab(label, id=f"tab-{key}") for key, label in _SECTIONS), id="nav")
         login = self._creds.login if self._creds else None
         with ContentSwitcher(initial=self._start, id="body"):
             yield HomeView(self._hub, login, id="home")
@@ -87,13 +88,27 @@ class NetHackersApp(App):
             yield EvolveForm(self._hub, self._creds, id="evolve")
 
     def on_mount(self) -> None:
+        self.query_one("#nav", Tabs).active = f"tab-{self._start}"
         if self._evolve is not None:
             cfg, run = self._evolve
             self._evolve_screen = EvolveScreen(cfg, run=run, exit_on_error=True)
             self.push_screen(self._evolve_screen)
 
+    def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
+        """Clicking a tab or moving with ← → (Textual's Tabs) switches the
+        section; a guard skips the burst of activations Tabs fires before the
+        ContentSwitcher has mounted."""
+        if not event.tab.id:
+            return
+        try:
+            body = self.query_one("#body", ContentSwitcher)
+        except Exception:
+            return
+        body.current = event.tab.id.removeprefix("tab-")
+
     def action_show(self, key: str) -> None:
-        self.query_one("#body", ContentSwitcher).current = key
+        # drive the tab bar; its TabActivated switches the ContentSwitcher
+        self.query_one("#nav", Tabs).active = f"tab-{key}"
 
     def action_evolve(self) -> None:
         self.action_show("evolve")

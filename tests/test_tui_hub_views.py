@@ -88,8 +88,8 @@ async def test_boards_view_renders_empty_board_message(monkeypatch):
     async with app.run_test() as pilot:
         await pilot.pause()
         body = app.query_one("#boards_body")
-        # render_board's empty message must appear
-        assert "no board entries yet" in str(body.content)
+        # BoardsView's own empty message must appear
+        assert "No ranked solutions yet" in str(body.content)
 
 
 async def test_map_view_renders_empty_attainment_message(monkeypatch):
@@ -135,7 +135,10 @@ class _FakeHubClient:
 
     def board(self, objective: str | None = None, metric: str | None = None) -> list:
         self.board_calls.append((objective, metric))
-        return []
+        # non-empty so BoardsView renders via highscore_table (it early-returns
+        # an empty-state message on []).
+        return [{"rank": 1, "owner": "vale", "mean_progression": 0.5,
+                 "solution_digest": "a" * 12}]
 
     def attainment(self, identity: str | None = None) -> list:
         self.attainment_calls.append((identity,))
@@ -152,15 +155,15 @@ async def test_boards_view_calls_board_and_passes_you(monkeypatch):
 
     captured_renderer_calls = []
 
-    original_render = hub.render_board
+    original_render = hub.highscore_table
 
     def capture_render(entries, **kwargs):
-        captured_renderer_calls.append(("render_board", entries, kwargs))
+        captured_renderer_calls.append(("highscore_table", entries, kwargs))
         return original_render(entries, **kwargs)
 
     _FakeHubClient.instances.clear()
     monkeypatch.setattr(hub, "HubClient", _FakeHubClient)
-    monkeypatch.setattr(hub, "render_board", capture_render)
+    monkeypatch.setattr(hub, "highscore_table", capture_render)
 
     app = _HostBoards()
     async with app.run_test() as pilot:

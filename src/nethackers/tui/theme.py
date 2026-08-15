@@ -53,15 +53,27 @@ Screen {{
     color: {_PARCHMENT};
 }}
 
-/* top identity + section-nav band */
-.tabbar {{
-    dock: top;
+/* top identity band, then the section tab bar (active tab in amber).
+   Both sit in normal flow -- two dock:top siblings overlap. */
+.idbar {{
     height: 1;
+    background: {_PANEL};
+    color: {_DIM};
+    padding: 0 1;
+}}
+#nav {{
+    background: {_PANEL};
+    color: {_DIM};
+}}
+#nav Tab.-active {{
     background: {_PANEL};
     color: {_AMBER};
     text-style: bold;
-    padding: 0 1;
 }}
+#nav Underline > .underline--bar {{
+    color: {_AMBER};
+}}
+#body {{ height: 1fr; }}
 
 /* the signature framed, titled "tty window" */
 .panel {{

@@ -9,7 +9,8 @@ from textual.containers import VerticalScroll
 from textual.widgets import Static
 
 from nethackers.hubclient.client import HubClient
-from nethackers.hubclient.render import render_attainment, render_board, render_elites
+from nethackers.hubclient.render import render_attainment, render_elites
+from nethackers.tui.art import highscore_table
 
 
 class _HubView(VerticalScroll):
@@ -58,7 +59,10 @@ class BoardsView(_HubView):
     PANEL_TITLE = "♛ Leaderboard — random"
 
     def _render_hub(self, client: HubClient):
-        return render_board(client.board("random"), you=self._login)
+        entries = client.board("random")
+        if not entries:
+            return "[dim]No ranked solutions yet.[/]"
+        return highscore_table(entries, you=self._login)
 
 
 class MapView(_HubView):

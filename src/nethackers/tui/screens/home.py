@@ -44,11 +44,10 @@ from textual.widgets import Static
 
 from nethackers.arena.progress import ACHIEVEMENTS
 from nethackers.hubclient.client import HubClient
-from nethackers.tui.art import highscore_table, score_to_dlvl
+from nethackers.tui.art import highscore_table
 from nethackers.tui.screens.runs import read_runs
 
 _RUNS_DIR = Path.home() / ".nethackers" / "evolve" / "runs"
-_DLVL_BAR_CELLS = 12
 
 
 def your_solutions_panel(entries: list[dict[str, Any]]) -> Table:
@@ -83,17 +82,15 @@ def recent_runs_panel(runs: list[dict[str, Any]]) -> Table:
 
 
 def attainment_panel(cells: list[dict[str, Any]], identity: str) -> str:
-    """A one-line Dlvl depth gauge for ``identity``: the deepest milestone
-    lit across ``cells`` (``read_attainment``'s rows, via
-    ``ACHIEVEMENTS``), rendered as a 12-cell filled/empty bar plus the
-    milestone label itself."""
-    deepest = max(
-        (ACHIEVEMENTS.get(str(c.get("milestone", "")), 0.0) for c in cells), default=0.0
-    )
-    label = score_to_dlvl(deepest)
-    filled = round(deepest * _DLVL_BAR_CELLS)
-    bar = "▓" * filled + "░" * (_DLVL_BAR_CELLS - filled)
-    return f"your attainment · {identity}\nDlvl {bar}  best {label}"
+    """Milestone attainment for ``identity``: the deepest milestone lit
+    across ``cells`` (``read_attainment``'s rows, ranked via
+    ``ACHIEVEMENTS``) named plainly -- ``Dlvl:26``, ``Astral Plane`` -- with
+    a count of how many milestones are reached. No abstract 0-1 bar."""
+    if not cells:
+        return f"{identity}\n[dim]No milestones reached yet.[/]"
+    deepest = max(cells, key=lambda c: ACHIEVEMENTS.get(str(c.get("milestone", "")), 0.0))
+    label = str(deepest.get("milestone", "")) or "—"
+    return f"{identity}\ndeepest reached  [b]{label}[/]\nmilestones lit   {len(cells)}"
 
 
 def _your_solutions(client: HubClient, login: str) -> list[dict[str, Any]]:

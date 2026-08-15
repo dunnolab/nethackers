@@ -30,7 +30,7 @@ _DEAD_HUB = "http://127.0.0.1:1"
 async def test_shell_shows_identity_and_switches_sections():
     app = NetHackersApp(hub=_DEAD_HUB, creds=Credentials("castiel", "t"))
     async with app.run_test() as pilot:
-        assert "@castiel" in str(app.query_one(".tabbar").render())
+        assert "@castiel" in str(app.query_one(".idbar").render())
         assert app.query_one("#body", ContentSwitcher).current == "home"  # default start
 
         await pilot.press("2")  # -> boards
@@ -41,7 +41,7 @@ async def test_shell_shows_identity_and_switches_sections():
 async def test_shell_guest_when_logged_out():
     app = NetHackersApp(hub=_DEAD_HUB, creds=None)
     async with app.run_test():
-        text = str(app.query_one(".tabbar").render())
+        text = str(app.query_one(".idbar").render())
         assert "guest" in text
         assert "@" not in text  # no stray "@"/"@None" when nobody is logged in
 
