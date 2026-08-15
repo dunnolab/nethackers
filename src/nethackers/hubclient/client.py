@@ -6,10 +6,10 @@ URL/params/headers/body the server expects. ``http`` defaults to the real
 every method against a fake recording calls -- no real network access
 anywhere in this module.
 
-``render_attainment``/``render_elites``/``render_board``/``render_search``/
-``render_show``/``plain_frontier`` are pure formatters over the JSON a
-read call returns -- they don't touch ``HubClient`` at all. The first five
-were the CLI's only renderers pre-CLI-UX-pass; now they're the
+``render_elites``/``render_board``/``render_search``/``render_show``/
+``plain_frontier`` are pure formatters over the JSON a read call returns --
+they don't touch ``HubClient`` at all. The first four were the CLI's only
+renderers pre-CLI-UX-pass; now they're the
 **``plain``** half of ``nethackers.hubclient.output.emit``'s
 ``table=``/``plain=`` pair (the ``rich`` half lives in
 ``nethackers.hubclient.render``) -- reached via ``-o plain``, and still
@@ -213,25 +213,6 @@ def plain_frontier(scores: dict[str, float | None]) -> str:
         rendered = f"{value:.2f}" if value is not None else "—"
         lines.append(f"{identity:<20} {rendered}")
     return "\n".join(lines)
-
-
-def render_attainment(cells: list[dict[str, Any]]) -> str:
-    """A table of attainment cells: ``identity | milestone | first_owner |
-    holders`` (``holders`` <- ``cell["holder_count"]``). A friendly
-    one-line message instead of a bare header when ``cells == []``."""
-    if not cells:
-        return "no attainment cells yet."
-    headers = ["identity", "milestone", "first_owner", "holders"]
-    rows = [
-        [
-            str(cell.get("identity", "")),
-            str(cell.get("milestone", "")),
-            str(cell.get("first_owner", "")),
-            str(cell.get("holder_count", "")),
-        ]
-        for cell in cells
-    ]
-    return _table(headers, rows)
 
 
 def render_elites(entries: list[dict[str, Any]]) -> str:

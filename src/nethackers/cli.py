@@ -58,6 +58,7 @@ from typing import Any, cast
 
 import httpx
 from rich.live import Live
+from rich.text import Text
 from rich_argparse import RichHelpFormatter
 
 from nethackers.eval.runner import eval_batch
@@ -67,21 +68,22 @@ from nethackers.hub.objectives import CATALOG
 from nethackers.hubclient import credentials as _cred
 from nethackers.hubclient.client import (
     HubClient,
-    render_attainment as plain_attainment,
+    plain_frontier,
     render_board as plain_board,
     render_elites as plain_elites,
     render_search as plain_search,
     render_show as plain_show,
 )
 from nethackers.hubclient.credentials import Credentials, whoami_from_token
+from nethackers.hubclient.frontier import champion, champion_scores, universe_scores
 from nethackers.hubclient.live import EpisodeStream
 from nethackers.hubclient.output import emit, err
 from nethackers.hubclient.pull import pull
 from nethackers.hubclient.register import device_login, register_solution
 from nethackers.hubclient.render import (
-    render_attainment as rich_attainment,
     render_board as rich_board,
     render_elites as rich_elites,
+    render_frontier_grid,
     render_search as rich_search,
     render_show as rich_show,
 )
@@ -242,9 +244,13 @@ def _build_parser() -> argparse.ArgumentParser:
         "frontier", aliases=["map", "attainment"], parents=[common],
         formatter_class=RichHelpFormatter,
         help="Show the frontier — how far the community has collectively "
-        "reached (identity x milestone).",
+        "reached, as a role x variation number grid.",
     )
-    m.add_argument("--identity", default=None, help="Narrow to one identity (default: all).")
+    m.add_argument(
+        "--program", nargs="?", const="", default=None,
+        help="Show one program across all identities (default: the champion). "
+        "Pass a digest to pick a specific solution.",
+    )
 
     el = sub.add_parser(
         "elites", parents=[common], formatter_class=RichHelpFormatter,
@@ -416,8 +422,28 @@ def _run(argv: list[str] | None) -> int:
 
     if args.cmd in ("frontier", "map", "attainment"):
         client = HubClient(args.hub)
-        emit(client.attainment(args.identity), args.output,
-             table=rich_attainment, plain=plain_attainment)
+        note = ""
+        if args.program is not None:
+            digest = args.program or None
+            if digest is None:
+                champ = champion(client)
+                if champ is None:
+                    emit(
+                        {}, args.output,
+                        table=lambda s: Text("no ranked programs yet.", style="dim"),
+                        plain=lambda s: "no ranked programs yet.",
+                    )
+                    return 0
+                digest, owner = champ
+                note = f"@{owner}/{digest[:10]} — this one program across all identities"
+            scores = champion_scores(client, digest)
+        else:
+            scores = universe_scores(client)
+        emit(
+            scores, args.output,
+            table=lambda s: render_frontier_grid(s, note=note),
+            plain=plain_frontier,
+        )
         return 0
 
     if args.cmd == "elites":

@@ -1,15 +1,12 @@
 """``rich`` renderers for the M2a hub-facing CLI read subcommands (CLI-UX
-pass): ``render_board``/``render_attainment``/``render_elites``/
-``render_search``/``render_show``, one per ``nethackers.cli`` read
-subcommand, each a pure formatter over the JSON a ``HubClient`` read call
-returns -- same contract as the baseline pure-Python renderers in
-``nethackers.hubclient.client`` (which these sit alongside as the ``table``
-half of ``hubclient.output.emit``'s ``table=``/``plain=`` pair; the
-baseline ones become ``plain=``). Reuses that module's ``_short_digest``/
-``_num`` helpers rather than duplicating them.
-
-``render_attainment`` is the showcase: the attainment MAP as a colored
-heatmap grid rather than a flat table -- see its docstring.
+pass): ``render_board``/``render_elites``/``render_search``/
+``render_show``, one per ``nethackers.cli`` read subcommand, each a pure
+formatter over the JSON a ``HubClient`` read call returns -- same contract
+as the baseline pure-Python renderers in ``nethackers.hubclient.client``
+(which these sit alongside as the ``table`` half of
+``hubclient.output.emit``'s ``table=``/``plain=`` pair; the baseline ones
+become ``plain=``). Reuses that module's ``_short_digest``/``_num`` helpers
+rather than duplicating them.
 
 Every renderer must tolerate an empty/short response without crashing,
 returning a friendly one-line ``rich.text.Text`` instead of a bare table
@@ -36,7 +33,6 @@ from rich.console import Group, JustifyMethod, RenderableType
 from rich.table import Table
 from rich.text import Text
 
-from nethackers.arena.progress import ACHIEVEMENTS
 from nethackers.hub.objectives import IDENTITIES
 from nethackers.hubclient.client import _num, _short_digest
 
@@ -205,73 +201,6 @@ def render_board(entries: list[dict[str, Any]], *, you: str | None = None) -> Re
         for e in entries:
             table.add_row(*[str(e.get(h, "")) for h in headers])
 
-    return table
-
-
-def _bar(fraction: float, width: int = 24) -> Text:
-    """A ``width``-char coverage bar filled to ``fraction`` (clamped to
-    ``[0, 1]``): the filled part colored by ``ramp(fraction)`` (cold->hot
-    with depth), the remainder a dim ``░``. Pure presentation, never raises."""
-    fraction = min(max(float(fraction), 0.0), 1.0)
-    filled = round(fraction * width)
-    bar = Text()
-    bar.append("█" * filled, style=ramp(fraction))
-    bar.append("░" * (width - filled), style="grey30")
-    return bar
-
-
-def render_attainment(cells: list[dict[str, Any]]) -> RenderableType:
-    """The attainment MAP as a readable per-identity progress leaderboard,
-    not an 87-wide unlabeled heatmap (which wraps and can't carry column
-    names in a terminal). One row per identity present, sorted
-    most-progressed first: a colored coverage bar, the deepest milestone
-    reached, how many of the full ladder are lit (``reached/total``), the
-    frontier's holder count, and who reached that frontier first.
-
-    ``fraction`` is the deepest reached milestone's empirical-ascension
-    value from ``nethackers.arena.progress.ACHIEVEMENTS`` (attainment is
-    cumulative -- reaching a deep milestone lights every shallower one -- so
-    the deepest cell is the frontier and its value is the coverage ratio).
-    Full per-cell detail stays available via ``-o json`` (every cell) and
-    ``-o plain`` (the flat cell table). Empty -> a friendly one-liner."""
-    if not cells:
-        return _empty("no attainment cells yet.")
-
-    total = len(ACHIEVEMENTS)
-    by_identity: dict[str, list[dict[str, Any]]] = {}
-    for c in cells:
-        by_identity.setdefault(str(c.get("identity", "")), []).append(c)
-
-    rows: list[tuple[str, float, str, int, int, str]] = []
-    for identity, group in by_identity.items():
-        deepest_cell = max(
-            group, key=lambda c: ACHIEVEMENTS.get(str(c.get("milestone", "")), 0.0)
-        )
-        deepest = str(deepest_cell.get("milestone", ""))
-        rows.append(
-            (
-                identity,
-                ACHIEVEMENTS.get(deepest, 0.0),
-                deepest,
-                len(group),
-                int(deepest_cell.get("holder_count") or 0),
-                str(deepest_cell.get("first_owner", "")),
-            )
-        )
-    rows.sort(key=lambda r: r[1], reverse=True)  # most-progressed identity first
-
-    table = Table(header_style="bold", row_styles=["", "on grey11"])
-    table.add_column("identity")
-    table.add_column("progress")
-    table.add_column("deepest")
-    table.add_column("reached", justify="right")
-    table.add_column("holders", justify="right")
-    table.add_column("first")
-    for identity, fraction, deepest, reached, holders, first in rows:
-        table.add_row(
-            identity, _bar(fraction), deepest, f"{reached}/{total}", str(holders),
-            _gh_user(first),
-        )
     return table
 
 
