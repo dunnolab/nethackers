@@ -50,14 +50,20 @@ def run_operator(
     proc = popen(cmd, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                  text=True, bufsize=1, start_new_session=True)
     killed = threading.Event()
+    done = threading.Event()
     watcher: threading.Thread | None = None
     if stop is not None:
         def _watch() -> None:
-            stop.wait()
-            if proc.poll() is None:
-                killed.set()
-                with contextlib.suppress(Exception):
-                    os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            # Poll the shared stop until THIS operator finishes (local `done`).
+            # Never touch `stop` itself -- it is shared across every iteration's
+            # run, so setting it here would poison it and skip the next iteration.
+            while not done.wait(timeout=0.1):
+                if stop.is_set():
+                    if proc.poll() is None:
+                        killed.set()
+                        with contextlib.suppress(Exception):
+                            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    return
         watcher = threading.Thread(target=_watch, daemon=True)
         watcher.start()
     try:
@@ -67,10 +73,9 @@ def run_operator(
                     on_line(line)
             meter.observe(line)
     finally:
-        if stop is not None:
-            stop.set()  # release the watcher, whether we finished or were killed
+        done.set()  # release the watcher WITHOUT poisoning the shared stop
         if watcher is not None:
-            watcher.join(timeout=1)
+            watcher.join(timeout=2)
         with contextlib.suppress(Exception):
             proc.wait(timeout=30)
     return OperatorResult(backend=backend, usage=meter.usage,

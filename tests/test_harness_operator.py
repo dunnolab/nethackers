@@ -1,6 +1,7 @@
 # tests/test_harness_operator.py
 import json
 import shutil
+import threading
 from pathlib import Path
 
 import pytest
@@ -59,6 +60,18 @@ def test_run_operator_on_line_exception_never_aborts(tmp_path):
     res = run_operator(["fake"], tmp_path, backend="claude", on_line=boom,
                        popen=_popen_factory([_RESULT]))
     assert res.total == 370   # metering + reap unaffected by the callback crash
+
+
+def test_run_operator_does_not_poison_the_shared_stop_on_completion(tmp_path):
+    # The stop Event is shared across every iteration's operator run (the TUI's
+    # self._stop). run_operator must NOT set it on normal completion, or the
+    # loop's top-of-iteration stop check trips and the NEXT iteration is skipped
+    # ("2 iterations, only 1 ran").
+    stop = threading.Event()
+    res = run_operator(["fake"], tmp_path, backend="claude", stop=stop,
+                       popen=_popen_factory([_RESULT]))
+    assert res.stopped_reason == "completed"
+    assert not stop.is_set()
 
 
 def test_run_operator_reaps_the_process(tmp_path):
