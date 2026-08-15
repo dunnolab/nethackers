@@ -75,6 +75,21 @@ Screen {{
 }}
 #body {{ height: 1fr; }}
 
+/* MapView's own Frontier subtab bar (Universe/Program) -- same amber-active,
+   dim-inactive language as #nav, never Textual's blue default. */
+#ftabs {{
+    background: {_PANEL};
+    color: {_DIM};
+}}
+#ftabs Tab.-active {{
+    background: {_PANEL};
+    color: {_AMBER};
+    text-style: bold;
+}}
+#ftabs Underline > .underline--bar {{
+    color: {_AMBER};
+}}
+
 /* the signature framed, titled "tty window" */
 .panel {{
     background: {_PANEL};

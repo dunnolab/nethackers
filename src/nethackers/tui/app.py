@@ -97,7 +97,30 @@ class NetHackersApp(App):
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         """Clicking a tab or moving with ← → (Textual's Tabs) switches the
         section; a guard skips the burst of activations Tabs fires before the
-        ContentSwitcher has mounted."""
+        ContentSwitcher has mounted.
+
+        ``MapView`` (the Frontier section) hosts its own subtab bar
+        (``Tabs(id="ftabs")``, for its Universe/Program regimes) nested
+        inside the ContentSwitcher. Its ``TabActivated`` bubbles up through
+        the ContentSwitcher to this same handler, since Textual messages
+        bubble to every ancestor regardless of which ``Tabs`` posted them --
+        and a ``Tabs`` widget auto-activates its first tab as soon as it
+        mounts, so this fires the moment the app starts (all six sections,
+        ``MapView`` included, are composed into the ContentSwitcher up
+        front, not lazily on first visit), not just when a user actually
+        clicks a Frontier subtab. Confirmed by temporarily removing the
+        guard below: ``body.current`` got set to ``"ft-universe"``, which
+        doesn't exist as a ContentSwitcher child, raising ``NoMatches`` and
+        crashing the app on mount -- before any test even switched to the
+        Frontier section. Guard on the event's *originating* ``Tabs``
+        widget -- ``event.tabs`` (confirmed present on installed Textual
+        8.2.8's ``Tabs.TabMessage.__init__``, which every ``TabActivated``
+        carries) -- so only the main nav (``id="nav"``) ever drives
+        ``body.current``; MapView's own handler switches its internal
+        regime itself and never touches this ContentSwitcher.
+        """
+        if event.tabs.id != "nav":
+            return
         if not event.tab.id:
             return
         try:
