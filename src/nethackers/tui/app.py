@@ -37,7 +37,7 @@ from nethackers.tui.status import EvolveConfig
 from nethackers.tui.theme import CSS
 
 _SECTIONS = [
-    ("home", "⌂ Home"), ("boards", "♛ Boards"), ("map", "▚ Map"),
+    ("home", "⌂ Home"), ("boards", "♛ Leaderboard"), ("map", "⇩ Frontier"),
     ("elites", "⚑ Elites"), ("runs", "▶ Runs"), ("evolve", "⚔ Evolve"),
 ]
 

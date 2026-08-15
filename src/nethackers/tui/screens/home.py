@@ -139,7 +139,7 @@ class HomeView(Container):
         self.query_one("#home_yours", Static).border_title = "Your Solutions"
         self.query_one("#home_board", Static).border_title = "♛ Leaderboard"
         self.query_one("#home_runs", Static).border_title = "▶ Recent Runs"
-        self.query_one("#home_attain", Static).border_title = "▚ Attainment"
+        self.query_one("#home_attain", Static).border_title = "⇩ Your Frontier"
         self._refresh()
 
     def on_show(self) -> None:

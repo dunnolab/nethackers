@@ -239,8 +239,10 @@ def _build_parser() -> argparse.ArgumentParser:
     pl.add_argument("dest", help="Destination directory for the clone.")
 
     m = sub.add_parser(
-        "map", aliases=["attainment"], parents=[common], formatter_class=RichHelpFormatter,
-        help="Show attainment cells (identity x milestone).",
+        "frontier", aliases=["map", "attainment"], parents=[common],
+        formatter_class=RichHelpFormatter,
+        help="Show the frontier — how far the community has collectively "
+        "reached (identity x milestone).",
     )
     m.add_argument("--identity", default=None, help="Narrow to one identity (default: all).")
 
@@ -251,8 +253,9 @@ def _build_parser() -> argparse.ArgumentParser:
     el.add_argument("--objective", required=True, help="A catalog objective name.")
 
     b = sub.add_parser(
-        "board", parents=[common], formatter_class=RichHelpFormatter,
-        help="Show a ranking board.",
+        "leaderboard", aliases=["board"], parents=[common],
+        formatter_class=RichHelpFormatter,
+        help="Show the leaderboard — solutions ranked on an objective.",
     )
     b.add_argument("--objective", default=None, help="A catalog objective name.")
     b.add_argument(
@@ -411,7 +414,7 @@ def _run(argv: list[str] | None) -> int:
         print(pull(args.repo_at_commit, Path(args.dest)))
         return 0
 
-    if args.cmd in ("map", "attainment"):
+    if args.cmd in ("frontier", "map", "attainment"):
         client = HubClient(args.hub)
         emit(client.attainment(args.identity), args.output,
              table=rich_attainment, plain=plain_attainment)
@@ -425,7 +428,7 @@ def _run(argv: list[str] | None) -> int:
         emit(client.elites(args.objective), args.output, table=rich_elites, plain=plain_elites)
         return 0
 
-    if args.cmd == "board":
+    if args.cmd in ("leaderboard", "board"):
         if args.objective is not None and args.objective not in CATALOG:
             err.print(_unknown_objective(args.objective))
             return 2

@@ -68,7 +68,7 @@ class BoardsView(_HubView):
 class MapView(_HubView):
     """The attainment map: identity × milestone coverage."""
 
-    PANEL_TITLE = "▚ Attainment Map"
+    PANEL_TITLE = "⇩ Frontier — how far we've collectively gotten"
 
     def _render_hub(self, client: HubClient):
         return render_attainment(client.attainment(None))
