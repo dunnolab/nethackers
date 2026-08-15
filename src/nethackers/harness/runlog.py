@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import Callable
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 
@@ -67,6 +68,8 @@ def metric_record(iteration: int, result: IterationResult) -> dict:
     return {
         "iteration": iteration, "outcome": outcome, "reason": result.reason,
         "dev_fitness": result.dev_fitness, "validation_fitness": result.validation_fitness,
-        "tokens": result.tokens, "stopped_reason": result.stopped_reason,
+        "tokens": result.usage.total if result.usage else result.tokens,
+        "usage": asdict(result.usage) if result.usage else None,
+        "stopped_reason": result.stopped_reason,
         "child_digest": result.digest,
     }
