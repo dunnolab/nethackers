@@ -21,6 +21,7 @@ from nethackers.hub.views.solution import read_solution_frontier
 
 DIGEST = "sha256:solution-a"
 OTHER_DIGEST = "sha256:solution-b"
+EMPTY_DIGEST = "sha256:solution-empty"
 
 # Two real identities the target digest has atoms on ("val-..." sorts
 # before "wiz-..." -- exercises the view's ORDER BY identity for real).
@@ -136,3 +137,26 @@ def test_get_solution_frontier_200_for_known_digest_404_for_unknown(tmp_path):
 
     assert unknown.status_code == 404
     assert unknown.json()["detail"] == "unknown solution digest: 'sha256:does-not-exist'"
+
+
+def test_get_solution_frontier_200_empty_list_for_known_solution_with_no_atoms(tmp_path):
+    # Property 3 (spec's Testing section, frontier-view-design.md:139-140):
+    # a solution that IS registered but has zero atoms -> 200 with [] --
+    # distinct from the unknown-digest case above, which 404s. The view's
+    # GROUP BY over zero matching rows already yields zero groups; this is
+    # API-level coverage of that, not new behavior.
+    client, store = _client(tmp_path)
+    store.upsert_solution(
+        EMPTY_DIGEST,
+        repo="r",
+        commit_sha="c",
+        owner="sam",
+        root=".",
+        entrypoint="bot.py",
+        registered_at="2026-01-01T00:00:00Z",
+    )
+
+    response = client.get(f"/solutions/{EMPTY_DIGEST}/frontier")
+
+    assert response.status_code == 200
+    assert response.json() == []
