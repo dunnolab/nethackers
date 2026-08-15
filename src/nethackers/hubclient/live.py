@@ -2,7 +2,7 @@
 
 ``run_loop`` calls ``on_episode(label, ep)`` once per finished arena episode,
 where ``label`` names the batch it belongs to (``"cold-start · dev"``,
-``"iter 1/3 · held-out"``, …) and ``ep`` is the parsed
+``"iter 1/3 · validation"``, …) and ``ep`` is the parsed
 ``{seed, character, progress, status, turns, depth, index, total}`` dict.
 
 ``EpisodeStream`` turns that stream into one table per batch that fills in

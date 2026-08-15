@@ -140,12 +140,21 @@ def agent_tokens(backend: str, line: str) -> int:
 
 
 def _codex_cmd(cli: str, brief: str) -> list[str]:
-    # Codex has no auto-memory recall and `codex exec` never auto-resumes,
-    # so these are consistency + hygiene, not a bug fix: stop writing
-    # session/rollout files and drop inherited user config/rules so the
-    # operator stays a pure function of (parent tree, brief). Auth still
-    # works -- --ignore-user-config only drops $CODEX_HOME/config.toml.
-    return [cli, "exec", brief, "--json", "--full-auto",
+    # --skip-git-repo-check is MANDATORY, not hygiene: the operator worktree is
+    # a plain shutil.copytree of the elite tree (loop.py -- no .git), and
+    # `codex exec` otherwise refuses with "Not inside a trusted directory and
+    # --skip-git-repo-check was not specified" on *stderr* -- which
+    # run_with_token_budget routes to DEVNULL, so the mutation silently no-ops
+    # (0 tokens, no changes, gate sees child == parent). `claude -p` has no
+    # such requirement, which is why only the codex operator was affected.
+    #
+    # The rest are consistency + hygiene: codex has no auto-memory recall and
+    # `codex exec` never auto-resumes, but --ephemeral stops writing
+    # session/rollout files and --ignore-user-config/--ignore-rules drop
+    # inherited config/rules so the operator stays a pure function of (parent
+    # tree, brief). Auth still works -- --ignore-user-config only drops
+    # $CODEX_HOME/config.toml.
+    return [cli, "exec", brief, "--json", "--full-auto", "--skip-git-repo-check",
             "--ephemeral", "--ignore-user-config", "--ignore-rules"]
 
 

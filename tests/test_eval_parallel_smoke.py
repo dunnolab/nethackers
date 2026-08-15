@@ -26,7 +26,7 @@ from pathlib import Path
 import pytest
 
 from nethackers.eval.runner import eval_batch
-from nethackers.harness.seeds import heldout_spec
+from nethackers.harness.seeds import validation_spec
 
 REPO_ROOT = Path(__file__).parents[1]
 SOLUTION = REPO_ROOT / "roots" / "autoascend"
@@ -34,10 +34,10 @@ IMAGE = "nethackers/arena:dev"
 
 # A small, deterministic, single-identity batch: 4 episodes of the same
 # character, on a seed range (start=90_000) well clear of any published
-# dev/held-out/smoke batch so it can never collide with one. max_steps is
+# dev/validation/smoke batch so it can never collide with one. max_steps is
 # capped well below the catalog default so both runs finish in reasonable
 # wall-clock time -- this is a smoke check, not a full evaluation.
-_SPEC = heldout_spec("val-dwa-law-fem", n=4, start=90_000, max_steps=200)
+_SPEC = validation_spec("val-dwa-law-fem", n=4, start=90_000, max_steps=200)
 
 
 @pytest.mark.docker

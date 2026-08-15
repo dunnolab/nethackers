@@ -57,19 +57,27 @@ def _new_store(tmp_path):
     return store
 
 
-def _seed(store: Store, atoms: list[Atom]) -> None:
+def _seed(
+    store: Store, atoms: list[Atom], *, owner: str = "sam", repo: str = "r",
+    commit_sha: str = "c",
+) -> None:
     """Seed every FK parent ``insert_atoms`` needs -- ``atoms`` has FKs to
     both ``objectives`` and ``solutions`` (task-8-context.md's test-setup
     note) -- then insert the atoms themselves. Safe to call more than once
-    per test: both upserts and ``insert_atoms`` are idempotent."""
+    per test: both upserts and ``insert_atoms`` are idempotent.
+
+    ``owner``/``repo``/``commit_sha`` describe the *registered solution*
+    row (default ``sam``/``r``/``c``, matching every pre-existing caller)
+    -- distinct from an atom's own ``owner`` field, and the knob the
+    owner/repo/commit_sha-enrichment tests override."""
     for identity in {atom.identity for atom in atoms}:
         store.objectives_upsert(CATALOG[identity])
     for digest in {atom.solution_digest for atom in atoms}:
         store.upsert_solution(
             digest,
-            repo="r",
-            commit_sha="c",
-            owner="sam",
+            repo=repo,
+            commit_sha=commit_sha,
+            owner=owner,
             root=".",
             entrypoint="bot.py",
             registered_at="2026-01-01T00:00:00Z",
@@ -229,3 +237,29 @@ def test_recompute_elites_is_idempotent(tmp_path):
 
     assert first == second
     assert len(first) == 2
+
+
+def test_entries_carry_owner_tier_repo_commit_sha_for_trust_aware_select(tmp_path):
+    # Property 7 (M3 SELECT-from-hub): each entry is enriched with the
+    # registered solution's {owner, repo, commit_sha} (LEFT JOIN solutions
+    # ON solution_digest = solutions.digest) plus a constant tier -- every
+    # atom is self-reported until M2b verification exists. The trust-aware
+    # SELECT resolver (harness/select.py) needs these fields to decide
+    # whether an elite is trusted.
+    store = _new_store(tmp_path)
+    atoms = [_atom(solution_digest="sha256:solution-a", seed=0, progression=0.5)]
+    _seed(store, atoms, owner="dev", repo="github.com/dev/nethacker-runs", commit_sha="d" * 40)
+
+    recompute_elites(store, k=2)
+    entries = read_elites(store, objective=IDENTITY)
+
+    assert len(entries) == 1
+    entry = entries[0]
+    assert entry["owner"] == "dev"
+    assert entry["tier"] == "self-reported"
+    assert entry["repo"] == "github.com/dev/nethacker-runs"
+    assert entry["commit_sha"] == "d" * 40
+    # Existing fields untouched.
+    assert entry["identity"] == IDENTITY
+    assert entry["solution_digest"] == "sha256:solution-a"
+    assert entry["rank"] == 1

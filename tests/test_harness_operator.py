@@ -209,6 +209,11 @@ def test_codex_cmd_includes_hermeticity_flags_and_brief():
     assert "--ephemeral" in cmd
     assert "--ignore-user-config" in cmd
     assert "--ignore-rules" in cmd
+    # The operator worktree is a plain shutil.copytree of the elite tree (no
+    # .git); `codex exec` refuses to run outside a trusted/git dir and prints
+    # "Not inside a trusted directory ..." to stderr (swallowed -> DEVNULL),
+    # producing a silent no-op mutation. --skip-git-repo-check is mandatory.
+    assert "--skip-git-repo-check" in cmd
 
 
 def _claude_project_slug(cwd: Path) -> str:
