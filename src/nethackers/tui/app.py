@@ -5,6 +5,7 @@ callbacks handed off with call_from_thread."""
 from __future__ import annotations
 
 import functools
+import threading
 import time
 from collections.abc import Callable
 
@@ -22,7 +23,7 @@ from textual.widgets import (
     TabPane,
 )
 
-from nethackers.harness.operator import agent_tokens
+from nethackers.harness.metering import Meter
 from nethackers.hubclient.live import episode_table
 from nethackers.tui.prettify import prettify
 from nethackers.tui.status import EvolveConfig, format_status
@@ -74,7 +75,7 @@ class EvolveApp(App):
     #logs_list { width: 20; border-right: solid $accent; }
     #logview { padding: 0 1; }
     """
-    BINDINGS = [("q", "quit", "Quit"), ("ctrl+c", "quit", "Quit")]
+    BINDINGS = [("q", "stop_and_quit", "Quit"), ("ctrl+c", "stop_and_quit", "Quit")]
 
     def __init__(self, cfg: EvolveConfig, run: Callable[[dict], object] | None = None) -> None:
         super().__init__()
@@ -90,7 +91,8 @@ class EvolveApp(App):
         self._eval_step: tuple[int, int, float] | None = None
         self._logs: dict[str, list[tuple[str, str]]] = {}
         self._items: dict[str, str] = {}  # slug -> tag
-        self._live_tokens: dict[str, int] = {}
+        self._meters: dict[str, Meter] = {}
+        self._stop = threading.Event()
         self._sel_tag: str | None = None
         self._mut_start = 0.0
 
@@ -110,6 +112,10 @@ class EvolveApp(App):
         if self._run is not None:
             self._worker()
 
+    def action_stop_and_quit(self) -> None:
+        self._stop.set()  # hard-kill the running operator subprocess group (no orphan)
+        self.exit()
+
     @work(thread=True, exit_on_error=False)
     def _worker(self) -> None:
         assert self._run is not None
@@ -119,6 +125,7 @@ class EvolveApp(App):
                 "on_episode": lambda label, ep: self.call_from_thread(
                     self._apply_episode, label, ep),
                 "on_log": lambda tag, line: self.call_from_thread(self._apply_log, tag, line),
+                "stop": self._stop,
             })
         except Exception as exc:
             self.error = exc
@@ -173,8 +180,7 @@ class EvolveApp(App):
         self._ensure_log(tag)
         pretty = prettify(self._cfg.backend, line)
         self._logs.setdefault(tag, []).extend(pretty)
-        gained = agent_tokens(self._cfg.backend, line)
-        self._live_tokens[tag] = self._live_tokens.get(tag, 0) + gained
+        self._meters.setdefault(tag, Meter(self._cfg.backend)).observe(line)
         if tag == self._sel_tag and pretty:
             log = self.query_one("#logview", RichLog)
             for kind, text in pretty:
@@ -219,7 +225,8 @@ class EvolveApp(App):
             self._refresh_status()
 
     def _refresh_status(self) -> None:
-        live = self._live_tokens.get(self._running_tag(), 0)
+        meter = self._meters.get(self._running_tag())
+        live = meter.usage.total if meter is not None else 0
         line1, line2 = format_status(self._cfg, self._state, live_tokens=live,
                                      eval_step=self._eval_step, elapsed_s=self._elapsed())
         self.query_one("#status", Static).update(f"[b]{self._title}[/]\n{line1}\n{line2}")

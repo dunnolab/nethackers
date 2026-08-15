@@ -1,7 +1,6 @@
-from nethackers.tui.status import EvolveConfig, format_status
+from nethackers.tui.status import EvolveConfig, _compact, format_status
 
-CFG = EvolveConfig(objective="val-dwa-law-fem", backend="claude",
-                   iterations=3, token_budget=40_000)
+CFG = EvolveConfig(objective="val-dwa-law-fem", backend="claude", iterations=3)
 
 
 def _state(phase, **kw):
@@ -13,8 +12,15 @@ def _state(phase, **kw):
 
 def test_mutating_shows_tokens_and_clock():
     l1, l2 = format_status(CFG, _state("mutating"), live_tokens=12_480, elapsed_s=41)
-    assert l1 == "MUTATING iter 2/3 · 12.5k/40.0k tok · 0:41"
+    assert l1 == "MUTATING iter 2/3 · 12.5k tok · 0:41"
     assert l2 == "best dev 0.089 (base 0.070) · held 0.061 · 1 win"
+
+
+def test_compact_scales_k_and_m():
+    assert _compact(999) == "999"
+    assert _compact(12_480) == "12.5k"
+    assert _compact(2_497_780) == "2.5M"     # faithful counts reach millions (cache-inclusive)
+    assert _compact(50_000_000) == "50.0M"
 
 
 def test_evaluating_shows_episode_and_mean():

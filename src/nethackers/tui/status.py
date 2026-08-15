@@ -10,11 +10,14 @@ class EvolveConfig:
     objective: str
     backend: str
     iterations: int
-    token_budget: int
 
 
 def _compact(n: int) -> str:
-    return f"{n / 1000:.1f}k" if n >= 1000 else str(int(n))
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1000:
+        return f"{n / 1000:.1f}k"
+    return str(int(n))
 
 
 def _clock(seconds: float) -> str:
@@ -37,8 +40,7 @@ def format_status(
         line1 = "COLD START · scoring baseline …"
     elif phase == "mutating":
         line1 = (f"MUTATING iter {k}/{n} · "
-                 f"{_compact(live_tokens)}/{_compact(cfg.token_budget)} tok · "
-                 f"{_clock(elapsed_s)}")
+                 f"{_compact(live_tokens)} tok · {_clock(elapsed_s)}")
     elif phase == "gating":
         line1 = f"GATING iter {k}/{n} · smoke …"
     elif phase in ("evaluating-dev", "evaluating-held"):

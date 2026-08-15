@@ -134,6 +134,8 @@ def run_loop(
         on_iteration(iteration, result)
 
     for k in range(iterations):
+        if stop is not None and stop.is_set():
+            break  # manual hard-stop: don't start another iteration
         tag = f"iter {k + 1}/{iterations}"
         try:
             # Mid-run migration: adopt another process's strictly-better elite
