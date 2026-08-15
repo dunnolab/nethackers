@@ -132,8 +132,12 @@ Input:focus, Select:focus, OptionList:focus, Button:focus,
 Input.-cursor, Select.-cursor, OptionList.-cursor, Button.-cursor {{
     border: heavy {_FOCUS};
 }}
-/* the navigate-mode cursor on a section/subtab: a solid gold chip */
-Tab.-cursor {{
+/* the navigate-mode cursor on a section/subtab: a solid gold chip. Scoped to
+   #nav/#ftabs so it matches `.-active`'s (id-level) specificity and, coming
+   later, wins -- otherwise a cursor tab (which is also the active tab, since
+   landing on it switches sections) would render as a plain active tab with
+   no focus highlight at all. */
+#nav Tab.-cursor, #ftabs Tab.-cursor {{
     background: {_FOCUS};
     color: {_DUNGEON};
     text-style: bold;
