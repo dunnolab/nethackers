@@ -2,7 +2,7 @@ import asyncio
 import json
 import threading
 
-from textual.widgets import OptionList
+from textual.widgets import Button
 
 from nethackers.tui.app import NetHackersApp
 from nethackers.tui.screens.monitor import RunMonitor
@@ -154,12 +154,6 @@ class _Plan:
         self.run = run
 
 
-class _Ev:  # minimal OptionList.OptionSelected stand-in
-    def __init__(self, option_list, oid):
-        self.option_list = option_list
-        self.option = type("O", (), {"id": oid})()
-
-
 async def test_runs_view_lists_ongoing_and_opens_on_select():
     fired = threading.Event()
 
@@ -186,12 +180,12 @@ async def test_runs_view_lists_ongoing_and_opens_on_select():
         runs_view = app.query_one(RunsView)
         runs_view._refresh()
         await pilot.pause()
-        ongoing = app.query_one("#runs_ongoing", OptionList)
-        assert ongoing.option_count == 1
-        assert "val-dwa-law-fem" in str(ongoing.get_option_at_index(0).prompt)
+        buttons = list(app.query(".ongoing-run").results(Button))
+        assert len(buttons) == 1
+        assert "val-dwa-law-fem" in str(buttons[0].label)
 
-        # selecting the ongoing run jumps back into its monitor
-        runs_view.on_option_list_option_selected(_Ev(ongoing, run.rid))
+        # a single Enter/press jumps into the run's monitor (no interact step)
+        buttons[0].press()
         await pilot.pause()
         assert isinstance(app.screen, RunMonitor) and app.screen.run is run
 

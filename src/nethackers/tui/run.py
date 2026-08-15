@@ -45,6 +45,8 @@ class Run:
         self.results: object | None = None
         self.error: BaseException | None = None
         self.stop = stop if stop is not None else threading.Event()
+        self.started = time.monotonic()   # wall-clock start (for run_time)
+        self.finished_at: float | None = None
 
         self.state: dict = dict(_INITIAL_STATE)
         self.chain: list[str] = []
@@ -102,6 +104,7 @@ class Run:
                error: BaseException | None = None) -> None:
         self.results = results
         self.error = error
+        self.finished_at = time.monotonic()
         if error is not None:
             self.status = "failed"
         elif self.stop.is_set():
@@ -133,6 +136,11 @@ class Run:
         """Cumulative faithful tokens across every iteration (for the Runs list;
         ``live_tokens`` is just the current iteration's)."""
         return sum(meter.usage.total for meter in self.meters.values())
+
+    def run_time(self) -> float:
+        """Wall-clock seconds since the run started (frozen once finished)."""
+        end = self.finished_at if self.finished_at is not None else time.monotonic()
+        return end - self.started
 
     def elapsed(self) -> float:
         if self.state.get("phase") == "mutating":

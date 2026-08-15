@@ -7,11 +7,10 @@ from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from textual.app import ComposeResult
-from textual.containers import VerticalScroll
-from textual.widgets import OptionList, Static
-from textual.widgets.option_list import Option
+from textual.containers import Vertical, VerticalScroll
+from textual.widgets import Button, Static
 
-from nethackers.tui.status import _compact
+from nethackers.tui.status import _clock, _compact
 
 if TYPE_CHECKING:
     from nethackers.tui.app import NetHackersApp
@@ -77,7 +76,13 @@ class RunsView(VerticalScroll):
     DEFAULT_CSS = """
     RunsView { margin: 1 2; padding: 0 1; height: 1fr; }
     RunsView #runs_ongoing_title { color: #d2a24c; text-style: bold; }
-    RunsView #runs_ongoing { height: auto; max-height: 12; margin-bottom: 1; }
+    RunsView #runs_ongoing { height: auto; margin-bottom: 1; }
+    RunsView .ongoing-run {
+        width: 1fr; height: 3; margin: 0 0 1 0;
+        border: round #d2a24c; background: #16161c; color: #d7c9a2;
+        text-align: left; content-align: left middle; text-style: none;
+    }
+    RunsView .ongoing-run:hover { background: #20202b; }
     RunsView #runs_past_title { color: #7c745f; margin-top: 1; }
     """
 
@@ -88,7 +93,7 @@ class RunsView(VerticalScroll):
 
     def compose(self) -> ComposeResult:
         yield Static(id="runs_ongoing_title")
-        yield OptionList(id="runs_ongoing")
+        yield Vertical(id="runs_ongoing")  # one focusable Button per ongoing run
         yield Static("past runs", id="runs_past_title")
         yield Static(id="runs_past")
 
@@ -115,20 +120,21 @@ class RunsView(VerticalScroll):
         st = run.state
         return (f"⚔ {run.cfg.objective}   {st.get('phase', '')}   "
                 f"gen {st.get('generation', 0)}   w {st.get('wins', 0)}   "
-                f"{_compact(run.total_tokens())} tok")
+                f"{_compact(run.total_tokens())} tok   ⏱ {_clock(run.run_time())}")
 
     def _refresh_ongoing(self) -> None:
         runs = [r for r in self._app()._runs.values() if r.running]
-        options = self.query_one("#runs_ongoing", OptionList)
+        container = self.query_one("#runs_ongoing", Vertical)
         ids = [r.rid for r in runs]
-        if ids != self._ongoing_ids:  # a run started/finished -> rebuild
-            options.clear_options()
+        if ids != self._ongoing_ids:  # a run started/finished -> rebuild the buttons
+            container.remove_children()
             for run in runs:
-                options.add_option(Option(self._ongoing_label(run), id=run.rid))
+                container.mount(Button(self._ongoing_label(run), id=f"ongoing-{run.rid}",
+                                       classes="ongoing-run"))
             self._ongoing_ids = ids
-        else:  # same set -> just refresh the live labels in place
+        else:  # same set -> refresh each run's live label in place
             for run in runs:
-                options.replace_option_prompt(run.rid, self._ongoing_label(run))
+                self.query_one(f"#ongoing-{run.rid}", Button).label = self._ongoing_label(run)
         self.query_one("#runs_ongoing_title", Static).update(
             f"● {len(runs)} run(s) in flight — enter to jump in" if runs
             else "[dim]No runs in flight. Start one from the ⚔ Evolve tab.[/]")
@@ -141,6 +147,7 @@ class RunsView(VerticalScroll):
         self.query_one("#runs_past", Static).update(
             recent_runs_panel(past) if past else "[dim]No finished runs yet.[/]")
 
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        if event.option_list.id == "runs_ongoing" and event.option.id:
-            self._app().open_run(event.option.id)  # jump into the run's monitor
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        bid = event.button.id or ""
+        if bid.startswith("ongoing-"):  # a single Enter/click jumps into the monitor
+            self._app().open_run(bid[len("ongoing-"):])
