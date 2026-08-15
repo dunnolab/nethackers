@@ -51,7 +51,12 @@ _INITIAL_STATE: dict = {
 class EvolveScreen(Screen):
     """The evolution monitor: PARENT -> CANDIDATE -> eval -> lineage, live,
     over a Monitor tab (per-batch episode tables) and an Agent log tab
-    (per-iteration mutation stream)."""
+    (per-iteration mutation stream). ``escape`` dismisses back to whatever
+    sits beneath in the screen stack -- the dashboard, for both the
+    ``⚔ Evolve`` tab's in-app launch (Task 16, ``EvolveForm.push_screen``)
+    and the CLI's ``nethackers evolve`` TTY path (``NetHackersApp.on_mount``
+    pushes this screen over the same dashboard ``compose()`` already
+    built)."""
 
     CSS = """
     TabbedContent { width: 1fr; }
@@ -59,7 +64,7 @@ class EvolveScreen(Screen):
     #logs_list { width: 20; border-right: solid $accent; }
     #logview { padding: 0 1; }
     """
-    BINDINGS = [("q", "app.quit", "Quit")]
+    BINDINGS = [("q", "app.quit", "Quit"), ("escape", "dismiss", "Back")]
 
     def __init__(self, cfg: EvolveConfig, run: Callable[[dict], object] | None = None) -> None:
         super().__init__()

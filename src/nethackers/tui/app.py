@@ -1,7 +1,7 @@
 """``NetHackersApp``: the dashboard shell -- a ``.tabbar`` header (identity +
 hub + section labels) over a ``ContentSwitcher`` hosting the section views
-(Home/Boards/Map/Elites/Runs), plus an optional pushed ``EvolveScreen`` for
-``nethackers evolve``'s TTY path.
+(Home/Boards/Map/Elites/Runs/Evolve), plus an optional pushed
+``EvolveScreen`` for ``nethackers evolve``'s TTY path.
 
 Replaces the old single-purpose ``EvolveApp``, which owned its own status
 bar and mutation-log tabs directly. That live-monitor UI now lives in
@@ -12,6 +12,13 @@ each subcommand spinning up its own. ``.error``/``.results`` delegate to
 that pushed screen so ``cli.py`` can read them after ``app.run()`` exactly
 as it did for ``EvolveApp`` -- ``None``/``None`` when this shell was never
 given an ``evolve=`` (a plain dashboard launch, no run in flight).
+
+The ``⚔ Evolve`` section (Task 16) is the in-app counterpart to that CLI
+path: ``EvolveForm`` sits in the ``ContentSwitcher`` like any other section,
+and its own Start button -- not this shell -- pushes an ``EvolveScreen`` on
+top of the dashboard once a run is built (``prepare_evolve``), so the two
+launch paths converge on the same pushed-screen mechanics right after this
+``__init__``'s ``evolve=`` short-circuit.
 """
 from __future__ import annotations
 
@@ -22,6 +29,7 @@ from textual.widgets import ContentSwitcher, Static
 
 from nethackers.hubclient.credentials import Credentials
 from nethackers.tui.screens.evolve import EvolveScreen
+from nethackers.tui.screens.evolve_form import EvolveForm
 from nethackers.tui.screens.home import HomeView
 from nethackers.tui.screens.hub import BoardsView, ElitesView, MapView
 from nethackers.tui.screens.runs import RunsView
@@ -30,15 +38,16 @@ from nethackers.tui.theme import CSS
 
 _SECTIONS = [
     ("home", "⌂ Home"), ("boards", "♛ Boards"), ("map", "▚ Map"),
-    ("elites", "⚑ Elites"), ("runs", "▶ Runs"),
+    ("elites", "⚑ Elites"), ("runs", "▶ Runs"), ("evolve", "⚔ Evolve"),
 ]
 
 
 class NetHackersApp(App):
-    """The dashboard shell. Five sections switched by ``1``..``5`` (or the
-    matching tab) over a ``ContentSwitcher``; ``e``/``l`` are stubs for the
-    in-app evolve-launch/login flows a later task fills in (``nethackers
-    evolve``/``nethackers login`` on the CLI already work today)."""
+    """The dashboard shell. Six sections switched by ``1``..``6`` (or the
+    matching tab) over a ``ContentSwitcher``, including the ``⚔ Evolve``
+    launch form (``e``/key ``6``); ``l`` remains a stub for the in-app login
+    flow a later task fills in (``nethackers login`` on the CLI already
+    works today)."""
 
     CSS = CSS
     BINDINGS = [
@@ -75,6 +84,7 @@ class NetHackersApp(App):
             yield MapView(self._hub, login, id="map")
             yield ElitesView(self._hub, login, id="elites")
             yield RunsView(id="runs")
+            yield EvolveForm(self._hub, self._creds, id="evolve")
 
     def on_mount(self) -> None:
         if self._evolve is not None:
@@ -86,7 +96,7 @@ class NetHackersApp(App):
         self.query_one("#body", ContentSwitcher).current = key
 
     def action_evolve(self) -> None:
-        pass  # in-app launch form deferred to a later task; `nethackers evolve` still works
+        self.action_show("evolve")
 
     def action_login(self) -> None:
         pass  # in-app device flow deferred; `nethackers login` on the CLI works today
