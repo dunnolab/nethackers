@@ -1,10 +1,9 @@
-"""Pure-formatter tests for the evolve-monitor screen's building blocks.
-
-Sibling to tests/test_tui_status.py, which pins the OLD single-panel
-format_status() (still used by the current EvolveApp and left untouched
-here). This file pins the NEW monitor formatters added alongside it:
+"""Pure-formatter tests for the evolve-monitor screen's building blocks:
 parent_panel, candidate_line, eval_line, lineage_strip, iterations_ledger,
-status_line, and the _bar helper they share.
+status_line, and the _bar helper they share -- what tui.screens.evolve.
+EvolveScreen renders through. These superseded the old single-panel
+format_status(), which the old EvolveApp used; both were removed in the
+Task 10 NetHackersApp shell cutover.
 """
 from nethackers.tui.status import (
     EvolveConfig,

@@ -85,7 +85,7 @@ from nethackers.hubclient.render import (
     render_search as rich_search,
     render_show as rich_show,
 )
-from nethackers.tui.app import EvolveApp
+from nethackers.tui.app import NetHackersApp
 
 
 def _default_hub() -> str:
@@ -364,13 +364,13 @@ def _run(argv: list[str] | None) -> int:
         cfg = plan.cfg
 
         if sys.stdout.isatty() and args.output != "json":
-            app = EvolveApp(cfg, run=plan.run)
+            app = NetHackersApp(hub=args.hub, creds=_creds, start="home", evolve=(cfg, plan.run))
             app.run()  # status bar replaces the prose report -> default no-op
             if app.error is not None:
                 raise app.error  # let main()'s friendly hub/docker handlers fire on the ORIGINAL
-            # EvolveApp.results is typed as `object | None` (it just forwards
-            # whatever `run=` returns); narrow it back to what `plan.run` actually
-            # produces -- a list of `run_loop`'s IterationResult.
+            # NetHackersApp.results is typed as `object | None` (it just forwards
+            # whatever `run=` returns via the pushed EvolveScreen); narrow it back to
+            # what `plan.run` actually produces -- a list of `run_loop`'s IterationResult.
             results = cast(list[IterationResult], app.results or [])
         else:
             t0 = time.monotonic()

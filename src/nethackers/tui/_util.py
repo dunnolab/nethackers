@@ -1,9 +1,8 @@
-"""Shared helpers used by tui screens. Copied (not imported) from
-tui.app.EvolveApp's module-level definitions per Ruling R-util: app.py keeps
-its own copies for now (it is frozen pending its Task 10 rework onto
-NetHackersApp), and screens must not import from tui.app -- a later task
-makes app.py import the screens defined here, so `tui.app -> tui._util`
-would become a cycle if screens imported the other direction."""
+"""Shared helpers used by tui screens. Originally copied -- not imported --
+from tui.app.EvolveApp's module-level definitions per Ruling R-util:
+screens must not import from tui.app, since (as of Task 10's NetHackersApp
+shell cutover) tui.app imports the screens defined here; `tui.app ->
+tui._util` would become a cycle if screens imported the other direction."""
 from __future__ import annotations
 
 import functools
