@@ -59,9 +59,11 @@ class EvolveScreen(Screen):
     built)."""
 
     CSS = """
-    TabbedContent { width: 1fr; }
-    #tables { padding: 1 2; }
-    #logs_list { width: 20; border-right: solid $accent; }
+    EvolveScreen #cockpit { height: auto; margin: 1 2 0 2; }
+    EvolveScreen #influences { color: #7c745f; }
+    EvolveScreen TabbedContent { width: 1fr; height: 1fr; margin: 0 2; }
+    #tables { padding: 1 1; }
+    #logs_list { width: 24; border-right: solid #d2a24c; }
     #logview { padding: 0 1; }
     """
     BINDINGS = [("q", "app.quit", "Quit"), ("escape", "dismiss", "Back")]
@@ -93,7 +95,7 @@ class EvolveScreen(Screen):
         self._mut_start = 0.0
 
     def compose(self) -> ComposeResult:
-        with Vertical():
+        with Vertical(id="cockpit", classes="panel"):
             yield Static(id="parent")
             yield Static(id="candidate")
             yield Static("influences  —  (lights up when the loop selects them)",
@@ -101,16 +103,18 @@ class EvolveScreen(Screen):
             yield Static(id="eval")
             yield Static(id="lineage")
             yield Static(id="ledger")
-            yield Static(id="statusline")
-            with TabbedContent():
-                with TabPane("Monitor", id="tab_mon"):
-                    yield VerticalScroll(id="tables")
-                with TabPane("Agent log", id="tab_logs"), Horizontal():
-                    yield ListView(id="logs_list")
-                    yield RichLog(id="logview", wrap=True, highlight=False, markup=False)
+        with TabbedContent():
+            with TabPane("Monitor", id="tab_mon"):
+                yield VerticalScroll(id="tables")
+            with TabPane("Agent log", id="tab_logs"), Horizontal():
+                yield ListView(id="logs_list")
+                yield RichLog(id="logview", wrap=True, highlight=False, markup=False)
+        yield Static(id="statusline", classes="statusline")
         yield Footer()
 
     def on_mount(self) -> None:
+        self.query_one("#cockpit").border_title = (
+            f"⚔ Evolution · {self._cfg.objective} · {self._cfg.backend}")
         self._refresh()
         self.set_interval(1.0, self._tick)
         if self._run is not None:

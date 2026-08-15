@@ -1,6 +1,12 @@
 """Shared NetHack-flavored visual language: status→glyph/style maps (reusing
 the hubclient.live maps so colors never drift across screens), a tty color
-palette, and the app's Textual CSS. Pure data; unit-tested."""
+palette, and the app's Textual CSS. Pure data; unit-tested.
+
+The look is a dungeon-dark ground (near-black stone) with a single warm
+**amber/lantern-gold** accent -- deliberately not the acid-green-on-black
+default -- and every section framed as a titled "tty window" (heavy
+box-drawing borders), echoing NetHack's own boxed inventory/menu windows.
+"""
 from __future__ import annotations
 
 from nethackers.hubclient.live import _STATUS_STYLE, _progress_style
@@ -23,15 +29,66 @@ def progress_style(progress: float) -> str:
     return _progress_style(progress)
 
 
-# NetHack tty palette (name -> hex).
+# NetHack tty palette (name -> hex). `gold`/`hp`/`green`/... feed rich-text
+# glyph styling; the dashboard chrome uses the DUNGEON/AMBER/PARCHMENT set.
 PALETTE: dict[str, str] = {
     "hp": "#c04040", "gold": "#c0a000", "cyan": "#00a0a0",
-    "magenta": "#a000a0", "green": "#00a000", "parchment": "#d8c8a0",
-    "stone": "#1c1c1c",
+    "magenta": "#a000a0", "green": "#00a000", "parchment": "#d7c9a2",
+    "stone": "#16161c",
+    "dungeon": "#0b0b0e", "panel": "#16161c", "amber": "#d2a24c",
+    "dim": "#7c745f",
 }
 
-CSS: str = """
-#status { dock: top; height: 3; padding: 0 1; background: $panel; color: $text; }
-.tabbar { dock: top; height: 1; background: $panel-darken-1; color: $text; }
-.you { text-style: bold reverse; }
+_DUNGEON = PALETTE["dungeon"]
+_PANEL = PALETTE["panel"]
+_PARCHMENT = PALETTE["parchment"]
+_AMBER = PALETTE["amber"]
+_DIM = PALETTE["dim"]
+
+# App-wide stylesheet. Shared, reusable classes only; per-screen layout lives
+# in each view's DEFAULT_CSS so specificity stays flat.
+CSS: str = f"""
+Screen {{
+    background: {_DUNGEON};
+    color: {_PARCHMENT};
+}}
+
+/* top identity + section-nav band */
+.tabbar {{
+    dock: top;
+    height: 1;
+    background: {_PANEL};
+    color: {_AMBER};
+    text-style: bold;
+    padding: 0 1;
+}}
+
+/* the signature framed, titled "tty window" */
+.panel {{
+    background: {_PANEL};
+    color: {_PARCHMENT};
+    border: heavy {_AMBER};
+    border-title-align: left;
+    border-title-color: {_AMBER};
+    border-title-style: bold;
+    padding: 0 1;
+}}
+
+/* muted body text for empty/idle states */
+.muted {{
+    color: {_DIM};
+    padding: 1 1;
+}}
+
+/* a NetHack-style status line: sits in flow just above the app Footer
+   (the monitor's TabbedContent is 1fr, so this single row lands at the
+   bottom of the content area). Not docked -- two bottom-docked bars
+   (this + Footer) collide. */
+.statusline {{
+    height: 1;
+    background: {_AMBER};
+    color: {_DUNGEON};
+    text-style: bold;
+    padding: 0 1;
+}}
 """

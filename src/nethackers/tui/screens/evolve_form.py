@@ -33,23 +33,39 @@ class EvolveForm(Vertical):
     ``prepare_evolve``, and pushes the live ``EvolveScreen`` monitor over
     the dashboard."""
 
+    DEFAULT_CSS = """
+    EvolveForm { align: center middle; }
+    EvolveForm > #form { width: 66; height: auto; padding: 1 2; }
+    EvolveForm Label { text-style: bold; margin-top: 1; }
+    EvolveForm #f_start { margin-top: 1; width: 100%; }
+    EvolveForm #f_err { height: auto; }
+    """
+
     def __init__(self, hub: str, creds: Credentials | None, **kw: Any) -> None:
         super().__init__(**kw)
         self._hub = hub
         self._creds = creds
 
     def compose(self) -> ComposeResult:
-        yield Label("⚔  Start an evolve run")
-        yield Input(placeholder="objective (e.g. wiz-elf-cha-mal)", id="f_obj")
-        yield Input(value="roots/autoascend", placeholder="seed", id="f_seed")
-        yield Select(
-            [("claude", "claude"), ("codex", "codex")],
-            value="claude", allow_blank=False, id="f_op",
-        )
-        yield Input(value="1", placeholder="iterations", id="f_iters")
-        yield Input(value="200000", placeholder="token budget", id="f_budget")
-        yield Button("Start", id="f_start", variant="success")
-        yield Static("", id="f_err")
+        with Vertical(id="form", classes="panel"):
+            yield Label("Objective")
+            yield Input(placeholder="e.g. wiz-elf-cha-mal", id="f_obj")
+            yield Label("Seed root")
+            yield Input(value="roots/autoascend", id="f_seed")
+            yield Label("Operator")
+            yield Select(
+                [("claude", "claude"), ("codex", "codex")],
+                value="claude", allow_blank=False, id="f_op",
+            )
+            yield Label("Iterations")
+            yield Input(value="1", id="f_iters")
+            yield Label("Token budget")
+            yield Input(value="200000", id="f_budget")
+            yield Button("Start", id="f_start", variant="success")
+            yield Static("", id="f_err")
+
+    def on_mount(self) -> None:
+        self.query_one("#form").border_title = "⚔ Start an Evolve Run"
 
     def _params(self) -> EvolveParams:
         obj = self.query_one("#f_obj", Input).value.strip()

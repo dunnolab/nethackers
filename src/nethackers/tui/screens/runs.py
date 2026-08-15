@@ -58,10 +58,19 @@ def read_runs(runs_dir: Path) -> list[dict]:
 
 
 class RunsView(VerticalScroll):
+    DEFAULT_CSS = """
+    RunsView { margin: 1 2; padding: 0 1; height: 1fr; }
+    """
+
+    def __init__(self, **kw) -> None:
+        super().__init__(**kw)
+        self.add_class("panel")
+
     def compose(self) -> ComposeResult:
         yield Static(id="runs_body")
 
     def on_mount(self) -> None:
+        self.border_title = "▶ Recent Runs"
         self._refresh()
 
     def on_show(self) -> None:
@@ -71,4 +80,7 @@ class RunsView(VerticalScroll):
         from nethackers.tui.screens.home import recent_runs_panel
 
         runs = read_runs(Path.home() / ".nethackers" / "evolve" / "runs")
-        self.query_one("#runs_body", Static).update(recent_runs_panel(runs))
+        self.query_one("#runs_body", Static).update(
+            recent_runs_panel(runs)
+            if runs else "[dim]No runs yet.\nStart one from the ⚔ Evolve tab.[/]"
+        )

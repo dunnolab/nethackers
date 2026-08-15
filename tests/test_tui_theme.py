@@ -18,4 +18,5 @@ def test_styles_delegate_to_live_maps():
 def test_palette_and_css_present():
     assert {"hp", "gold", "green"} <= set(theme.PALETTE)
     assert all(v.startswith("#") for v in theme.PALETTE.values())
-    assert "#status" in theme.CSS and "dock: top" in theme.CSS
+    assert ".tabbar" in theme.CSS and ".panel" in theme.CSS
+    assert "dock: top" in theme.CSS  # the tabbar band docks to the top

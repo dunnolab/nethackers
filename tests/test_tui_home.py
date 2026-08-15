@@ -157,7 +157,7 @@ async def test_home_view_survives_unreachable_hub_and_renders_friendly_messages(
         attain = str(host.query_one("#home_attain").render())
         assert "unreachable" in board
         assert "unreachable" in yours
-        assert "your attainment" in attain  # attainment falls back, doesn't crash
+        assert "attainment" in attain.lower()  # attainment falls back, doesn't crash
 
 
 async def test_home_view_with_no_login_skips_search_but_still_renders():

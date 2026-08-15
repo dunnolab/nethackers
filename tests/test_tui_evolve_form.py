@@ -46,7 +46,7 @@ async def test_start_builds_params_and_pushes_monitor(monkeypatch):
 
     monkeypatch.setattr(ef, "prepare_evolve", _fake_prepare_evolve)
     app = _Host(Credentials("castiel", "tok"))
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(100, 40)) as pilot:
         app.query_one("#f_obj", Input).value = "wiz-elf-cha-mal"
         monkeypatch.setattr(app, "push_screen", lambda s: seen.update(screen=s))
 
@@ -65,7 +65,7 @@ async def test_missing_objective_shows_error_no_push(monkeypatch):
         ef, "prepare_evolve", lambda *a, **k: seen.update(called=True)
     )
     app = _Host(None)
-    async with app.run_test() as pilot:
+    async with app.run_test(size=(100, 40)) as pilot:
         await pilot.click("#f_start")
         await pilot.pause()
 

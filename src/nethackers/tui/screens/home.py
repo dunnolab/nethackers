@@ -36,9 +36,10 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
+from rich import box
 from rich.table import Table
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Container
 from textual.widgets import Static
 
 from nethackers.arena.progress import ACHIEVEMENTS
@@ -69,7 +70,7 @@ def recent_runs_panel(runs: list[dict[str, Any]]) -> Table:
     summaries): run id, objective, operator, a ``wins/iterations``
     fraction, and best dev/held scores. Capped to the 6 most recent --
     ``read_runs`` already sorts newest-first."""
-    t = Table(header_style="bold", pad_edge=False)
+    t = Table(header_style="bold", pad_edge=False, box=box.SIMPLE_HEAVY)
     for c in ("run", "objective", "op", "wins", "dev", "held"):
         t.add_column(c)
     for r in runs[:6]:
@@ -109,12 +110,22 @@ def _your_solutions(client: HubClient, login: str) -> list[dict[str, Any]]:
     return [e for e in elite if str(e.get("solution_digest", "")) in digests]
 
 
-class HomeView(Vertical):
+class HomeView(Container):
     """The dashboard landing view: your solutions, the leaderboard, recent
-    runs, and attainment, in a 2x2 grid of panels. Fetched fresh on mount
-    and every time this view is shown again (``on_show``) -- each hub-
-    backed panel is refreshed independently so one failing call can't blank
-    out the other three."""
+    runs, and attainment, in a 2x2 grid of framed panels. Fetched fresh on
+    mount and every time the view is shown again (``on_show``) -- each hub-
+    backed panel refreshes independently so one failing call can't blank out
+    the other three."""
+
+    DEFAULT_CSS = """
+    HomeView {
+        layout: grid;
+        grid-size: 2 2;
+        grid-gutter: 1 2;
+        padding: 1 2;
+    }
+    HomeView > .panel { width: 1fr; height: 1fr; }
+    """
 
     def __init__(self, hub: str, login: str | None, **kw: Any) -> None:
         super().__init__(**kw)
@@ -122,14 +133,16 @@ class HomeView(Vertical):
         self._login = login
 
     def compose(self) -> ComposeResult:
-        with Horizontal():
-            yield Static(id="home_yours")
-            yield Static(id="home_board")
-        with Horizontal():
-            yield Static(id="home_runs")
-            yield Static(id="home_attain")
+        yield Static(id="home_yours", classes="panel")
+        yield Static(id="home_board", classes="panel")
+        yield Static(id="home_runs", classes="panel")
+        yield Static(id="home_attain", classes="panel")
 
     def on_mount(self) -> None:
+        self.query_one("#home_yours", Static).border_title = "Your Solutions"
+        self.query_one("#home_board", Static).border_title = "♛ Leaderboard"
+        self.query_one("#home_runs", Static).border_title = "▶ Recent Runs"
+        self.query_one("#home_attain", Static).border_title = "▚ Attainment"
         self._refresh()
 
     def on_show(self) -> None:
@@ -137,8 +150,9 @@ class HomeView(Vertical):
 
     def _refresh(self) -> None:
         client = HubClient(self._hub)
-        unreachable = f"hub unreachable: {self._hub}"
+        unreachable = "[dim]hub unreachable[/]"
 
+        # public leaderboard
         try:
             board_entries = client.board("random") or []
         except Exception:
@@ -146,26 +160,43 @@ class HomeView(Vertical):
         else:
             self.query_one("#home_board", Static).update(
                 leaderboard_panel(board_entries, self._login)
+                if board_entries else "[dim]No ranked solutions yet.[/]"
             )
 
+        # your solutions
         yours: list[dict[str, Any]] = []
-        try:
-            if self._login:
-                yours = _your_solutions(client, self._login)
-        except Exception:
-            self.query_one("#home_yours", Static).update(unreachable)
-        else:
-            self.query_one("#home_yours", Static).update(your_solutions_panel(yours))
-
-        self.query_one("#home_runs", Static).update(recent_runs_panel(read_runs(_RUNS_DIR)))
-
-        # Attainment for the user's best identity (first join hit), if any.
-        identity = str(yours[0].get("identity", "")) if yours else ""
-        try:
-            cells = client.attainment(identity) if identity else []
-        except Exception:
-            self.query_one("#home_attain", Static).update(unreachable)
-        else:
-            self.query_one("#home_attain", Static).update(
-                attainment_panel(cells or [], identity or "—")
+        if not self._login:
+            self.query_one("#home_yours", Static).update(
+                "[dim]Not logged in.\nRun `nethackers login` to see your solutions.[/]"
             )
+        else:
+            try:
+                yours = _your_solutions(client, self._login)
+            except Exception:
+                self.query_one("#home_yours", Static).update(unreachable)
+            else:
+                self.query_one("#home_yours", Static).update(
+                    your_solutions_panel(yours)
+                    if yours else "[dim]No registered solutions yet.[/]"
+                )
+
+        # recent local runs
+        runs = read_runs(_RUNS_DIR)
+        self.query_one("#home_runs", Static).update(
+            recent_runs_panel(runs)
+            if runs else "[dim]No runs yet.\nStart one from the ⚔ Evolve tab.[/]"
+        )
+
+        # attainment for the user's best identity (first join hit), if any
+        identity = str(yours[0].get("identity", "")) if yours else ""
+        if not identity:
+            self.query_one("#home_attain", Static).update("[dim]No attainment yet.[/]")
+        else:
+            try:
+                cells = client.attainment(identity)
+            except Exception:
+                self.query_one("#home_attain", Static).update(unreachable)
+            else:
+                self.query_one("#home_attain", Static).update(
+                    attainment_panel(cells or [], identity)
+                )
