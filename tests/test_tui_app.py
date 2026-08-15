@@ -52,8 +52,9 @@ async def test_escape_leaves_a_focused_field_so_q_can_quit():
     """A focused text ``Input`` swallows letters, so the advertised ``q`` quit
     is dead while you're typing in the Evolve form's objective filter (Textual
     ``Input`` consumes printable keys before any binding, ``priority`` or not).
-    ``escape`` returns focus to the nav, restoring the global ``q`` / ``1–6``
-    keys -- the way out of the field a stuck user needs."""
+    ``escape`` hands control back to the modal nav (navigate mode, nothing
+    focused), restoring the global ``q`` / ``1–6`` keys -- the way out of the
+    field a stuck user needs."""
     app = NetHackersApp(hub=_DEAD_HUB, creds=Credentials("castiel", "t"))
     async with app.run_test() as pilot:
         await pilot.press("6")  # -> Evolve
@@ -64,12 +65,27 @@ async def test_escape_leaves_a_focused_field_so_q_can_quit():
 
         await pilot.press("escape")
         await pilot.pause()
-        nav = app.focused
-        assert isinstance(nav, Tabs) and nav.id == "nav"  # escaped back to the nav
+        # back in navigate mode: nothing focused (so q/1-6 fire), cursor on a tab
+        assert app.focused is None
+        assert app._nav_cursor is not None and (app._nav_cursor.id or "").startswith("tab-")
 
         await pilot.press("q")
         await pilot.pause()
         assert not app.is_running  # `q` quits again
+
+
+async def test_activating_a_tab_externally_syncs_the_keyboard_cursor():
+    # regression: a mouse click on a tab (or Textual Tabs' own ←/→ when #nav
+    # holds focus) switched the active section but left the gold cursor on the
+    # old tab -- two tabs looked highlighted. The cursor must follow the active.
+    app = NetHackersApp(hub=_DEAD_HUB, creds=Credentials("castiel", "t"), start="runs")
+    async with app.run_test() as pilot:
+        await pilot.pause()  # _nav_start -> cursor on tab-runs
+        app.query_one("#nav", Tabs).active = "tab-map"  # simulate an external activation
+        await pilot.pause()
+        assert app._nav_cursor is not None and app._nav_cursor.id == "tab-map"
+        golds = [t.id for t in app.screen.query("#nav Tab.-cursor")]
+        assert golds == ["tab-map"]  # exactly one highlighted tab, matching the section
 
 
 async def test_home_grid_is_arrow_navigable():

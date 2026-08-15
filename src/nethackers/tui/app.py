@@ -148,12 +148,27 @@ class NetHackersApp(App):
         except Exception:
             return
         body.current = event.tab.id.removeprefix("tab-")
+        # keep the keyboard cursor on the active tab -- however the tab was
+        # activated (a mouse click, or Textual's own ←/→ when #nav holds focus),
+        # so the gold cursor never sits on a different tab than the shown
+        # section (the "two tabs highlighted" glitch).
+        if self._nav_mode == "navigate" and self._nav_cursor is not None:
+            self._nav_set_cursor(event.tab)
 
     def action_show(self, key: str) -> None:
-        # drive the tab bar; its TabActivated switches the ContentSwitcher
+        # drive the tab bar; its TabActivated switches the ContentSwitcher (and
+        # now also syncs the keyboard cursor onto the tab).
         self.query_one("#nav", Tabs).active = f"tab-{key}"
-        if self._nav_cursor is not None:  # keep the keyboard cursor on the tab
-            self._nav_set_cursor(self.query_one(f"#tab-{key}", Tab))
+
+    def leave_to_nav(self) -> None:
+        """Hand control from a focused form field back to the modal keyboard
+        nav: navigate mode, nothing focused -- so q / 1-6 and the arrow cursor
+        work again (focusing #nav instead would let Textual's Tabs steal ←/→
+        and desync the cursor from the active section)."""
+        if self._nav_cursor is None:
+            self._nav_start()
+        else:
+            self._nav_to_navigate()
 
     def action_evolve(self) -> None:
         self.action_show("evolve")

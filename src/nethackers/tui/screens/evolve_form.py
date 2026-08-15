@@ -22,7 +22,7 @@ from typing import TYPE_CHECKING, Any, cast
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
-from textual.widgets import Button, Input, Label, OptionList, Select, Static, Tabs
+from textual.widgets import Button, Input, Label, OptionList, Select, Static
 from textual.widgets.option_list import Option
 
 from nethackers.harness.launch import EvolveParams, prepare_evolve
@@ -117,13 +117,14 @@ class EvolveForm(Vertical):
         form.can_focus = False
 
     def action_leave_field(self) -> None:
-        """Return focus to the main nav so the global keys (``q`` to quit,
-        ``1``–``6`` to switch) work again -- a focused ``Input`` otherwise
-        swallows them as text. Falls back to a plain blur if the nav isn't
-        present (e.g. the form mounted outside the dashboard shell)."""
-        try:
-            self.app.query_one("#nav", Tabs).focus()
-        except Exception:
+        """Hand control back to the modal keyboard nav so the global keys
+        (``q`` to quit, ``1``–``6`` to switch) and the arrow cursor work again
+        -- a focused ``Input`` otherwise swallows them as text. Falls back to a
+        plain blur if the app isn't the dashboard shell (form mounted alone)."""
+        leave = getattr(self.app, "leave_to_nav", None)
+        if callable(leave):
+            leave()
+        else:
             self.app.set_focus(None)
 
     def on_input_changed(self, event: Input.Changed) -> None:
