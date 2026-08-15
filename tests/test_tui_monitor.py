@@ -93,3 +93,40 @@ async def test_s_stops_the_run():
         await pilot.press("s")
         await pilot.pause()
         assert run.stop.is_set()  # explicit stop
+
+
+async def test_c_copies_the_selected_iteration_log_to_the_clipboard():
+    run = _populated_run()
+    run.logs["iter 1/3"] = [("assistant", "line one"), ("tool", "line two")]
+    run.sel_tag = "iter 1/3"
+    host = _Host(run)
+    captured: dict[str, str] = {}
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        host.copy_to_clipboard = lambda t: captured.__setitem__("t", t)  # type: ignore[method-assign]
+        await pilot.press("c")
+        await pilot.pause()
+        assert captured["t"] == "line one\nline two"
+
+
+async def test_arrows_navigate_tabs_and_panes_then_enter_interacts():
+    from textual.widgets import Tab
+
+    run = _populated_run()
+    host = _Host(run)
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        await pilot.pause()  # let call_after_refresh(_nav_start) run
+        mon = host.screen
+        assert isinstance(mon, RunMonitor)
+        assert mon._nav_mode == "navigate" and host.focused is None
+        assert isinstance(mon._nav_cursor, Tab)  # cursor starts on a tab
+        await pilot.press("down")                # dive into the active pane
+        await pilot.pause()
+        assert mon._nav_cursor is not None and not isinstance(mon._nav_cursor, Tab)
+        await pilot.press("enter")               # interact: the pane takes real focus
+        await pilot.pause()
+        assert mon._nav_mode == "interact" and host.focused is mon._nav_cursor
+        await pilot.press("escape")              # back to navigate, NOT leaving
+        await pilot.pause()
+        assert mon._nav_mode == "navigate" and isinstance(host.screen, RunMonitor)

@@ -9,15 +9,18 @@ owned by the app, so the monitor holds only widgets."""
 from __future__ import annotations
 
 from rich.text import Text
+from textual import events
 from textual.app import ComposeResult
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.screen import Screen
+from textual.widget import Widget
 from textual.widgets import (
     Footer,
     ListItem,
     ListView,
     RichLog,
     Static,
+    Tab,
     TabbedContent,
     TabPane,
 )
@@ -26,6 +29,7 @@ from nethackers.hubclient.live import episode_table
 from nethackers.tui import status as S
 from nethackers.tui._util import _slug
 from nethackers.tui.art import tombstone
+from nethackers.tui.nav import dedup_visible, nearest_in_direction
 from nethackers.tui.run import Run
 
 _KIND_STYLE = {"assistant": "", "tool": "cyan", "result": "green b", "meta": "dim"}
@@ -38,13 +42,23 @@ class RunMonitor(Screen):
     CSS = """
     RunMonitor #cockpit { height: auto; margin: 1 2 0 2; }
     RunMonitor #influences { color: #7c745f; }
+    RunMonitor #navhint { color: #7c745f; height: 1; margin: 0 2; }
     RunMonitor TabbedContent { width: 1fr; height: 1fr; margin: 0 2; }
     #tables { padding: 1 1; }
     #logs_list { width: 24; border-right: solid #d2a24c; }
     #logview { padding: 0 1; }
+    /* the modal cursor: a gold chip on a tab, a gold ring (outline -> no
+       reflow) on a content pane; :focus keeps the ring while interacting. */
+    RunMonitor Tab.-cursor { background: #ffd54a; color: #0b0b0e; text-style: bold; }
+    RunMonitor #tables.-cursor, RunMonitor #logs_list.-cursor,
+    RunMonitor #logview.-cursor, RunMonitor #tables:focus,
+    RunMonitor #logs_list:focus, RunMonitor #logview:focus {
+        outline: heavy #ffd54a;
+    }
     """
     BINDINGS = [
-        ("escape", "dismiss", "Back"),
+        ("escape", "nav_back", "Back"),
+        ("c", "copy_log", "Copy log"),
         ("s", "stop", "Stop"),
         ("q", "app.quit", "Quit"),
     ]
@@ -55,6 +69,11 @@ class RunMonitor(Screen):
         self._batch_statics: list[Static] = []  # aligned with run.batches
         self._log_items: dict[str, str] = {}     # slug -> tag
         self._shown: dict[str, int] = {}          # tag -> #prettified lines already written
+        # modal keyboard nav (mirrors the dashboard): "navigate" = arrows move a
+        # visible cursor between the tabs + the active pane's controls; "interact"
+        # = the cursor element holds real focus (scroll / pick).
+        self._nav_mode = "navigate"
+        self._nav_cursor: Widget | None = None
 
     def compose(self) -> ComposeResult:
         with Vertical(id="cockpit", classes="panel"):
@@ -65,6 +84,7 @@ class RunMonitor(Screen):
             yield Static(id="eval")
             yield Static(id="lineage")
             yield Static(id="ledger")
+        yield Static("↑↓←→ move · enter use · esc back · c copy log", id="navhint")
         with TabbedContent():
             with TabPane("Monitor", id="tab_mon"):
                 yield VerticalScroll(id="tables")
@@ -78,6 +98,8 @@ class RunMonitor(Screen):
         self.query_one("#cockpit").border_title = (
             f"⚔ Evolution · {self.run.cfg.objective} · {self.run.cfg.backend}")
         self._backfill()
+        # after Textual's own initial auto-focus, so navigate mode owns the keys
+        self.call_after_refresh(self._nav_start)
         self.set_interval(1.0, self._tick)
 
     def action_stop(self) -> None:
@@ -106,15 +128,21 @@ class RunMonitor(Screen):
             self.query_one("#candidate", Static).update(tombstone(
                 [run.cfg.objective, f"iter {st['iteration']}", st["detail"] or "rejected"]))
         else:
+            # live streaming tokens while mutating; once past it (gating/eval)
+            # fall back to the iteration's authoritative op total so the panel
+            # doesn't drop back to 0 mid-iteration (codex only reports at the end).
             self.query_one("#candidate", Static).update(S.candidate_line(
-                st, live_tokens=run.live_tokens(), elapsed_s=run.elapsed()))
+                st, live_tokens=run.live_tokens() or st.get("tokens", 0),
+                elapsed_s=run.elapsed()))
         self.query_one("#eval", Static).update(
             S.eval_line(run.split(), run.eval_step, run.counts))
         self.query_one("#lineage", Static).update(S.lineage_strip(
             run.chain, best_dev=st["best_dev"], baseline_dev=st["baseline_dev"]))
         self.query_one("#ledger", Static).update(S.iterations_ledger(run.ledger_rows))
+        # the bottom status bar is the run's persistent gauge: cumulative tokens
+        # (across every iteration) and total run time -- both always advancing.
         self.query_one("#statusline", Static).update(S.status_line(
-            run.cfg, st, live_tokens=run.live_tokens(), elapsed_s=run.elapsed()))
+            run.cfg, st, live_tokens=run.total_tokens(), elapsed_s=run.run_time()))
 
     def render_episode(self, label: str, ep: dict) -> None:
         scroll = self.query_one("#tables", VerticalScroll)
@@ -167,5 +195,107 @@ class RunMonitor(Screen):
             self._select_log(tag)
 
     def _tick(self) -> None:
-        if self.run.state.get("phase") == "mutating":
-            self.render_state()  # keep the elapsed clock live
+        # always re-render: the status bar's run-time clock + cumulative tokens
+        # advance even between phases (not just while mutating).
+        self.render_state()
+
+    # ---- modal keyboard navigation (mirrors the dashboard) ------------------
+    def _nav_targets(self) -> list[Widget]:
+        """The tabs, plus the active pane's focusable controls."""
+        tabs: list[Widget] = list(self.query(Tab))
+        active = self.query_one(TabbedContent).active
+        if active == "tab_mon":
+            content = list(self.query("#tables"))
+        else:
+            content = list(self.query("#logs_list")) + list(self.query("#logview"))
+        return dedup_visible(tabs + content)
+
+    def _active_tab_widget(self) -> Widget | None:
+        active = self.query_one(TabbedContent).active
+        for tab in self.query(Tab):
+            if (tab.id or "").removeprefix("--content-tab-") == active:
+                return tab
+        return None
+
+    def _nav_set_cursor(self, widget: Widget) -> None:
+        if self._nav_cursor is not None:
+            self._nav_cursor.remove_class("-cursor")
+        self._nav_cursor = widget
+        widget.add_class("-cursor")
+
+    def _nav_start(self) -> None:
+        self._nav_mode = "navigate"
+        self.set_focus(None)  # navigate mode: nothing focused, so on_key gets arrows
+        targets = self._nav_targets()
+        if targets:
+            self._nav_set_cursor(targets[0])
+
+    def _nav_move(self, direction: str) -> None:
+        cur = self._nav_cursor
+        if cur is None:
+            self._nav_start()
+            return
+        others = [w for w in self._nav_targets() if w is not cur]
+        tabs = [w for w in others if isinstance(w, Tab)]
+        content = [w for w in others if not isinstance(w, Tab)]
+        if isinstance(cur, Tab):
+            if direction in ("left", "right"):
+                nxt = nearest_in_direction(cur, tabs, direction)
+            elif direction == "down":
+                nxt = content[0] if content else None  # dive into the pane
+            else:
+                nxt = None
+        else:
+            nxt = nearest_in_direction(cur, content, direction)
+            if nxt is None and direction == "up":  # back up to this pane's tab
+                nxt = self._active_tab_widget()
+        if nxt is None:
+            return
+        self._nav_set_cursor(nxt)
+        if isinstance(nxt, Tab) and nxt.id:  # landing on a tab switches to it live
+            self.query_one(TabbedContent).active = nxt.id.removeprefix("--content-tab-")
+
+    def _nav_activate(self) -> None:
+        w = self._nav_cursor
+        if w is None:
+            return
+        if isinstance(w, Tab):  # dive into the (now-active) pane's first control
+            for t in self._nav_targets():
+                if not isinstance(t, Tab):
+                    self._nav_set_cursor(t)
+                    return
+        else:  # a scroll / list -> take real focus so arrows scroll / pick
+            self._nav_mode = "interact"
+            w.focus()
+
+    def _nav_to_navigate(self) -> None:
+        self._nav_mode = "navigate"
+        self.set_focus(None)
+        if self._nav_cursor is not None:
+            self._nav_cursor.add_class("-cursor")
+
+    def on_key(self, event: events.Key) -> None:
+        if self._nav_mode == "interact":
+            return  # the focused control owns keys; `esc` returns via action_nav_back
+        if event.key in ("up", "down", "left", "right"):
+            self._nav_move(event.key)
+            event.stop()
+        elif event.key == "enter":
+            self._nav_activate()
+            event.stop()
+
+    def action_nav_back(self) -> None:
+        # interact -> back to navigate; navigate -> leave the monitor (run stays).
+        if self._nav_mode == "interact":
+            self._nav_to_navigate()
+        else:
+            self.dismiss()
+
+    def action_copy_log(self) -> None:
+        lines = self.run.logs.get(self.run.sel_tag or "", [])
+        text = "\n".join(t for _kind, t in lines)
+        if text:
+            self.app.copy_to_clipboard(text)
+            self.app.notify(f"copied {len(lines)} log lines to clipboard", timeout=3)
+        else:
+            self.app.notify("no log lines to copy", severity="warning", timeout=3)
