@@ -321,6 +321,20 @@ class NetHackersApp(App):
     def _is_nav_tab(widget: Widget) -> bool:
         return isinstance(widget, Tab) and (widget.id or "").startswith("tab-")
 
+    @staticmethod
+    def _is_subtab(widget: Widget) -> bool:
+        # a section's own subtab (Frontier's Universe/Program: id "ft-…")
+        return isinstance(widget, Tab) and (widget.id or "").startswith("ft-")
+
+    def _active_subtab(self) -> Widget | None:
+        """The currently-active subtab widget (Frontier's #ftabs), or None."""
+        try:
+            active = self.query_one("#ftabs", Tabs).active
+        except Exception:
+            return None
+        return next((w for w in self._nav_targets()
+                     if self._is_subtab(w) and w.id == active), None)
+
     def _active_section_tab(self) -> Widget | None:
         body = self.query_one("#body", ContentSwitcher)
         if body.current:
@@ -337,19 +351,33 @@ class NetHackersApp(App):
             return
         others = [w for w in self._nav_targets() if w is not cur]
         nav_tabs = [w for w in others if self._is_nav_tab(w)]
-        content = [w for w in others if not self._is_nav_tab(w)]
+        subtabs = [w for w in others if self._is_subtab(w)]
+        content = [w for w in others
+                   if not self._is_nav_tab(w) and not self._is_subtab(w)]
         if self._is_nav_tab(cur):
-            # the top row: left/right along the tabs, down dives into content
+            # the main tab row: left/right along the tabs, down dives in
             if direction in ("left", "right"):
                 nxt = nearest_in_direction(cur, nav_tabs, direction)
-            elif direction == "down":
-                nxt = content[0] if content else None  # dive to the section's first element
+            elif direction == "down":  # to the active subtab if any, else first control
+                nxt = self._active_subtab() or (content[0] if content else None)
             else:
                 nxt = None  # already at the top
+        elif self._is_subtab(cur):
+            # a section's own subtab row (Frontier Universe/Program)
+            if direction in ("left", "right"):
+                nxt = nearest_in_direction(cur, subtabs, direction)
+            elif direction == "down":
+                nxt = content[0] if content else None  # into the section body
+            elif direction == "up":
+                nxt = self._active_section_tab()       # back up to the main tab
+            else:
+                nxt = None
         else:
             nxt = nearest_in_direction(cur, content, direction)
-            if nxt is None and direction == "up":  # leave the top of the content
-                nxt = self._active_section_tab()   # back to this section's own tab
+            if nxt is None and direction == "up":  # leaving the top of the body:
+                # land on the ACTIVE subtab (never the geometric nearest, which
+                # would silently flip the regime), else the section's main tab
+                nxt = self._active_subtab() or self._active_section_tab()
         if nxt is None:
             return
         self._nav_set_cursor(nxt)

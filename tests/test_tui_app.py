@@ -88,6 +88,27 @@ async def test_activating_a_tab_externally_syncs_the_keyboard_cursor():
         assert golds == ["tab-map"]  # exactly one highlighted tab, matching the section
 
 
+async def test_frontier_up_from_body_returns_to_active_subtab_not_the_other():
+    # regression: up from the Frontier grid landed on the geometrically-nearest
+    # subtab (ft-program), silently flipping the regime Universe->Program --
+    # the "rejump tabs by one" glitch. It must return to the ACTIVE subtab.
+    app = NetHackersApp(hub=_DEAD_HUB, creds=Credentials("castiel", "t"), start="home")
+    async with app.run_test(size=(120, 42)) as pilot:
+        await pilot.pause()
+        await pilot.press("3")     # -> Frontier
+        await pilot.press("down")  # onto the Universe subtab
+        await pilot.pause()
+        assert app._nav_cursor is not None and app._nav_cursor.id == "ft-universe"
+        await pilot.press("down")  # into the grid body
+        await pilot.pause()
+        assert app._nav_cursor is not None
+        assert not (app._nav_cursor.id or "").startswith("ft-")
+        await pilot.press("up")    # back up -> the ACTIVE subtab, regime unchanged
+        await pilot.pause()
+        assert app._nav_cursor.id == "ft-universe"
+        assert app.query_one("#ftabs", Tabs).active == "ft-universe"
+
+
 async def test_home_grid_is_arrow_navigable():
     """The modal 2D navigator starts on the Home tab holding no real focus
     (so nothing can eat a keystroke); Down dives into the top-left card and
