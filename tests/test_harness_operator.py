@@ -91,19 +91,26 @@ def test_run_operator_reaps_the_process(tmp_path):
 
 
 def test_claude_cmd_includes_hermeticity_flags_and_brief():
-    cmd = _claude_cmd("claude", "BRIEF")
+    cmd = _claude_cmd("claude", "BRIEF", None, None)
     assert cmd[0] == "claude"
     assert "BRIEF" in cmd
     assert "--strict-mcp-config" in cmd
     assert "--no-session-persistence" in cmd
+    assert "--model" not in cmd and "--effort" not in cmd  # no pin by default
     sources_idx = cmd.index("--setting-sources")
     assert cmd[sources_idx + 1] == "project,local"
     settings_idx = cmd.index("--settings")
     assert json.loads(cmd[settings_idx + 1]) == {"autoMemoryEnabled": False}
 
 
+def test_claude_cmd_pins_model_and_effort_when_set():
+    cmd = _claude_cmd("claude", "BRIEF", "claude-opus-5", "xhigh")
+    assert cmd[cmd.index("--model") + 1] == "claude-opus-5"
+    assert cmd[cmd.index("--effort") + 1] == "xhigh"
+
+
 def test_codex_cmd_includes_hermeticity_flags_and_brief():
-    cmd = _codex_cmd("codex", "BRIEF")
+    cmd = _codex_cmd("codex", "BRIEF", None, None)
     assert cmd[:3] == ["codex", "exec", "BRIEF"]
     assert "--json" in cmd
     assert "--full-auto" in cmd
@@ -111,6 +118,14 @@ def test_codex_cmd_includes_hermeticity_flags_and_brief():
     assert "--ignore-user-config" in cmd
     assert "--ignore-rules" in cmd
     assert "--skip-git-repo-check" in cmd
+    assert "-m" not in cmd  # no model pin by default
+
+
+def test_codex_cmd_pins_model_and_effort_when_set():
+    cmd = _codex_cmd("codex", "BRIEF", "gpt-5.6-sol", "max")
+    assert cmd[cmd.index("-m") + 1] == "gpt-5.6-sol"
+    # effort is a `-c` config override (still applies under --ignore-user-config)
+    assert "-c" in cmd and "model_reasoning_effort=max" in cmd
 
 
 def _claude_project_slug(cwd: Path) -> str:

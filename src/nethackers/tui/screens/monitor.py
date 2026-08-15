@@ -95,8 +95,11 @@ class RunMonitor(Screen):
         yield Footer()
 
     def on_mount(self) -> None:
+        cfg = self.run.cfg
+        pin = "".join([f" · {cfg.model}" if cfg.model else "",
+                       f" · {cfg.effort}" if cfg.effort else ""])
         self.query_one("#cockpit").border_title = (
-            f"⚔ Evolution · {self.run.cfg.objective} · {self.run.cfg.backend}")
+            f"⚔ Evolution · {cfg.objective} · {cfg.backend}{pin}")
         self._backfill()
         # after Textual's own initial auto-focus, so navigate mode owns the keys
         self.call_after_refresh(self._nav_start)
@@ -222,6 +225,7 @@ class RunMonitor(Screen):
             self._nav_cursor.remove_class("-cursor")
         self._nav_cursor = widget
         widget.add_class("-cursor")
+        widget.scroll_visible()
 
     def _nav_start(self) -> None:
         self._nav_mode = "navigate"

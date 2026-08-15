@@ -15,6 +15,8 @@ class EvolveConfig:
     objective: str
     backend: str
     iterations: int
+    model: str | None = None
+    effort: str | None = None
 
 
 def _compact(n: int) -> str:

@@ -11,7 +11,7 @@ this suite must never do."""
 from __future__ import annotations
 
 from textual.app import App, ComposeResult
-from textual.widgets import Static
+from textual.widgets import Button, Input, Select, Static
 
 import nethackers.tui.screens.evolve_form as ef
 from nethackers.hubclient.credentials import Credentials
@@ -54,13 +54,61 @@ async def test_start_builds_params_and_starts_a_run(monkeypatch):
     async with app.run_test(size=(100, 40)) as pilot:
         # objective is chosen from the filter+list; set the selection directly
         app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
-        await pilot.click("#f_start")
+        app.query_one("#f_start", Button).press()
         await pilot.pause()
 
         assert seen["params"].objective == "wiz-elf-cha-mal"
         assert seen["params"].owner == "castiel"
         assert seen["params"].token == "tok"
+        assert seen["params"].model is None and seen["params"].effort is None  # unpinned
         assert isinstance(app.started, _Plan)  # the plan was handed to start_run
+
+
+async def test_start_pins_model_and_effort_from_the_pickers(monkeypatch):
+    seen: dict = {}
+
+    def _fake_prepare_evolve(params, **_kw):
+        seen["params"] = params
+        return _Plan()
+
+    monkeypatch.setattr(ef, "prepare_evolve", _fake_prepare_evolve)
+    app = _Host(Credentials("castiel", "tok"))
+    async with app.run_test(size=(100, 50)) as pilot:
+        form = app.query_one(ef.EvolveForm)
+        form._objective = "wiz-elf-cha-mal"
+        form.query_one("#f_op", Select).value = "codex"  # -> repopulates model list
+        await pilot.pause()
+        form.query_one("#f_model", Select).value = "gpt-5.6-sol"
+        form.query_one("#f_effort", Select).value = "max"
+        await pilot.pause()
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        assert seen["params"].operator == "codex"
+        assert seen["params"].model == "gpt-5.6-sol"
+        assert seen["params"].effort == "max"
+
+
+async def test_custom_model_reveals_freetext_and_flows_through(monkeypatch):
+    seen: dict = {}
+
+    def _fake_prepare_evolve(params, **_kw):
+        seen["params"] = params
+        return _Plan()
+
+    monkeypatch.setattr(ef, "prepare_evolve", _fake_prepare_evolve)
+    app = _Host(None)
+    async with app.run_test(size=(100, 50)) as pilot:
+        form = app.query_one(ef.EvolveForm)
+        form._objective = "wiz-elf-cha-mal"
+        custom = form.query_one("#f_model_custom", Input)
+        assert custom.display is False  # hidden until Custom… is picked
+        form.query_one("#f_model", Select).value = "__custom__"
+        await pilot.pause()
+        assert custom.display is True
+        custom.value = "my-exp-model-42"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        assert seen["params"].model == "my-exp-model-42"
 
 
 async def test_missing_objective_shows_error_no_start(monkeypatch):
@@ -68,7 +116,7 @@ async def test_missing_objective_shows_error_no_start(monkeypatch):
     monkeypatch.setattr(ef, "prepare_evolve", lambda *a, **k: seen.update(called=True))
     app = _Host(None)
     async with app.run_test(size=(100, 40)) as pilot:
-        await pilot.click("#f_start")
+        app.query_one("#f_start", Button).press()
         await pilot.pause()
         assert "called" not in seen        # prepare_evolve NOT called
         assert app.started is None         # no run started

@@ -21,11 +21,12 @@ from typing import TYPE_CHECKING, Any, cast
 
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical
+from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Button, Input, Label, OptionList, Select, Static, Tabs
 from textual.widgets.option_list import Option
 
 from nethackers.harness.launch import EvolveParams, prepare_evolve
+from nethackers.harness.models import EFFORTS, MODELS
 from nethackers.hub.objectives import CATALOG
 from nethackers.hubclient.credentials import Credentials
 
@@ -65,12 +66,13 @@ class EvolveForm(Vertical):
 
     DEFAULT_CSS = """
     EvolveForm { align: center middle; }
-    EvolveForm > #form { width: 74; height: auto; padding: 1 2; }
+    EvolveForm > #form { width: 74; height: auto; max-height: 100%; padding: 1 2; }
     EvolveForm Label { text-style: bold; color: #d2a24c; margin-top: 1; }
-    EvolveForm #f_obj_list { height: 7; border: round #7c745f; }
+    EvolveForm #f_obj_list { height: 6; border: round #7c745f; }
     EvolveForm #f_obj_sel { color: #d7c9a2; }
     EvolveForm #f_start { margin-top: 1; width: 100%; }
     EvolveForm #f_err { height: auto; color: #c04040; }
+    EvolveForm #f_model_custom { display: none; }  /* shown only for Custom… */
     """
 
     def __init__(self, hub: str, creds: Credentials | None, **kw: Any) -> None:
@@ -80,7 +82,7 @@ class EvolveForm(Vertical):
         self._objective: str | None = None
 
     def compose(self) -> ComposeResult:
-        with Vertical(id="form", classes="panel"):
+        with VerticalScroll(id="form", classes="panel"):
             yield Label("Objective — type to filter, then pick one · esc to leave")
             yield Input(placeholder="filter…  e.g. wiz · val · random", id="f_obj_filter")
             yield OptionList(*(Option(o, id=o) for o in _OBJECTIVES), id="f_obj_list")
@@ -93,6 +95,13 @@ class EvolveForm(Vertical):
                 [("claude", "claude"), ("codex", "codex")],
                 value="claude", allow_blank=False, id="f_op",
             )
+            yield Label("Model")
+            yield Select(self._model_options("claude"), value="",
+                         allow_blank=False, id="f_model")
+            yield Input(placeholder="custom model id…", id="f_model_custom")
+            yield Label("Reasoning effort")
+            yield Select([("Harness default", ""), *((e, e) for e in EFFORTS)],
+                         value="", allow_blank=False, id="f_effort")
             yield Label("Iterations")
             yield Input(value="1", id="f_iters")
             yield Button("Start", id="f_start", variant="success")
@@ -125,6 +134,30 @@ class EvolveForm(Vertical):
         self._objective = event.option.id
         self.query_one("#f_obj_sel", Static).update(f"objective: [b]{self._objective}[/]")
 
+    @staticmethod
+    def _model_options(backend: str) -> list[tuple[str, str]]:
+        # "" is the harness default (no --model pin); "__custom__" reveals the
+        # free-text id field. Curated list per backend from harness.models.
+        return [("Harness default", ""), *MODELS.get(backend, []), ("Custom…", "__custom__")]
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        if event.select.id == "f_op":  # repopulate the model list for the new harness
+            model = self.query_one("#f_model", Select)
+            model.set_options(self._model_options(str(event.value)))
+            model.value = ""
+            self.query_one("#f_model_custom", Input).display = False
+        elif event.select.id == "f_model":  # reveal the id field only for Custom…
+            self.query_one("#f_model_custom", Input).display = event.value == "__custom__"
+
+    def _model(self) -> str | None:
+        value = str(self.query_one("#f_model", Select).value)
+        if value == "__custom__":
+            return self.query_one("#f_model_custom", Input).value.strip() or None
+        return value or None  # "" (harness default) -> None
+
+    def _effort(self) -> str | None:
+        return str(self.query_one("#f_effort", Select).value) or None
+
     def _params(self) -> EvolveParams:
         if not self._objective:
             raise ValueError("pick an objective from the list")
@@ -137,6 +170,8 @@ class EvolveForm(Vertical):
             seed=str(self.query_one("#f_seed", Select).value),
             operator=str(self.query_one("#f_op", Select).value),
             iterations=iters,
+            model=self._model(),
+            effort=self._effort(),
             hub=self._hub,
             token=self._creds.token if self._creds else "dev-token",
             owner=self._creds.login if self._creds else "dev",

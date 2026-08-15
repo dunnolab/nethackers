@@ -225,6 +225,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Disable mid-run migration: don't adopt a better hub elite between "
              "iterations (keep a pure single-parent lineage).")
     evolve.add_argument("--operator", choices=["codex", "claude"], default="claude")
+    evolve.add_argument(
+        "--model", default=None,
+        help="Pin the operator's model (e.g. claude-opus-5, gpt-5.6-sol); "
+        "default: the harness's own default.",
+    )
+    evolve.add_argument(
+        "--effort", default=None,
+        help="Reasoning effort: low|medium|high|xhigh|max (codex also 'ultra'); "
+        "default: the harness's own default.",
+    )
     evolve.add_argument("--iterations", type=int, default=1)
     evolve.add_argument("--validation-n", type=int, default=15)
     evolve.add_argument(
@@ -400,6 +410,7 @@ def _run(argv: list[str] | None) -> int:
             token=args.token or (_creds.token if _creds else "dev-token"),
             owner=args.owner or (_creds.login if _creds else "dev"),
             from_seed=args.from_seed, select_k=args.select_k, select_temp=args.select_temp,
+            model=args.model, effort=args.effort,
         )
         plan = prepare_evolve(params)
 

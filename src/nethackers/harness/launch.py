@@ -67,6 +67,8 @@ class EvolveParams:
     from_seed: bool = False  # skip SELECT; cold-start from `seed` directly
     select_k: int = 1
     select_temp: float = 1.0
+    model: str | None = None   # pin the operator's model (None = harness default)
+    effort: str | None = None  # reasoning effort level (None = harness default)
 
 
 @dataclass
@@ -106,11 +108,14 @@ def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
         "max_parallel_evals": params.max_parallel_evals, "image": params.image,
         "parent": parent_digest or "seed", "select_k": params.select_k,
         "select_temp": params.select_temp, "migrate": params.migrate,
+        "model": params.model, "effort": params.effort,
     })
     _point_latest(runs_dir, rid)
-    operator = {"codex": CodexOperator, "claude": ClaudeOperator}[params.operator]()
+    operator = {"codex": CodexOperator, "claude": ClaudeOperator}[params.operator](
+        model=params.model, effort=params.effort)
     cfg = EvolveConfig(objective=params.objective, backend=params.operator,
-                       iterations=params.iterations)
+                       iterations=params.iterations, model=params.model,
+                       effort=params.effort)
 
     def run(callbacks: dict, report: Callable[[str], None] = lambda _m: None) -> list:
         def _on_log(tag: str, line: str) -> None:
