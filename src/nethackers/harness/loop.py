@@ -94,6 +94,8 @@ def run_loop(
             "baseline_dev": base_dev, "baseline_held": base_held,
             "best_dev": elite.dev_fitness, "best_held": elite.heldout_fitness,
             "wins": wins, "tokens": tokens, "detail": detail,
+            "parent_digest": parent_digest, "parent_dev": parent_dev,
+            "parent_held": parent_held, "generation": generation,
         })
 
     # Cold start: the seed (AutoAscend) is the first elite.
@@ -109,6 +111,8 @@ def run_loop(
     )
     elite = EliteState(seed_digest, tree_store.path(seed_digest), dev_fit0, ho_fit0, dev_ev0)
     base_dev, base_held = dev_fit0, ho_fit0
+    parent_digest, parent_dev, parent_held = seed_digest, dev_fit0, ho_fit0
+    generation = 0
     report(f"cold-start · elite=seed dev={dev_fit0:.3f} held={ho_fit0:.3f}")
     _emit("cold-start", 0)
     on_iteration(0, IterationResult(False, "baseline",
@@ -123,6 +127,10 @@ def run_loop(
     for k in range(iterations):
         tag = f"iter {k + 1}/{iterations}"
         try:
+            parent_digest, parent_dev, parent_held = (
+                elite.digest, elite.dev_fitness, elite.heldout_fitness)
+            generation = wins
+
             worktree = workdir / f"iter-{k}"
             if worktree.exists():
                 shutil.rmtree(worktree)
