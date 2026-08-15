@@ -54,6 +54,7 @@ from nethackers.hub.validate import (
 from nethackers.hub.views.attainment import read_attainment
 from nethackers.hub.views.boards import board, coverage_board, firsts_board
 from nethackers.hub.views.elites import read_elites
+from nethackers.hub.views.solution import read_solution_frontier
 
 # GET /search's column list, local to this module -- the context calls for
 # keeping this one small SELECT in api.py rather than adding a store.py
@@ -152,6 +153,12 @@ def create_app(
         if solution is None:
             raise HTTPException(status_code=404, detail=f"unknown solution digest: {digest!r}")
         return solution
+
+    @app.get("/solutions/{digest}/frontier")
+    def solution_frontier(digest: str) -> list[dict[str, Any]]:
+        if store.get_solution(digest) is None:
+            raise HTTPException(status_code=404, detail=f"unknown solution digest: {digest!r}")
+        return read_solution_frontier(store, digest)
 
     @app.get("/search")
     def search(owner: str | None = None, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
