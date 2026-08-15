@@ -68,7 +68,7 @@ class RunsView(VerticalScroll):
         self._refresh()
 
     def _refresh(self) -> None:
-        from nethackers.tui.screens.home import recent_runs_panel  # type: ignore[import-not-found]
+        from nethackers.tui.screens.home import recent_runs_panel
 
         runs = read_runs(Path.home() / ".nethackers" / "evolve" / "runs")
         self.query_one("#runs_body", Static).update(recent_runs_panel(runs))
