@@ -37,6 +37,26 @@ def _sample(entries: list[dict], k: int, temperature: float,
     return rng.choices(top, weights=weights, k=1)[0]
 
 
+def _resolve(entry: dict, store: LocalTreeStore,
+             fetch: Callable[[dict, Path], Path | None]) -> tuple[Path, str] | None:
+    """Serve an elite entry's bytes through the local content cache: a hit
+    resolves immediately (always true for your own wins); a miss pulls, then
+    ``store.save`` recomputes the digest and the result is used ONLY if it
+    equals the hub's claimed digest (content-addressed integrity). ``None`` on
+    a miss + fetch-failure, or a digest mismatch."""
+    digest = entry["solution_digest"]
+    if store.has(digest):
+        return store.path(digest), digest
+    with tempfile.TemporaryDirectory() as td:
+        pulled = fetch(entry, Path(td))
+        if pulled is None:
+            return None
+        got = store.save(pulled)
+    if got != digest or not store.has(digest):
+        return None
+    return store.path(digest), digest
+
+
 def select_parent(
     hub, objective: str, store: LocalTreeStore, seed_tree: Path, *,
     owner: str, k: int = 1, temperature: float = 1.0,
@@ -71,14 +91,25 @@ def select_parent(
     if not trusted:
         return seed_tree, None
     chosen = _sample(trusted, k, temperature, rng)
-    digest = chosen["solution_digest"]
-    if store.has(digest):
-        return store.path(digest), digest
-    with tempfile.TemporaryDirectory() as td:
-        pulled = fetch(chosen, Path(td))
-        if pulled is None:
-            return seed_tree, None
-        got = store.save(pulled)              # content-addressed -> integrity
-    if got != digest or not store.has(digest):
-        return seed_tree, None
-    return store.path(digest), digest
+    resolved = _resolve(chosen, store, fetch)
+    return resolved if resolved is not None else (seed_tree, None)
+
+
+def top_trusted_elite(
+    hub, objective: str, store: LocalTreeStore, owner: str, *,
+    fetch: Callable[[dict, Path], Path | None] = pull_fetch,
+) -> tuple[dict, Path] | None:
+    """The objective's single best TRUSTED elite, GREEDY (max score, never
+    sampled) -- for mid-run migration (harness/loop.py). Returns ``(entry,
+    tree_path)``, or ``None`` on a hub error, no trusted entries, or a
+    cache-miss + fetch/integrity failure. Never raises."""
+    try:
+        entries = list(hub.elites(objective))
+    except Exception:
+        return None
+    trusted = [e for e in entries if _trusted(e, owner)]
+    if not trusted:
+        return None
+    top = max(trusted, key=lambda e: e["score"])
+    resolved = _resolve(top, store, fetch)
+    return (top, resolved[0]) if resolved is not None else None
