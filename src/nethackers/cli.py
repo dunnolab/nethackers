@@ -49,10 +49,8 @@ subcommand does along the way.
 from __future__ import annotations
 
 import argparse
-import datetime
 import json
 import os
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -63,10 +61,8 @@ from rich.live import Live
 from rich_argparse import RichHelpFormatter
 
 from nethackers.eval.runner import eval_batch
-from nethackers.harness import runlog
-from nethackers.harness.loop import IterationResult, run_loop
-from nethackers.harness.operator import ClaudeOperator, CodexOperator
-from nethackers.harness.store import LocalTreeStore
+from nethackers.harness.launch import EvolveParams, _now, prepare_evolve
+from nethackers.harness.loop import IterationResult
 from nethackers.hub.objectives import CATALOG
 from nethackers.hubclient import credentials as _cred
 from nethackers.hubclient.client import (
@@ -90,35 +86,10 @@ from nethackers.hubclient.render import (
     render_show as rich_show,
 )
 from nethackers.tui.app import EvolveApp
-from nethackers.tui.status import EvolveConfig
-
-
-def _now() -> str:
-    return datetime.datetime.now(datetime.UTC).isoformat()
 
 
 def _default_hub() -> str:
     return os.environ.get("NETHACKERS_HUB", "http://localhost:8000")
-
-
-def _git_sha() -> str | None:
-    try:
-        out = subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
-        )
-        return out.stdout.strip()
-    except Exception:
-        return None
-
-
-def _point_latest(runs_dir: Path, rid: str) -> None:
-    link = runs_dir / "latest"
-    try:
-        if link.is_symlink() or link.exists():
-            link.unlink()
-        link.symlink_to(rid)  # relative link to the run-id directory
-    except OSError as exc:
-        err.print(f"[dim]could not update 'latest' symlink: {exc}[/dim]")
 
 
 def _load_creds() -> Credentials | None:
@@ -381,53 +352,24 @@ def _run(argv: list[str] | None) -> int:
 
     if args.cmd == "evolve":
         _creds = _load_creds()
-        owner = args.owner or (_creds.login if _creds else "dev")
-        token = args.token or (_creds.token if _creds else "dev-token")
-        started = datetime.datetime.now(datetime.UTC)
-        runs_dir = Path(args.workdir) / "runs"
-        rid = runlog.run_id(started, args.run_name,
-                            exists=lambda r: (runs_dir / r).exists())
-        run_dir = runs_dir / rid
-        runlog.write_run_config(run_dir, {
-            "run_id": rid, "created_at": started.isoformat(), "git_sha": _git_sha(),
-            "objective": args.objective, "seed": str(args.seed), "operator": args.operator,
-            "iterations": args.iterations, "token_budget": args.token_budget,
-            "timeout": args.timeout, "heldout_n": args.heldout_n,
-            "max_parallel_evals": args.max_parallel_evals, "image": args.image,
-        })
-        _point_latest(runs_dir, rid)
-
-        operator = {"codex": CodexOperator, "claude": ClaudeOperator}[args.operator]()
-        cfg = EvolveConfig(objective=args.objective, backend=args.operator,
-                           iterations=args.iterations, token_budget=args.token_budget)
-
-        def _run(callbacks, report=lambda _m: None):
-            def _on_log(tag: str, line: str) -> None:
-                runlog.append_log(run_dir, tag, line)  # persist the per-iteration mutation log
-                callbacks["on_log"](tag, line)         # + render live (TUI) / drop (non-TUI)
-            return run_loop(
-                objective=args.objective, seed_tree=Path(args.seed),
-                tree_store=LocalTreeStore(run_dir / "trees"),
-                operator=operator, hub=HubClient(args.hub), image=args.image,
-                token=token, owner=owner, iterations=args.iterations,
-                token_budget=args.token_budget, timeout_s=args.timeout,
-                heldout_n=args.heldout_n, max_parallel_evals=args.max_parallel_evals,
-                now_fn=_now, report=report,
-                on_episode=callbacks["on_episode"],
-                on_state=callbacks["on_state"],
-                on_log=_on_log,
-                workdir=run_dir / "work",
-                on_iteration=lambda it, res: runlog.append_metric(
-                    run_dir, runlog.metric_record(it, res)),
-            )
+        params = EvolveParams(
+            objective=args.objective, seed=args.seed, operator=args.operator,
+            iterations=args.iterations, token_budget=args.token_budget, timeout=args.timeout,
+            heldout_n=args.heldout_n, max_parallel_evals=args.max_parallel_evals,
+            image=args.image, hub=args.hub, workdir=args.workdir, run_name=args.run_name,
+            token=args.token or (_creds.token if _creds else "dev-token"),
+            owner=args.owner or (_creds.login if _creds else "dev"),
+        )
+        plan = prepare_evolve(params)
+        cfg = plan.cfg
 
         if sys.stdout.isatty() and args.output != "json":
-            app = EvolveApp(cfg, run=lambda callbacks: _run(callbacks))
+            app = EvolveApp(cfg, run=plan.run)
             app.run()  # status bar replaces the prose report -> default no-op
             if app.error is not None:
                 raise app.error  # let main()'s friendly hub/docker handlers fire on the ORIGINAL
             # EvolveApp.results is typed as `object | None` (it just forwards
-            # whatever `run=` returns); narrow it back to what `_run` actually
+            # whatever `run=` returns); narrow it back to what `plan.run` actually
             # produces -- a list of `run_loop`'s IterationResult.
             results = cast(list[IterationResult], app.results or [])
         else:
@@ -438,7 +380,7 @@ def _run(argv: list[str] | None) -> int:
             )
             with Live(console=err, auto_refresh=False, transient=False) as live:
                 stream = EpisodeStream(live)
-                results = _run(
+                results = plan.run(
                     {"on_state": lambda s: None, "on_episode": stream.on_episode,
                      "on_log": lambda tag, line: None},
                     report=lambda m: live.console.print(
