@@ -194,3 +194,39 @@ async def test_runs_view_lists_ongoing_and_opens_on_select():
             if not run.running:
                 break
             await asyncio.sleep(0.01)
+
+
+async def test_ongoing_reconciles_when_set_changes_without_duplicate_ids():
+    # regression: a rebuild via remove_children()+mount re-mounted a still-present
+    # run id before the async removal ran -> DuplicateIds crash mid-navigation.
+    def long_run(cb):
+        cb["on_state"]({
+            "phase": "mutating", "iteration": 1, "baseline_dev": 0.0, "baseline_held": 0.0,
+            "best_dev": 0.0, "best_held": 0.0, "wins": 0, "tokens": 0, "detail": "",
+            "parent_digest": "seed0", "parent_dev": 0.0, "parent_held": 0.0, "generation": 1})
+        cb["stop"].wait(timeout=3)
+        return []
+
+    app = NetHackersApp(hub="http://127.0.0.1:1", creds=None, start="runs")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        pa = _Plan(long_run)
+        pa.rid = "run-A"
+        ra = app.start_run(pa)
+        runs_view = app.query_one(RunsView)
+        runs_view._refresh()   # mounts A; tracked _ongoing_ids == [run-A]
+        await pilot.pause()
+        pb = _Plan(long_run)
+        pb.rid = "run-B"
+        rb = app.start_run(pb)
+        runs_view._refresh()   # set changes [A] -> [A, B]; must NOT re-mount A
+        await pilot.pause()
+        buttons = list(app.query(".ongoing-run").results(Button))
+        assert {b.id for b in buttons} == {"ongoing-run-A", "ongoing-run-B"}
+
+        app.stop_run("run-A")
+        app.stop_run("run-B")
+        for _ in range(200):
+            if not (ra.running or rb.running):
+                break
+            await asyncio.sleep(0.01)

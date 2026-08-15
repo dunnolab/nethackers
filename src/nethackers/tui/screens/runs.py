@@ -2,12 +2,14 @@
 select one to jump into its monitor -- over past runs read from disk."""
 from __future__ import annotations
 
+import contextlib
 import json
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
 from textual.app import ComposeResult
 from textual.containers import Vertical, VerticalScroll
+from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 
 from nethackers.tui.status import _clock, _compact
@@ -125,16 +127,25 @@ class RunsView(VerticalScroll):
     def _refresh_ongoing(self) -> None:
         runs = [r for r in self._app()._runs.values() if r.running]
         container = self.query_one("#runs_ongoing", Vertical)
-        ids = [r.rid for r in runs]
-        if ids != self._ongoing_ids:  # a run started/finished -> rebuild the buttons
-            container.remove_children()
-            for run in runs:
-                container.mount(Button(self._ongoing_label(run), id=f"ongoing-{run.rid}",
-                                       classes="ongoing-run"))
-            self._ongoing_ids = ids
-        else:  # same set -> refresh each run's live label in place
-            for run in runs:
-                self.query_one(f"#ongoing-{run.rid}", Button).label = self._ongoing_label(run)
+        current = [r.rid for r in runs]
+        # Reconcile incrementally -- never remove_children()+remount: removal is
+        # async, so re-mounting a still-present id raises DuplicateIds. Track the
+        # mounted ids in self._ongoing_ids (updated synchronously) so a second
+        # refresh before a pending mount lands doesn't double-mount.
+        for rid in self._ongoing_ids:  # drop runs that finished
+            if rid not in current:
+                with contextlib.suppress(NoMatches):
+                    self.query_one(f"#ongoing-{rid}", Button).remove()
+        for run in runs:
+            if run.rid in self._ongoing_ids:  # update the live label in place
+                # (NoMatches: its mount is still pending -- refreshes next tick)
+                with contextlib.suppress(NoMatches):
+                    self.query_one(f"#ongoing-{run.rid}", Button).label = \
+                        self._ongoing_label(run)
+            else:  # a new run -> mount one button for it
+                container.mount(Button(self._ongoing_label(run),
+                                       id=f"ongoing-{run.rid}", classes="ongoing-run"))
+        self._ongoing_ids = current
         self.query_one("#runs_ongoing_title", Static).update(
             f"● {len(runs)} run(s) in flight — enter to jump in" if runs
             else "[dim]No runs in flight. Start one from the ⚔ Evolve tab.[/]")
