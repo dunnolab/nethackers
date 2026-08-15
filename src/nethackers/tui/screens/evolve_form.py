@@ -93,8 +93,6 @@ class EvolveForm(Vertical):
             )
             yield Label("Iterations")
             yield Input(value="1", id="f_iters")
-            yield Label("Token budget")
-            yield Input(value="200000", id="f_budget")
             yield Button("Start", id="f_start", variant="success")
             yield Static("", id="f_err")
 
@@ -130,15 +128,13 @@ class EvolveForm(Vertical):
             raise ValueError("pick an objective from the list")
         try:
             iters = int(self.query_one("#f_iters", Input).value)
-            budget = int(self.query_one("#f_budget", Input).value)
         except ValueError:
-            raise ValueError("iterations and token-budget must be integers") from None
+            raise ValueError("iterations must be an integer") from None
         return EvolveParams(
             objective=self._objective,
             seed=str(self.query_one("#f_seed", Select).value),
             operator=str(self.query_one("#f_op", Select).value),
             iterations=iters,
-            token_budget=budget,
             hub=self._hub,
             token=self._creds.token if self._creds else "dev-token",
             owner=self._creds.login if self._creds else "dev",

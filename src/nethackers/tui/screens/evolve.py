@@ -14,6 +14,7 @@ shared DOMNode/MessagePump machinery and work the same on a Screen.
 """
 from __future__ import annotations
 
+import threading
 import time
 from collections.abc import Callable
 
@@ -32,7 +33,7 @@ from textual.widgets import (
     TabPane,
 )
 
-from nethackers.harness.operator import agent_tokens
+from nethackers.harness.metering import Meter
 from nethackers.hubclient.live import episode_table
 from nethackers.tui import status as S
 from nethackers.tui._util import _guarded, _rows_in_order, _slug
@@ -66,7 +67,7 @@ class EvolveScreen(Screen):
     #logs_list { width: 24; border-right: solid #d2a24c; }
     #logview { padding: 0 1; }
     """
-    BINDINGS = [("q", "app.quit", "Quit"), ("escape", "dismiss", "Back")]
+    BINDINGS = [("q", "stop_and_quit", "Quit"), ("escape", "stop_and_back", "Back")]
 
     def __init__(
         self,
@@ -90,7 +91,8 @@ class EvolveScreen(Screen):
         self._eval_step: tuple[int, int, float] | None = None
         self._logs: dict[str, list[tuple[str, str]]] = {}
         self._items: dict[str, str] = {}  # slug -> tag
-        self._live_tokens: dict[str, int] = {}
+        self._meters: dict[str, Meter] = {}  # tag -> faithful cache-aware token meter
+        self._stop = threading.Event()
         self._sel_tag: str | None = None
         self._mut_start = 0.0
 
@@ -129,6 +131,7 @@ class EvolveScreen(Screen):
                 "on_episode": lambda label, ep: self.app.call_from_thread(
                     self._apply_episode, label, ep),
                 "on_log": lambda tag, line: self.app.call_from_thread(self._apply_log, tag, line),
+                "stop": self._stop,
             })
         except Exception as exc:
             self.error = exc
@@ -142,6 +145,17 @@ class EvolveScreen(Screen):
                 # stays up -- surface the failure and fall back to it
                 # instead of silently killing the whole shell.
                 self.app.call_from_thread(self._fatal)
+
+    def action_stop_and_quit(self) -> None:
+        """Signal the evolve worker to stop (run_loop's stop event hard-kills
+        the operator's process group) and tear the whole app down."""
+        self._stop.set()
+        self.app.exit()
+
+    def action_stop_and_back(self) -> None:
+        """Stop the worker and dismiss back to the dashboard (in-app path)."""
+        self._stop.set()
+        self.dismiss()
 
     def _fatal(self) -> None:
         """Off the worker thread, via call_from_thread: notify + dismiss
@@ -221,8 +235,7 @@ class EvolveScreen(Screen):
         self._ensure_log(tag)
         pretty = prettify(self._cfg.backend, line)
         self._logs.setdefault(tag, []).extend(pretty)
-        gained = agent_tokens(self._cfg.backend, line)
-        self._live_tokens[tag] = self._live_tokens.get(tag, 0) + gained
+        self._meters.setdefault(tag, Meter(self._cfg.backend)).observe(line)
         if tag == self._sel_tag and pretty:
             log = self.query_one("#logview", RichLog)
             for kind, text in pretty:
@@ -281,12 +294,13 @@ class EvolveScreen(Screen):
 
     def _refresh(self) -> None:
         st = self._state
-        live = self._live_tokens.get(self._running_tag(), 0)
+        meter = self._meters.get(self._running_tag())
+        live = meter.usage.total if meter is not None else 0
         elapsed = self._elapsed()
         self.query_one("#parent", Static).update(S.parent_panel(st))
         if st.get("phase") != "rejected":
             self.query_one("#candidate", Static).update(S.candidate_line(
-                st, live_tokens=live, token_budget=self._cfg.token_budget, elapsed_s=elapsed))
+                st, live_tokens=live, elapsed_s=elapsed))
         self.query_one("#eval", Static).update(
             S.eval_line(self._split(), self._eval_step, self._counts))
         self.query_one("#lineage", Static).update(S.lineage_strip(

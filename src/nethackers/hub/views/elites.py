@@ -54,11 +54,20 @@ INSERT INTO elite_pool (identity, solution_digest, score, rank)
 VALUES (?, ?, ?, ?)
 """
 
+_TIER = "self-reported"  # every atom is self-reported until M2b verification exists
+
+# LEFT JOIN (not INNER): solution_digest -> solutions.digest always resolves
+# in practice (atoms.solution_digest carries an FK to solutions(digest), and
+# elite_pool rows are derived from atoms -- see store.py's insert_atoms), but
+# LEFT keeps a stray/legacy elite_pool row from vanishing outright if that
+# ever weren't true; owner/repo/commit_sha just come back NULL.
 _SELECT_IDENTITY_SQL = """
-SELECT identity, solution_digest, score, rank
-FROM elite_pool
-WHERE identity = ?
-ORDER BY rank
+SELECT ep.identity, ep.solution_digest, ep.score, ep.rank,
+       s.owner, s.repo, s.commit_sha
+FROM elite_pool ep
+LEFT JOIN solutions s ON ep.solution_digest = s.digest
+WHERE ep.identity = ?
+ORDER BY ep.rank
 """
 
 
@@ -90,7 +99,12 @@ def recompute_elites(store: Store, *, k: int = 8) -> None:
 
 def read_elites(store: Store, *, objective: str) -> list[dict[str, Any]]:
     """Entries for ``objective`` (a catalog objective name), each
-    ``{identity, solution_digest, score, rank}``.
+    ``{identity, solution_digest, score, rank, owner, repo, commit_sha,
+    tier}`` -- the last four (M3 SELECT-from-hub) come from a ``LEFT JOIN``
+    onto the registered ``solutions`` row (``tier`` is always the constant
+    ``"self-reported"``; see ``_TIER``) and are exactly what a trust-aware
+    SELECT (``harness/select.py``) needs to decide whether an elite is
+    trusted.
 
     - ``spec.kind == "identity"`` (``objective`` IS one of the 73
       identities): that identity's own top-k, in rank order.
@@ -112,8 +126,10 @@ def read_elites(store: Store, *, objective: str) -> list[dict[str, Any]]:
     ids = IDENTITIES if spec.kind == "functional" else tuple(sorted(set(spec.characters())))
     placeholders = ", ".join(["?"] * len(ids))
     sql = (
-        "SELECT identity, solution_digest, score, rank FROM elite_pool "
-        f"WHERE identity IN ({placeholders}) ORDER BY rank, identity"
+        "SELECT ep.identity, ep.solution_digest, ep.score, ep.rank, "
+        "s.owner, s.repo, s.commit_sha "
+        "FROM elite_pool ep LEFT JOIN solutions s ON ep.solution_digest = s.digest "
+        f"WHERE ep.identity IN ({placeholders}) ORDER BY ep.rank, ep.identity"
     )
     rows = store.conn.execute(sql, ids).fetchall()
     return _entries(rows)
@@ -121,6 +137,9 @@ def read_elites(store: Store, *, objective: str) -> list[dict[str, Any]]:
 
 def _entries(rows: list[Any]) -> list[dict[str, Any]]:
     return [
-        {"identity": row[0], "solution_digest": row[1], "score": row[2], "rank": row[3]}
+        {
+            "identity": row[0], "solution_digest": row[1], "score": row[2], "rank": row[3],
+            "owner": row[4], "repo": row[5], "commit_sha": row[6], "tier": _TIER,
+        }
         for row in rows
     ]

@@ -15,11 +15,14 @@ class EvolveConfig:
     objective: str
     backend: str
     iterations: int
-    token_budget: int
 
 
 def _compact(n: int) -> str:
-    return f"{n / 1000:.1f}k" if n >= 1000 else str(int(n))
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1000:
+        return f"{n / 1000:.1f}k"
+    return str(int(n))
 
 
 def _clock(seconds: float) -> str:
@@ -54,11 +57,9 @@ _PHASE_VERB = {"mutating": "mutating", "gating": "gating",
                "evaluating-dev": "eval dev", "evaluating-held": "eval held"}
 
 
-def candidate_line(state: dict, *, live_tokens: int, token_budget: int,
-                   elapsed_s: float) -> str:
+def candidate_line(state: dict, *, live_tokens: int, elapsed_s: float) -> str:
     verb = _PHASE_VERB.get(state["phase"], state["phase"])
-    return (f"{verb} ⠙  {_compact(live_tokens)}/{_compact(token_budget)} tok · "
-            f"{_clock(elapsed_s)}")
+    return f"{verb} ⠙  {_compact(live_tokens)} tok · {_clock(elapsed_s)}"
 
 
 def eval_line(split: str, eval_step: tuple[int, int, float] | None,

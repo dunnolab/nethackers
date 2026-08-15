@@ -15,7 +15,7 @@ from textual.app import App
 from nethackers.tui.screens.evolve import EvolveScreen
 from nethackers.tui.status import EvolveConfig
 
-CFG = EvolveConfig("wiz-elf-cha-mal", "claude", 3, 200_000)
+CFG = EvolveConfig("wiz-elf-cha-mal", "claude", 3)
 
 
 def _state(phase="mutating", **kw):

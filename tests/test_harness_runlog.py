@@ -3,6 +3,7 @@ import json
 from datetime import UTC, datetime
 
 from nethackers.harness.loop import IterationResult
+from nethackers.harness.metering import TokenUsage
 from nethackers.harness.runlog import (
     append_log,
     append_metric,
@@ -36,16 +37,23 @@ def test_write_run_config_and_append_metric(tmp_path):
 
 
 def test_metric_record_maps_outcome():
-    reg = IterationResult(True, "registered", dev_fitness=0.2, heldout_fitness=0.1,
+    reg = IterationResult(True, "registered", dev_fitness=0.2, validation_fitness=0.1,
                           tokens=5, digest="sha256:abc", stopped_reason="completed")
     assert metric_record(3, reg) == {
         "iteration": 3, "outcome": "registered", "reason": "registered",
-        "dev_fitness": 0.2, "heldout_fitness": 0.1, "tokens": 5,
+        "dev_fitness": 0.2, "validation_fitness": 0.1, "tokens": 5, "usage": None,
         "stopped_reason": "completed", "child_digest": "sha256:abc"}
-    base = IterationResult(False, "baseline", dev_fitness=0.05, heldout_fitness=0.05)
+    base = IterationResult(False, "baseline", dev_fitness=0.05, validation_fitness=0.05)
     assert metric_record(0, base)["outcome"] == "baseline"
     assert metric_record(2, IterationResult(False, "no-dev-gain"))["outcome"] == "rejected"
     assert metric_record(4, IterationResult(False, "error: boom"))["outcome"] == "error"
+
+
+def test_metric_record_uses_faithful_usage_when_present():
+    r = IterationResult(True, "registered", usage=TokenUsage(1, 2, 3, 4))
+    rec = metric_record(1, r)
+    assert rec["tokens"] == 10  # faithful total, not the legacy int field
+    assert rec["usage"] == {"input": 1, "output": 2, "cache_creation": 3, "cache_read": 4}
 
 
 def test_append_log_writes_per_iteration_file(tmp_path):

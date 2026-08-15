@@ -287,6 +287,8 @@ class NetHackersApp(App):
         self._nav_update_hint()
 
     def on_key(self, event: events.Key) -> None:
+        if len(self.screen_stack) > 1:
+            return  # a screen is pushed (e.g. the evolve monitor) -- it owns its keys
         if self._nav_mode == "interact":
             if event.key == "escape":
                 self._nav_to_navigate()

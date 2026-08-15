@@ -1,4 +1,4 @@
-"""Record a held-out-confirmed win to the hub (trusted self-report)."""
+"""Record a validation-confirmed win to the hub (trusted self-report)."""
 from __future__ import annotations
 
 from typing import Any

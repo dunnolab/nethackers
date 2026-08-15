@@ -6,6 +6,7 @@ to, and so importing it never pulls in cli/tui (no import cycle)."""
 from __future__ import annotations
 
 import datetime
+import random
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -14,6 +15,7 @@ from pathlib import Path
 from nethackers.harness import runlog
 from nethackers.harness.loop import run_loop
 from nethackers.harness.operator import ClaudeOperator, CodexOperator
+from nethackers.harness.select import select_parent
 from nethackers.harness.store import LocalTreeStore
 from nethackers.hubclient.client import HubClient
 from nethackers.hubclient.output import err
@@ -50,12 +52,11 @@ def _default_workdir() -> str:
 @dataclass
 class EvolveParams:
     objective: str
-    seed: str
+    seed: str  # resolved parent tree (CLI SELECTs it; the TUI form passes a seed root)
     operator: str = "claude"
     iterations: int = 1
-    token_budget: int = 200_000
-    timeout: float = 1800.0
-    heldout_n: int = 8
+    validation_n: int = 15
+    migrate: bool = True
     max_parallel_evals: int = 8
     image: str = "nethackers/arena:dev"
     hub: str = "http://localhost:8000"
@@ -63,6 +64,9 @@ class EvolveParams:
     owner: str = "dev"
     workdir: str = field(default_factory=_default_workdir)
     run_name: str | None = None
+    from_seed: bool = False  # skip SELECT; cold-start from `seed` directly
+    select_k: int = 1
+    select_temp: float = 1.0
 
 
 @dataclass
@@ -73,35 +77,52 @@ class EvolvePlan:
     rid: str
 
 
-def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None) -> EvolvePlan:
+def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
+                   tree_store: LocalTreeStore | None = None) -> EvolvePlan:
     started = datetime.datetime.now(datetime.UTC)
     runs_dir = Path(params.workdir) / "runs"
     rid = runlog.run_id(started, params.run_name, exists=lambda r: (runs_dir / r).exists())
     run_dir = runs_dir / rid
+    # Shared machine-wide content cache (dedup by digest) -- a win registered
+    # by one run is instantly a cache hit for the next run's SELECT.
+    store = tree_store if tree_store is not None else LocalTreeStore(Path(params.workdir) / "store")
+
+    # SELECT the parent: the objective's top *trusted* hub elite (so evolution
+    # compounds), unless from_seed forces a deliberate cold start. rng is
+    # seeded from the run id so a select_k>1 parent choice is reproducible.
+    if params.from_seed:
+        parent_tree, parent_digest = Path(params.seed), None
+    else:
+        parent_tree, parent_digest = select_parent(
+            HubClient(params.hub), params.objective, store, Path(params.seed),
+            owner=params.owner, k=params.select_k, temperature=params.select_temp,
+            rng=random.Random(rid))
+
     runlog.write_run_config(run_dir, {
         "run_id": rid, "created_at": started.isoformat(),
         "git_sha": git_sha if git_sha is not None else _git_sha(),
         "objective": params.objective, "seed": str(params.seed), "operator": params.operator,
-        "iterations": params.iterations, "token_budget": params.token_budget,
-        "timeout": params.timeout, "heldout_n": params.heldout_n,
+        "iterations": params.iterations, "validation_n": params.validation_n,
         "max_parallel_evals": params.max_parallel_evals, "image": params.image,
+        "parent": parent_digest or "seed", "select_k": params.select_k,
+        "select_temp": params.select_temp, "migrate": params.migrate,
     })
     _point_latest(runs_dir, rid)
     operator = {"codex": CodexOperator, "claude": ClaudeOperator}[params.operator]()
     cfg = EvolveConfig(objective=params.objective, backend=params.operator,
-                       iterations=params.iterations, token_budget=params.token_budget)
+                       iterations=params.iterations)
 
     def run(callbacks: dict, report: Callable[[str], None] = lambda _m: None) -> list:
         def _on_log(tag: str, line: str) -> None:
             runlog.append_log(run_dir, tag, line)
             callbacks["on_log"](tag, line)
         return run_loop(
-            objective=params.objective, seed_tree=Path(params.seed),
-            tree_store=LocalTreeStore(run_dir / "trees"), operator=operator,
+            objective=params.objective, seed_tree=parent_tree,
+            tree_store=store, operator=operator,
             hub=HubClient(params.hub), image=params.image, token=params.token,
             owner=params.owner, iterations=params.iterations,
-            token_budget=params.token_budget, timeout_s=params.timeout,
-            heldout_n=params.heldout_n, max_parallel_evals=params.max_parallel_evals,
+            validation_n=params.validation_n, migrate=params.migrate,
+            max_parallel_evals=params.max_parallel_evals, stop=callbacks.get("stop"),
             now_fn=_now, report=report, on_episode=callbacks["on_episode"],
             on_state=callbacks["on_state"], on_log=_on_log, workdir=run_dir / "work",
             on_iteration=lambda it, res: runlog.append_metric(

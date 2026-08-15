@@ -115,8 +115,7 @@ async def test_results_delegate_from_the_pushed_evolve_screen():
     def fake_run(callbacks):
         return {"ok": True}
 
-    cfg = EvolveConfig(objective="val-dwa-law-fem", backend="claude",
-                       iterations=1, token_budget=1_000)
+    cfg = EvolveConfig(objective="val-dwa-law-fem", backend="claude", iterations=1)
     app = NetHackersApp(hub=_DEAD_HUB, creds=None, evolve=(cfg, fake_run))
     async with app.run_test():
         for _ in range(200):  # up to ~2s
@@ -131,8 +130,7 @@ async def test_error_delegates_from_the_pushed_evolve_screen_as_the_original_exc
     def boom(callbacks):
         raise RuntimeError("cold start: hub unreachable")
 
-    cfg = EvolveConfig(objective="val-dwa-law-fem", backend="claude",
-                       iterations=1, token_budget=1_000)
+    cfg = EvolveConfig(objective="val-dwa-law-fem", backend="claude", iterations=1)
     app = NetHackersApp(hub=_DEAD_HUB, creds=None, evolve=(cfg, boom))
     async with app.run_test():
         for _ in range(200):  # up to ~2s

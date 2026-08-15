@@ -16,8 +16,7 @@ from nethackers.tui.status import (
     status_line,
 )
 
-CFG = EvolveConfig(objective="wiz-elf-cha-mal", backend="claude",
-                   iterations=3, token_budget=200_000)
+CFG = EvolveConfig(objective="wiz-elf-cha-mal", backend="claude", iterations=3)
 
 
 def _state(phase="mutating", **kw):
@@ -59,21 +58,20 @@ def test_parent_panel_shows_seed_when_no_parent_digest():
 # ---- candidate_line -------------------------------------------------------
 
 def test_candidate_line_has_tokens_and_clock():
-    s = candidate_line(_state(), live_tokens=92_000, token_budget=200_000, elapsed_s=194)
-    assert s == "mutating ⠙  92.0k/200.0k tok · 3:14"
-    assert "92.0k/200.0k tok" in s and "3:14" in s
+    s = candidate_line(_state(), live_tokens=92_000, elapsed_s=194)
+    assert s == "mutating ⠙  92.0k tok · 3:14"
+    assert "92.0k tok" in s and "3:14" in s
 
 
 def test_candidate_line_maps_known_phase_verbs():
-    kw = {"live_tokens": 0, "token_budget": 1_000, "elapsed_s": 0}
+    kw = {"live_tokens": 0, "elapsed_s": 0}
     assert candidate_line(_state(phase="gating"), **kw).startswith("gating ⠙")
     assert candidate_line(_state(phase="evaluating-dev"), **kw).startswith("eval dev ⠙")
     assert candidate_line(_state(phase="evaluating-held"), **kw).startswith("eval held ⠙")
 
 
 def test_candidate_line_falls_back_to_raw_phase_when_unmapped():
-    s = candidate_line(_state(phase="registered"), live_tokens=0, token_budget=1_000,
-                       elapsed_s=0)
+    s = candidate_line(_state(phase="registered"), live_tokens=0, elapsed_s=0)
     assert s.startswith("registered ⠙")
 
 

@@ -2,7 +2,11 @@
 import json
 from pathlib import Path
 
+import pytest
+
+from nethackers.harness import loop as loop_mod
 from nethackers.harness.loop import IterationResult, run_loop
+from nethackers.harness.metering import TokenUsage
 from nethackers.harness.store import LocalTreeStore
 
 
@@ -25,20 +29,21 @@ class _FakeHub:
 class _ImprovingOperator:
     """Edits bot.py so the child differs; a counter drives rising fitness."""
     def __init__(self): self.n = 0
-    def run(self, worktree, brief, *, token_budget, timeout_s, on_line=None):
+    def run(self, worktree, brief, *, on_line=None, stop=None):
         from nethackers.harness.operator import OperatorResult
         self.n += 1
         if on_line is not None:
             on_line('{"type":"assistant","message":{"content":'
                     '[{"type":"text","text":"editing"}]}}')
         (Path(worktree) / "bot.py").write_text(f"VERSION = {self.n}\n")
-        return OperatorResult(backend="fake", tokens=10, stopped_reason="completed")
+        return OperatorResult(backend="fake", usage=TokenUsage(1, 2, 3, 4),
+                              stopped_reason="completed")
 
 
 class _RaisingOperator:
     """Simulates a mutation step that blows up (e.g. the coding agent's CLI
     crashes) -- the loop must discard just this iteration, not abort."""
-    def run(self, worktree, brief, *, token_budget, timeout_s, on_line=None):
+    def run(self, worktree, brief, *, on_line=None, stop=None):
         raise RuntimeError("boom")
 
 
@@ -63,11 +68,23 @@ def test_loop_registers_an_improvement(tmp_path):
         objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
         tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
         hub=hub, image="img:dev", token="dev-token", owner="dev", iterations=1,
-        token_budget=1000, timeout_s=999, heldout_n=3,
+validation_n=3,
         now_fn=lambda: "2026-08-10T00:00:00Z",
         runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work")
     assert results[0].registered is True
     assert len(hub.registered) == 1
+
+
+def test_loop_records_faithful_usage(tmp_path):
+    results = run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+        hub=_FakeHub(), image="img:dev", token="dev-token", owner="dev", iterations=1,
+        validation_n=3, now_fn=lambda: "2026-08-10T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work")
+    win = results[-1]
+    assert win.registered is True
+    assert win.usage == TokenUsage(1, 2, 3, 4) and win.usage.total == 10
 
 
 def test_loop_discards_a_non_improvement(tmp_path):
@@ -76,7 +93,7 @@ def test_loop_discards_a_non_improvement(tmp_path):
         objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
         tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
         hub=hub, image="img:dev", token="dev-token", owner="dev", iterations=1,
-        token_budget=1000, timeout_s=999, heldout_n=3,
+validation_n=3,
         now_fn=lambda: "2026-08-10T00:00:00Z",
         runner=_fitness_runner(lambda v: 0.5), workdir=tmp_path / "work")  # flat: no gain
     assert results[0].registered is False
@@ -91,7 +108,7 @@ def test_loop_discards_an_iteration_that_raises(tmp_path):
         objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
         tree_store=LocalTreeStore(tmp_path / "store"), operator=_RaisingOperator(),
         hub=hub, image="img:dev", token="dev-token", owner="dev", iterations=1,
-        token_budget=1000, timeout_s=999, heldout_n=3,
+validation_n=3,
         now_fn=lambda: "2026-08-10T00:00:00Z",
         runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work")
     assert len(results) == 1
@@ -108,7 +125,7 @@ def test_loop_reports_progress(tmp_path):
         objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
         tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
         hub=_FakeHub(), image="img:dev", token="dev-token", owner="dev", iterations=1,
-        token_budget=1000, timeout_s=999, heldout_n=3,
+validation_n=3,
         now_fn=lambda: "2026-08-10T00:00:00Z", report=events.append,
         runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work")
     text = "\n".join(events)
@@ -123,7 +140,7 @@ def test_loop_emits_state_transitions(tmp_path):
         objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
         tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
         hub=_FakeHub(), image="img:dev", token="t", owner="o", iterations=1,
-        token_budget=1000, timeout_s=999, heldout_n=3,
+validation_n=3,
         now_fn=lambda: "2026-08-10T00:00:00Z",
         runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
         on_state=states.append)
@@ -148,7 +165,7 @@ def test_on_state_carries_parent_snapshot_and_generation(tmp_path):
         objective="val-dwa-law-fem", seed_tree=seed_tree,
         tree_store=tree_store, operator=_ImprovingOperator(),
         hub=hub, image="img:dev", token="t", owner="o", iterations=1,
-        token_budget=1000, timeout_s=999, heldout_n=3,
+        validation_n=3,
         now_fn=lambda: "2026-08-10T00:00:00Z",
         runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
         on_state=states.append)
@@ -176,7 +193,7 @@ def test_on_iteration_fires_for_baseline_and_each_iteration(tmp_path):
         objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
         tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
         hub=_FakeHub(), image="img:dev", token="t", owner="o", iterations=1,
-        token_budget=1000, timeout_s=999, heldout_n=3,
+validation_n=3,
         now_fn=lambda: "2026-08-10T00:00:00Z",
         runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
         on_iteration=lambda i, r: seen.append((i, r.reason)))
@@ -191,8 +208,59 @@ def test_loop_forwards_tagged_log_lines(tmp_path):
         objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
         tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
         hub=_FakeHub(), image="img:dev", token="t", owner="o", iterations=1,
-        token_budget=1000, timeout_s=999, heldout_n=3,
+validation_n=3,
         now_fn=lambda: "2026-08-10T00:00:00Z",
         runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
         on_log=lambda tag, line: logs.append((tag, line)))
     assert logs and logs[0][0] == "iter 1/1" and "editing" in logs[0][1]
+
+
+def _run_with_migration(tmp_path, monkeypatch, *, migrate, better_version=5, score=0.99):
+    """Seed baseline scores VERSION=0 (dev 0.0). Monkeypatch top_trusted_elite to
+    offer a VERSION=`better_version` tree (from the store) at `score`. Returns
+    the on_state phase dicts seen."""
+    store = LocalTreeStore(tmp_path / "store")
+    better = _seed_tree(tmp_path / "better")
+    (better / "bot.py").write_text(f"VERSION = {better_version}\n")
+    better_digest = store.save(better)
+    entry = {"solution_digest": better_digest, "score": score, "owner": "other",
+             "tier": "verified", "repo": "r", "commit_sha": "c"}
+    monkeypatch.setattr(loop_mod, "top_trusted_elite",
+                        lambda hub, obj, s, owner, **kw: (entry, store.path(better_digest)))
+    states: list[dict] = []
+    run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=store, operator=_ImprovingOperator(), hub=_FakeHub(),
+        image="img:dev", token="dev-token", owner="dev", iterations=1,
+validation_n=3, migrate=migrate,
+        now_fn=lambda: "2026-08-10T00:00:00Z", on_state=states.append,
+        runner=_fitness_runner(lambda v: 0.1 * v), workdir=tmp_path / "work")
+    return states
+
+
+def test_loop_migrates_to_strictly_better_hub_elite(tmp_path, monkeypatch):
+    states = _run_with_migration(tmp_path, monkeypatch, migrate=True, better_version=5)
+    migrated = [s for s in states if s["phase"] == "migrated"]
+    assert len(migrated) == 1
+    assert migrated[0]["detail"].startswith("other/")
+    assert migrated[0]["best_dev"] == pytest.approx(0.5)   # re-eval of VERSION=5
+
+
+def test_loop_no_migration_when_disabled(tmp_path, monkeypatch):
+    states = _run_with_migration(tmp_path, monkeypatch, migrate=False)
+    assert not any(s["phase"] == "migrated" for s in states)
+
+
+def test_loop_no_migration_when_same_digest(tmp_path, monkeypatch):
+    # VERSION=0 -> byte-identical tree/digest to the seed; the digest guard
+    # blocks even though the offered score (0.99) beats the baseline.
+    states = _run_with_migration(tmp_path, monkeypatch, migrate=True, better_version=0)
+    assert not any(s["phase"] == "migrated" for s in states)
+
+
+def test_loop_no_migration_when_not_strictly_better(tmp_path, monkeypatch):
+    # a genuinely different tree (VERSION=7 -> different digest), but the offered
+    # score (0.0) does not exceed the seed baseline's dev_fitness (0.0).
+    states = _run_with_migration(tmp_path, monkeypatch, migrate=True,
+                                 better_version=7, score=0.0)
+    assert not any(s["phase"] == "migrated" for s in states)
