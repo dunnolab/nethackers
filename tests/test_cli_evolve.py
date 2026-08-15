@@ -185,3 +185,40 @@ def test_evolve_from_seed_bypasses_select_parent(tmp_path, monkeypatch):
     run_dir = next(p for p in runs.iterdir() if p.name != "latest")
     cfg = json.loads((run_dir / "run.json").read_text())
     assert cfg["parent"] == "seed"
+
+
+def test_evolve_migrate_defaults_on_and_records_it(tmp_path, monkeypatch):
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    (seed / "nethackers.solution.json").write_text(
+        '{"root":".","entrypoint":"bot.py","parents":[],"influences":[]}'
+    )
+    (seed / "bot.py").write_text("x=1\n")
+    captured = {}
+
+    def fake_run_loop(**kwargs):
+        captured.update(kwargs)
+        return []
+    monkeypatch.setattr(cli, "run_loop", fake_run_loop, raising=False)
+
+    rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed), "--from-seed",
+                   "--workdir", str(tmp_path / "w")])
+    assert rc == 0 and captured["migrate"] is True
+    run_dir = next(p for p in (tmp_path / "w" / "runs").iterdir() if p.name != "latest")
+    assert json.loads((run_dir / "run.json").read_text())["migrate"] is True
+
+
+def test_evolve_no_migrate_flag_disables(tmp_path, monkeypatch):
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    (seed / "nethackers.solution.json").write_text(
+        '{"root":".","entrypoint":"bot.py","parents":[],"influences":[]}'
+    )
+    (seed / "bot.py").write_text("x=1\n")
+    captured = {}
+    monkeypatch.setattr(cli, "run_loop",
+                        lambda **k: captured.update(k) or [], raising=False)
+
+    rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed), "--from-seed",
+                   "--no-migrate", "--workdir", str(tmp_path / "w")])
+    assert rc == 0 and captured["migrate"] is False

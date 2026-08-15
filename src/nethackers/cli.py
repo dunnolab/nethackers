@@ -225,6 +225,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "--from-seed", action="store_true",
         help="Ignore the hub; cold-start from --seed.",
     )
+    evolve.add_argument(
+        "--no-migrate", action="store_true",
+        help="Disable mid-run migration: don't adopt a better hub elite between "
+             "iterations (keep a pure single-parent lineage).")
     evolve.add_argument("--operator", choices=["codex", "claude"], default="claude")
     evolve.add_argument("--iterations", type=int, default=1)
     evolve.add_argument("--token-budget", type=int, default=200_000)
@@ -379,7 +383,7 @@ def _run(argv: list[str] | None) -> int:
             "timeout": args.timeout, "validation_n": args.validation_n,
             "max_parallel_evals": args.max_parallel_evals, "image": args.image,
             "parent": parent_digest or "seed", "select_k": args.select_k,
-            "select_temp": args.select_temp,
+            "select_temp": args.select_temp, "migrate": not args.no_migrate,
         })
         _point_latest(runs_dir, rid)
 
@@ -398,6 +402,7 @@ def _run(argv: list[str] | None) -> int:
                 token=args.token, owner=args.owner, iterations=args.iterations,
                 token_budget=args.token_budget, timeout_s=args.timeout,
                 validation_n=args.validation_n, max_parallel_evals=args.max_parallel_evals,
+                migrate=not args.no_migrate,
                 now_fn=_now, report=report,
                 on_episode=callbacks["on_episode"],
                 on_state=callbacks["on_state"],
