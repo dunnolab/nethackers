@@ -8,7 +8,9 @@ from rich.console import Console
 from textual.app import App, ComposeResult
 from textual.widgets import Tabs
 
+from nethackers.hubclient.client import _short_digest
 from nethackers.hubclient.credentials import Credentials
+from nethackers.hubclient.frontier import overall_mean
 from nethackers.tui.app import NetHackersApp
 from nethackers.tui.screens.hub import BoardsView, ElitesView, MapView
 
@@ -276,6 +278,9 @@ async def test_map_view_universe_default_shows_a_known_identity_number(monkeypat
         assert "0.15" in rendered
         assert "0.99" not in rendered  # rank-2, must be filtered out
         assert "each number = the best program's mean on that identity" in rendered
+        om = overall_mean({"val-dwa-law-fem": 0.42, "arc-hum-law-mal": 0.15})
+        assert om is not None
+        assert f"overall {om:.2f}" in rendered
 
 
 async def test_map_view_activating_program_subtab_shows_champion_grid(monkeypatch):
@@ -304,8 +309,11 @@ async def test_map_view_activating_program_subtab_shows_champion_grid(monkeypatc
         rendered = _render_to_str(body.content)
         assert "0.91" in rendered  # the champion's number
         assert "0.42" not in rendered  # the universe number is gone, not merged
-        assert "@vale/abc123def4" in rendered
+        assert f"@vale/{_short_digest('abc123def456')}" in rendered
         assert "this one program across all identities" in rendered
+        om = overall_mean({"val-dwa-law-fem": 0.91})
+        assert om is not None
+        assert f"overall {om:.2f}" in rendered
 
 
 async def test_map_view_program_subtab_shows_friendly_line_when_no_champion(monkeypatch):
@@ -324,6 +332,7 @@ async def test_map_view_program_subtab_shows_friendly_line_when_no_champion(monk
         rendered = _render_to_str(body.content)
         assert "no ranked programs yet" in rendered
         assert "could not load" not in rendered
+        assert "overall" not in rendered  # no scores -- no mean to report
 
 
 # --- Nav-collision regression (MANDATORY) ------------------------------------

@@ -9,8 +9,8 @@ from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import Static, Tab, Tabs
 
-from nethackers.hubclient.client import HubClient
-from nethackers.hubclient.frontier import champion, champion_scores, universe_scores
+from nethackers.hubclient.client import HubClient, _short_digest
+from nethackers.hubclient.frontier import champion, champion_scores, overall_mean, universe_scores
 from nethackers.hubclient.render import render_elites, render_frontier_grid
 from nethackers.tui.art import highscore_table
 
@@ -118,13 +118,17 @@ class MapView(_HubView):
                 return Text("no ranked programs yet.", style="dim")
             digest, owner = champ
             scores: dict[str, float | None] = dict(champion_scores(client, digest))
-            note = f"@{owner}/{digest[:10]} — this one program across all identities"
+            note = f"@{owner}/{_short_digest(digest)} — this one program across all identities"
+            om = overall_mean(scores)
+            if om is not None:
+                note = f"{note} · overall {om:.2f}"
             return render_frontier_grid(scores, note=note)
         universe: dict[str, float | None] = dict(universe_scores(client))
-        return render_frontier_grid(
-            universe,
-            note="each number = the best program's mean on that identity",
-        )
+        note = "each number = the best program's mean on that identity"
+        om = overall_mean(universe)
+        if om is not None:
+            note = f"{note} · overall {om:.2f}"
+        return render_frontier_grid(universe, note=note)
 
 
 class ElitesView(_HubView):

@@ -61,6 +61,7 @@ from nethackers.hubclient.client import (
     render_search as plain_search,
     render_show as plain_show,
 )
+from nethackers.hubclient.frontier import overall_mean
 from nethackers.hubclient.render import (
     ramp,
     render_board as rich_board,
@@ -178,6 +179,7 @@ def test_cli_frontier_bare_program_flag_resolves_champion_with_owner_note(monkey
     assert ("solution_frontier", "sha256:abcdef0123456789") in calls
     out = capsys.readouterr().out
     assert "@sam" in out  # the champion's owner, called out by name
+    assert _short_digest("sha256:abcdef0123456789") in out  # not a mangled sha256:-prefix slice
     assert "Valkyrie" in out and "hum-neu-fem" in out and "0.42" in out
 
 
@@ -828,6 +830,9 @@ def test_cli_map_output_table_renders_universe_grid_through_console(monkeypatch,
     assert "Valkyrie" in out and "Wizard" in out
     assert "hum-neu-fem" in out and "elf-cha-mal" in out  # variation labels
     assert "0.42" in out and "0.77" in out  # the known identity numbers
+    om = overall_mean({"val-hum-neu-fem": 0.42, "wiz-elf-cha-mal": 0.77})
+    assert om is not None
+    assert f"overall {om:.2f}" in out
 
 
 def test_cli_auto_resolves_to_table_under_forced_terminal(monkeypatch, capsys):

@@ -68,6 +68,7 @@ from nethackers.hub.objectives import CATALOG
 from nethackers.hubclient import credentials as _cred
 from nethackers.hubclient.client import (
     HubClient,
+    _short_digest,
     plain_frontier,
     render_board as plain_board,
     render_elites as plain_elites,
@@ -75,7 +76,7 @@ from nethackers.hubclient.client import (
     render_show as plain_show,
 )
 from nethackers.hubclient.credentials import Credentials, whoami_from_token
-from nethackers.hubclient.frontier import champion, champion_scores, universe_scores
+from nethackers.hubclient.frontier import champion, champion_scores, overall_mean, universe_scores
 from nethackers.hubclient.live import EpisodeStream
 from nethackers.hubclient.output import emit, err
 from nethackers.hubclient.pull import pull
@@ -423,6 +424,7 @@ def _run(argv: list[str] | None) -> int:
     if args.cmd in ("frontier", "map", "attainment"):
         client = HubClient(args.hub)
         note = ""
+        scores: dict[str, float | None]
         if args.program is not None:
             digest = args.program or None
             if digest is None:
@@ -435,10 +437,13 @@ def _run(argv: list[str] | None) -> int:
                     )
                     return 0
                 digest, owner = champ
-                note = f"@{owner}/{digest[:10]} — this one program across all identities"
-            scores = champion_scores(client, digest)
+                note = f"@{owner}/{_short_digest(digest)} — this one program across all identities"
+            scores = dict(champion_scores(client, digest))
         else:
-            scores = universe_scores(client)
+            scores = dict(universe_scores(client))
+        om = overall_mean(scores)
+        if om is not None:
+            note = f"{note} · overall {om:.2f}" if note else f"overall {om:.2f}"
         emit(
             scores, args.output,
             table=lambda s: render_frontier_grid(s, note=note),
