@@ -1,7 +1,7 @@
-"""Textual Screen for `nethackers evolve`: the live evolution monitor --
-PARENT -> CANDIDATE -> eval -> lineage, with a status-line motif and a RIP
-tombstone on rejection. Reworked from tui.app.EvolveApp (which is left
-unmodified, pending a later app-shell cutover): the worker/call_from_thread
+"""Textual Screen for `nethackers evolve`: the live evolution monitor Screen
+hosted by NetHackersApp -- PARENT -> CANDIDATE -> eval -> lineage, with a
+status-line motif and a RIP tombstone on rejection. Reworked from the old
+standalone tui.app.EvolveApp (since deleted): the worker/call_from_thread
 hand-off, @_guarded handlers, and the per-iteration agent-log pane
 (ListView + RichLog) are ported mechanics; the status now renders through
 the status.py monitor formatters instead of the old two-line format_status
@@ -66,10 +66,16 @@ class EvolveScreen(Screen):
     """
     BINDINGS = [("q", "app.quit", "Quit"), ("escape", "dismiss", "Back")]
 
-    def __init__(self, cfg: EvolveConfig, run: Callable[[dict], object] | None = None) -> None:
+    def __init__(
+        self,
+        cfg: EvolveConfig,
+        run: Callable[[dict], object] | None = None,
+        exit_on_error: bool = False,
+    ) -> None:
         super().__init__()
         self._cfg = cfg
         self._run = run
+        self._exit_on_error = exit_on_error
         self.results: object | None = None
         self.error: BaseException | None = None
         self._state: dict = dict(_INITIAL_STATE)
@@ -122,7 +128,23 @@ class EvolveScreen(Screen):
             })
         except Exception as exc:
             self.error = exc
-            self.app.call_from_thread(self.app.exit)
+            if self._exit_on_error:
+                # CLI path (NetHackersApp's evolve= construction): tear the
+                # whole app down so cli.py's app.run()/app.error re-raise
+                # contract (main()'s friendly hub/docker handlers) fires.
+                self.app.call_from_thread(self.app.exit)
+            else:
+                # In-app path (EvolveForm's Start button): the dashboard
+                # stays up -- surface the failure and fall back to it
+                # instead of silently killing the whole shell.
+                self.app.call_from_thread(self._fatal)
+
+    def _fatal(self) -> None:
+        """Off the worker thread, via call_from_thread: notify + dismiss
+        back to the dashboard on a cold-start failure, when this screen
+        isn't the CLI's exit_on_error=True instance."""
+        self.app.notify(f"evolve failed: {self.error}", severity="error", timeout=10)
+        self.dismiss()
 
     # ---- handlers (app thread) ----
     @_guarded

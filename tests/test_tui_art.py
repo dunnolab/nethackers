@@ -22,8 +22,8 @@ def test_tombstone_contains_rip_and_each_line():
     # Base row is filled with "_"
     assert "_" in lines[-1], "Headstone base '_' not found"
     # "RIP" sits on its own row ABOVE the epitaph (not merged)
-    rip_idx = next(i for i, l in enumerate(lines) if "RIP" in l)
-    epitaph_idx = next(i for i, l in enumerate(lines) if "iter 2" in l)
+    rip_idx = next(i for i, ln in enumerate(lines) if "RIP" in ln)
+    epitaph_idx = next(i for i, ln in enumerate(lines) if "iter 2" in ln)
     assert rip_idx < epitaph_idx, "RIP row should appear above epitaph"
     assert "iter 2" not in lines[rip_idx], "RIP is NOT merged onto epitaph row"
     assert (

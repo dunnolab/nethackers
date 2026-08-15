@@ -400,7 +400,7 @@ def _run(argv: list[str] | None) -> int:
                      "on_log": lambda tag, line: None},
                     report=lambda m: live.console.print(
                         f"{time.monotonic() - t0:7.1f}s  {m}", markup=False),
-                ) or []
+                )
                 stream.finish()
 
         n_reg = sum(1 for r in results if r.registered)

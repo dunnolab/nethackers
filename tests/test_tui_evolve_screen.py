@@ -28,9 +28,9 @@ def _state(phase="mutating", **kw):
 
 
 class _Host(App):
-    def __init__(self, run=None):
+    def __init__(self, run=None, exit_on_error=False):
         super().__init__()
-        self.screen_ = EvolveScreen(CFG, run=run)
+        self.screen_ = EvolveScreen(CFG, run=run, exit_on_error=exit_on_error)
 
     def on_mount(self) -> None:
         self.push_screen(self.screen_)
@@ -146,11 +146,14 @@ async def test_worker_exception_is_captured_not_wrapped_in_workerfailed():
     """Mirrors test_tui_app.py's WorkerFailed-avoidance test for EvolveApp,
     adapted for the Screen: the worker's except clause must set self.error to
     the ORIGINAL exception and end the app via self.app.exit() (Screen has no
-    .exit() of its own)."""
+    .exit() of its own). This is the CLI contract (NetHackersApp's evolve=
+    construction path passes exit_on_error=True so cli.py can re-raise
+    app.error after app.run() returns) -- see the in-app counterpart below
+    for the exit_on_error=False (EvolveForm) disposition."""
     def boom(callbacks):
         raise RuntimeError("cold start: hub unreachable")
 
-    host = _Host(run=boom)
+    host = _Host(run=boom, exit_on_error=True)
     async with host.run_test():
         for _ in range(200):  # up to ~2s
             if host.screen_.error is not None:
@@ -159,3 +162,42 @@ async def test_worker_exception_is_captured_not_wrapped_in_workerfailed():
         assert isinstance(host.screen_.error, RuntimeError)
         assert str(host.screen_.error) == "cold start: hub unreachable"
         assert host.screen_.results is None
+
+
+async def test_in_app_worker_exception_notifies_and_dismisses_without_exiting_the_app():
+    """The in-app `⚔ Evolve` launch path (EvolveForm pushes EvolveScreen with
+    the default exit_on_error=False) must NOT tear down the whole dashboard
+    on a cold-start failure -- only the CLI path (exit_on_error=True, see the
+    test above) does that. Instead the worker's exception handler surfaces
+    the error via App.notify and dismisses the screen back to whatever's
+    beneath it, leaving the rest of the app running."""
+    def boom(callbacks):
+        raise RuntimeError("docker: cannot connect to the Docker daemon")
+
+    host = _Host(run=boom, exit_on_error=False)
+    notify_calls: list[tuple[str, dict]] = []
+    exit_calls: list[tuple[tuple, dict]] = []
+    host.notify = lambda message, **kw: notify_calls.append((message, kw))
+    host.exit = lambda *a, **kw: exit_calls.append((a, kw))
+
+    async with host.run_test() as pilot:
+        for _ in range(200):  # up to ~2s
+            if host.screen_.error is not None:
+                break
+            await asyncio.sleep(0.01)
+        await pilot.pause()
+
+        # original exception captured, exactly as the CLI path captures it
+        assert isinstance(host.screen_.error, RuntimeError)
+        assert str(host.screen_.error) == "docker: cannot connect to the Docker daemon"
+        assert host.screen_.results is None
+
+        # surfaced via a notification, not a silent app teardown
+        assert notify_calls, "expected app.notify to be called with the error"
+        message, kwargs = notify_calls[-1]
+        assert "docker: cannot connect to the Docker daemon" in message
+        assert kwargs.get("severity") == "error"
+
+        # dismissed back to the dashboard, and the app itself was NOT exited
+        assert host.screen_ not in host.screen_stack
+        assert exit_calls == []

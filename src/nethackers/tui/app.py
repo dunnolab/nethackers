@@ -89,7 +89,7 @@ class NetHackersApp(App):
     def on_mount(self) -> None:
         if self._evolve is not None:
             cfg, run = self._evolve
-            self._evolve_screen = EvolveScreen(cfg, run=run)
+            self._evolve_screen = EvolveScreen(cfg, run=run, exit_on_error=True)
             self.push_screen(self._evolve_screen)
 
     def action_show(self, key: str) -> None:
