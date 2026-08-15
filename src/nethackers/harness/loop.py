@@ -14,6 +14,7 @@ from nethackers.harness.brief import build_brief
 from nethackers.harness.evaluate import evaluate
 from nethackers.harness.gate import passes_gate
 from nethackers.harness.register import register_win
+from nethackers.harness.select import top_trusted_elite
 from nethackers.harness.seeds import dev_spec, validation_spec
 from nethackers.harness.store import LocalTreeStore
 
@@ -53,6 +54,7 @@ def run_loop(
     timeout_s: float,
     validation_n: int,
     max_parallel_evals: int = 8,
+    migrate: bool = True,
     now_fn: Callable[[], str],
     report: Callable[[str], None] = lambda _: None,
     on_episode: Callable[[str, dict], None] | None = None,
@@ -96,24 +98,32 @@ def run_loop(
             "wins": wins, "tokens": tokens, "detail": detail,
         })
 
+    def _score_elite(tree_path: Path, digest: str, *, dev_label: str,
+                     val_label: str) -> EliteState:
+        # Score a tree on this run's own dev+validation specs -> an EliteState.
+        # Shared by the cold-start (seed baseline) and mid-run migration, so an
+        # adopted elite's gate thresholds are established identically.
+        dev_fit, dev_ev = evaluate(
+            tree_path, dev, image, now=now_fn(), runner=runner,
+            on_episode=_episode_cb(dev_label), max_parallel_evals=max_parallel_evals)
+        val_fit, _ = evaluate(
+            tree_path, validation, image, now=now_fn(), runner=runner,
+            on_episode=_episode_cb(val_label), max_parallel_evals=max_parallel_evals)
+        return EliteState(digest, tree_path, dev_fit, val_fit, dev_ev)
+
     # Cold start: the seed (AutoAscend) is the first elite.
     report(f"cold-start · scoring seed: dev {len(dev.batch)}ep "
            f"+ validation {len(validation.batch)}ep…")
     seed_digest = tree_store.save(seed_tree)
-    dev_fit0, dev_ev0 = evaluate(
-        tree_store.path(seed_digest), dev, image, now=now_fn(), runner=runner,
-        on_episode=_episode_cb("cold-start · dev"), max_parallel_evals=max_parallel_evals,
-    )
-    val_fit0, _ = evaluate(
-        tree_store.path(seed_digest), validation, image, now=now_fn(), runner=runner,
-        on_episode=_episode_cb("cold-start · validation"), max_parallel_evals=max_parallel_evals,
-    )
-    elite = EliteState(seed_digest, tree_store.path(seed_digest), dev_fit0, val_fit0, dev_ev0)
-    base_dev, base_validation = dev_fit0, val_fit0
-    report(f"cold-start · elite=seed dev={dev_fit0:.3f} validation={val_fit0:.3f}")
+    elite = _score_elite(tree_store.path(seed_digest), seed_digest,
+                         dev_label="cold-start · dev", val_label="cold-start · validation")
+    base_dev, base_validation = elite.dev_fitness, elite.validation_fitness
+    report(f"cold-start · elite=seed dev={elite.dev_fitness:.3f} "
+           f"validation={elite.validation_fitness:.3f}")
     _emit("cold-start", 0)
     on_iteration(0, IterationResult(False, "baseline",
-                                    dev_fitness=dev_fit0, validation_fitness=val_fit0))
+                                    dev_fitness=elite.dev_fitness,
+                                    validation_fitness=elite.validation_fitness))
 
     results: list[IterationResult] = []
 
@@ -124,6 +134,28 @@ def run_loop(
     for k in range(iterations):
         tag = f"iter {k + 1}/{iterations}"
         try:
+            # Mid-run migration: adopt another process's strictly-better elite
+            # from the hub before mutating (greedy move-up; digest-differ + a
+            # strictly-higher score, which equals dev_fitness for identity
+            # objectives). Any failure -> keep the local elite.
+            if migrate:
+                picked = top_trusted_elite(hub, objective, tree_store, owner)
+                if picked is not None:
+                    entry, tree_path = picked
+                    if (entry["solution_digest"] != elite.digest
+                            and entry["score"] > elite.dev_fitness):
+                        detail = f"{entry['owner']}/{entry['solution_digest'][:12]}"
+                        report(f"{tag} · ↥ migrating → {detail} "
+                               f"(score {entry['score']:.3f} > {elite.dev_fitness:.3f})")
+                        if on_log is not None:
+                            on_log(tag, f"migrated ← {detail} score "
+                                        f"{entry['score']:.3f} > {elite.dev_fitness:.3f}\n")
+                        elite = _score_elite(
+                            tree_path, entry["solution_digest"],
+                            dev_label=f"{tag} · migrate-dev",
+                            val_label=f"{tag} · migrate-validation")
+                        _emit("migrated", k + 1, detail=detail)
+
             worktree = workdir / f"iter-{k}"
             if worktree.exists():
                 shutil.rmtree(worktree)
