@@ -1,91 +1,85 @@
-"""Headless coding-agent mutation operator with a soft token budget.
+"""Headless coding-agent mutation operator.
 
-The operator streams the agent's output, accumulates per-step token usage,
-and kills the process once the budget is crossed (overshoot by the in-flight
-step is accepted) or a wall-clock timeout trips. Two backends: Claude Code
-(`claude -p`) and Codex (`codex exec`), invoked headless in the worktree.
+Streams the agent's output, meters token usage faithfully (see
+``harness.metering``), and reaps the process at EOF. No token budget, no
+timeout: the agent runs to completion and is stopped manually (hard kill via
+its own process group). Two backends: Claude Code (``claude -p``) and Codex
+(``codex exec``), invoked headless in the worktree.
 """
 from __future__ import annotations
 
 import contextlib
-import json
+import os
+import signal
 import subprocess
-import time
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+
+from nethackers.harness.metering import Meter, TokenUsage
 
 
 @dataclass(frozen=True)
 class OperatorResult:
     backend: str
-    tokens: int
-    stopped_reason: str  # "completed" | "budget" | "timeout"
+    usage: TokenUsage
+    stopped_reason: str  # "completed" | "killed"
+
+    @property
+    def total(self) -> int:
+        return self.usage.total
 
 
-def run_with_token_budget(
+def run_operator(
     cmd: list[str],
     cwd: str | Path,
     *,
-    token_budget: int,
-    timeout_s: float,
-    tokens_from_line: Callable[[str], int],
     backend: str,
     on_line: Callable[[str], None] | None = None,
+    stop: threading.Event | None = None,
     popen=subprocess.Popen,
-    monotonic=time.monotonic,
 ) -> OperatorResult:
-    start = monotonic()
+    """Stream the operator's stdout, metering faithfully; reap at EOF. No
+    budget/timeout -- the agent runs until it exits. The subprocess runs in its
+    own session (process group) so a manual stop can hard-kill it and any
+    children it spawned: if ``stop`` is set by the caller, the group is killed
+    and ``stopped_reason`` is ``"killed"`` (else ``"completed"``). A crashing
+    ``on_line`` never aborts the run."""
+    meter = Meter(backend)
     proc = popen(cmd, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-                 text=True, bufsize=1)
-    total = 0
-    reason = "completed"
-    for line in proc.stdout:
-        if on_line is not None:
-            with contextlib.suppress(Exception):
-                on_line(line)
-        total += tokens_from_line(line)
-        if total >= token_budget:
-            reason = "budget"
-            break
-        if monotonic() - start >= timeout_s:
-            reason = "timeout"
-            break
-    if reason != "completed":
-        proc.terminate()
+                 text=True, bufsize=1, start_new_session=True)
+    killed = threading.Event()
+    done = threading.Event()
+    watcher: threading.Thread | None = None
+    if stop is not None:
+        def _watch() -> None:
+            # Poll the shared stop until THIS operator finishes (local `done`).
+            # Never touch `stop` itself -- it is shared across every iteration's
+            # run, so setting it here would poison it and skip the next iteration.
+            while not done.wait(timeout=0.1):
+                if stop.is_set():
+                    if proc.poll() is None:
+                        killed.set()
+                        with contextlib.suppress(Exception):
+                            os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+                    return
+        watcher = threading.Thread(target=_watch, daemon=True)
+        watcher.start()
     try:
-        proc.wait(timeout=30)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait()
-    return OperatorResult(backend=backend, tokens=total, stopped_reason=reason)
-
-
-def _usage_tokens(usage: object, *keys: str) -> int:
-    """Sum ``keys`` from a usage dict, tolerating any non-dict / null / non-int
-    value the agent's stream might emit -- a stray line must never crash the
-    whole mutation. (This is what the "'str' object has no attribute 'get'"
-    crash was: a Claude stream line whose ``message`` field was a string.)"""
-    if not isinstance(usage, dict):
-        return 0
-    total = 0
-    for key in keys:
-        value = usage.get(key)
-        if isinstance(value, (int, float)):
-            total += int(value)
-    return total
-
-
-def _claude_tokens(line: str) -> int:
-    try:
-        msg = json.loads(line)
-    except ValueError:
-        return 0
-    if not isinstance(msg, dict):
-        return 0
-    inner = msg.get("message")
-    usage = inner.get("usage") if isinstance(inner, dict) else msg.get("usage")
-    return _usage_tokens(usage, "input_tokens", "output_tokens")
+        for line in proc.stdout:
+            if on_line is not None:
+                with contextlib.suppress(Exception):
+                    on_line(line)
+            meter.observe(line)
+    finally:
+        done.set()  # release the watcher WITHOUT poisoning the shared stop
+        if watcher is not None:
+            watcher.join(timeout=2)
+        with contextlib.suppress(Exception):
+            proc.wait(timeout=30)
+    return OperatorResult(backend=backend, usage=meter.usage,
+                          stopped_reason="killed" if killed.is_set() else "completed")
 
 
 def _claude_cmd(cli: str, brief: str) -> list[str]:
@@ -110,43 +104,22 @@ class ClaudeOperator:
         self._cli = cli
 
     def run(
-        self, worktree: Path, brief: str, *, token_budget: int, timeout_s: float,
-        on_line: Callable[[str], None] | None = None
+        self, worktree: Path, brief: str, *,
+        on_line: Callable[[str], None] | None = None,
+        stop: threading.Event | None = None,
     ) -> OperatorResult:
-        cmd = _claude_cmd(self._cli, brief)
-        return run_with_token_budget(cmd, worktree, token_budget=token_budget,
-                                     timeout_s=timeout_s, tokens_from_line=_claude_tokens,
-                                     backend="claude", on_line=on_line)
-
-
-def _codex_tokens(line: str) -> int:
-    try:
-        msg = json.loads(line)
-    except ValueError:
-        return 0
-    if not isinstance(msg, dict):
-        return 0
-    return _usage_tokens(msg.get("usage"), "total_tokens")
-
-
-def agent_tokens(backend: str, line: str) -> int:
-    """Public dispatch used by the UI to count tokens from the same stream it
-    already receives for the mutation log. Unknown backend -> 0."""
-    if backend == "claude":
-        return _claude_tokens(line)
-    if backend == "codex":
-        return _codex_tokens(line)
-    return 0
+        return run_operator(_claude_cmd(self._cli, brief), worktree,
+                            backend="claude", on_line=on_line, stop=stop)
 
 
 def _codex_cmd(cli: str, brief: str) -> list[str]:
     # --skip-git-repo-check is MANDATORY, not hygiene: the operator worktree is
     # a plain shutil.copytree of the elite tree (loop.py -- no .git), and
     # `codex exec` otherwise refuses with "Not inside a trusted directory and
-    # --skip-git-repo-check was not specified" on *stderr* -- which
-    # run_with_token_budget routes to DEVNULL, so the mutation silently no-ops
-    # (0 tokens, no changes, gate sees child == parent). `claude -p` has no
-    # such requirement, which is why only the codex operator was affected.
+    # --skip-git-repo-check was not specified" on *stderr* -- which run_operator
+    # routes to DEVNULL, so the mutation silently no-ops (no changes, gate sees
+    # child == parent). `claude -p` has no such requirement, which is why only
+    # the codex operator was affected.
     #
     # The rest are consistency + hygiene: codex has no auto-memory recall and
     # `codex exec` never auto-resumes, but --ephemeral stops writing
@@ -163,10 +136,9 @@ class CodexOperator:
         self._cli = cli
 
     def run(
-        self, worktree: Path, brief: str, *, token_budget: int, timeout_s: float,
-        on_line: Callable[[str], None] | None = None
+        self, worktree: Path, brief: str, *,
+        on_line: Callable[[str], None] | None = None,
+        stop: threading.Event | None = None,
     ) -> OperatorResult:
-        cmd = _codex_cmd(self._cli, brief)
-        return run_with_token_budget(cmd, worktree, token_budget=token_budget,
-                                     timeout_s=timeout_s, tokens_from_line=_codex_tokens,
-                                     backend="codex", on_line=on_line)
+        return run_operator(_codex_cmd(self._cli, brief), worktree,
+                            backend="codex", on_line=on_line, stop=stop)

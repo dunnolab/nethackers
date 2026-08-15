@@ -6,6 +6,7 @@ import pytest
 
 from nethackers.harness import loop as loop_mod
 from nethackers.harness.loop import IterationResult, run_loop
+from nethackers.harness.metering import TokenUsage
 from nethackers.harness.store import LocalTreeStore
 
 
@@ -28,20 +29,21 @@ class _FakeHub:
 class _ImprovingOperator:
     """Edits bot.py so the child differs; a counter drives rising fitness."""
     def __init__(self): self.n = 0
-    def run(self, worktree, brief, *, token_budget, timeout_s, on_line=None):
+    def run(self, worktree, brief, *, on_line=None, stop=None):
         from nethackers.harness.operator import OperatorResult
         self.n += 1
         if on_line is not None:
             on_line('{"type":"assistant","message":{"content":'
                     '[{"type":"text","text":"editing"}]}}')
         (Path(worktree) / "bot.py").write_text(f"VERSION = {self.n}\n")
-        return OperatorResult(backend="fake", tokens=10, stopped_reason="completed")
+        return OperatorResult(backend="fake", usage=TokenUsage(1, 2, 3, 4),
+                              stopped_reason="completed")
 
 
 class _RaisingOperator:
     """Simulates a mutation step that blows up (e.g. the coding agent's CLI
     crashes) -- the loop must discard just this iteration, not abort."""
-    def run(self, worktree, brief, *, token_budget, timeout_s, on_line=None):
+    def run(self, worktree, brief, *, on_line=None, stop=None):
         raise RuntimeError("boom")
 
 
@@ -66,11 +68,23 @@ def test_loop_registers_an_improvement(tmp_path):
         objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
         tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
         hub=hub, image="img:dev", token="dev-token", owner="dev", iterations=1,
-        token_budget=1000, timeout_s=999, validation_n=3,
+validation_n=3,
         now_fn=lambda: "2026-08-10T00:00:00Z",
         runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work")
     assert results[0].registered is True
     assert len(hub.registered) == 1
+
+
+def test_loop_records_faithful_usage(tmp_path):
+    results = run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+        hub=_FakeHub(), image="img:dev", token="dev-token", owner="dev", iterations=1,
+        validation_n=3, now_fn=lambda: "2026-08-10T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work")
+    win = results[-1]
+    assert win.registered is True
+    assert win.usage == TokenUsage(1, 2, 3, 4) and win.usage.total == 10
 
 
 def test_loop_discards_a_non_improvement(tmp_path):
@@ -79,7 +93,7 @@ def test_loop_discards_a_non_improvement(tmp_path):
         objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
         tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
         hub=hub, image="img:dev", token="dev-token", owner="dev", iterations=1,
-        token_budget=1000, timeout_s=999, validation_n=3,
+validation_n=3,
         now_fn=lambda: "2026-08-10T00:00:00Z",
         runner=_fitness_runner(lambda v: 0.5), workdir=tmp_path / "work")  # flat: no gain
     assert results[0].registered is False
@@ -94,7 +108,7 @@ def test_loop_discards_an_iteration_that_raises(tmp_path):
         objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
         tree_store=LocalTreeStore(tmp_path / "store"), operator=_RaisingOperator(),
         hub=hub, image="img:dev", token="dev-token", owner="dev", iterations=1,
-        token_budget=1000, timeout_s=999, validation_n=3,
+validation_n=3,
         now_fn=lambda: "2026-08-10T00:00:00Z",
         runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work")
     assert len(results) == 1
@@ -111,7 +125,7 @@ def test_loop_reports_progress(tmp_path):
         objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
         tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
         hub=_FakeHub(), image="img:dev", token="dev-token", owner="dev", iterations=1,
-        token_budget=1000, timeout_s=999, validation_n=3,
+validation_n=3,
         now_fn=lambda: "2026-08-10T00:00:00Z", report=events.append,
         runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work")
     text = "\n".join(events)
@@ -126,7 +140,7 @@ def test_loop_emits_state_transitions(tmp_path):
         objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
         tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
         hub=_FakeHub(), image="img:dev", token="t", owner="o", iterations=1,
-        token_budget=1000, timeout_s=999, validation_n=3,
+validation_n=3,
         now_fn=lambda: "2026-08-10T00:00:00Z",
         runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
         on_state=states.append)
@@ -148,7 +162,7 @@ def test_on_iteration_fires_for_baseline_and_each_iteration(tmp_path):
         objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
         tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
         hub=_FakeHub(), image="img:dev", token="t", owner="o", iterations=1,
-        token_budget=1000, timeout_s=999, validation_n=3,
+validation_n=3,
         now_fn=lambda: "2026-08-10T00:00:00Z",
         runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
         on_iteration=lambda i, r: seen.append((i, r.reason)))
@@ -163,7 +177,7 @@ def test_loop_forwards_tagged_log_lines(tmp_path):
         objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
         tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
         hub=_FakeHub(), image="img:dev", token="t", owner="o", iterations=1,
-        token_budget=1000, timeout_s=999, validation_n=3,
+validation_n=3,
         now_fn=lambda: "2026-08-10T00:00:00Z",
         runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
         on_log=lambda tag, line: logs.append((tag, line)))
@@ -187,7 +201,7 @@ def _run_with_migration(tmp_path, monkeypatch, *, migrate, better_version=5, sco
         objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
         tree_store=store, operator=_ImprovingOperator(), hub=_FakeHub(),
         image="img:dev", token="dev-token", owner="dev", iterations=1,
-        token_budget=1000, timeout_s=999, validation_n=3, migrate=migrate,
+validation_n=3, migrate=migrate,
         now_fn=lambda: "2026-08-10T00:00:00Z", on_state=states.append,
         runner=_fitness_runner(lambda v: 0.1 * v), workdir=tmp_path / "work")
     return states

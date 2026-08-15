@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import shutil
 import subprocess
+import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -13,6 +14,7 @@ from nethackers.contracts.models import Evidence
 from nethackers.harness.brief import build_brief
 from nethackers.harness.evaluate import evaluate
 from nethackers.harness.gate import passes_gate
+from nethackers.harness.metering import TokenUsage
 from nethackers.harness.register import register_win
 from nethackers.harness.seeds import dev_spec, validation_spec
 from nethackers.harness.select import top_trusted_elite
@@ -35,6 +37,7 @@ class IterationResult:
     dev_fitness: float | None = None
     validation_fitness: float | None = None
     tokens: int | None = None
+    usage: TokenUsage | None = None
     digest: str | None = None
     stopped_reason: str | None = None
 
@@ -50,11 +53,10 @@ def run_loop(
     token: str,
     owner: str,
     iterations: int,
-    token_budget: int,
-    timeout_s: float,
     validation_n: int,
     max_parallel_evals: int = 8,
     migrate: bool = True,
+    stop: threading.Event | None = None,
     now_fn: Callable[[], str],
     report: Callable[[str], None] = lambda _: None,
     on_episode: Callable[[str, dict], None] | None = None,
@@ -132,6 +134,8 @@ def run_loop(
         on_iteration(iteration, result)
 
     for k in range(iterations):
+        if stop is not None and stop.is_set():
+            break  # manual hard-stop: don't start another iteration
         tag = f"iter {k + 1}/{iterations}"
         try:
             # Mid-run migration: adopt another process's strictly-better elite
@@ -163,36 +167,37 @@ def run_loop(
 
             brief = build_brief(objective, character, elite.dev_evidence)
             _emit("mutating", k + 1)
-            report(f"{tag} · mutating (budget {token_budget} tok)…")
-            op = operator.run(worktree, brief, token_budget=token_budget,
-                              timeout_s=timeout_s, on_line=_log_cb(tag))
-            report(f"{tag} · operator: {op.tokens} tok ({op.stopped_reason}); gating…")
-            _emit("gating", k + 1, tokens=op.tokens)
+            report(f"{tag} · mutating…")
+            op = operator.run(worktree, brief, on_line=_log_cb(tag), stop=stop)
+            report(f"{tag} · operator: {op.total} tok ({op.stopped_reason}); gating…")
+            _emit("gating", k + 1, tokens=op.total)
 
             ok, reason = passes_gate(worktree, elite.digest, smoke_spec=smoke,
                                      image=image, now=now_fn(), runner=runner,
                                      on_episode=_episode_cb(f"{tag} · smoke"))
             if not ok:
-                _emit("rejected", k + 1, tokens=op.tokens, detail=f"gate: {reason}")
+                _emit("rejected", k + 1, tokens=op.total, detail=f"gate: {reason}")
                 report(f"{tag} · ✗ gate: {reason}")
-                _record(k + 1, IterationResult(False, f"gate:{reason}", tokens=op.tokens,
+                _record(k + 1, IterationResult(False, f"gate:{reason}", tokens=op.total,
+                                               usage=op.usage,
                                                stopped_reason=op.stopped_reason))
                 continue
 
-            _emit("evaluating-dev", k + 1, tokens=op.tokens)
+            _emit("evaluating-dev", k + 1, tokens=op.total)
             report(f"{tag} · gate ok; dev eval ({len(dev.batch)}ep)…")
             dev_fit, dev_ev = evaluate(
                 worktree, dev, image, now=now_fn(), runner=runner,
                 on_episode=_episode_cb(f"{tag} · dev"), max_parallel_evals=max_parallel_evals,
             )
             if dev_fit <= elite.dev_fitness:
-                _emit("rejected", k + 1, tokens=op.tokens, detail="no dev gain")
+                _emit("rejected", k + 1, tokens=op.total, detail="no dev gain")
                 report(f"{tag} · ✗ no dev gain: {dev_fit:.3f} ≤ {elite.dev_fitness:.3f}")
                 _record(k + 1, IterationResult(False, "no-dev-gain", dev_fitness=dev_fit,
-                                               tokens=op.tokens, stopped_reason=op.stopped_reason))
+                                               tokens=op.total, usage=op.usage,
+                                               stopped_reason=op.stopped_reason))
                 continue
 
-            _emit("evaluating-held", k + 1, tokens=op.tokens)
+            _emit("evaluating-held", k + 1, tokens=op.total)
             report(f"{tag} · dev win {dev_fit:.3f}; validation ({len(validation.batch)}ep)…")
             val_fit, _ = evaluate(
                 worktree, validation, image, now=now_fn(), runner=runner,
@@ -200,12 +205,13 @@ def run_loop(
                 max_parallel_evals=max_parallel_evals,
             )
             if val_fit <= elite.validation_fitness:
-                _emit("rejected", k + 1, tokens=op.tokens, detail="no validation gain")
+                _emit("rejected", k + 1, tokens=op.total, detail="no validation gain")
                 report(f"{tag} · ✗ no validation gain: {val_fit:.3f} "
                        f"≤ {elite.validation_fitness:.3f}")
                 _record(k + 1, IterationResult(False, "no-validation-gain",
                                                dev_fitness=dev_fit, validation_fitness=val_fit,
-                                               tokens=op.tokens, stopped_reason=op.stopped_reason))
+                                               tokens=op.total, usage=op.usage,
+                                               stopped_reason=op.stopped_reason))
                 continue
 
             digest = tree_store.save(worktree)
@@ -214,11 +220,12 @@ def run_loop(
                          evidence=dev_ev, parent_digest=elite.digest)
             elite = EliteState(digest, tree_store.path(digest), dev_fit, val_fit, dev_ev)
             wins += 1
-            _emit("registered", k + 1, tokens=op.tokens)
+            _emit("registered", k + 1, tokens=op.total)
             report(f"{tag} · ✓ REGISTERED dev={dev_fit:.3f} validation={val_fit:.3f}")
             _record(k + 1, IterationResult(True, "registered", dev_fitness=dev_fit,
-                                           validation_fitness=val_fit, tokens=op.tokens,
-                                           digest=digest, stopped_reason=op.stopped_reason))
+                                           validation_fitness=val_fit, tokens=op.total,
+                                           usage=op.usage, digest=digest,
+                                           stopped_reason=op.stopped_reason))
         except Exception as e:
             _emit("error", k + 1, detail=str(e))
             report(f"{tag} · ✗ error: {e}")

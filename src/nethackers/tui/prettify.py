@@ -1,6 +1,6 @@
 """Pure conversion of a coding-agent stream line into display lines for the
 Mutation-logs tab. Never raises: any unparseable / unknown shape yields []
-(the same defensive discipline as operator._usage_tokens)."""
+(the same defensive discipline as metering.classify)."""
 from __future__ import annotations
 
 import json

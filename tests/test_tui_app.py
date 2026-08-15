@@ -3,8 +3,7 @@ import asyncio
 from nethackers.tui.app import EvolveApp, _rows_in_order
 from nethackers.tui.status import EvolveConfig
 
-CFG = EvolveConfig(objective="val-dwa-law-fem", backend="claude",
-                   iterations=3, token_budget=40_000)
+CFG = EvolveConfig(objective="val-dwa-law-fem", backend="claude", iterations=3)
 
 
 def test_rows_in_order_sorts_by_index_regardless_of_arrival():
@@ -45,7 +44,10 @@ async def test_episode_mounts_table_and_log_records_line():
         await pilot.pause()
         assert app.query("#tables Static")               # a batch table mounted
         assert app._logs["iter 1/3"] == [("assistant", "editing bot")]
-        assert app._live_tokens.get("iter 1/3", 0) >= 0  # counter updated, no crash
+        app._apply_log("iter 1/3",
+                       '{"type":"result","usage":{"input_tokens":1,"output_tokens":2,'
+                       '"cache_read_input_tokens":3,"cache_creation_input_tokens":4}}')
+        assert app._meters["iter 1/3"].usage.total == 10  # faithful meter from the result line
 
 
 async def test_apply_episode_out_of_order_arrival_sorts_rows_and_counts_done():
