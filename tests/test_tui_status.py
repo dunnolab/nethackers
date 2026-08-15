@@ -33,3 +33,8 @@ def test_cold_start_and_done_and_rejected():
 def test_pluralizes_wins():
     assert format_status(CFG, _state("mutating", wins=0))[1].endswith("· 0 wins")
     assert format_status(CFG, _state("mutating", wins=2))[1].endswith("· 2 wins")
+
+
+def test_migrated_phase_shows_source():
+    l1, _ = format_status(CFG, _state("migrated", detail="alice/sha256:abcd1"))
+    assert l1 == "↥ MIGRATED iter 2/3 ← alice/sha256:abcd1"

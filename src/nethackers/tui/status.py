@@ -48,6 +48,8 @@ def format_status(
             line1 = f"EVALUATING {split} · iter {k}/{n} · ep {i}/{total} · x̄ {mean:.3f}"
         else:
             line1 = f"EVALUATING {split} · iter {k}/{n} …"
+    elif phase == "migrated":
+        line1 = f"↥ MIGRATED iter {k}/{n} ← {state['detail']}"
     elif phase == "registered":
         line1 = f"✓ REGISTERED iter {k}/{n}"
     elif phase == "rejected":
