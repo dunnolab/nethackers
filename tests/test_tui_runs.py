@@ -1,6 +1,13 @@
+import asyncio
 import json
+import threading
 
-from nethackers.tui.screens.runs import read_runs
+from textual.widgets import OptionList
+
+from nethackers.tui.app import NetHackersApp
+from nethackers.tui.screens.monitor import RunMonitor
+from nethackers.tui.screens.runs import RunsView, read_runs
+from nethackers.tui.status import EvolveConfig
 
 
 def _mk(run_dir, cfg, metrics):
@@ -138,3 +145,58 @@ def test_read_runs_sorts_newest_first(tmp_path):
     assert len(runs) == 2
     assert runs[0]["run_id"] == "r-2"  # newest first
     assert runs[1]["run_id"] == "r-1"
+
+
+class _Plan:
+    def __init__(self, run):
+        self.rid = "r-abc"
+        self.cfg = EvolveConfig("val-dwa-law-fem", "claude", 1)
+        self.run = run
+
+
+class _Ev:  # minimal OptionList.OptionSelected stand-in
+    def __init__(self, option_list, oid):
+        self.option_list = option_list
+        self.option = type("O", (), {"id": oid})()
+
+
+async def test_runs_view_lists_ongoing_and_opens_on_select():
+    fired = threading.Event()
+
+    def long_run(cb):
+        cb["on_state"]({
+            "phase": "mutating", "iteration": 1, "baseline_dev": 0.0, "baseline_held": 0.0,
+            "best_dev": 0.0, "best_held": 0.0, "wins": 2, "tokens": 0, "detail": "",
+            "parent_digest": "seed0", "parent_dev": 0.0, "parent_held": 0.0, "generation": 2})
+        fired.set()
+        cb["stop"].wait(timeout=3)
+        return []
+
+    app = NetHackersApp(hub="http://127.0.0.1:1", creds=None, start="runs")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        run = app.start_run(_Plan(long_run))
+        for _ in range(200):
+            if fired.is_set():
+                break
+            await asyncio.sleep(0.01)
+        await pilot.press("escape")  # leave the monitor start_run opened -> Runs tab
+        await pilot.pause()
+
+        runs_view = app.query_one(RunsView)
+        runs_view._refresh()
+        await pilot.pause()
+        ongoing = app.query_one("#runs_ongoing", OptionList)
+        assert ongoing.option_count == 1
+        assert "val-dwa-law-fem" in str(ongoing.get_option_at_index(0).prompt)
+
+        # selecting the ongoing run jumps back into its monitor
+        runs_view.on_option_list_option_selected(_Ev(ongoing, run.rid))
+        await pilot.pause()
+        assert isinstance(app.screen, RunMonitor) and app.screen.run is run
+
+        app.stop_run(run.rid)  # let the worker exit cleanly
+        for _ in range(200):
+            if not run.running:
+                break
+            await asyncio.sleep(0.01)
