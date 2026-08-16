@@ -96,9 +96,21 @@ ACHIEVEMENTS: dict[str, float] = {
     "You ascend t": 1.0,
 }
 
-_TEXT_ACHIEVEMENTS = tuple(
-    achievement for achievement in ACHIEVEMENTS if not achievement.startswith(("Dlvl:", "Xp:"))
-)
+# Stable indices into NLE's 27-element blstats (bottom-line statistics).
+BL_DEPTH = 12
+BL_XP = 18
+BL_DUNGEON_NUMBER = 23
+BL_LEVEL_NUMBER = 24
+
+# Dungeon numbers are the 0-based load order in dat/dungeon.def: Dungeons of
+# Doom=0, Gehennom=1, Gnomish Mines=2, Quest=3, Sokoban=4, Fort Ludios=5,
+# Vlad's Tower=6, Elemental Planes=7. The Astral Plane is level 1 of the
+# Elemental Planes: the endgame builds up, so with depth(astral)=-5 ..
+# depth(earth)=-1 the astral level is dlevel 1 (the dummy surface is dlevel 6).
+QUEST_DUNGEON_NUMBER = 3
+ELEMENTAL_PLANES_DUNGEON_NUMBER = 7
+ASTRAL_PLANE_LEVEL_NUMBER = 1
+ASCENSION_ACHIEVEMENT = "You ascend t"
 
 
 @dataclass
@@ -113,22 +125,31 @@ class NetHackProgress:
     ) -> float:
         """Update and return the best BALROG progress seen so far.
 
-        The original nle-progress implementation only considered dungeon depth and
-        experience level. The achievement table also contains terminal/textual
-        achievements such as quest Home levels, Astral Plane, and ascension text;
-        those are detected from tty/message text and from ``info['is_ascended']``.
+        Depth and experience level come from blstats. The location milestones
+        (quest ``Home`` levels and the ``Astral Plane``) are detected from the
+        authoritative dungeon-number / level-number in blstats -- mirroring
+        NetHack's ``In_quest`` / ``In_endgame`` -- not from on-screen text.
+        Scanning the message line or full tty for these names matched floor
+        graffiti, quest dialogue, and farlook encyclopedia entries that merely
+        mention these places, crediting e.g. ``Astral Plane`` (0.875) on Dlvl 4.
+        Ascension comes from ``info['is_ascended']``.
         """
         blstats = observation["blstats"]
-        self._record(f"Dlvl:{int(blstats[12])}")
-        self._record(f"Xp:{int(blstats[18])}")
+        self._record(f"Dlvl:{int(blstats[BL_DEPTH])}")
+        self._record(f"Xp:{int(blstats[BL_XP])}")
 
-        text = _observation_text(observation)
-        for achievement in _TEXT_ACHIEVEMENTS:
-            if achievement in text:
-                self._record(achievement)
+        dungeon_number = int(blstats[BL_DUNGEON_NUMBER])
+        level_number = int(blstats[BL_LEVEL_NUMBER])
+        if dungeon_number == QUEST_DUNGEON_NUMBER and 1 <= level_number <= 5:
+            self._record(f"Home {level_number}")
+        if (
+            dungeon_number == ELEMENTAL_PLANES_DUNGEON_NUMBER
+            and level_number == ASTRAL_PLANE_LEVEL_NUMBER
+        ):
+            self._record("Astral Plane")
 
         if info is not None and info.get("is_ascended", False):
-            self._record("You ascend t")
+            self._record(ASCENSION_ACHIEVEMENT)
 
         return self.progression
 
@@ -137,19 +158,3 @@ class NetHackProgress:
         if value is not None and value > self.progression:
             self.progression = value
             self.highest_achievement = achievement
-
-
-def _decode_bytes(value: Any) -> str:
-    try:
-        return bytes(value.reshape(-1)).decode(errors="replace")
-    except AttributeError:
-        return bytes(value).decode(errors="replace")
-
-
-def _observation_text(observation: Mapping[str, Any]) -> str:
-    parts = []
-    for key in ("message", "tty_chars"):
-        value = observation.get(key)
-        if value is not None:
-            parts.append(_decode_bytes(value).replace("\0", " "))
-    return "\n".join(parts)
