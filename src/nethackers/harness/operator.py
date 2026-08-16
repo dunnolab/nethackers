@@ -82,7 +82,7 @@ def run_operator(
                           stopped_reason="killed" if killed.is_set() else "completed")
 
 
-def _claude_cmd(cli: str, brief: str) -> list[str]:
+def _claude_cmd(cli: str, brief: str, model: str | None, effort: str | None) -> list[str]:
     # Hermeticity flags: the operator must be a pure function of (parent
     # tree, brief). Claude Code otherwise persists + recalls per-directory
     # memory under ~/.claude/projects/<cwd-slug>/memory across runs that
@@ -91,28 +91,36 @@ def _claude_cmd(cli: str, brief: str) -> list[str]:
     # docs/superpowers/specs/2026-08-11-hermetic-operator-design.md).
     # --setting-sources drops only the *user* settings layer; auth lives in
     # ~/.claude.json, which is not a setting source, so it still works.
-    return [cli, "-p", brief, "--output-format", "stream-json", "--verbose",
-            "--permission-mode", "acceptEdits",
-            "--settings", '{"autoMemoryEnabled": false}',
-            "--setting-sources", "project,local",
-            "--strict-mcp-config",
-            "--no-session-persistence"]
+    cmd = [cli, "-p", brief, "--output-format", "stream-json", "--verbose",
+           "--permission-mode", "acceptEdits",
+           "--settings", '{"autoMemoryEnabled": false}',
+           "--setting-sources", "project,local",
+           "--strict-mcp-config",
+           "--no-session-persistence"]
+    if model:
+        cmd += ["--model", model]     # pin the model (else Claude Code's default)
+    if effort:
+        cmd += ["--effort", effort]   # reasoning effort: low|medium|high|xhigh|max
+    return cmd
 
 
 class ClaudeOperator:
-    def __init__(self, *, cli: str = "claude") -> None:
+    def __init__(self, *, cli: str = "claude", model: str | None = None,
+                 effort: str | None = None) -> None:
         self._cli = cli
+        self._model = model
+        self._effort = effort
 
     def run(
         self, worktree: Path, brief: str, *,
         on_line: Callable[[str], None] | None = None,
         stop: threading.Event | None = None,
     ) -> OperatorResult:
-        return run_operator(_claude_cmd(self._cli, brief), worktree,
-                            backend="claude", on_line=on_line, stop=stop)
+        return run_operator(_claude_cmd(self._cli, brief, self._model, self._effort),
+                            worktree, backend="claude", on_line=on_line, stop=stop)
 
 
-def _codex_cmd(cli: str, brief: str) -> list[str]:
+def _codex_cmd(cli: str, brief: str, model: str | None, effort: str | None) -> list[str]:
     # --skip-git-repo-check is MANDATORY, not hygiene: the operator worktree is
     # a plain shutil.copytree of the elite tree (loop.py -- no .git), and
     # `codex exec` otherwise refuses with "Not inside a trusted directory and
@@ -127,18 +135,29 @@ def _codex_cmd(cli: str, brief: str) -> list[str]:
     # inherited config/rules so the operator stays a pure function of (parent
     # tree, brief). Auth still works -- --ignore-user-config only drops
     # $CODEX_HOME/config.toml.
-    return [cli, "exec", brief, "--json", "--full-auto", "--skip-git-repo-check",
-            "--ephemeral", "--ignore-user-config", "--ignore-rules"]
+    cmd = [cli, "exec", brief, "--json", "--full-auto", "--skip-git-repo-check",
+           "--ephemeral", "--ignore-user-config", "--ignore-rules"]
+    # --ignore-user-config drops ~/.codex/config.toml -- including its `model`
+    # and `model_reasoning_effort` -- so pin them back explicitly here (a `-c`
+    # override still applies on top of --ignore-user-config).
+    if model:
+        cmd += ["-m", model]
+    if effort:
+        cmd += ["-c", f"model_reasoning_effort={effort}"]
+    return cmd
 
 
 class CodexOperator:
-    def __init__(self, *, cli: str = "codex") -> None:
+    def __init__(self, *, cli: str = "codex", model: str | None = None,
+                 effort: str | None = None) -> None:
         self._cli = cli
+        self._model = model
+        self._effort = effort
 
     def run(
         self, worktree: Path, brief: str, *,
         on_line: Callable[[str], None] | None = None,
         stop: threading.Event | None = None,
     ) -> OperatorResult:
-        return run_operator(_codex_cmd(self._cli, brief), worktree,
-                            backend="codex", on_line=on_line, stop=stop)
+        return run_operator(_codex_cmd(self._cli, brief, self._model, self._effort),
+                            worktree, backend="codex", on_line=on_line, stop=stop)

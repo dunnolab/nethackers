@@ -73,6 +73,18 @@ def episode_table(label: str, rows: list[dict], *, done: bool) -> Table:
             f"{int(ep['turns']):,}",
             str(ep["depth"]),
         )
+    if rows:  # a mean-across-evals summary row so batches are comparable at a glance
+        mean_progress = sum(float(r["progress"]) for r in rows) / len(rows)
+        mean_turns = sum(int(r["turns"]) for r in rows) / len(rows)
+        table.add_section()
+        table.add_row(
+            "",
+            Text("mean", style="bold"),
+            Text(f"{mean_progress:.3f}", style=f"{_progress_style(mean_progress)} bold"),
+            "",
+            f"{mean_turns:,.0f}",
+            "",
+        )
     return table
 
 

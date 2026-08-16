@@ -4,6 +4,12 @@ import json
 import pytest
 
 from nethackers import cli
+from nethackers.harness import launch
+
+# run_loop + select_parent are called from harness.launch.prepare_evolve (the
+# shared CLI + in-app evolve setup), so these wiring tests patch them there,
+# not on `cli`. --from-seed forces a cold start so the SELECT path never
+# touches a real hub (hermetic), except the two tests that exercise SELECT.
 
 
 def test_evolve_parses_and_invokes_loop(tmp_path, monkeypatch):
@@ -19,9 +25,7 @@ def test_evolve_parses_and_invokes_loop(tmp_path, monkeypatch):
         from nethackers.harness.loop import IterationResult
         return [IterationResult(True, "registered", dev_fitness=0.6, validation_fitness=0.6,
                                 tokens=10, digest="sha256:new")]
-    monkeypatch.setattr(cli, "run_loop", fake_run_loop, raising=False)
-    # --from-seed: this test is about run_loop's argument wiring, not SELECT
-    # -- forcing cold-start keeps it hermetic (no real hub/network call).
+    monkeypatch.setattr(launch, "run_loop", fake_run_loop, raising=False)
     rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed), "--from-seed",
                    "--operator", "claude", "--iterations", "1",
                    "--token", "dev-token", "--owner", "dev", "--workdir", str(tmp_path / "w")])
@@ -44,9 +48,7 @@ def test_evolve_passes_max_parallel_evals(tmp_path, monkeypatch):
         from nethackers.harness.loop import IterationResult
         return [IterationResult(True, "registered", dev_fitness=0.6, validation_fitness=0.6,
                                 tokens=10, digest="sha256:new")]
-    monkeypatch.setattr(cli, "run_loop", fake_run_loop, raising=False)
-    # --from-seed: this test is about --max-parallel-evals wiring, not
-    # SELECT -- forcing cold-start keeps it hermetic.
+    monkeypatch.setattr(launch, "run_loop", fake_run_loop, raising=False)
     rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed), "--from-seed",
                    "--operator", "claude", "--iterations", "1",
                    "--token", "dev-token", "--owner", "dev", "--workdir", str(tmp_path / "w"),
@@ -68,9 +70,7 @@ def test_evolve_creates_run_dir_with_config_and_latest_symlink(tmp_path, monkeyp
         recorded["tree_store_root"] = str(kwargs["tree_store"]._root)
         recorded["workdir"] = str(kwargs["workdir"])
         return []
-    monkeypatch.setattr(cli, "run_loop", fake_run_loop, raising=False)
-    # --from-seed: this test is about run.json/the store root/the latest
-    # symlink, not SELECT -- forcing cold-start keeps it hermetic.
+    monkeypatch.setattr(launch, "run_loop", fake_run_loop, raising=False)
     rc = cli._run(["evolve", "random", "--seed", str(seed), "--from-seed",
                    "--workdir", str(tmp_path / "w")])
     assert rc == 0
@@ -100,9 +100,7 @@ def test_evolve_on_log_persists_mutation_stream(tmp_path, monkeypatch):
     def fake_run_loop(**kwargs):
         captured["on_log"] = kwargs["on_log"]
         return []
-    monkeypatch.setattr(cli, "run_loop", fake_run_loop, raising=False)
-    # --from-seed: this test is about on_log persistence, not SELECT --
-    # forcing cold-start keeps it hermetic.
+    monkeypatch.setattr(launch, "run_loop", fake_run_loop, raising=False)
     rc = cli._run(["evolve", "random", "--seed", str(seed), "--from-seed",
                    "--workdir", str(tmp_path / "w")])
     assert rc == 0
@@ -128,7 +126,7 @@ def test_evolve_selects_parent_from_hub_and_records_it(tmp_path, monkeypatch):
     def fake_run_loop(**kwargs):
         captured.update(kwargs)
         return []
-    monkeypatch.setattr(cli, "run_loop", fake_run_loop, raising=False)
+    monkeypatch.setattr(launch, "run_loop", fake_run_loop, raising=False)
 
     select_calls = []
     def fake_select_parent(hub, objective, store, seed_tree, *, owner, k, temperature, rng):
@@ -137,7 +135,7 @@ def test_evolve_selects_parent_from_hub_and_records_it(tmp_path, monkeypatch):
             "k": k, "temperature": temperature, "rng": rng,
         })
         return elite_tree, "sha256:elite"
-    monkeypatch.setattr(cli, "select_parent", fake_select_parent, raising=False)
+    monkeypatch.setattr(launch, "select_parent", fake_select_parent, raising=False)
 
     rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed),
                    "--owner", "dev", "--workdir", str(tmp_path / "w")])
@@ -172,11 +170,11 @@ def test_evolve_from_seed_bypasses_select_parent(tmp_path, monkeypatch):
     def fake_run_loop(**kwargs):
         captured.update(kwargs)
         return []
-    monkeypatch.setattr(cli, "run_loop", fake_run_loop, raising=False)
+    monkeypatch.setattr(launch, "run_loop", fake_run_loop, raising=False)
 
     def fake_select_parent(*args, **kwargs):
         raise AssertionError("select_parent must not be called with --from-seed")
-    monkeypatch.setattr(cli, "select_parent", fake_select_parent, raising=False)
+    monkeypatch.setattr(launch, "select_parent", fake_select_parent, raising=False)
 
     rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed), "--from-seed",
                    "--workdir", str(tmp_path / "w")])
@@ -201,7 +199,7 @@ def test_evolve_migrate_defaults_on_and_records_it(tmp_path, monkeypatch):
     def fake_run_loop(**kwargs):
         captured.update(kwargs)
         return []
-    monkeypatch.setattr(cli, "run_loop", fake_run_loop, raising=False)
+    monkeypatch.setattr(launch, "run_loop", fake_run_loop, raising=False)
 
     rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed), "--from-seed",
                    "--workdir", str(tmp_path / "w")])
@@ -218,7 +216,7 @@ def test_evolve_no_migrate_flag_disables(tmp_path, monkeypatch):
     )
     (seed / "bot.py").write_text("x=1\n")
     captured = {}
-    monkeypatch.setattr(cli, "run_loop",
+    monkeypatch.setattr(launch, "run_loop",
                         lambda **k: captured.update(k) or [], raising=False)
 
     rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed), "--from-seed",

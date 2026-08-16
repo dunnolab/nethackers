@@ -102,6 +102,65 @@ def test_cli_eval_unknown_objective_errors_without_traceback(capsys, tmp_path):
     assert "not-a-real-objective" in captured.err
 
 
+# --- bare `nethackers` entry rule -------------------------------------
+#
+# Bare `nethackers` on a TTY opens the dashboard TUI (Task 14); piped or
+# `--no-tui` prints help exactly like every other invocation, never emitting
+# Textual escape codes into a pipe. `C.NetHackersApp` is monkeypatched to a
+# recording fake in every TTY case below -- the real Textual app must never
+# be constructed or run by this suite.
+
+
+def test_bare_piped_prints_help(monkeypatch, capsys):
+    monkeypatch.setattr(C.sys.stdout, "isatty", lambda: False)
+
+    assert C.main([]) == 0
+
+    assert "usage" in capsys.readouterr().out.lower()
+
+
+def test_bare_tty_launches_app(monkeypatch):
+    launched = {}
+    monkeypatch.setattr(C.sys.stdout, "isatty", lambda: True)
+
+    class FakeApp:
+        def __init__(self, *a, **k):
+            launched["hub"] = k.get("hub") or (a[0] if a else None)
+
+        def run(self):
+            launched["ran"] = True
+
+        error = None
+
+    monkeypatch.setattr(C, "NetHackersApp", FakeApp)
+
+    assert C.main([]) == 0
+
+    assert launched.get("ran") is True
+    assert launched.get("hub") == C._default_hub()  # the resolved top-level --hub, not None
+
+
+def test_bare_no_tui_prints_help_and_never_constructs_the_app(monkeypatch, capsys):
+    launched = {}
+    monkeypatch.setattr(C.sys.stdout, "isatty", lambda: True)  # a TTY -- --no-tui must still win
+
+    class FakeApp:
+        def __init__(self, *a, **k):
+            launched["constructed"] = True
+
+        def run(self):
+            launched["ran"] = True
+
+        error = None
+
+    monkeypatch.setattr(C, "NetHackersApp", FakeApp)
+
+    assert C.main(["--no-tui"]) == 0
+
+    assert "usage" in capsys.readouterr().out.lower()
+    assert launched == {}  # NetHackersApp never constructed, let alone run
+
+
 def test_cli_pull_invokes_pull(monkeypatch, capsys, tmp_path):
     seen = {}
 

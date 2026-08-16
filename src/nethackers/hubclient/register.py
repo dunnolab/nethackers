@@ -38,27 +38,21 @@ class DeviceFlowError(Exception):
     ``expired_token``) that polling can never resolve."""
 
 
-def register_solution(
+def device_login(
     *,
-    hub,
-    reference: dict[str, Any],
-    manifest: dict[str, Any],
-    evidence: dict[str, Any],
     client_id: str = DEFAULT_CLIENT_ID,
     http=httpx,
     prompt=print,
     sleep=time.sleep,
-) -> Any:
-    """Run the GitHub device flow to get a user token, then call
-    ``hub.register(token=..., reference=reference, manifest=manifest,
-    evidence=evidence)`` and return its result.
+) -> str:
+    """Run the GitHub device flow and return the resulting user access token.
 
     Requests a device code, ``prompt``s the user with the verification URL
     and the code to enter there, then polls the token endpoint every
     ``interval`` seconds (``sleep``) while the server reports
     ``authorization_pending``/``slow_down``. Any other error
     (``access_denied``, ``expired_token``, ...) is terminal and raises
-    ``DeviceFlowError`` before ``hub.register`` is ever called.
+    ``DeviceFlowError``.
     """
 
     def _post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -82,13 +76,31 @@ def register_solution(
             },
         )
         if "access_token" in token_response:
-            return hub.register(
-                token=token_response["access_token"],
-                reference=reference,
-                manifest=manifest,
-                evidence=evidence,
-            )
+            return str(token_response["access_token"])
         if token_response.get("error") in ("authorization_pending", "slow_down"):
             sleep(interval)
             continue
         raise DeviceFlowError(token_response.get("error") or "device flow failed")
+
+
+def register_solution(
+    *,
+    hub,
+    reference: dict[str, Any],
+    manifest: dict[str, Any],
+    evidence: dict[str, Any],
+    client_id: str = DEFAULT_CLIENT_ID,
+    http=httpx,
+    prompt=print,
+    sleep=time.sleep,
+) -> Any:
+    """Run the GitHub device flow to get a user token, then call
+    ``hub.register(token=..., reference=reference, manifest=manifest,
+    evidence=evidence)`` and return its result.
+
+    The device flow itself (request a device code, prompt the user, poll for
+    the token, raise ``DeviceFlowError`` on a terminal error) lives in
+    ``device_login`` -- this just supplies the token to ``hub.register``.
+    """
+    token = device_login(client_id=client_id, http=http, prompt=prompt, sleep=sleep)
+    return hub.register(token=token, reference=reference, manifest=manifest, evidence=evidence)

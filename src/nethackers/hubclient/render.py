@@ -1,31 +1,39 @@
 """``rich`` renderers for the M2a hub-facing CLI read subcommands (CLI-UX
-pass): ``render_board``/``render_attainment``/``render_elites``/
-``render_search``/``render_show``, one per ``nethackers.cli`` read
-subcommand, each a pure formatter over the JSON a ``HubClient`` read call
-returns -- same contract as the baseline pure-Python renderers in
-``nethackers.hubclient.client`` (which these sit alongside as the ``table``
-half of ``hubclient.output.emit``'s ``table=``/``plain=`` pair; the
-baseline ones become ``plain=``). Reuses that module's ``_short_digest``/
-``_num`` helpers rather than duplicating them.
-
-``render_attainment`` is the showcase: the attainment MAP as a colored
-heatmap grid rather than a flat table -- see its docstring.
+pass): ``render_board``/``render_elites``/``render_search``/
+``render_show``, one per ``nethackers.cli`` read subcommand, each a pure
+formatter over the JSON a ``HubClient`` read call returns -- same contract
+as the baseline pure-Python renderers in ``nethackers.hubclient.client``
+(which these sit alongside as the ``table`` half of
+``hubclient.output.emit``'s ``table=``/``plain=`` pair; the baseline ones
+become ``plain=``). Reuses that module's ``_short_digest``/``_num`` helpers
+rather than duplicating them.
 
 Every renderer must tolerate an empty/short response without crashing,
 returning a friendly one-line ``rich.text.Text`` instead of a bare table
 header -- the exact same message text the baseline ``plain`` renderers use,
 so ``-o table`` and ``-o plain`` agree on empty input.
+
+``render_frontier_grid`` is the one deliberate exception to that last rule:
+it's a fixed-shape role x variation grid over all 73 ``IDENTITIES``
+(shared by the TUI Frontier view and the CLI ``frontier`` command, not tied
+to one ``nethackers.cli`` subcommand), so an empty/all-``None`` ``scores``
+map still renders the full 13-role grid -- every cell just shows ``"—"``
+rather than collapsing to a one-line message, since "no cell evaluated yet"
+is itself the frontier's normal starting state, not an error/empty
+condition to special-case away.
 """
 
 from __future__ import annotations
 
+from collections import defaultdict
 from typing import Any
 
-from rich.console import JustifyMethod, RenderableType
+from rich import box
+from rich.console import Group, JustifyMethod, RenderableType
 from rich.table import Table
 from rich.text import Text
 
-from nethackers.arena.progress import ACHIEVEMENTS
+from nethackers.hub.objectives import IDENTITIES
 from nethackers.hubclient.client import _num, _short_digest
 
 # Column (name, justify) specs for render_board's three known shapes --
@@ -92,7 +100,7 @@ def _empty(message: str) -> Text:
     return Text(message, style="italic dim")
 
 
-def _gh_user(login: str) -> Text:
+def _gh_user(login: str, you: str | None = None) -> Text:
     """A GitHub username as an OSC-8 terminal hyperlink to the profile. Owners
     are GitHub logins (register resolves the auth token -> login and requires
     the repo owner == login), so ``github.com/<login>`` is always the right
@@ -101,8 +109,11 @@ def _gh_user(login: str) -> Text:
     login = str(login)
     if not login:
         return Text("")
-    # Display "@ login"; the link target stays github.com/<login> (no "@ ").
-    return Text(f"@ {login}", style=f"link https://github.com/{login}")
+    style = "link https://github.com/" + login
+    if you is not None and login == you:
+        style += " bold reverse"
+    label = f"@ {login}" + (" ◀ you" if you is not None and login == you else "")
+    return Text(label, style=style)
 
 
 def _gh_repo(repo: str) -> Text:
@@ -127,7 +138,7 @@ def _gh_commit(repo: str, sha: str) -> Text:
     return Text(short, style=f"link {base}/commit/{sha}")
 
 
-def render_board(entries: list[dict[str, Any]]) -> RenderableType:
+def render_board(entries: list[dict[str, Any]], *, you: str | None = None) -> RenderableType:
     """A ``rich`` table of board entries, shape-aware over which metric
     produced them (mirrors the baseline ``plain`` ``render_board``'s shape
     detection exactly, so ``-o table``/``-o plain`` never disagree on
@@ -158,7 +169,7 @@ def render_board(entries: list[dict[str, Any]]) -> RenderableType:
             table.add_row(
                 str(e.get("rank", "")),
                 _short_digest(str(e.get("solution_digest", ""))),
-                _gh_user(e.get("owner", "")),
+                _gh_user(e.get("owner", ""), you=you),
                 str(e.get("ascensions", "")),
                 _colored_num(e.get("median_progression", "")),
                 _colored_num(e.get("mean_progression", "")),
@@ -170,7 +181,7 @@ def render_board(entries: list[dict[str, Any]]) -> RenderableType:
             table.add_row(
                 str(e.get("rank", "")),
                 _short_digest(str(e.get("solution_digest", ""))),
-                _gh_user(e.get("owner", "")),
+                _gh_user(e.get("owner", ""), you=you),
                 str(e.get("cells_held", "")),
             )
     elif "firsts" in first:
@@ -180,7 +191,7 @@ def render_board(entries: list[dict[str, Any]]) -> RenderableType:
             table.add_row(
                 str(e.get("rank", "")),
                 _short_digest(str(e.get("solution_digest", ""))),
-                _gh_user(e.get("owner", "")),
+                _gh_user(e.get("owner", ""), you=you),
                 str(e.get("firsts", "")),
             )
     else:
@@ -190,73 +201,6 @@ def render_board(entries: list[dict[str, Any]]) -> RenderableType:
         for e in entries:
             table.add_row(*[str(e.get(h, "")) for h in headers])
 
-    return table
-
-
-def _bar(fraction: float, width: int = 24) -> Text:
-    """A ``width``-char coverage bar filled to ``fraction`` (clamped to
-    ``[0, 1]``): the filled part colored by ``ramp(fraction)`` (cold->hot
-    with depth), the remainder a dim ``░``. Pure presentation, never raises."""
-    fraction = min(max(float(fraction), 0.0), 1.0)
-    filled = round(fraction * width)
-    bar = Text()
-    bar.append("█" * filled, style=ramp(fraction))
-    bar.append("░" * (width - filled), style="grey30")
-    return bar
-
-
-def render_attainment(cells: list[dict[str, Any]]) -> RenderableType:
-    """The attainment MAP as a readable per-identity progress leaderboard,
-    not an 87-wide unlabeled heatmap (which wraps and can't carry column
-    names in a terminal). One row per identity present, sorted
-    most-progressed first: a colored coverage bar, the deepest milestone
-    reached, how many of the full ladder are lit (``reached/total``), the
-    frontier's holder count, and who reached that frontier first.
-
-    ``fraction`` is the deepest reached milestone's empirical-ascension
-    value from ``nethackers.arena.progress.ACHIEVEMENTS`` (attainment is
-    cumulative -- reaching a deep milestone lights every shallower one -- so
-    the deepest cell is the frontier and its value is the coverage ratio).
-    Full per-cell detail stays available via ``-o json`` (every cell) and
-    ``-o plain`` (the flat cell table). Empty -> a friendly one-liner."""
-    if not cells:
-        return _empty("no attainment cells yet.")
-
-    total = len(ACHIEVEMENTS)
-    by_identity: dict[str, list[dict[str, Any]]] = {}
-    for c in cells:
-        by_identity.setdefault(str(c.get("identity", "")), []).append(c)
-
-    rows: list[tuple[str, float, str, int, int, str]] = []
-    for identity, group in by_identity.items():
-        deepest_cell = max(
-            group, key=lambda c: ACHIEVEMENTS.get(str(c.get("milestone", "")), 0.0)
-        )
-        deepest = str(deepest_cell.get("milestone", ""))
-        rows.append(
-            (
-                identity,
-                ACHIEVEMENTS.get(deepest, 0.0),
-                deepest,
-                len(group),
-                int(deepest_cell.get("holder_count") or 0),
-                str(deepest_cell.get("first_owner", "")),
-            )
-        )
-    rows.sort(key=lambda r: r[1], reverse=True)  # most-progressed identity first
-
-    table = Table(header_style="bold", row_styles=["", "on grey11"])
-    table.add_column("identity")
-    table.add_column("progress")
-    table.add_column("deepest")
-    table.add_column("reached", justify="right")
-    table.add_column("holders", justify="right")
-    table.add_column("first")
-    for identity, fraction, deepest, reached, holders, first in rows:
-        table.add_row(
-            identity, _bar(fraction), deepest, f"{reached}/{total}", str(holders),
-            _gh_user(first),
-        )
     return table
 
 
@@ -280,6 +224,107 @@ def render_elites(entries: list[dict[str, Any]]) -> RenderableType:
             _short_digest(str(e.get("solution_digest", ""))),
             _colored_num(e.get("score", "")),
         )
+    return table
+
+
+# Role code -> full display name (all 13 NetHack roles), and the frontier
+# grid's fixed role display order -- ``list(ROLE_FULL)`` walks its
+# insertion order, which is alphabetical by role code, matching
+# ``IDENTITIES``' own sort so a role's header and its variations always
+# agree on grouping.
+ROLE_FULL: dict[str, str] = {
+    "arc": "Archeologist", "bar": "Barbarian", "cav": "Caveman", "hea": "Healer",
+    "kni": "Knight", "mon": "Monk", "pri": "Priest", "ran": "Ranger",
+    "rog": "Rogue", "sam": "Samurai", "tou": "Tourist", "val": "Valkyrie",
+    "wiz": "Wizard",
+}
+ROLE_ORDER: list[str] = list(ROLE_FULL)
+
+
+def _frontier_numstyle(v: float | None) -> str:
+    """The tint for one frontier-grid cell's progression number -- a scan
+    aid, not a verdict (a handful of discrete bands, unlike ``ramp``'s
+    continuous heat gradient): dim grey for an unevaluated (``None``)
+    cell; green tones for any evaluated value below the near-ascension
+    cutoffs, most saturated just above zero and paling through three bands
+    up to ``0.65``; amber from ``0.65`` up to ``0.8746``; bold gold at/above
+    ``0.8746`` (``ACHIEVEMENTS["Astral Plane"]`` rounded to 4dp -- the
+    milestone one step short of full ascension at ``1.0``)."""
+    if v is None:
+        return "#5a5a52"
+    if v >= 0.8746:
+        return "bold #ffd54a"
+    if v < 0.10:
+        return "#3f9e7f"
+    if v < 0.25:
+        return "#57c99a"
+    if v < 0.45:
+        return "#9be3b8"
+    if v < 0.65:
+        return "#c7f0d8"
+    return "#d2a24c"
+
+
+def _mean(values: list[float]) -> float | None:
+    """The arithmetic mean of ``values``, or ``None`` for an empty list --
+    the frontier grid's ONLY aggregate (never max/best): a role's header
+    number always answers "how is this role doing on average", never
+    "what's its single best result so far"."""
+    return sum(values) / len(values) if values else None
+
+
+def render_frontier_grid(scores: dict[str, float | None], *, note: str = "") -> RenderableType:
+    """The frontier ``{identity: value}`` map as a 4-column grid, one cell
+    per role (all 13, in ``ROLE_ORDER``): the role's full name, its mean
+    progression across evaluated variations (``mean X.XX``, or ``"—"`` if
+    none evaluated -- the aggregate is always a MEAN, never a max/best, see
+    ``_mean``), then one line per variation -- its ``race-align-gender``
+    label and its progression number, tinted via ``_frontier_numstyle`` as
+    a scan aid only (the number is the reading; the color just helps a
+    glance find the interesting cells). A variation with no value yet
+    (absent from ``scores``, or present as ``None``) renders ``"—"``
+    rather than a blank, so "not evaluated" always reads as a deliberate
+    dash, never empty space that could pass for a layout gap.
+
+    Always draws all 73 ``IDENTITIES`` grouped by role -- ``scores`` need
+    not be complete, and ``render_frontier_grid({})`` still renders the
+    full grid (every cell ``"—"``); see the module docstring for why this
+    renderer, alone, doesn't collapse empty input down to a one-line
+    message the way this module's other renderers do.
+
+    An optional ``note`` (e.g. ``"frozen -- parent gen 4"``) renders as a
+    dim line above the grid via ``rich.console.Group``, for callers that
+    want to caption the grid without the caption becoming part of the
+    table itself."""
+    by_role: dict[str, list[str]] = defaultdict(list)
+    for ident in IDENTITIES:
+        by_role[ident.split("-")[0]].append(ident)
+
+    cells: list[Text] = []
+    for role in ROLE_ORDER:
+        idents = sorted(by_role.get(role, []))
+        present = [scores[i] for i in idents if scores.get(i) is not None]
+        agg = _mean([v for v in present if v is not None])
+        head = Text(ROLE_FULL[role], style="bold #d2a24c")
+        head.append(f"   mean {agg:.2f}\n" if agg is not None else "   —\n", style="dim")
+        for ident in idents:
+            v = scores.get(ident)
+            head.append(f"{ident.split('-', 1)[1]:<12} ", style="#8a8069")
+            head.append((f"{v:>4.2f}" if v is not None else "  — ") + "\n",
+                        style=_frontier_numstyle(v))
+        cells.append(head)
+
+    table = Table(box=box.SQUARE, show_header=False, pad_edge=False,
+                  padding=(0, 1), border_style="#4a4436", expand=True)
+    for _ in range(4):
+        table.add_column(ratio=1)
+    for i in range(0, len(cells), 4):
+        row = cells[i:i + 4]
+        row += [Text("")] * (4 - len(row))
+        table.add_row(*row)
+
+    if note:
+        return Group(Text(note, style="dim"), Text(""), table)
     return table
 
 

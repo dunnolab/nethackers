@@ -152,6 +152,37 @@ validation_n=3,
     assert reg["best_dev"] > reg["baseline_dev"]  # improved over the seed
 
 
+def test_on_state_carries_parent_snapshot_and_generation(tmp_path):
+    """Every on_state payload additionally carries the parent-elite snapshot
+    (digest/dev/held) and the generation -- the iteration being worked, which
+    advances every attempt -- so a later TUI shows lineage + live progress."""
+    hub = _FakeHub()
+    seed_tree = _seed_tree(tmp_path / "seed")
+    tree_store = LocalTreeStore(tmp_path / "store")
+    cold_seed_digest = tree_store.save(seed_tree)  # same digest run_loop computes
+    states: list[dict] = []
+    run_loop(
+        objective="val-dwa-law-fem", seed_tree=seed_tree,
+        tree_store=tree_store, operator=_ImprovingOperator(),
+        hub=hub, image="img:dev", token="t", owner="o", iterations=1,
+        validation_n=3,
+        now_fn=lambda: "2026-08-10T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
+        on_state=states.append)
+    phases = {s["phase"]: s for s in states}
+
+    cold = phases["cold-start"]
+    assert cold["generation"] == 0
+    assert cold["parent_digest"] == cold_seed_digest
+
+    mut = phases["mutating"]
+    assert set(mut) >= {"parent_digest", "parent_dev", "parent_held", "generation"}
+    assert mut["generation"] == 1                    # iteration 1 (advances per attempt)
+    assert mut["parent_digest"] == cold_seed_digest   # mutated from the seed elite
+    assert mut["parent_dev"] == cold["best_dev"]
+    assert mut["parent_held"] == cold["best_held"]
+
+
 def test_iteration_result_stopped_reason_defaults_to_none():
     assert IterationResult(False, "baseline").stopped_reason is None
 

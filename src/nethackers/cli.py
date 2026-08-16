@@ -49,76 +49,53 @@ subcommand does along the way.
 from __future__ import annotations
 
 import argparse
-import datetime
 import json
 import os
-import random
-import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import httpx
 from rich.live import Live
+from rich.text import Text
 from rich_argparse import RichHelpFormatter
 
 from nethackers.eval.runner import eval_batch
-from nethackers.harness import runlog
-from nethackers.harness.loop import IterationResult, run_loop
-from nethackers.harness.operator import ClaudeOperator, CodexOperator
-from nethackers.harness.select import select_parent
-from nethackers.harness.store import LocalTreeStore
+from nethackers.harness.launch import EvolveParams, _now, prepare_evolve
 from nethackers.hub.objectives import CATALOG
+from nethackers.hubclient import credentials as _cred
 from nethackers.hubclient.client import (
     HubClient,
-    render_attainment as plain_attainment,
+    _short_digest,
+    plain_frontier,
     render_board as plain_board,
     render_elites as plain_elites,
     render_search as plain_search,
     render_show as plain_show,
 )
+from nethackers.hubclient.credentials import Credentials, whoami_from_token
+from nethackers.hubclient.frontier import champion, champion_scores, overall_mean, universe_scores
 from nethackers.hubclient.live import EpisodeStream
 from nethackers.hubclient.output import emit, err
 from nethackers.hubclient.pull import pull
-from nethackers.hubclient.register import register_solution
+from nethackers.hubclient.register import device_login, register_solution
 from nethackers.hubclient.render import (
-    render_attainment as rich_attainment,
     render_board as rich_board,
     render_elites as rich_elites,
+    render_frontier_grid,
     render_search as rich_search,
     render_show as rich_show,
 )
-from nethackers.tui.app import EvolveApp
-from nethackers.tui.status import EvolveConfig
-
-
-def _now() -> str:
-    return datetime.datetime.now(datetime.UTC).isoformat()
+from nethackers.tui.app import NetHackersApp
 
 
 def _default_hub() -> str:
     return os.environ.get("NETHACKERS_HUB", "http://localhost:8000")
 
 
-def _git_sha() -> str | None:
-    try:
-        out = subprocess.run(
-            ["git", "rev-parse", "HEAD"], capture_output=True, text=True, check=True
-        )
-        return out.stdout.strip()
-    except Exception:
-        return None
-
-
-def _point_latest(runs_dir: Path, rid: str) -> None:
-    link = runs_dir / "latest"
-    try:
-        if link.is_symlink() or link.exists():
-            link.unlink()
-        link.symlink_to(rid)  # relative link to the run-id directory
-    except OSError as exc:
-        err.print(f"[dim]could not update 'latest' symlink: {exc}[/dim]")
+def _load_creds() -> Credentials | None:
+    return _cred.load()
 
 
 def _common_parser() -> argparse.ArgumentParser:
@@ -192,8 +169,26 @@ def _build_parser() -> argparse.ArgumentParser:
         "table (rich), json (raw, jq-able), or plain (plain-text table). "
         "Default: %(default)s; or $NETHACKERS_OUTPUT.",
     )
+    parser.add_argument(
+        "--no-tui",
+        action="store_true",
+        help="Never open the interactive TUI; print help/plain output.",
+    )
     sub = parser.add_subparsers(dest="cmd")
     common = _common_parser()
+
+    sub.add_parser(
+        "login", parents=[common], formatter_class=RichHelpFormatter,
+        help="Authenticate via the GitHub device flow and store the resulting credentials.",
+    )
+    sub.add_parser(
+        "logout", parents=[common], formatter_class=RichHelpFormatter,
+        help="Clear stored credentials.",
+    )
+    sub.add_parser(
+        "whoami", parents=[common], formatter_class=RichHelpFormatter,
+        help="Show the currently logged-in identity.",
+    )
 
     e = sub.add_parser(
         "eval", parents=[common], formatter_class=RichHelpFormatter,
@@ -230,6 +225,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Disable mid-run migration: don't adopt a better hub elite between "
              "iterations (keep a pure single-parent lineage).")
     evolve.add_argument("--operator", choices=["codex", "claude"], default="claude")
+    evolve.add_argument(
+        "--model", default=None,
+        help="Pin the operator's model (e.g. claude-opus-5, gpt-5.6-sol); "
+        "default: the harness's own default.",
+    )
+    evolve.add_argument(
+        "--effort", default=None,
+        help="Reasoning effort: low|medium|high|xhigh|max (codex also 'ultra'); "
+        "default: the harness's own default.",
+    )
     evolve.add_argument("--iterations", type=int, default=1)
     evolve.add_argument("--validation-n", type=int, default=15)
     evolve.add_argument(
@@ -237,8 +242,15 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Cap on episodes the arena runs concurrently per eval (default: %(default)s).",
     )
     evolve.add_argument("--image", default="nethackers/arena:dev")
-    evolve.add_argument("--token", default="dev-token")
-    evolve.add_argument("--owner", default="dev")
+    evolve.add_argument(
+        "--token", default=None,
+        help="Attribution token (default: stored `nethackers login` credentials, "
+        "else 'dev-token').",
+    )
+    evolve.add_argument(
+        "--owner", default=None,
+        help="Attribution owner (default: stored `nethackers login` credentials, else 'dev').",
+    )
     evolve.add_argument("--workdir", default=str(Path.home() / ".nethackers" / "evolve"))
     evolve.add_argument(
         "--run-name", default=None,
@@ -253,10 +265,16 @@ def _build_parser() -> argparse.ArgumentParser:
     pl.add_argument("dest", help="Destination directory for the clone.")
 
     m = sub.add_parser(
-        "map", aliases=["attainment"], parents=[common], formatter_class=RichHelpFormatter,
-        help="Show attainment cells (identity x milestone).",
+        "frontier", aliases=["map", "attainment"], parents=[common],
+        formatter_class=RichHelpFormatter,
+        help="Show the frontier — how far the community has collectively "
+        "reached, as a role x variation number grid.",
     )
-    m.add_argument("--identity", default=None, help="Narrow to one identity (default: all).")
+    m.add_argument(
+        "--program", nargs="?", const="", default=None,
+        help="Show one program across all identities (default: the champion). "
+        "Pass a digest to pick a specific solution.",
+    )
 
     el = sub.add_parser(
         "elites", parents=[common], formatter_class=RichHelpFormatter,
@@ -265,8 +283,9 @@ def _build_parser() -> argparse.ArgumentParser:
     el.add_argument("--objective", required=True, help="A catalog objective name.")
 
     b = sub.add_parser(
-        "board", parents=[common], formatter_class=RichHelpFormatter,
-        help="Show a ranking board.",
+        "leaderboard", aliases=["board"], parents=[common],
+        formatter_class=RichHelpFormatter,
+        help="Show the leaderboard — solutions ranked on an objective.",
     )
     b.add_argument("--objective", default=None, help="A catalog objective name.")
     b.add_argument(
@@ -330,8 +349,41 @@ def _run(argv: list[str] | None) -> int:
     parser = _build_parser()
     args = parser.parse_args(argv)
 
-    if args.cmd is None:  # bare `nethackers` -> friendly help (with the project description)
+    if args.cmd is None:
+        # bare `nethackers`: on a TTY (and not --no-tui), open the dashboard
+        # -- agents and pipes get the same friendly help as every other
+        # invocation (with the project description), never Textual escape
+        # codes down a pipe.
+        if sys.stdout.isatty() and not args.no_tui:
+            app = NetHackersApp(hub=args.hub, creds=_load_creds())
+            app.run()
+            if app.error is not None:
+                raise app.error  # let main()'s top-level guard render it
+            return 0
         parser.print_help()
+        return 0
+
+    if args.cmd == "login":
+        token = device_login()
+        login = whoami_from_token(token)
+        _cred.save(Credentials(login=login, token=token))
+        err.print(f"logged in as [b]@{login}[/]")
+        return 0
+
+    if args.cmd == "logout":
+        _cred.clear()
+        err.print("logged out")
+        return 0
+
+    if args.cmd == "whoami":
+        c = _load_creds()
+        if c is None:
+            err.print("[yellow]not logged in[/] — run `nethackers login`")
+            return 1
+        if args.output == "json":
+            print(json.dumps({"login": c.login}))
+        else:
+            err.print(f"[b]@{c.login}[/]")
         return 0
 
     if args.cmd == "eval":
@@ -347,93 +399,45 @@ def _run(argv: list[str] | None) -> int:
         return 0
 
     if args.cmd == "evolve":
-        started = datetime.datetime.now(datetime.UTC)
-        runs_dir = Path(args.workdir) / "runs"
-        rid = runlog.run_id(started, args.run_name,
-                            exists=lambda r: (runs_dir / r).exists())
-        run_dir = runs_dir / rid
+        _creds = _load_creds()
+        # SELECT (compounding from the hub's top trusted elite) + run.json +
+        # run wiring all live in prepare_evolve, shared with the in-app form.
+        params = EvolveParams(
+            objective=args.objective, seed=str(args.seed), operator=args.operator,
+            iterations=args.iterations, validation_n=args.validation_n,
+            migrate=not args.no_migrate, max_parallel_evals=args.max_parallel_evals,
+            image=args.image, hub=args.hub, workdir=args.workdir, run_name=args.run_name,
+            token=args.token or (_creds.token if _creds else "dev-token"),
+            owner=args.owner or (_creds.login if _creds else "dev"),
+            from_seed=args.from_seed, select_k=args.select_k, select_temp=args.select_temp,
+            model=args.model, effort=args.effort,
+        )
+        plan = prepare_evolve(params)
 
-        # Shared machine-wide content cache (dedup by digest, keyed by the
-        # same _solution_digest the arena/register path uses) -- NOT
-        # per-run: a win registered from one run is instantly a cache hit
-        # for the next run's SELECT, and the store never needs cleanup
-        # between runs. Per-run dirs keep only work/ + metrics + logs +
-        # run.json (still under run_dir, below).
-        store = LocalTreeStore(Path(args.workdir) / "store")
-
-        # SELECT: start from the objective's top *trusted* elite (so
-        # evolution compounds instead of always restarting from --seed),
-        # unless --from-seed forces a deliberate cold start. The sampling
-        # RNG is seeded from this run's own id, so a given run's parent
-        # choice (only meaningful when --select-k > 1) is reproducible.
-        if args.from_seed:
-            parent_tree, parent_digest = Path(args.seed), None
-        else:
-            parent_tree, parent_digest = select_parent(
-                HubClient(args.hub), args.objective, store, Path(args.seed),
-                owner=args.owner, k=args.select_k, temperature=args.select_temp,
-                rng=random.Random(rid))
-
-        runlog.write_run_config(run_dir, {
-            "run_id": rid, "created_at": started.isoformat(), "git_sha": _git_sha(),
-            "objective": args.objective, "seed": str(args.seed), "operator": args.operator,
-            "iterations": args.iterations, "validation_n": args.validation_n,
-            "max_parallel_evals": args.max_parallel_evals, "image": args.image,
-            "parent": parent_digest or "seed", "select_k": args.select_k,
-            "select_temp": args.select_temp, "migrate": not args.no_migrate,
-        })
-        _point_latest(runs_dir, rid)
-
-        operator = {"codex": CodexOperator, "claude": ClaudeOperator}[args.operator]()
-        cfg = EvolveConfig(objective=args.objective, backend=args.operator,
-                           iterations=args.iterations)
-
-        def _run(callbacks, report=lambda _m: None):
-            def _on_log(tag: str, line: str) -> None:
-                runlog.append_log(run_dir, tag, line)  # persist the per-iteration mutation log
-                callbacks["on_log"](tag, line)         # + render live (TUI) / drop (non-TUI)
-            return run_loop(
-                objective=args.objective, seed_tree=parent_tree,
-                tree_store=store,
-                operator=operator, hub=HubClient(args.hub), image=args.image,
-                token=args.token, owner=args.owner, iterations=args.iterations,
-                validation_n=args.validation_n, max_parallel_evals=args.max_parallel_evals,
-                migrate=not args.no_migrate,
-                stop=callbacks.get("stop"),
-                now_fn=_now, report=report,
-                on_episode=callbacks["on_episode"],
-                on_state=callbacks["on_state"],
-                on_log=_on_log,
-                workdir=run_dir / "work",
-                on_iteration=lambda it, res: runlog.append_metric(
-                    run_dir, runlog.metric_record(it, res)),
-            )
-
-        if sys.stdout.isatty() and args.output != "json":
-            app = EvolveApp(cfg, run=lambda callbacks: _run(callbacks))
-            app.run()  # status bar replaces the prose report -> default no-op
+        if sys.stdout.isatty() and args.output != "json" and not args.no_tui:
+            # Interactive session: auto-start the run + open its monitor over
+            # the dashboard; esc roams other tabs while it runs, quit stops it.
+            app = NetHackersApp(hub=args.hub, creds=_creds, start="runs", evolve=plan)
+            app.run()
             if app.error is not None:
-                raise app.error  # let main()'s friendly hub/docker handlers fire on the ORIGINAL
-            # EvolveApp.results is typed as `object | None` (it just forwards
-            # whatever `run=` returns); narrow it back to what `_run` actually
-            # produces -- a list of `run_loop`'s IterationResult.
-            results = cast(list[IterationResult], app.results or [])
-        else:
-            t0 = time.monotonic()
-            err.print(
-                f"evolving [b]{args.objective}[/] · operator={args.operator} · "
-                f"{args.iterations} iter"
-            )
-            with Live(console=err, auto_refresh=False, transient=False) as live:
-                stream = EpisodeStream(live)
-                results = _run(
-                    {"on_state": lambda s: None, "on_episode": stream.on_episode,
-                     "on_log": lambda tag, line: None},
-                    report=lambda m: live.console.print(
-                        f"{time.monotonic() - t0:7.1f}s  {m}", markup=False),
-                ) or []
-                stream.finish()
+                raise app.error  # let main()'s friendly hub/docker handlers fire
+            return 0
 
+        # Headless: run to completion + print the summary.
+        t0 = time.monotonic()
+        err.print(
+            f"evolving [b]{args.objective}[/] · operator={args.operator} · "
+            f"{args.iterations} iter"
+        )
+        with Live(console=err, auto_refresh=False, transient=False) as live:
+            stream = EpisodeStream(live)
+            results = plan.run(
+                {"on_state": lambda s: None, "on_episode": stream.on_episode,
+                 "on_log": lambda tag, line: None},
+                report=lambda m: live.console.print(
+                    f"{time.monotonic() - t0:7.1f}s  {m}", markup=False),
+            )
+            stream.finish()
         n_reg = sum(1 for r in results if r.registered)
         err.print(f"done · [b]{n_reg}[/]/{len(results)} iteration(s) registered a new elite")
         return 0
@@ -442,10 +446,34 @@ def _run(argv: list[str] | None) -> int:
         print(pull(args.repo_at_commit, Path(args.dest)))
         return 0
 
-    if args.cmd in ("map", "attainment"):
+    if args.cmd in ("frontier", "map", "attainment"):
         client = HubClient(args.hub)
-        emit(client.attainment(args.identity), args.output,
-             table=rich_attainment, plain=plain_attainment)
+        note = ""
+        scores: dict[str, float | None]
+        if args.program is not None:
+            digest = args.program or None
+            if digest is None:
+                champ = champion(client)
+                if champ is None:
+                    emit(
+                        {}, args.output,
+                        table=lambda s: Text("no ranked programs yet.", style="dim"),
+                        plain=lambda s: "no ranked programs yet.",
+                    )
+                    return 0
+                digest, owner = champ
+                note = f"@{owner}/{_short_digest(digest)} — this one program across all identities"
+            scores = dict(champion_scores(client, digest))
+        else:
+            scores = dict(universe_scores(client))
+        om = overall_mean(scores)
+        if om is not None:
+            note = f"{note} · overall {om:.2f}" if note else f"overall {om:.2f}"
+        emit(
+            scores, args.output,
+            table=lambda s: render_frontier_grid(s, note=note),
+            plain=plain_frontier,
+        )
         return 0
 
     if args.cmd == "elites":
@@ -456,7 +484,7 @@ def _run(argv: list[str] | None) -> int:
         emit(client.elites(args.objective), args.output, table=rich_elites, plain=plain_elites)
         return 0
 
-    if args.cmd == "board":
+    if args.cmd in ("leaderboard", "board"):
         if args.objective is not None and args.objective not in CATALOG:
             err.print(_unknown_objective(args.objective))
             return 2

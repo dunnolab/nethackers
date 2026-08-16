@@ -12,7 +12,7 @@ from __future__ import annotations
 import pytest
 
 from nethackers.hubclient.client import HubClient
-from nethackers.hubclient.register import DeviceFlowError, register_solution
+from nethackers.hubclient.register import DeviceFlowError, device_login, register_solution
 
 
 class _FakeResponse:
@@ -147,6 +147,16 @@ def test_show_gets_solution_path():
     assert http.calls == [("GET", "http://localhost:8000/solutions/sha256:x", None)]
 
 
+def test_solution_frontier_gets_frontier_path():
+    http = _FakeHttp(response=[{"solution_digest": "sha256:x"}])
+    client = HubClient("http://localhost:8000", http=http)
+
+    result = client.solution_frontier("abc")
+
+    assert result == [{"solution_digest": "sha256:x"}]
+    assert http.calls == [("GET", "http://localhost:8000/solutions/abc/frontier", None)]
+
+
 def test_register_posts_bearer_header_and_three_key_body():
     http = _FakeHttp(response={"solution_digest": "sha256:x"})
     client = HubClient("http://localhost:8000", http=http)
@@ -178,7 +188,54 @@ def test_base_url_trailing_slash_is_stripped():
     assert http.calls[0][1] == "http://localhost:8000/objectives"
 
 
-# --- Property 2: register_solution's device flow ---------------------------
+# --- Property 2: device_login's GitHub device flow -------------------------
+#
+# device_login() is the device-flow half extracted out of register_solution
+# (Task 5) so a future `nethackers login` verb can call it directly.
+# register_solution now just calls device_login() then hub.register() -- its
+# own tests below (Property 3) still exercise the whole thing end-to-end and
+# must keep passing unchanged.
+
+
+def test_device_login_returns_access_token():
+    calls = []
+
+    class FakeResp:
+        def __init__(self, payload):
+            self._p = payload
+
+        def raise_for_status(self):
+            pass
+
+        def json(self):
+            return self._p
+
+    class FakeHttp:
+        def __init__(self):
+            self.n = 0
+
+        def post(self, url, data, headers):
+            if url.endswith("/device/code"):
+                return FakeResp(
+                    {
+                        "verification_uri": "https://gh/dev",
+                        "user_code": "WXYZ",
+                        "device_code": "dc",
+                        "interval": 0,
+                    }
+                )
+            self.n += 1
+            if self.n == 1:
+                return FakeResp({"error": "authorization_pending"})
+            return FakeResp({"access_token": "gho_realtoken"})
+
+    prompts = []
+    token = device_login(http=FakeHttp(), prompt=prompts.append, sleep=lambda _s: calls.append(1))
+    assert token == "gho_realtoken"
+    assert any("WXYZ" in p for p in prompts)  # user shown the code
+
+
+# --- Property 3: register_solution's device flow ---------------------------
 
 _DEVICE_CODE_RESPONSE = {
     "device_code": "devcode123",

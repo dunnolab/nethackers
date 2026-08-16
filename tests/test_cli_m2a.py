@@ -45,7 +45,6 @@ import pytest
 from rich.console import Console
 
 import nethackers.cli as C
-from nethackers.arena.progress import ACHIEVEMENTS
 from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
 from nethackers.hub.auth import LocalStubAuth
 from nethackers.hub.objectives import CATALOG
@@ -56,15 +55,15 @@ from nethackers.hubclient.client import (
     _num,
     _short_digest,
     _table,
-    render_attainment as plain_attainment,
+    plain_frontier,
     render_board as plain_board,
     render_elites as plain_elites,
     render_search as plain_search,
     render_show as plain_show,
 )
+from nethackers.hubclient.frontier import overall_mean
 from nethackers.hubclient.render import (
     ramp,
-    render_attainment as rich_attainment,
     render_board as rich_board,
     render_elites as rich_elites,
     render_search as rich_search,
@@ -85,10 +84,6 @@ def _make_fake_hub_client(response_map):
             calls.append(("__init__", base_url))
             self.base_url = base_url
 
-        def attainment(self, identity=None):
-            calls.append(("attainment", identity))
-            return response_map.get("attainment", [])
-
         def elites(self, objective):
             calls.append(("elites", objective))
             return response_map.get("elites", [])
@@ -96,6 +91,10 @@ def _make_fake_hub_client(response_map):
         def board(self, objective=None, metric=None):
             calls.append(("board", objective, metric))
             return response_map.get("board", [])
+
+        def solution_frontier(self, digest):
+            calls.append(("solution_frontier", digest))
+            return response_map.get("solution_frontier", [])
 
         def search(self, owner=None, limit=50, offset=0):
             calls.append(("search", owner, limit, offset))
@@ -124,24 +123,111 @@ def _render_text(renderable, width=100):
 # --- Property 3: each subcommand dispatches to the right client method ----
 
 
-def test_cli_map_dispatches_to_attainment(monkeypatch, capsys):
-    FakeHubClient, calls = _make_fake_hub_client({"attainment": []})
+def test_cli_frontier_no_flag_dispatches_to_universe_scores(monkeypatch, capsys):
+    FakeHubClient, calls = _make_fake_hub_client({"elites": []})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
 
-    rc = C.main(["map", "--identity", "val-dwa-law-fem"])
+    rc = C.main(["frontier"])
 
     assert rc == 0
-    assert ("attainment", "val-dwa-law-fem") in calls
+    assert ("elites", "all") in calls
 
 
-def test_cli_attainment_alias_dispatches_to_attainment(monkeypatch, capsys):
-    FakeHubClient, calls = _make_fake_hub_client({"attainment": []})
+def test_cli_attainment_alias_dispatches_to_universe_scores(monkeypatch, capsys):
+    # The one dedicated alias test -- 'map'/'attainment' must keep dispatching
+    # exactly like 'frontier' itself (no --program -> the universe regime).
+    FakeHubClient, calls = _make_fake_hub_client({"elites": []})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
 
     rc = C.main(["attainment"])
 
     assert rc == 0
-    assert ("attainment", None) in calls
+    assert ("elites", "all") in calls
+
+
+def test_cli_frontier_program_digest_dispatches_to_solution_frontier(monkeypatch, capsys):
+    # `--program <digest>` (a non-empty value) skips champion resolution
+    # entirely and goes straight to that solution's own frontier.
+    digest = "sha256:abcdef0123456789"
+    response = [{"identity": "val-hum-neu-fem", "progression": 0.42, "episodes": 3}]
+    FakeHubClient, calls = _make_fake_hub_client({"solution_frontier": response})
+    monkeypatch.setattr(C, "HubClient", FakeHubClient)
+
+    rc = C.main(["frontier", "--program", digest, "-o", "json"])
+
+    assert rc == 0
+    assert ("solution_frontier", digest) in calls
+    assert ("board", "random", None) not in calls  # no champion lookup needed
+    assert json.loads(capsys.readouterr().out) == {"val-hum-neu-fem": 0.42}
+
+
+def test_cli_frontier_bare_program_flag_resolves_champion_with_owner_note(monkeypatch, capsys):
+    # `--program` with NO value (argparse's `const=""`) means "the champion":
+    # look it up via `champion()`, then render its grid with an "@owner" note.
+    board_rows = [{"rank": 1, "solution_digest": "sha256:abcdef0123456789", "owner": "sam"}]
+    frontier_rows = [{"identity": "val-hum-neu-fem", "progression": 0.42, "episodes": 3}]
+    FakeHubClient, calls = _make_fake_hub_client(
+        {"board": board_rows, "solution_frontier": frontier_rows}
+    )
+    monkeypatch.setattr(C, "HubClient", FakeHubClient)
+    monkeypatch.setattr(O.console, "_width", 200)  # wide: the note fits on one line
+
+    rc = C.main(["frontier", "--program", "-o", "table"])
+
+    assert rc == 0
+    assert ("board", "random", None) in calls
+    assert ("solution_frontier", "sha256:abcdef0123456789") in calls
+    out = capsys.readouterr().out
+    assert "@sam" in out  # the champion's owner, called out by name
+    assert _short_digest("sha256:abcdef0123456789") in out  # not a mangled sha256:-prefix slice
+    assert "Valkyrie" in out and "hum-neu-fem" in out and "0.42" in out
+
+
+def test_cli_frontier_bare_program_flag_no_ranked_programs_is_friendly(monkeypatch, capsys):
+    FakeHubClient, calls = _make_fake_hub_client({"board": []})
+    monkeypatch.setattr(C, "HubClient", FakeHubClient)
+
+    rc = C.main(["frontier", "--program", "-o", "table"])
+
+    assert rc == 0
+    assert ("board", "random", None) in calls
+    assert "no ranked programs yet" in capsys.readouterr().out
+
+
+def test_cli_frontier_bare_program_flag_no_ranked_programs_json_is_empty_object(
+    monkeypatch, capsys
+):
+    # The friendly message is table/plain-only chrome -- -o json always stays
+    # the raw (empty) data, same convention as every other renderer.
+    FakeHubClient, _calls = _make_fake_hub_client({"board": []})
+    monkeypatch.setattr(C, "HubClient", FakeHubClient)
+
+    rc = C.main(["frontier", "--program", "-o", "json"])
+
+    assert rc == 0
+    assert json.loads(capsys.readouterr().out) == {}
+
+
+def test_cli_frontier_hub_down_is_friendly_not_traceback(monkeypatch, capsys):
+    # The frontier dispatch goes through hubclient.frontier's adapters now,
+    # not a single direct client call -- prove main()'s top-level guard still
+    # catches a failure raised from inside that adapter chain.
+    request = httpx.Request("GET", "http://localhost:8000/elites")
+
+    class FakeHub:
+        def __init__(self, base_url):
+            pass
+
+        def elites(self, objective):
+            raise httpx.ConnectError("Connection refused", request=request)
+
+    monkeypatch.setattr(C, "HubClient", FakeHub)
+    rc = C.main(["frontier"])
+    assert rc == 1
+    captured = capsys.readouterr()
+    assert "cannot reach the hub" in captured.err
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
 
 
 def test_cli_no_args_prints_help_with_project_description(capsys):
@@ -503,16 +589,35 @@ def test_cli_subcommand_help_without_crashing(capsys):
 # --- Group 2: json is raw + jq-able (full digests, never ANSI) -------------
 
 
-def test_cli_map_json_on_empty_response_emits_empty_json_array(monkeypatch, capsys):
+def test_cli_map_json_on_empty_response_emits_empty_json_object(monkeypatch, capsys):
     # -o json bypasses any friendly-message/table default entirely -- it
-    # always prints exactly the raw hub response, empty or not.
-    FakeHubClient, _calls = _make_fake_hub_client({"attainment": []})
+    # always prints exactly the raw {identity: value} map, empty or not
+    # (an empty universe is {}, not [] -- frontier's payload is a map).
+    FakeHubClient, _calls = _make_fake_hub_client({"elites": []})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
 
     rc = C.main(["map", "-o", "json"])
 
     assert rc == 0
-    assert json.loads(capsys.readouterr().out) == []
+    assert json.loads(capsys.readouterr().out) == {}
+
+
+def test_cli_frontier_json_emits_identity_value_map(monkeypatch, capsys):
+    # The populated case: -o json prints exactly the {identity: value} map
+    # universe_scores assembled (rank-1 elites only), parseable by jq.
+    rows = [
+        {"identity": "val-hum-neu-fem", "solution_digest": "sha256:a", "score": 0.8, "rank": 1},
+        {"identity": "val-hum-neu-fem", "solution_digest": "sha256:b", "score": 0.5, "rank": 2},
+        {"identity": "wiz-elf-cha-mal", "solution_digest": "sha256:c", "score": 0.65, "rank": 1},
+    ]
+    FakeHubClient, _calls = _make_fake_hub_client({"elites": rows})
+    monkeypatch.setattr(C, "HubClient", FakeHubClient)
+
+    rc = C.main(["frontier", "-o", "json"])
+
+    assert rc == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert payload == {"val-hum-neu-fem": 0.8, "wiz-elf-cha-mal": 0.65}
 
 
 def test_cli_board_json_emits_raw_response_equal_to_stub(monkeypatch, capsys):
@@ -596,36 +701,6 @@ def test_rich_render_board_firsts_shape_shows_count_column():
 
 def test_rich_render_board_empty_is_friendly_not_bare_header():
     assert _render_text(rich_board([])).strip() == "no board entries yet."
-
-
-def test_rich_render_attainment_progress_leaderboard():
-    cells = [
-        {"identity": "val-dwa-law-fem", "milestone": "Dlvl:3", "first_owner": "sam",
-         "holder_count": 2},
-        {"identity": "val-dwa-law-fem", "milestone": "Dlvl:1", "first_owner": "sam",
-         "holder_count": 9},
-        {"identity": "wiz-elf-cha-mal", "milestone": "Dlvl:1", "first_owner": "bob",
-         "holder_count": 1},
-    ]
-    out = _render_text(rich_attainment(cells), width=120)
-    # A per-identity progress leaderboard (not an 87-wide heatmap): one row
-    # per identity with a coverage bar + deepest milestone + reached/total.
-    for column in ("identity", "progress", "deepest", "reached", "holders", "first"):
-        assert column in out
-    assert "val-dwa-law-fem" in out and "wiz-elf-cha-mal" in out
-    # deepest reached per identity: val got to Dlvl:3, wiz only Dlvl:1
-    assert "Dlvl:3" in out
-    # reached out of the full ladder: val lit 2 cells, wiz lit 1
-    total = len(ACHIEVEMENTS)
-    assert f"2/{total}" in out and f"1/{total}" in out
-    # who reached each frontier first
-    assert "sam" in out and "bob" in out
-    # sorted most-progressed first: val (deepest Dlvl:3) before wiz (Dlvl:1)
-    assert out.index("val-dwa-law-fem") < out.index("wiz-elf-cha-mal")
-
-
-def test_rich_render_attainment_empty_is_friendly_not_bare_grid():
-    assert _render_text(rich_attainment([])).strip() == "no attainment cells yet."
 
 
 def test_rich_render_elites_contains_expected_cells():
@@ -738,16 +813,12 @@ def test_cli_board_output_table_renders_through_console(monkeypatch, capsys):
     assert "cells" in out
 
 
-def test_cli_map_output_table_renders_progress_through_console(monkeypatch, capsys):
-    response = [
-        {"identity": "val-dwa-law-fem", "milestone": "Dlvl:1", "first_owner": "sam",
-         "holder_count": 5},
-        {"identity": "val-dwa-law-fem", "milestone": "Dlvl:3", "first_owner": "sam",
-         "holder_count": 2},
-        {"identity": "wiz-elf-cha-mal", "milestone": "Dlvl:1", "first_owner": "bob",
-         "holder_count": 1},
+def test_cli_map_output_table_renders_universe_grid_through_console(monkeypatch, capsys):
+    rows = [
+        {"identity": "val-hum-neu-fem", "solution_digest": "sha256:a", "score": 0.42, "rank": 1},
+        {"identity": "wiz-elf-cha-mal", "solution_digest": "sha256:b", "score": 0.77, "rank": 1},
     ]
-    FakeHubClient, _calls = _make_fake_hub_client({"attainment": response})
+    FakeHubClient, _calls = _make_fake_hub_client({"elites": rows})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
     monkeypatch.setattr(O.console, "_width", 200)  # wide: no truncation
 
@@ -755,9 +826,13 @@ def test_cli_map_output_table_renders_progress_through_console(monkeypatch, caps
 
     assert rc == 0
     out = capsys.readouterr().out
-    assert "val-dwa-law-fem" in out
-    assert "wiz-elf-cha-mal" in out
-    assert "deepest" in out  # progress-table header (was a heatmap legend before)
+    # a number grid keyed by role name now, not a per-identity progress table
+    assert "Valkyrie" in out and "Wizard" in out
+    assert "hum-neu-fem" in out and "elf-cha-mal" in out  # variation labels
+    assert "0.42" in out and "0.77" in out  # the known identity numbers
+    om = overall_mean({"val-hum-neu-fem": 0.42, "wiz-elf-cha-mal": 0.77})
+    assert om is not None
+    assert f"overall {om:.2f}" in out
 
 
 def test_cli_auto_resolves_to_table_under_forced_terminal(monkeypatch, capsys):
@@ -786,38 +861,30 @@ def test_cli_auto_resolves_to_table_under_forced_terminal(monkeypatch, capsys):
 # didn't, so -o plain must still produce exactly what they used to.)
 
 
-def test_cli_map_output_plain_matches_baseline_table(monkeypatch, capsys):
-    response = [
-        {
-            "identity": "val-dwa-law-fem",
-            "milestone": "Dlvl:3",
-            "first_solution": "sha256:abc",
-            "first_owner": "sam",
-            "first_at": "2026-01-01T00:00:00Z",
-            "holder_count": 2,
-        }
+def test_cli_map_output_plain_matches_baseline_frontier(monkeypatch, capsys):
+    rows = [
+        {"identity": "val-hum-neu-fem", "solution_digest": "sha256:a", "score": 0.42, "rank": 1},
     ]
-    FakeHubClient, _calls = _make_fake_hub_client({"attainment": response})
+    FakeHubClient, _calls = _make_fake_hub_client({"elites": rows})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
 
     rc = C.main(["map", "-o", "plain"])
 
     assert rc == 0
     out = capsys.readouterr().out
-    assert out == plain_attainment(response) + "\n"  # byte-for-byte the baseline render
-    assert "val-dwa-law-fem" in out
-    assert "Dlvl:3" in out
-    assert "sam" in out
+    assert out == plain_frontier({"val-hum-neu-fem": 0.42}) + "\n"  # byte-for-byte baseline
+    assert "val-hum-neu-fem" in out
+    assert "0.42" in out
 
 
 def test_cli_map_output_plain_on_empty_response_prints_friendly_message(monkeypatch, capsys):
-    FakeHubClient, _calls = _make_fake_hub_client({"attainment": []})
+    FakeHubClient, _calls = _make_fake_hub_client({"elites": []})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
 
     rc = C.main(["map", "-o", "plain"])
 
     assert rc == 0
-    assert capsys.readouterr().out.strip() == "no attainment cells yet."
+    assert capsys.readouterr().out.strip() == "no frontier data yet."
 
 
 def test_cli_board_output_plain_matches_baseline_table(monkeypatch, capsys):

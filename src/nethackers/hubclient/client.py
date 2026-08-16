@@ -6,15 +6,16 @@ URL/params/headers/body the server expects. ``http`` defaults to the real
 every method against a fake recording calls -- no real network access
 anywhere in this module.
 
-``render_attainment``/``render_elites``/``render_board``/``render_search``/
-``render_show`` are pure formatters over the JSON a read call returns --
-they don't touch ``HubClient`` at all. They were the CLI's only renderers
-pre-CLI-UX-pass; now they're the **``plain``** half of
-``nethackers.hubclient.output.emit``'s ``table=``/``plain=`` pair (the
-``rich`` half lives in ``nethackers.hubclient.render``) -- reached via
-``-o plain``, and still exactly what the CLI's raw-JSON modes never touch
-(``emit`` prints ``json.dumps`` of the untouched response for ``-o json``,
-same as this module's callers always could). Built on three shared helpers
+``render_elites``/``render_board``/``render_search``/``render_show``/
+``plain_frontier`` are pure formatters over the JSON a read call returns --
+they don't touch ``HubClient`` at all. The first four were the CLI's only
+renderers pre-CLI-UX-pass; now they're the
+**``plain``** half of ``nethackers.hubclient.output.emit``'s
+``table=``/``plain=`` pair (the ``rich`` half lives in
+``nethackers.hubclient.render``) -- reached via ``-o plain``, and still
+exactly what the CLI's raw-JSON modes never touch (``emit`` prints
+``json.dumps`` of the untouched response for ``-o json``, same as this
+module's callers always could). Built on three shared helpers
 (final-review fix, folding in a CLI-UX pass): ``_table`` (an aligned ASCII
 table -- per-column widths, left-aligned text / right-aligned numeric
 columns, a header + rule, 2-space gutters), ``_short_digest`` (the first
@@ -27,6 +28,13 @@ Python, no ``rich`` dependency here -- see the M2a fix reports for why this
 half stays plain. Every renderer prints a friendly one-line message
 instead of a bare header for an empty response -- never a crash, never a
 table of nothing.
+
+``plain_frontier`` is ``render_frontier_grid``'s plain-text counterpart
+(same ``{identity: value}`` input), but unlike it, ``plain_frontier``
+DOES collapse to the shared friendly-one-liner convention above -- it
+lists only the identities present in ``scores`` rather than padding out
+the full 73-``IDENTITIES`` universe, so it has no fixed shape to fall back
+on the way the rich grid does.
 """
 
 from __future__ import annotations
@@ -89,6 +97,10 @@ class HubClient:
     def show(self, digest: str) -> Any:
         """``GET /solutions/{digest}``."""
         return self._get(f"/solutions/{digest}")
+
+    def solution_frontier(self, digest: str) -> Any:
+        """``GET /solutions/{digest}/frontier``."""
+        return self._get(f"/solutions/{digest}/frontier")
 
     def register(
         self,
@@ -177,23 +189,30 @@ def _num(x: Any, nd: int = 3) -> str:
     return str(x)
 
 
-def render_attainment(cells: list[dict[str, Any]]) -> str:
-    """A table of attainment cells: ``identity | milestone | first_owner |
-    holders`` (``holders`` <- ``cell["holder_count"]``). A friendly
-    one-line message instead of a bare header when ``cells == []``."""
-    if not cells:
-        return "no attainment cells yet."
-    headers = ["identity", "milestone", "first_owner", "holders"]
-    rows = [
-        [
-            str(cell.get("identity", "")),
-            str(cell.get("milestone", "")),
-            str(cell.get("first_owner", "")),
-            str(cell.get("holder_count", "")),
-        ]
-        for cell in cells
-    ]
-    return _table(headers, rows)
+def plain_frontier(scores: dict[str, float | None]) -> str:
+    """A pure-text rendering of a frontier ``{identity: value}`` map -- the
+    same shape ``nethackers.hubclient.render``'s ``render_frontier_grid``
+    draws as a role grid, here as one ``f"{identity:<20} {value:.2f}"``
+    line per identity actually present in ``scores`` (a ``None`` value
+    renders ``"—"`` instead of a number), sorted so identities group by
+    role (a role code is an identity's leading segment, and sorting
+    identity strings sorts by role first), with a blank line between role
+    groups. A friendly one-line message -- not an empty string, not a bare
+    ``"—"`` -- when ``scores`` is empty or every value in it is ``None``."""
+    if not scores or all(v is None for v in scores.values()):
+        return "no frontier data yet."
+
+    lines: list[str] = []
+    prev_role: str | None = None
+    for identity in sorted(scores):
+        role = identity.split("-")[0]
+        if prev_role is not None and role != prev_role:
+            lines.append("")
+        prev_role = role
+        value = scores[identity]
+        rendered = f"{value:.2f}" if value is not None else "—"
+        lines.append(f"{identity:<20} {rendered}")
+    return "\n".join(lines)
 
 
 def render_elites(entries: list[dict[str, Any]]) -> str:
