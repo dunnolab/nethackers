@@ -13,6 +13,7 @@ import os
 import signal
 import subprocess
 import threading
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -45,12 +46,17 @@ def run_operator(
     own session (process group) so a manual stop can hard-kill it and any
     children it spawned: if ``stop`` is set by the caller, the group is killed
     and ``stopped_reason`` is ``"killed"`` (else ``"completed"``). A crashing
-    ``on_line`` never aborts the run."""
+    ``on_line`` never aborts the run. A non-zero backend exit is surfaced as an
+    error with the useful tail of its combined stdout/stderr."""
     meter = Meter(backend)
-    proc = popen(cmd, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    # Keep stderr in the same stream as the backend's JSONL output.  CLI parse
+    # and startup failures are written only to stderr; discarding it used to
+    # make them look like successful zero-token no-ops.
+    proc = popen(cmd, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
                  text=True, bufsize=1, start_new_session=True)
     killed = threading.Event()
     done = threading.Event()
+    output_tail: deque[str] = deque(maxlen=20)
     watcher: threading.Thread | None = None
     if stop is not None:
         def _watch() -> None:
@@ -68,6 +74,7 @@ def run_operator(
         watcher.start()
     try:
         for line in proc.stdout:
+            output_tail.append(line.rstrip())
             if on_line is not None:
                 with contextlib.suppress(Exception):
                     on_line(line)
@@ -76,8 +83,16 @@ def run_operator(
         done.set()  # release the watcher WITHOUT poisoning the shared stop
         if watcher is not None:
             watcher.join(timeout=2)
-        with contextlib.suppress(Exception):
-            proc.wait(timeout=30)
+        try:
+            returncode = proc.wait(timeout=30)
+        except Exception:
+            returncode = None
+    if returncode not in (None, 0) and not killed.is_set():
+        detail = next(
+            (line for line in output_tail if line.lstrip().lower().startswith("error:")),
+            next((line for line in reversed(output_tail) if line.strip()), "no output"),
+        )
+        raise RuntimeError(f"{backend} operator exited with status {returncode}: {detail}")
     return OperatorResult(backend=backend, usage=meter.usage,
                           stopped_reason="killed" if killed.is_set() else "completed")
 
@@ -124,10 +139,9 @@ def _codex_cmd(cli: str, brief: str, model: str | None, effort: str | None) -> l
     # --skip-git-repo-check is MANDATORY, not hygiene: the operator worktree is
     # a plain shutil.copytree of the elite tree (loop.py -- no .git), and
     # `codex exec` otherwise refuses with "Not inside a trusted directory and
-    # --skip-git-repo-check was not specified" on *stderr* -- which run_operator
-    # routes to DEVNULL, so the mutation silently no-ops (no changes, gate sees
-    # child == parent). `claude -p` has no such requirement, which is why only
-    # the codex operator was affected.
+    # --skip-git-repo-check was not specified" on *stderr*. Before operator
+    # failures were surfaced above, that silently no-op'd and the gate saw the
+    # child as identical to its parent. `claude -p` has no such requirement.
     #
     # The rest are consistency + hygiene: codex has no auto-memory recall and
     # `codex exec` never auto-resumes, but --ephemeral stops writing
@@ -135,7 +149,7 @@ def _codex_cmd(cli: str, brief: str, model: str | None, effort: str | None) -> l
     # inherited config/rules so the operator stays a pure function of (parent
     # tree, brief). Auth still works -- --ignore-user-config only drops
     # $CODEX_HOME/config.toml.
-    cmd = [cli, "exec", brief, "--json", "--full-auto", "--skip-git-repo-check",
+    cmd = [cli, "exec", brief, "--json", "--approve-for-me", "--skip-git-repo-check",
            "--ephemeral", "--ignore-user-config", "--ignore-rules"]
     # --ignore-user-config drops ~/.codex/config.toml -- including its `model`
     # and `model_reasoning_effort` -- so pin them back explicitly here (a `-c`

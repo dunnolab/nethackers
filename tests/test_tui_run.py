@@ -35,6 +35,7 @@ def test_apply_episode_orders_by_index_and_counts_completed():
             "progress": 0.1 * idx, "status": "completed", "turns": 1, "depth": 1})
     batch = r.current_batch()
     assert [row["index"] for row in batch.rows()] == [0, 1, 2]  # reads in batch order
+    assert batch.done is True                                  # seals on final arrival
     assert r.eval_step is not None
     assert r.eval_step[:2] == (3, 3)                             # completed-count, not index
     assert round(r.eval_step[2], 3) == 0.1                       # mean(0.0, 0.1, 0.2)
@@ -42,6 +43,7 @@ def test_apply_episode_orders_by_index_and_counts_completed():
         "index": 0, "total": 2, "seed": 0, "character": "val-dwa-law-fem",
         "progress": 0.5, "status": "completed", "turns": 1, "depth": 1})
     assert len(r.batches) == 2 and r.batches[0].done is True
+    assert r.batches[1].done is False
 
 
 def test_apply_log_extends_logs_and_meters_faithful_tokens():
@@ -66,8 +68,12 @@ def test_live_tokens_tracks_the_running_iteration():
 
 def test_finish_sets_status():
     ok = Run("a", CFG)
+    ok.apply_episode("cold-start · held", {
+        "index": 0, "total": 1, "seed": 1000, "character": "val-dwa-law-fem",
+        "progress": 0.1, "status": "completed", "turns": 1, "depth": 1})
     ok.finish(results=["x"])
     assert ok.status == "done" and ok.running is False
+    assert ok.current_batch().done is True
     bad = Run("b", CFG)
     bad.finish(error=RuntimeError("boom"))
     assert bad.status == "failed"
