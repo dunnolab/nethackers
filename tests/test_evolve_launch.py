@@ -23,6 +23,6 @@ def test_prepare_evolve_writes_config_and_drives_run_loop(tmp_path, monkeypatch)
     assert results == ["res"]
     assert captured["objective"] == "wiz-elf-cha-mal"
     assert captured["iterations"] == 2 and captured["migrate"] is True
-    assert captured["validation_n"] == 2  # default
+    assert captured["validation_n"] == 15  # default
     assert captured["owner"] == "castiel" and captured["token"] == "tok"
     assert (Path(tmp_path) / "runs" / "latest").resolve().name == plan.rid
