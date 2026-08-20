@@ -1,6 +1,8 @@
 # tests/test_container_operator.py
 from pathlib import Path
 
+import pytest
+
 from nethackers.harness.container_operator import ContainerCaps, build_docker_argv
 
 
@@ -8,7 +10,8 @@ def _argv(harness, **kw):
     return build_docker_argv(
         harness=harness, image="nethackers/mutator:test", name="mut-r-1",
         worktree=Path("/runs/r/work/iter-1"), cli=None, model="gpt-x", effort="high",
-        caps=ContainerCaps(), auth_args=["-v", "/h/.codex:/home/agent/.codex"], **kw)
+        caps=ContainerCaps(), auth_args=["-v", "/h/.codex:/home/agent/.codex"],
+        brief="B", **kw)
 
 
 def test_docker_run_shape_and_caps():
@@ -18,6 +21,8 @@ def test_docker_run_shape_and_caps():
     for cap in ("--pids-limit", "512", "--memory", "8g", "--cpus", "4"):
         assert cap in a
     assert a[a.index("--security-opt") + 1] == "no-new-privileges"
+    # swap must be capped too, else a runaway reaches ~2x --memory via swap
+    assert a[a.index("--memory-swap") + 1] == ContainerCaps().memory
     assert "/runs/r/work/iter-1:/workspace" in a
     assert a[a.index("-w") + 1] == "/workspace"
     assert "nethackers/mutator:test" in a
@@ -38,3 +43,8 @@ def test_claude_in_cage_skips_permissions():
     a = _argv("claude")
     assert "--dangerously-skip-permissions" in a
     assert "-p" in a
+
+
+def test_unknown_harness_raises():
+    with pytest.raises(ValueError, match="unknown harness"):
+        _argv("pi")

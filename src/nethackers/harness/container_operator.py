@@ -2,12 +2,15 @@
 resource-capped, no-new-privileges container -- the mutator's execution cage.
 
 Cgroup caps (``--pids-limit``/``--memory``/``--cpus``) are the fork-bomb /
-runaway-process defense the host operator (``harness/operator.py``) lacks; an
-in-container wall-clock ``timeout`` backstops a wedged harness. The in-cage
-harness command reuses the existing host argv builders (``_claude_cmd`` /
-``_codex_cmd``) so the two harnesses stay a single source of truth, with each
-harness's own confirmation-prompt escape hatch swapped for the equivalent
-that's safe to use *because* the container is already the sandbox: codex's
+runaway-process defense the host operator (``harness/operator.py``) lacks;
+``--memory-swap`` is pinned to the same value as ``--memory`` so a runaway
+can't just push into swap and reach ~2x the intended cap (Docker's default
+otherwise allows exactly that). An in-container wall-clock ``timeout``
+backstops a wedged harness. The in-cage harness command reuses the existing
+host argv builders (``_claude_cmd`` / ``_codex_cmd``) so the two harnesses
+stay a single source of truth, with each harness's own confirmation-prompt
+escape hatch swapped for the equivalent that's safe to use *because* the
+container is already the sandbox: codex's
 ``--approve-for-me`` (host-side "don't ask me") is replaced with
 ``--dangerously-bypass-approvals-and-sandbox`` (codex's own inner sandbox
 would otherwise double-sandbox and fail inside the container); claude gets
@@ -41,7 +44,7 @@ def build_docker_argv(
     effort: str | None,
     caps: ContainerCaps,
     auth_args: list[str],
-    brief: str = "B",
+    brief: str,
 ) -> list[str]:
     """Assemble ``docker run`` argv for one mutator iteration: fixed docker
     prefix (name + caps + security-opt + workspace mount), then ``auth_args``,
@@ -49,15 +52,18 @@ def build_docker_argv(
     in-cage harness command.
 
     ``brief`` flows straight into the inner ``_claude_cmd``/``_codex_cmd``
-    call. It defaults to a placeholder so this builder's own argv-shape tests
-    don't need to pass one; the operator that wraps this function (a later
-    task) always passes the real per-iteration brief explicitly.
+    call and is required (no placeholder default): a caller that forgets it
+    would otherwise silently build a wrong-prompt argv instead of failing
+    loudly. Callers that only care about argv shape (this module's own tests)
+    pass a fixed ``brief="B"``; the operator that wraps this function (a
+    later task) passes the real per-iteration brief.
     """
     argv = [
         "docker", "run", "--rm",
         "--name", name,
         "--pids-limit", str(caps.pids),
         "--memory", caps.memory,
+        "--memory-swap", caps.memory,  # cap swap too -- else a runaway reaches ~2x via swap
         "--cpus", caps.cpus,
         "--security-opt", "no-new-privileges",
         "-v", f"{worktree}:/workspace",
