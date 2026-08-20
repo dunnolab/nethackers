@@ -93,7 +93,9 @@ def run_operator(
         err_thread.join(timeout=2)
         with contextlib.suppress(Exception):
             proc.wait(timeout=30)
-    error_tail = "".join(err_lines).strip() or None
+    error_tail: str | None = None
+    with contextlib.suppress(Exception):
+        error_tail = "".join(err_lines).strip() or None
     return OperatorResult(backend=backend, usage=meter.usage,
                           stopped_reason="killed" if killed.is_set() else "completed",
                           returncode=getattr(proc, "returncode", None),
@@ -143,9 +145,10 @@ def _codex_cmd(cli: str, brief: str, model: str | None, effort: str | None) -> l
     # a plain shutil.copytree of the elite tree (loop.py -- no .git), and
     # `codex exec` otherwise refuses with "Not inside a trusted directory and
     # --skip-git-repo-check was not specified" on *stderr* -- which run_operator
-    # routes to DEVNULL, so the mutation silently no-ops (no changes, gate sees
-    # child == parent). `claude -p` has no such requirement, which is why only
-    # the codex operator was affected.
+    # now captures into OperatorResult.error_tail, but without this flag the
+    # mutation would still silently no-op (no changes, gate sees child ==
+    # parent). `claude -p` has no such requirement, which is why only the
+    # codex operator was affected.
     #
     # The rest are consistency + hygiene: codex has no auto-memory recall and
     # `codex exec` never auto-resumes, but --ephemeral stops writing

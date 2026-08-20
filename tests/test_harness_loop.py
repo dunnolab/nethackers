@@ -55,6 +55,16 @@ class _FailingOperator:
                               returncode=1, error_tail='{"error":"json body error"}')
 
 
+class _KilledOperator:
+    """Operator that reports a manual stop (SIGKILL shape: stopped_reason=
+    "killed" with a non-zero returncode) -- a user-initiated stop is not a
+    model failure, so it must NOT count toward the operator-error breaker."""
+    def run(self, worktree, brief, *, on_line=None, stop=None):
+        from nethackers.harness.operator import OperatorResult
+        return OperatorResult(backend="codex", usage=_TU(), stopped_reason="killed",
+                              returncode=-9)
+
+
 def _fitness_runner(progress_by_version):
     """Fake Docker runner: reads the mounted bot's VERSION, scores by table."""
     def fake(cmd, check):
@@ -152,6 +162,24 @@ def test_loop_no_gain_does_not_trip_the_breaker(tmp_path):
         max_consecutive_errors=3, sleep=lambda _s: None)
     assert len(results) == 4
     assert all(not r.registered for r in results)
+
+
+def test_loop_killed_operator_does_not_trip_the_breaker(tmp_path):
+    # SIGKILL shape (stopped_reason="killed", returncode=-9) must NOT be
+    # classified as an operator-error -- it falls through to the normal gate
+    # path (here: rejected as a no-op, since the killed operator never
+    # touched the worktree) without ever incrementing the breaker.
+    slept: list[float] = []
+    results = run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_KilledOperator(),
+        hub=_FakeHub(), image="img:dev", token="t", owner="o", iterations=5,
+        validation_n=3, now_fn=lambda: "2026-08-10T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
+        max_consecutive_errors=3, sleep=slept.append)
+    assert len(results) == 5   # all 5 iterations ran; the breaker never fired
+    assert not any(r.reason.startswith("operator-error") for r in results)
+    assert slept == []   # no backoff -- the error branch was never entered
 
 
 def test_loop_reports_progress(tmp_path):
