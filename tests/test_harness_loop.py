@@ -120,7 +120,9 @@ validation_n=3,
 
 def test_loop_discards_an_iteration_that_raises(tmp_path):
     """Cold start (fake `runner`) succeeds; the operator raises on the one
-    mutation attempt -- that iteration must be discarded, not propagate."""
+    mutation attempt -- that iteration must be discarded, not propagate. A
+    raise from operator.run is classified as an operator-error (same breaker
+    path as a non-zero exit), not the generic catch-all "error:"."""
     hub = _FakeHub()
     results = run_loop(
         objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
@@ -131,8 +133,52 @@ validation_n=3,
         runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work")
     assert len(results) == 1
     assert results[0].registered is False
-    assert results[0].reason.startswith("error:")
+    assert results[0].reason.startswith("operator-error")
     assert hub.registered == []
+
+
+def test_loop_circuit_breaker_stops_after_consecutive_raising_operators(tmp_path):
+    """A RAISING operator.run (e.g. subprocess.Popen's FileNotFoundError for a
+    missing/renamed CLI binary) must trip the SAME breaker as a non-zero exit
+    -- otherwise a persistently-broken operator fast-spins the whole
+    `iterations` budget with no backoff, which is exactly what the breaker
+    exists to prevent."""
+    slept: list[float] = []
+    results = run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_RaisingOperator(),
+        hub=_FakeHub(), image="img:dev", token="t", owner="o", iterations=10,
+        validation_n=3, now_fn=lambda: "2026-08-10T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
+        max_consecutive_errors=3, sleep=slept.append)
+    # 10 iterations requested, but 3 straight raises trip the breaker exactly
+    # like 3 straight non-zero exits do -- a raise IS an operator-error.
+    assert len(results) == 3
+    assert all(r.reason.startswith("operator-error") for r in results)
+    assert slept == [1, 2]   # backoff after error 1 and 2; error 3 breaks (no sleep)
+
+
+def test_loop_non_operator_raise_does_not_trip_the_operator_breaker(tmp_path, monkeypatch):
+    """A raise from an UNRELATED step (here: the gate) is not an
+    operator-error -- it must keep falling through to the generic outer
+    `except` (reason "error:") and must NOT increment the operator-breaker's
+    consecutive_errors. max_consecutive_errors=1 would trip on a single
+    operator-error; proving 3 straight gate-raises survive it shows the two
+    breaker paths are genuinely separate."""
+    def _boom(*a, **k):
+        raise RuntimeError("gate blew up")
+    monkeypatch.setattr(loop_mod, "passes_gate", _boom)
+    slept: list[float] = []
+    results = run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+        hub=_FakeHub(), image="img:dev", token="t", owner="o", iterations=3,
+        validation_n=3, now_fn=lambda: "2026-08-10T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
+        max_consecutive_errors=1, sleep=slept.append)
+    assert len(results) == 3
+    assert all(r.reason.startswith("error:") for r in results)
+    assert slept == []
 
 
 def test_loop_circuit_breaker_stops_after_consecutive_operator_errors(tmp_path):

@@ -205,6 +205,32 @@ def test_preflight_warns_when_unknown():
     assert pf.action == "warn"
 
 
+def test_preflight_claude_alias_skips_the_probe_entirely(tmp_path, monkeypatch):
+    # Aliases resolve server-side and are always valid -- preflight must
+    # return proceed without ever touching list_models (Keychain+HTTPS probe).
+    # NOTE: discovery.py's probe helpers wrap their calls in blanket
+    # `except Exception: return None` (by design -- probe failure means
+    # warn-and-proceed, never a crash), so a fake that *raises* to prove
+    # "not called" would be silently absorbed and prove nothing. Track calls
+    # instead. home=tmp_path + a deleted env var keep this hermetic even if a
+    # regression lets the probe fall through to a real credentials file.
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    calls: list[object] = []
+    def run(cmd, **k):
+        if cmd[1:2] == ["--version"]:
+            return SimpleNamespace(returncode=0, stdout="claude-cli 1.0")
+        if cmd[:2] == ["claude", "auth"]:
+            return SimpleNamespace(returncode=0, stdout=json.dumps({"loggedIn": True}))
+        calls.append(cmd)                          # e.g. the keychain probe
+        return SimpleNamespace(returncode=1, stdout="")
+    def http(*a, **k):
+        calls.append(("http", a, k))
+        return SimpleNamespace(status_code=200, json=lambda: {"data": []})
+    pf = preflight_model("claude", "opus", which=_which_ok, run=run, http=http, home=tmp_path)
+    assert pf.action == "proceed"
+    assert calls == []          # zero list_models / Keychain / HTTPS calls
+
+
 def test_preflight_proceeds_without_a_pinned_model_and_makes_no_model_calls():
     # model="" (harness default): nothing to validate -> proceed, list_models never called
     calls = {"debug": 0}

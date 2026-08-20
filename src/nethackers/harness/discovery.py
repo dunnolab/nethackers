@@ -228,18 +228,20 @@ def preflight_model(
         return Preflight("refuse", f"{backend} is not logged in — run `{login_cmd}`.", cli, None)
     if not model:
         return Preflight("proceed", "", cli, None)   # harness default: nothing pinned to check
+    if backend == "claude" and model in _CLAUDE_ALIASES:
+        return Preflight("proceed", "", cli, None)   # aliases are always valid -- skip the probe
     models = list_models(backend, run=run, http=http, home=home)
-    avail = is_model_available(backend, model, models=models, run=run, http=http, home=home)
-    if avail is True:
-        return Preflight("proceed", "", cli, models)
     ver = f" {cli.version}" if cli.version else ""
-    if avail is None:
+    if models is None:
         return Preflight(
             "warn",
             f"Couldn't verify '{model}' on {backend}{ver} — proceeding; "
             "the run will stop fast if the model is rejected.",
-            cli, models)
-    served = ", ".join(m.id for m in (models or [])) or "(none)"
+            cli, None)
+    avail = is_model_available(backend, model, models=models)
+    if avail is True:
+        return Preflight("proceed", "", cli, models)
+    served = ", ".join(m.id for m in models) or "(none)"
     hint = "run `codex update`" if backend == "codex" else "check your account access"
     return Preflight(
         "refuse",

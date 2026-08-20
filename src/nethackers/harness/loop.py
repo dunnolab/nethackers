@@ -16,6 +16,7 @@ from nethackers.harness.brief import build_brief
 from nethackers.harness.evaluate import evaluate
 from nethackers.harness.gate import passes_gate
 from nethackers.harness.metering import TokenUsage
+from nethackers.harness.operator import OperatorResult
 from nethackers.harness.register import register_win
 from nethackers.harness.seeds import dev_spec, validation_spec
 from nethackers.harness.select import top_trusted_elite
@@ -178,7 +179,19 @@ def run_loop(
             brief = build_brief(objective, character, elite.dev_evidence)
             _emit("mutating", k + 1)
             report(f"{tag} · mutating…")
-            op = operator.run(worktree, brief, on_line=_log_cb(tag), stop=stop)
+            try:
+                op = operator.run(worktree, brief, on_line=_log_cb(tag), stop=stop)
+            except Exception as e:
+                # A RAISE here (e.g. subprocess.Popen's FileNotFoundError for a
+                # missing/renamed CLI binary) means "the operator did not run",
+                # same as a non-zero exit -- route it through the SAME breaker
+                # path below instead of letting it fall to the generic outer
+                # `except`, which does not increment consecutive_errors and
+                # would fast-spin the whole `iterations` budget in milliseconds
+                # against a persistently-broken operator.
+                op = OperatorResult(backend="operator", usage=TokenUsage(),
+                                    stopped_reason="completed", returncode=1,
+                                    error_tail=f"operator failed to start: {e}")
 
             # Operator-error circuit-breaker: a non-zero exit is the confirmed
             # signal of an unavailable model / stale CLI / auth failure (its
