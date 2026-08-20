@@ -91,3 +91,64 @@ def test_stop_docker_kills_named_container(tmp_path):
     stop.set()
     op._maybe_kill_on_stop("mut-work-iter-9", stop)
     assert killed == ["mut-work-iter-9"]
+
+
+class _GatedFakePopen:
+    """Like FakePopen, but its stdout blocks until `release` fires -- so the
+    background stop-watcher is guaranteed a chance to act BEFORE run_operator
+    can finish. Without this gate, a real (instant) FakePopen would let
+    run_operator complete before the watcher's first 0.1s poll tick, making
+    a same-name assertion racy: it would pass or fail depending on thread
+    scheduling, not on whether run() is actually correct. poll() must stay
+    non-None (never "still running") so run_operator's OWN internal watcher
+    never attempts a real os.killpg on this fake/unrelated pid."""
+
+    def __init__(self, cmd, release, **kw):
+        self.cmd = cmd
+        self.pid = 4321
+        self._release = release
+
+    @property
+    def stdout(self):
+        self._release.wait(timeout=2)
+        return iter(['{"type":"x"}\n'])
+
+    def poll(self):
+        return 0
+
+    def wait(self, timeout=None):
+        return 0
+
+
+def test_stop_kills_the_same_name_baked_into_the_docker_argv(tmp_path):
+    """run() computes the container name once; a silent divergence between
+    the --name it bakes into the docker argv and the name its stop-watcher
+    docker-kills would have `docker kill` target the wrong (or a
+    nonexistent) container, so stop would fail silently. Pin that both call
+    sites see the exact same value out of a single run() invocation."""
+    seen = {}
+    killed = []
+    release = threading.Event()
+
+    op = ContainerOperator(harness="codex", image="img:test", system="Linux", home=tmp_path)
+    (tmp_path / ".codex").mkdir()
+    wt = tmp_path / "work" / "iter-7"
+    wt.mkdir(parents=True)
+
+    def fake_popen(cmd, **kw):
+        seen["cmd"] = cmd
+        return _GatedFakePopen(cmd, release, **kw)
+    op._popen = fake_popen
+
+    def fake_docker_kill(name):
+        killed.append(name)
+        release.set()  # let the gated stdout resolve now that the kill fired
+    op._docker_kill = fake_docker_kill
+
+    stop = threading.Event()
+    stop.set()
+    op.run(wt, "BRIEF-TEXT", stop=stop)
+
+    name_in_argv = seen["cmd"][seen["cmd"].index("--name") + 1]
+    assert name_in_argv == "mut-work-iter-7"
+    assert killed == [name_in_argv]   # the SAME name -- not just the same formula
