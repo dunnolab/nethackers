@@ -164,3 +164,24 @@ async def test_model_picker_populates_from_live_discovery(monkeypatch):
         sel = app.query_one("#f_model", Select)
         sel.value = "live-sol-9"                 # raises if the live option isn't present
         assert sel.value == "live-sol-9"
+
+
+async def test_model_picker_dispatches_exactly_once_on_mount(monkeypatch):
+    # Regression: the default operator's Select is built with a non-blank
+    # initial value, so mounting it organically fires one Select.Changed
+    # (-> one _refresh_models("claude")) all on its own. An extra explicit
+    # kick from on_mount would double-dispatch list_models -- two real
+    # Keychain+HTTP round-trips per form mount in production. Lock it at one.
+    calls: list[str] = []
+
+    def _counting_list_models(backend, **k):
+        calls.append(backend)
+        return None
+
+    monkeypatch.setattr(ef, "list_models", _counting_list_models)
+    app = _Host(None)
+    async with app.run_test(size=(100, 50)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert calls == ["claude"]        # exactly one dispatch on mount, not two

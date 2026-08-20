@@ -117,7 +117,13 @@ class EvolveForm(Vertical):
         # for the cursor. It still scrolls: each field's scroll_visible() drives
         # it as the cursor lands.
         form.can_focus = False
-        self._refresh_models("claude")
+        # No explicit _refresh_models("claude") kick here: #f_op is built with
+        # a non-blank initial value, so Select's own _on_mount organically
+        # fires one Select.Changed (-> on_select_changed's "f_op" branch calls
+        # _refresh_models(backend)) all on its own. An extra explicit call
+        # here would double-dispatch list_models -- two real Keychain+HTTP
+        # round-trips per form mount (see
+        # test_model_picker_dispatches_exactly_once_on_mount).
 
     def action_leave_field(self) -> None:
         """Hand control back to the modal keyboard nav so the global keys
