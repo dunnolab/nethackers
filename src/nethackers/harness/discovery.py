@@ -26,6 +26,7 @@ import httpx
 
 _ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models?limit=100"
 _ANTHROPIC_VERSION = "2023-06-01"
+_ANTHROPIC_OAUTH_BETA = "oauth-2025-04-20"   # required on the Bearer (OAuth) tiers only
 
 
 @dataclass(frozen=True)
@@ -102,12 +103,12 @@ def _claude_auth_headers(*, run: Callable, home: Path | None) -> dict[str, str] 
     if platform.system() == "Darwin":
         tok = _keychain_token(run=run)
         if tok:
-            return {"Authorization": f"Bearer {tok}"}
+            return {"Authorization": f"Bearer {tok}", "anthropic-beta": _ANTHROPIC_OAUTH_BETA}
     creds = (home or Path.home()) / ".claude" / ".credentials.json"
     try:
         tok = json.loads(creds.read_text())["claudeAiOauth"]["accessToken"]
         if tok:
-            return {"Authorization": f"Bearer {tok}"}
+            return {"Authorization": f"Bearer {tok}", "anthropic-beta": _ANTHROPIC_OAUTH_BETA}
     except Exception:
         pass
     key = os.environ.get("ANTHROPIC_API_KEY")
@@ -223,7 +224,8 @@ def preflight_model(
     if not cli.installed:
         return Preflight("refuse", f"{backend} is not installed / not on PATH.", cli, None)
     if cli.logged_in is False:
-        return Preflight("refuse", f"{backend} is not logged in — run `{backend} login`.", cli, None)
+        login_cmd = "codex login" if backend == "codex" else "claude auth"
+        return Preflight("refuse", f"{backend} is not logged in — run `{login_cmd}`.", cli, None)
     if not model:
         return Preflight("proceed", "", cli, None)   # harness default: nothing pinned to check
     models = list_models(backend, run=run, http=http, home=home)

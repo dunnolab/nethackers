@@ -2,7 +2,14 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 
-from nethackers.harness.discovery import ModelInfo, list_models
+from nethackers.harness.discovery import (
+    CliInfo,
+    ModelInfo,
+    detect_cli,
+    is_model_available,
+    list_models,
+    preflight_model,
+)
 
 _CODEX_JSON = json.dumps({"models": [
     {"slug": "gpt-5.6-sol", "display_name": "gpt-5.6-sol",
@@ -55,7 +62,12 @@ def _http(status, payload):
 
 def test_list_models_claude_from_api(tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-test")   # 3rd-tier credential
-    models = list_models("claude", http=_http(200, _ANTHROPIC_OK), home=tmp_path)
+    models = list_models(
+        "claude",
+        run=lambda *a, **k: SimpleNamespace(returncode=1, stdout=""),   # keychain miss -> env tier
+        http=_http(200, _ANTHROPIC_OK),
+        home=tmp_path,
+    )
     assert [m.id for m in models] == ["claude-opus-5", "claude-fable-5"]
     assert models[0].label == "Opus 5"
 
@@ -63,7 +75,13 @@ def test_list_models_claude_from_api(tmp_path, monkeypatch):
 def test_list_models_claude_401_is_unknown_not_empty(tmp_path, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-stale")
     # 401 = stale token, NOT "no models" -> None (warn+proceed), never []
-    assert list_models("claude", http=_http(401, {}), home=tmp_path) is None
+    models = list_models(
+        "claude",
+        run=lambda *a, **k: SimpleNamespace(returncode=1, stdout=""),
+        http=_http(401, {}),
+        home=tmp_path,
+    )
+    assert models is None
 
 
 def test_list_models_claude_no_credential_is_none(tmp_path, monkeypatch):
@@ -87,15 +105,15 @@ def test_claude_credential_reads_linux_creds_file(tmp_path, monkeypatch):
     seen = {}
     def get(url, **kwargs):
         seen["auth"] = kwargs["headers"].get("Authorization")
+        seen["beta"] = kwargs["headers"].get("anthropic-beta")
         return SimpleNamespace(status_code=200, json=lambda: _ANTHROPIC_OK)
     def _run_fail(*a, **k):   # force past the keychain tier
         return SimpleNamespace(returncode=1, stdout="")
     models = list_models("claude", run=_run_fail, http=get, home=tmp_path)
     assert [m.id for m in models] == ["claude-opus-5", "claude-fable-5"]
     assert seen["auth"] == "Bearer oauth-xyz"     # token used, never logged
+    assert seen["beta"] == "oauth-2025-04-20"     # Bearer path needs the OAuth beta header
 
-
-from nethackers.harness.discovery import CliInfo, ModelInfo, detect_cli, is_model_available
 
 _CODEX_MODELS = [ModelInfo("gpt-5.6-sol", "gpt-5.6-sol")]
 _CLAUDE_MODELS = [ModelInfo("claude-opus-5", "Opus 5")]
@@ -116,10 +134,14 @@ def test_is_model_available_strips_1m_suffix():
     assert is_model_available("claude", "claude-opus-5[1m]", models=_CLAUDE_MODELS) is True
 
 
-def test_is_model_available_none_list_is_unknown():
+def test_is_model_available_none_list_is_unknown(tmp_path):
     # models is None (discovery failed) and not an alias -> None (unknown)
-    assert is_model_available("claude", "claude-x", models=None,
-                              http=lambda *a, **k: (_ for _ in ()).throw(RuntimeError)) is None
+    assert is_model_available(
+        "claude", "claude-x", models=None,
+        run=lambda *a, **k: SimpleNamespace(returncode=1, stdout=""),
+        home=tmp_path,
+        http=lambda *a, **k: (_ for _ in ()).throw(RuntimeError),
+    ) is None
 
 
 def test_detect_cli_installed_reports_version():
@@ -138,9 +160,6 @@ def test_detect_cli_installed_reports_version():
 def test_detect_cli_missing_binary():
     info = detect_cli("claude", run=lambda *a, **k: None, which=lambda _b: None)
     assert info == CliInfo("claude", False, None, None)
-
-
-from nethackers.harness.discovery import Preflight, preflight_model
 
 
 def _which_ok(_b): return "/bin/" + _b
