@@ -1,9 +1,14 @@
 # tests/test_container_operator.py
+import threading
 from pathlib import Path
 
 import pytest
 
-from nethackers.harness.container_operator import ContainerCaps, build_docker_argv
+from nethackers.harness.container_operator import (
+    ContainerCaps,
+    ContainerOperator,
+    build_docker_argv,
+)
 
 
 def _argv(harness, **kw):
@@ -48,3 +53,41 @@ def test_claude_in_cage_skips_permissions():
 def test_unknown_harness_raises():
     with pytest.raises(ValueError, match="unknown harness"):
         _argv("pi")
+
+
+class FakePopen:
+    def __init__(self, cmd, **kw):
+        self.cmd = cmd
+        self.stdout = iter(['{"type":"x"}\n'])
+        self.pid = 4321
+        self.returncode = 0
+    def poll(self): return 0
+    def wait(self, timeout=None): return 0
+
+
+def test_run_delegates_and_builds_docker_argv(monkeypatch, tmp_path):
+    seen = {}
+    op = ContainerOperator(harness="codex", image="img:test", system="Linux", home=tmp_path)
+    (tmp_path / ".codex").mkdir()
+    wt = tmp_path / "work" / "iter-3"
+    wt.mkdir(parents=True)
+    # NB: `and`, not `or` -- dict.setdefault returns the (truthy) cmd list
+    # itself, so `or` would short-circuit and hand run_operator a bare list
+    # instead of a FakePopen, breaking on the first `proc.stdout` access.
+    op._popen = lambda cmd, **kw: seen.setdefault("cmd", cmd) and FakePopen(cmd, **kw)
+    res = op.run(wt, "BRIEF-TEXT")
+    assert seen["cmd"][:3] == ["docker", "run", "--rm"]
+    assert "BRIEF-TEXT" in seen["cmd"]        # real brief threaded into the inner cmd
+    assert res.backend == "codex"
+
+
+def test_stop_docker_kills_named_container(tmp_path):
+    killed = []
+    op = ContainerOperator(harness="codex", image="img:test", system="Linux", home=tmp_path)
+    (tmp_path / ".codex").mkdir()
+    op._docker_kill = lambda name: killed.append(name)
+    # drive the stop-watcher directly (unit): a set event → docker kill invoked
+    stop = threading.Event()
+    stop.set()
+    op._maybe_kill_on_stop("mut-work-iter-9", stop)
+    assert killed == ["mut-work-iter-9"]
