@@ -5,6 +5,7 @@ import json
 import shutil
 import subprocess
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,6 +57,8 @@ def run_loop(
     validation_n: int,
     max_parallel_evals: int = 8,
     migrate: bool = True,
+    max_consecutive_errors: int = 3,
+    sleep: Callable[[float], None] = time.sleep,
     stop: threading.Event | None = None,
     now_fn: Callable[[], str],
     report: Callable[[str], None] = lambda _: None,
@@ -134,6 +137,7 @@ def run_loop(
                                     validation_fitness=elite.validation_fitness))
 
     results: list[IterationResult] = []
+    consecutive_errors = 0
 
     def _record(iteration: int, result: IterationResult) -> None:
         results.append(result)
@@ -175,6 +179,33 @@ def run_loop(
             _emit("mutating", k + 1)
             report(f"{tag} · mutating…")
             op = operator.run(worktree, brief, on_line=_log_cb(tag), stop=stop)
+
+            # Operator-error circuit-breaker: a non-zero exit is the confirmed
+            # signal of an unavailable model / stale CLI / auth failure (its
+            # stderr -- e.g. codex's "json body error" -- is now captured). This
+            # is distinct from a HEALTHY run that simply didn't improve, which
+            # must NOT trip the breaker. Without this, a persistently-failing
+            # model spins the whole `iterations` budget in seconds.
+            op_errored = (op.stopped_reason != "killed"
+                          and op.returncode not in (0, None))
+            if op_errored:
+                consecutive_errors += 1
+                detail = (op.error_tail or "").strip() or f"exit {op.returncode}"
+                _emit("error", k + 1, tokens=op.total, detail=detail)
+                report(f"{tag} · ✗ operator error (exit {op.returncode}): {detail}")
+                _record(k + 1, IterationResult(False, f"operator-error:{op.returncode}",
+                                               tokens=op.total, usage=op.usage,
+                                               stopped_reason=op.stopped_reason))
+                if consecutive_errors >= max_consecutive_errors:
+                    msg = (f"aborting after {consecutive_errors} consecutive operator "
+                           f"failures — last error: {detail}")
+                    _emit("aborted", k + 1, detail=detail)
+                    report(f"{tag} · ✗✗ {msg}")
+                    break
+                sleep(min(2 ** (consecutive_errors - 1), 30))   # 1s, 2s, 4s… capped
+                continue
+            consecutive_errors = 0   # a healthy operator run resets the breaker
+
             report(f"{tag} · operator: {op.total} tok ({op.stopped_reason}); gating…")
             _emit("gating", k + 1, tokens=op.total)
 
