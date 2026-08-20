@@ -200,3 +200,46 @@ def detect_cli(backend: str, *, run: Callable = subprocess.run,
     except Exception:
         pass
     return CliInfo(backend, True, version, _logged_in(backend, run=run))
+
+
+@dataclass(frozen=True)
+class Preflight:
+    action: str                     # "proceed" | "refuse" | "warn"
+    message: str
+    cli: CliInfo
+    models: list[ModelInfo] | None
+
+
+def preflight_model(
+    backend: str,
+    model: str | None,
+    *,
+    run: Callable = subprocess.run,
+    http: Callable = httpx.get,
+    home: Path | None = None,
+    which: Callable = shutil.which,
+) -> Preflight:
+    cli = detect_cli(backend, run=run, which=which)
+    if not cli.installed:
+        return Preflight("refuse", f"{backend} is not installed / not on PATH.", cli, None)
+    if cli.logged_in is False:
+        return Preflight("refuse", f"{backend} is not logged in — run `{backend} login`.", cli, None)
+    if not model:
+        return Preflight("proceed", "", cli, None)   # harness default: nothing pinned to check
+    models = list_models(backend, run=run, http=http, home=home)
+    avail = is_model_available(backend, model, models=models, run=run, http=http, home=home)
+    if avail is True:
+        return Preflight("proceed", "", cli, models)
+    ver = f" {cli.version}" if cli.version else ""
+    if avail is None:
+        return Preflight(
+            "warn",
+            f"Couldn't verify '{model}' on {backend}{ver} — proceeding; "
+            "the run will stop fast if the model is rejected.",
+            cli, models)
+    served = ", ".join(m.id for m in (models or [])) or "(none)"
+    hint = "run `codex update`" if backend == "codex" else "check your account access"
+    return Preflight(
+        "refuse",
+        f"{backend}{ver} can't serve '{model}'. Available: {served}. {hint} or pick one of those.",
+        cli, models)

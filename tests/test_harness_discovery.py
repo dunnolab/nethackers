@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 from nethackers.harness.discovery import ModelInfo, list_models
@@ -137,3 +138,63 @@ def test_detect_cli_installed_reports_version():
 def test_detect_cli_missing_binary():
     info = detect_cli("claude", run=lambda *a, **k: None, which=lambda _b: None)
     assert info == CliInfo("claude", False, None, None)
+
+
+from nethackers.harness.discovery import Preflight, preflight_model
+
+
+def _which_ok(_b): return "/bin/" + _b
+
+def _run_version_and_login(cmd, **k):
+    from types import SimpleNamespace
+    if cmd[1:2] == ["--version"]:
+        return SimpleNamespace(returncode=0, stdout="codex-cli 0.146.0")
+    if cmd == ["codex", "login", "status"]:
+        return SimpleNamespace(returncode=0, stdout="")
+    if cmd[:2] == ["codex", "debug"]:
+        return SimpleNamespace(returncode=0, stdout=_CODEX_JSON)
+    return SimpleNamespace(returncode=0, stdout="")
+
+
+def test_preflight_refuses_when_not_installed():
+    pf = preflight_model("codex", "gpt-5.6-sol", which=lambda _b: None,
+                         run=lambda *a, **k: None)
+    assert pf.action == "refuse" and "not installed" in pf.message.lower()
+
+
+def test_preflight_refuses_confidently_absent_model():
+    pf = preflight_model("codex", "gpt-9.9-nope", which=_which_ok, run=_run_version_and_login)
+    assert pf.action == "refuse"
+    assert "gpt-9.9-nope" in pf.message and "gpt-5.6-sol" in pf.message   # names the served list
+
+
+def test_preflight_proceeds_for_available_model():
+    pf = preflight_model("codex", "gpt-5.6-sol", which=_which_ok, run=_run_version_and_login)
+    assert pf.action == "proceed"
+
+
+def test_preflight_warns_when_unknown():
+    # installed + logged in, but discovery of the list fails -> None -> warn
+    def run(cmd, **k):
+        from types import SimpleNamespace
+        if cmd[1:2] == ["--version"]:
+            return SimpleNamespace(returncode=0, stdout="codex-cli 0.50.0")
+        if cmd == ["codex", "login", "status"]:
+            return SimpleNamespace(returncode=0, stdout="")
+        return SimpleNamespace(returncode=1, stdout="")   # debug models fails, no cache
+    pf = preflight_model("codex", "gpt-5.6-sol", which=_which_ok, run=run, home=Path("/nope"))
+    assert pf.action == "warn"
+
+
+def test_preflight_proceeds_without_a_pinned_model_and_makes_no_model_calls():
+    # model="" (harness default): nothing to validate -> proceed, list_models never called
+    calls = {"debug": 0}
+    def run(cmd, **k):
+        from types import SimpleNamespace
+        if cmd[:2] == ["codex", "debug"]:
+            calls["debug"] += 1
+        if cmd[1:2] == ["--version"]:
+            return SimpleNamespace(returncode=0, stdout="codex-cli 0.146.0")
+        return SimpleNamespace(returncode=0, stdout="")
+    pf = preflight_model("codex", "", which=_which_ok, run=run)
+    assert pf.action == "proceed" and calls["debug"] == 0
