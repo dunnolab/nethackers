@@ -62,7 +62,7 @@ from rich.text import Text
 from rich_argparse import RichHelpFormatter
 
 from nethackers.eval.runner import eval_batch
-from nethackers.harness.discovery import preflight_model
+from nethackers.harness.discovery import ModelInfo, list_models, preflight_model
 from nethackers.harness.launch import EvolveParams, _now, prepare_evolve
 from nethackers.hub.objectives import CATALOG
 from nethackers.hubclient import credentials as _cred
@@ -97,6 +97,18 @@ def _default_hub() -> str:
 
 def _load_creds() -> Credentials | None:
     return _cred.load()
+
+
+def _models_table(operator: str, rows: list[dict[str, Any]]):
+    from rich.table import Table
+    table = Table(title=f"{operator} models", title_style="bold")
+    table.add_column("id")
+    table.add_column("label")
+    table.add_column("effort")
+    for r in rows:
+        name = r["id"] + (" [dim](deprecated)[/]" if r["deprecated"] else "")
+        table.add_row(name, r["label"], ", ".join(r["reasoning"]))
+    return table
 
 
 def _common_parser() -> argparse.ArgumentParser:
@@ -202,6 +214,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--max-parallel-evals", type=int, default=8,
         help="Cap on episodes the arena runs concurrently (default: %(default)s).",
     )
+
+    mo = sub.add_parser(
+        "models", parents=[common], formatter_class=RichHelpFormatter,
+        help="List the models the installed operator CLI can actually serve on this machine.",
+    )
+    mo.add_argument("--operator", choices=["codex", "claude"], default="codex")
 
     evolve = sub.add_parser(
         "evolve", parents=[common], formatter_class=RichHelpFormatter,
@@ -397,6 +415,20 @@ def _run(argv: list[str] | None) -> int:
             max_parallel_evals=args.max_parallel_evals,
         )
         print(json.dumps(evidence.to_dict(), indent=2))
+        return 0
+
+    if args.cmd == "models":
+        models: list[ModelInfo] | None = list_models(args.operator)
+        if models is None:
+            err.print(f"[yellow]couldn't determine {args.operator}'s models[/] "
+                      "(offline, old CLI, or logged out) — check `"
+                      f"{args.operator} --version` / login.")
+            models = []
+        data = [{"id": m.id, "label": m.label, "reasoning": list(m.reasoning),
+                 "deprecated": m.deprecated} for m in models]
+        emit(data, args.output,
+             table=lambda rows: _models_table(args.operator, rows),
+             plain=lambda rows: "\n".join(r["id"] for r in rows))
         return 0
 
     if args.cmd == "evolve":
