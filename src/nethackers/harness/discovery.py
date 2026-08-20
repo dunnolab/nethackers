@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import shutil
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -138,3 +139,64 @@ def _claude_models(*, run: Callable, http: Callable, home: Path | None) -> list[
             continue
         out.append(ModelInfo(id=str(d["id"]), label=str(d.get("display_name") or d["id"])))
     return out
+
+
+_CLAUDE_ALIASES = frozenset({"default", "sonnet", "opus", "haiku", "fable"})
+
+
+def is_model_available(
+    backend: str,
+    model: str,
+    *,
+    models: list[ModelInfo] | None = None,
+    run: Callable = subprocess.run,
+    http: Callable = httpx.get,
+    home: Path | None = None,
+) -> bool | None:
+    if backend == "claude" and model in _CLAUDE_ALIASES:
+        return True
+    if models is None:
+        models = list_models(backend, run=run, http=http, home=home)
+    if models is None:
+        return None
+    check = model
+    if backend == "claude" and check.endswith("[1m]"):
+        check = check[:-4]
+    return check in {m.id for m in models}
+
+
+@dataclass(frozen=True)
+class CliInfo:
+    backend: str
+    installed: bool
+    version: str | None
+    logged_in: bool | None
+
+
+def _logged_in(backend: str, *, run: Callable) -> bool | None:
+    try:
+        if backend == "codex":
+            return run(["codex", "login", "status"], capture_output=True,
+                       text=True, timeout=10).returncode == 0
+        proc = run(["claude", "auth", "status", "--json"], capture_output=True,
+                   text=True, timeout=10)
+        if proc.returncode != 0:
+            return None
+        return bool(json.loads(proc.stdout).get("loggedIn"))
+    except Exception:
+        return None
+
+
+def detect_cli(backend: str, *, run: Callable = subprocess.run,
+               which: Callable = shutil.which) -> CliInfo:
+    binary = {"codex": "codex", "claude": "claude"}[backend]
+    if which(binary) is None:
+        return CliInfo(backend, False, None, None)
+    version: str | None = None
+    try:
+        proc = run([binary, "--version"], capture_output=True, text=True, timeout=10)
+        if proc.returncode == 0:
+            version = (proc.stdout or "").strip() or None
+    except Exception:
+        pass
+    return CliInfo(backend, True, version, _logged_in(backend, run=run))

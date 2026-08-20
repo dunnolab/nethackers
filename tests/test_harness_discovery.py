@@ -92,3 +92,48 @@ def test_claude_credential_reads_linux_creds_file(tmp_path, monkeypatch):
     models = list_models("claude", run=_run_fail, http=get, home=tmp_path)
     assert [m.id for m in models] == ["claude-opus-5", "claude-fable-5"]
     assert seen["auth"] == "Bearer oauth-xyz"     # token used, never logged
+
+
+from nethackers.harness.discovery import CliInfo, ModelInfo, detect_cli, is_model_available
+
+_CODEX_MODELS = [ModelInfo("gpt-5.6-sol", "gpt-5.6-sol")]
+_CLAUDE_MODELS = [ModelInfo("claude-opus-5", "Opus 5")]
+
+
+def test_is_model_available_codex_membership():
+    assert is_model_available("codex", "gpt-5.6-sol", models=_CODEX_MODELS) is True
+    assert is_model_available("codex", "gpt-9.9-nope", models=_CODEX_MODELS) is False
+
+
+def test_is_model_available_claude_alias_always_true():
+    # aliases resolve server-side; never block them even with an empty list
+    assert is_model_available("claude", "opus", models=[]) is True
+    assert is_model_available("claude", "fable", models=None, run=lambda *a, **k: None) is True
+
+
+def test_is_model_available_strips_1m_suffix():
+    assert is_model_available("claude", "claude-opus-5[1m]", models=_CLAUDE_MODELS) is True
+
+
+def test_is_model_available_none_list_is_unknown():
+    # models is None (discovery failed) and not an alias -> None (unknown)
+    assert is_model_available("claude", "claude-x", models=None,
+                              http=lambda *a, **k: (_ for _ in ()).throw(RuntimeError)) is None
+
+
+def test_detect_cli_installed_reports_version():
+    def which(_b): return "/usr/local/bin/codex"
+    def run(cmd, **k):
+        from types import SimpleNamespace
+        if cmd[:2] == ["codex", "--version"]:
+            return SimpleNamespace(returncode=0, stdout="codex-cli 0.146.0\n")
+        return SimpleNamespace(returncode=0, stdout="")   # login status
+    info = detect_cli("codex", run=run, which=which)
+    assert info.installed is True
+    assert info.version == "codex-cli 0.146.0"
+    assert info.logged_in is True
+
+
+def test_detect_cli_missing_binary():
+    info = detect_cli("claude", run=lambda *a, **k: None, which=lambda _b: None)
+    assert info == CliInfo("claude", False, None, None)
