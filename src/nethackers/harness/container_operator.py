@@ -195,6 +195,23 @@ class ContainerOperator:
             done.set()
             if watcher is not None:
                 watcher.join(timeout=2)
+            # Closes a race between the two watchers (this one, and
+            # run_operator's own internal one -- both poll the same `stop`
+            # but against different `done` events): if run_operator's own
+            # watcher is the one that notices `stop` first, it SIGKILLs only
+            # the local `docker run` client, run_operator returns fast, and
+            # THIS `done` gets set -- possibly while our watcher is still
+            # mid-wait, so its `done.wait()` returns via the "already set"
+            # path without ever reaching the `stop.is_set()` check above,
+            # and the container is left running (SIGKILLing the client does
+            # NOT stop it). This final call is synchronous, on the main
+            # thread, made only after run_operator is confirmed done --
+            # independent of watcher poll-timing, so it can't lose the race.
+            # `_maybe_kill_on_stop` already no-ops when `stop` was never set
+            # (normal completion), and `_docker_kill` is idempotent/
+            # best-effort, so a possible double-call (watcher + this) is
+            # harmless.
+            self._maybe_kill_on_stop(name, stop)
 
     def _maybe_kill_on_stop(self, name: str, stop: threading.Event | None) -> None:
         """Single check-and-act step, kept separate from the watcher's poll

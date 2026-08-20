@@ -1,4 +1,5 @@
 # tests/test_container_operator.py
+import os
 import threading
 from pathlib import Path
 
@@ -125,7 +126,16 @@ def test_stop_kills_the_same_name_baked_into_the_docker_argv(tmp_path):
     the --name it bakes into the docker argv and the name its stop-watcher
     docker-kills would have `docker kill` target the wrong (or a
     nonexistent) container, so stop would fail silently. Pin that both call
-    sites see the exact same value out of a single run() invocation."""
+    sites see the exact same value out of a single run() invocation.
+
+    `_docker_kill` may legitimately fire more than once here: the watcher
+    calls it, which (via `release`) lets the gated stdout resolve and
+    run_operator finish -- and since nothing clears `stop`, run()'s own
+    final synchronous safety-net call (added for the watcher-race fix, see
+    test_stop_reliably_kills_even_when_run_operators_watcher_wins_the_race)
+    then fires too. That double-call is the documented, harmless,
+    idempotent case -- this test only cares that every call, however many,
+    named the exact same container."""
     seen = {}
     killed = []
     release = threading.Event()
@@ -151,4 +161,108 @@ def test_stop_kills_the_same_name_baked_into_the_docker_argv(tmp_path):
 
     name_in_argv = seen["cmd"][seen["cmd"].index("--name") + 1]
     assert name_in_argv == "mut-work-iter-7"
-    assert killed == [name_in_argv]   # the SAME name -- not just the same formula
+    assert killed                        # _docker_kill fired at least once
+    assert set(killed) == {name_in_argv}  # every call used the SAME name
+
+
+class _StillRunningFakePopen:
+    """Unlike FakePopen/_GatedFakePopen above (poll() always 0 -- "already
+    exited"), this fake is genuinely still "running" (poll() stays None)
+    until run_operator's OWN internal stop-watcher notices `stop` and
+    attempts to kill it. stdout blocks until that real kill-attempt happens
+    (detected via the os.getpgid hook the test installs), so run_operator's
+    completion is genuinely CAUSED BY its own watcher acting first -- the
+    exact interleaving the race below depends on, and the thing a
+    poll()-always-0 fake structurally cannot exercise (its kill-branch is
+    dead code, so it can never be the reason run_operator returns)."""
+
+    def __init__(self, cmd, unblock, **kw):
+        self.cmd = cmd
+        self.pid = 4321
+        self._unblock = unblock
+
+    @property
+    def stdout(self):
+        self._unblock.wait(timeout=2)
+        return iter(['{"type":"x"}\n'])
+
+    def poll(self):
+        return None
+
+    def wait(self, timeout=None):
+        return 0
+
+
+def test_stop_reliably_kills_even_when_run_operators_watcher_wins_the_race(
+    tmp_path, monkeypatch,
+):
+    """Regression for a Critical race found in review (empirically ~27.5%
+    failure across 40 trials on the pre-fix code): ContainerOperator's own
+    stop-watcher and run_operator's internal one both poll the same `stop`,
+    but against different `done` events. When run_operator's watcher wins --
+    notices `stop` first and SIGKILLs the local docker-run *client* --
+    run_operator returns fast, run()'s `finally: done.set()` fires, and OUR
+    watcher's `done.wait()` returns via the "already set" path without ever
+    reaching its own `if stop.is_set()` check below it -- so `_docker_kill`
+    never runs, and the container is left running (SIGKILLing the client
+    does not stop it).
+
+    Reproducing this needs a fake process that is genuinely still "running"
+    (poll() returns None) so run_operator's watcher's real kill-branch is
+    reachable -- see _StillRunningFakePopen. Both watchers then poll on the
+    *same* ~0.1s cadence, so which one notices `stop` first is a genuine
+    thread-scheduling race, not something a single trial can reliably catch
+    either way (empirically: 10/40 misses before the fix in this module's
+    own experiment, 0/40 after, in line with the reviewer's ~27.5%). Running
+    N independent trials and requiring ALL to succeed makes this a reliable
+    regression gate: with the fix, the final synchronous call in run()'s
+    `finally` is unconditional and independent of watcher timing, so success
+    is deterministic (N/N, always); without it, at an empirical ~25-27%
+    single-trial miss rate, the chance of all 20 trials happening to dodge
+    the race is under 1%.
+    """
+    op = ContainerOperator(harness="codex", image="img:test", system="Linux", home=tmp_path)
+    (tmp_path / ".codex").mkdir()
+    wt = tmp_path / "work" / "iter-race"
+    wt.mkdir(parents=True)
+
+    real_getpgid = os.getpgid
+    current_unblock: list[threading.Event] = []
+
+    def fake_getpgid(pid):
+        # Only the fake pid triggers the hook -- anything else (unrelated
+        # calls from elsewhere) falls through to the real implementation.
+        if pid == 4321 and current_unblock:
+            current_unblock[0].set()
+            # This is what run_operator's own `os.killpg(os.getpgid(pid),
+            # SIGKILL)` call feeds into `killpg` -- raising here means
+            # `killpg` is never reached at all, so no real signal is ever
+            # sent (contextlib.suppress(Exception) in run_operator's
+            # watcher swallows this).
+            raise ProcessLookupError("fake pid -- never a real process")
+        return real_getpgid(pid)
+
+    monkeypatch.setattr(os, "getpgid", fake_getpgid)
+
+    trials = 20
+    results = []
+    for _ in range(trials):
+        unblock = threading.Event()
+        current_unblock[:] = [unblock]
+        killed = []
+
+        def fake_popen(cmd, _unblock=unblock, **kw):
+            return _StillRunningFakePopen(cmd, _unblock, **kw)
+        op._popen = fake_popen
+        op._docker_kill = lambda name, _killed=killed: _killed.append(name)
+
+        stop = threading.Event()
+        stop.set()
+        op.run(wt, "BRIEF-TEXT", stop=stop)
+        results.append(bool(killed))
+
+    misses = results.count(False)
+    assert misses == 0, (
+        f"{misses}/{trials} trials never called _docker_kill -- the "
+        "container would have been left running"
+    )
