@@ -19,12 +19,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Button, Input, Label, OptionList, Select, Static
 from textual.widgets.option_list import Option
 
+from nethackers.harness.discovery import ModelInfo, list_models
 from nethackers.harness.launch import EvolveParams, prepare_evolve
 from nethackers.harness.models import EFFORTS, MODELS
 from nethackers.hub.objectives import CATALOG
@@ -115,6 +117,7 @@ class EvolveForm(Vertical):
         # for the cursor. It still scrolls: each field's scroll_visible() drives
         # it as the cursor lands.
         form.can_focus = False
+        self._refresh_models("claude")
 
     def action_leave_field(self) -> None:
         """Hand control back to the modal keyboard nav so the global keys
@@ -153,8 +156,30 @@ class EvolveForm(Vertical):
             model.set_options(self._model_options(str(event.value)))
             model.value = ""
             self.query_one("#f_model_custom", Input).display = False
+            self._refresh_models(str(event.value))   # then refine from the live catalog
         elif event.select.id == "f_model":  # reveal the id field only for Custom…
             self.query_one("#f_model_custom", Input).display = event.value == "__custom__"
+
+    @work(exclusive=True, thread=True)
+    def _refresh_models(self, backend: str) -> None:
+        # Live discovery does subprocess/HTTP (~1-2s) -- off the UI thread. On
+        # None (offline / old CLI / logged out) we keep the static fallback.
+        models = list_models(backend)
+        self.app.call_from_thread(self._apply_live_models, backend, models)
+
+    def _apply_live_models(self, backend: str, models: list[ModelInfo] | None) -> None:
+        if str(self.query_one("#f_op", Select).value) != backend:
+            return   # operator changed since this fetch started -- stale, drop it
+        if not models:
+            return   # keep the static fallback
+        sel = self.query_one("#f_model", Select)
+        current = str(sel.value)
+        options = [("Harness default", ""),
+                   *[(m.label + (" (deprecated)" if m.deprecated else ""), m.id) for m in models],
+                   ("Custom…", "__custom__")]
+        sel.set_options(options)
+        valid = {m.id for m in models} | {"", "__custom__"}
+        sel.value = current if current in valid else ""
 
     def _model(self) -> str | None:
         value = str(self.query_one("#f_model", Select).value)

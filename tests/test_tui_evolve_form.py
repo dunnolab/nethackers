@@ -10,13 +10,22 @@ test -- the real one builds a run dir on disk and spins up an operator, which
 this suite must never do."""
 from __future__ import annotations
 
+import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Input, Select, Static
 
 import nethackers.tui.screens.evolve_form as ef
+from nethackers.harness.discovery import ModelInfo
 from nethackers.hubclient.credentials import Credentials
 from nethackers.tui.app import NetHackersApp
 from nethackers.tui.screens.evolve_form import EvolveForm
+
+
+@pytest.fixture(autouse=True)
+def _no_live_models(monkeypatch):
+    # Default: discovery "unavailable" -> the form keeps its static fallback,
+    # so every existing test sees exactly today's behavior (and no real probe).
+    monkeypatch.setattr(ef, "list_models", lambda *a, **k: None)
 
 
 class _Host(App):
@@ -138,3 +147,20 @@ async def test_missing_objective_shows_error_no_start(monkeypatch):
         assert app.started is None         # no run started
         err_text = str(app.query_one("#f_err", Static).render()).lower()
         assert "objective" in err_text
+
+
+async def test_model_picker_populates_from_live_discovery(monkeypatch):
+    monkeypatch.setattr(
+        ef, "list_models",
+        lambda backend, **k: (
+            [ModelInfo("live-sol-9", "Live Sol 9")] if backend == "claude" else None
+        ),
+    )
+    app = _Host(None)
+    async with app.run_test(size=(100, 50)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        sel = app.query_one("#f_model", Select)
+        sel.value = "live-sol-9"                 # raises if the live option isn't present
+        assert sel.value == "live-sol-9"
