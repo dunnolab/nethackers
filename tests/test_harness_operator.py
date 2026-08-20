@@ -22,6 +22,8 @@ class _FakeProc:
     def __init__(self, lines):
         self.stdout = iter(lines)
         self._terminated = False
+        self.stderr = iter(())     # new: run_operator now drains stderr
+        self.returncode = 0        # new: run_operator now reads the exit code
 
     def poll(self):
         return None if not self._terminated else 0
@@ -38,6 +40,21 @@ def _popen_factory(lines):
     def popen(cmd, **kwargs):
         return _FakeProc(lines)
     return popen
+
+
+class _FakeProcRC:
+    """Fake Popen exposing stdout, stderr, returncode -- for the new capture."""
+    def __init__(self, out_lines, err_lines=(), returncode=0):
+        self.stdout = iter(out_lines)
+        self.stderr = iter(err_lines)
+        self.returncode = returncode
+        self._terminated = False
+    def poll(self):
+        return None if not self._terminated else self.returncode
+    def terminate(self):
+        self._terminated = True
+    def wait(self, timeout=None):
+        return self.returncode
 
 
 def test_run_operator_meters_faithfully_from_result_line(tmp_path):
@@ -88,6 +105,21 @@ def test_run_operator_reaps_the_process(tmp_path):
 
     run_operator(["fake"], tmp_path, backend="claude", popen=popen)
     assert proc_box.get("waited") is True
+
+
+def test_run_operator_captures_returncode_and_stderr(tmp_path):
+    def popen(cmd, **kwargs):
+        return _FakeProcRC([_RESULT], err_lines=['{"error":"json body error"}\n'], returncode=1)
+    res = run_operator(["fake"], tmp_path, backend="codex", popen=popen)
+    assert res.returncode == 1
+    assert "json body error" in (res.error_tail or "")
+
+
+def test_run_operator_clean_run_has_zero_rc_and_no_error_tail(tmp_path):
+    def popen(cmd, **kwargs):
+        return _FakeProcRC([_RESULT], err_lines=(), returncode=0)
+    res = run_operator(["fake"], tmp_path, backend="claude", popen=popen)
+    assert res.returncode == 0 and res.error_tail is None
 
 
 def test_claude_cmd_includes_hermeticity_flags_and_brief():

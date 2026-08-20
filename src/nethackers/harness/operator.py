@@ -13,6 +13,7 @@ import os
 import signal
 import subprocess
 import threading
+from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +26,8 @@ class OperatorResult:
     backend: str
     usage: TokenUsage
     stopped_reason: str  # "completed" | "killed"
+    returncode: int | None = None
+    error_tail: str | None = None
 
     @property
     def total(self) -> int:
@@ -47,8 +50,19 @@ def run_operator(
     and ``stopped_reason`` is ``"killed"`` (else ``"completed"``). A crashing
     ``on_line`` never aborts the run."""
     meter = Meter(backend)
-    proc = popen(cmd, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    proc = popen(cmd, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                  text=True, bufsize=1, start_new_session=True)
+    err_lines: deque[str] = deque(maxlen=50)
+
+    def _drain_stderr() -> None:
+        if getattr(proc, "stderr", None) is None:
+            return
+        with contextlib.suppress(Exception):
+            for line in proc.stderr:
+                err_lines.append(line)
+
+    err_thread = threading.Thread(target=_drain_stderr, daemon=True)
+    err_thread.start()
     killed = threading.Event()
     done = threading.Event()
     watcher: threading.Thread | None = None
@@ -76,10 +90,14 @@ def run_operator(
         done.set()  # release the watcher WITHOUT poisoning the shared stop
         if watcher is not None:
             watcher.join(timeout=2)
+        err_thread.join(timeout=2)
         with contextlib.suppress(Exception):
             proc.wait(timeout=30)
+    error_tail = "".join(err_lines).strip() or None
     return OperatorResult(backend=backend, usage=meter.usage,
-                          stopped_reason="killed" if killed.is_set() else "completed")
+                          stopped_reason="killed" if killed.is_set() else "completed",
+                          returncode=getattr(proc, "returncode", None),
+                          error_tail=error_tail)
 
 
 def _claude_cmd(cli: str, brief: str, model: str | None, effort: str | None) -> list[str]:
