@@ -138,6 +138,14 @@ class RunMonitor(Screen):
     # ---- live renders (forwarded by the app while this screen is on top) ----
     def render_state(self) -> None:
         run, st = self.run, self.run.state
+        # No next batch arrives to seal the final table. Run.finish marks it
+        # done, and the worker's final render_state call must refresh its
+        # caption from "running… n/n" to "✓ complete".
+        if not run.running and self._batch_statics:
+            batch = run.current_batch()
+            if batch is not None:
+                self._batch_statics[-1].update(
+                    episode_table(batch.label, batch.rows(), done=batch.done))
         self.query_one("#parent", Static).update(S.parent_panel(st))
         if st.get("phase") == "rejected":
             self.query_one("#candidate", Static).update(tombstone(
