@@ -7,7 +7,7 @@ Docker, no real network). ``POST /register`` wraps the request body's
 self-reported trust model) and delegates straight to ``validate.register``.
 
 ``IDENTITY``/``SPEC`` mirror test_validate.py's real-catalog-entry pattern:
-the smallest real objective (a per-identity objective, 15 episodes) so the
+the smallest real objective (a per-identity objective, 2 episodes) so the
 register body built here has to satisfy the full validation ladder for
 real, exactly like a real registration would.
 """
@@ -25,7 +25,7 @@ from nethackers.hub.objectives import CATALOG
 from nethackers.hub.store import Store
 
 IDENTITY = "val-dwa-law-fem"
-SPEC = CATALOG[IDENTITY]  # a real, published identity objective (15 episodes)
+SPEC = CATALOG[IDENTITY]  # a real, published identity objective (2 episodes)
 BATCH_SIZE = len(SPEC.batch)
 
 TOKEN = "tok-sam"
@@ -88,7 +88,7 @@ def _client(tmp_path: Any) -> tuple[TestClient, Store]:
 
 def test_register_then_read_solution(tmp_path: Any) -> None:
     # Property 1: POST /register with a stub token + a valid body -> 200,
-    # RegisterResult.atoms_inserted == 15; GET /solutions/{digest} -> 200
+    # RegisterResult.atoms_inserted == 2; GET /solutions/{digest} -> 200
     # with the stored solution.
     client, _store = _client(tmp_path)
 
@@ -96,7 +96,7 @@ def test_register_then_read_solution(tmp_path: Any) -> None:
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["atoms_inserted"] == BATCH_SIZE == 15
+    assert payload["atoms_inserted"] == BATCH_SIZE == 2
     assert payload["solution_digest"] == DIGEST
     assert payload["owner"] == OWNER
     assert payload["objective"] == IDENTITY

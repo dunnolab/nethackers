@@ -55,7 +55,7 @@ class EvolveParams:
     seed: str  # resolved parent tree (CLI SELECTs it; the TUI form passes a seed root)
     operator: str = "claude"
     iterations: int = 1
-    validation_n: int = 15
+    validation_n: int = 2
     migrate: bool = True
     max_parallel_evals: int = 8
     image: str = "nethackers/arena:dev"

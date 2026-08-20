@@ -190,7 +190,7 @@ def _natural_character(trajectory_id: int) -> str:
 
 
 def build_catalog(
-    *, random_size: int = 32, per_identity_size: int = 15
+    *, random_size: int = 32, per_identity_size: int = 2
 ) -> dict[str, ObjectiveSpec]:
     """Build the hub's objective catalog.
 
@@ -205,11 +205,9 @@ def build_catalog(
       identity objective's atoms.
 
     ``random_size``/``per_identity_size`` are the published-batch sizes
-    for this M2a default catalog (tunable, not architectural): 15 (was 8,
-    M1's ``public-8`` default seed-set size) roughly halves the per-identity
-    standard error -- cheap now that eval runs in parallel, while still a
-    pragmatic fraction of the sibling arena's 1024-episode reliable setting
-    (M3 SELECT-from-hub).
+    for this M2a default catalog (tunable, not architectural). Identity
+    objectives default to two episodes for fast local evaluation; callers can
+    request larger batches when they need statistically reliable results.
 
     Deterministic: every batch is derived from ``PUBLIC_SECRET`` via
     ``trajectory_spec``, so calling this twice with the same arguments

@@ -103,11 +103,11 @@ def test_identity_objectives_are_single_character():
     spec0 = CATALOG[IDENTITIES[0]]
     assert spec0.kind == "identity"
     assert spec0.aggregation == "mean"
-    assert len(spec0.batch) == 15  # per_identity_size default
+    assert len(spec0.batch) == 2  # per_identity_size default
     assert set(spec0.characters()) == {IDENTITIES[0]}
-    assert [seed for seed, _character in spec0.batch] == list(range(15))
+    assert [seed for seed, _character in spec0.batch] == [0, 1]
 
-    # Every identity, not just the sample -- cheap (73 x 15) and much
+    # Every identity, not just the sample -- cheap (73 x 2) and much
     # stronger coverage of the "single-character" invariant.
     for identity in IDENTITIES:
         spec = CATALOG[identity]

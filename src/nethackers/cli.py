@@ -236,7 +236,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "default: the harness's own default.",
     )
     evolve.add_argument("--iterations", type=int, default=1)
-    evolve.add_argument("--validation-n", type=int, default=15)
+    evolve.add_argument("--validation-n", type=int, default=2)
     evolve.add_argument(
         "--max-parallel-evals", type=int, default=8,
         help="Cap on episodes the arena runs concurrently per eval (default: %(default)s).",
