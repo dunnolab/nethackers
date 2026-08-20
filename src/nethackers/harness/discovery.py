@@ -14,12 +14,17 @@ server catalog.
 from __future__ import annotations
 
 import json
+import os
+import platform
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
 import httpx
+
+_ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models?limit=100"
+_ANTHROPIC_VERSION = "2023-06-01"
 
 
 @dataclass(frozen=True)
@@ -39,6 +44,8 @@ def list_models(
 ) -> list[ModelInfo] | None:
     if backend == "codex":
         return _codex_models(run=run, home=home)
+    if backend == "claude":
+        return _claude_models(run=run, http=http, home=home)
     return None
 
 
@@ -77,3 +84,57 @@ def _codex_models(*, run: Callable, home: Path | None) -> list[ModelInfo] | None
         return _codex_parse(json.loads(cache.read_text()))
     except Exception:
         return None
+
+
+def _keychain_token(*, run: Callable) -> str | None:
+    try:
+        proc = run(["security", "find-generic-password", "-s", "Claude Code-credentials", "-w"],
+                   capture_output=True, text=True, timeout=5)
+        if proc.returncode != 0:
+            return None
+        return json.loads(proc.stdout)["claudeAiOauth"]["accessToken"] or None
+    except Exception:
+        return None
+
+
+def _claude_auth_headers(*, run: Callable, home: Path | None) -> dict[str, str] | None:
+    if platform.system() == "Darwin":
+        tok = _keychain_token(run=run)
+        if tok:
+            return {"Authorization": f"Bearer {tok}"}
+    creds = (home or Path.home()) / ".claude" / ".credentials.json"
+    try:
+        tok = json.loads(creds.read_text())["claudeAiOauth"]["accessToken"]
+        if tok:
+            return {"Authorization": f"Bearer {tok}"}
+    except Exception:
+        pass
+    key = os.environ.get("ANTHROPIC_API_KEY")
+    if key:
+        return {"x-api-key": key}
+    return None
+
+
+def _claude_models(*, run: Callable, http: Callable, home: Path | None) -> list[ModelInfo] | None:
+    auth = _claude_auth_headers(run=run, home=home)
+    if auth is None:
+        return None
+    headers = {**auth, "anthropic-version": _ANTHROPIC_VERSION}
+    try:
+        resp = http(_ANTHROPIC_MODELS_URL, headers=headers, timeout=10)
+    except Exception:
+        return None
+    if getattr(resp, "status_code", None) != 200:
+        return None      # 401 stale-token / any non-200 -> unknown, never []
+    try:
+        data = resp.json().get("data")
+    except Exception:
+        return None
+    if not isinstance(data, list):
+        return None
+    out: list[ModelInfo] = []
+    for d in data:
+        if not isinstance(d, dict) or not d.get("id"):
+            continue
+        out.append(ModelInfo(id=str(d["id"]), label=str(d.get("display_name") or d["id"])))
+    return out
