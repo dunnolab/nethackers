@@ -35,3 +35,50 @@ def test_missing_codex_login_raises_with_hint():
         auth_docker_args(
             "codex", system="Linux", home=Path("/does/not/exist"), _require_exists=True,
         )
+
+
+def test_claude_macos_keychain_miss_raises():
+    # `security find-generic-password` exits non-zero when there is no
+    # matching Keychain item (never ran `claude` on this Mac, or the item
+    # was deleted) -- that's the macOS half of "unresolvable creds".
+    def fake_run(cmd, **kw):
+        class R:
+            returncode = 1
+            stdout = ""
+
+        return R()
+
+    with pytest.raises(AuthUnavailable):
+        auth_docker_args("claude", system="Darwin", run=fake_run, home=Path("/h"))
+
+
+def test_claude_macos_non_json_stdout_raises():
+    # `-w` succeeded (returncode 0) but the password field isn't the
+    # expected JSON blob -- a corrupted/foreign Keychain item.
+    def fake_run(cmd, **kw):
+        class R:
+            returncode = 0
+            stdout = "not-json"
+
+        return R()
+
+    with pytest.raises(AuthUnavailable):
+        auth_docker_args("claude", system="Darwin", run=fake_run, home=Path("/h"))
+
+
+def test_claude_macos_missing_access_token_raises():
+    # Valid JSON, but missing the `claudeAiOauth.accessToken` path.
+    def fake_run(cmd, **kw):
+        class R:
+            returncode = 0
+            stdout = json.dumps({"claudeAiOauth": {}})
+
+        return R()
+
+    with pytest.raises(AuthUnavailable):
+        auth_docker_args("claude", system="Darwin", run=fake_run, home=Path("/h"))
+
+
+def test_unknown_harness_raises():
+    with pytest.raises(ValueError, match="unknown harness"):
+        auth_docker_args("pi", system="Linux", home=Path("/h"))
