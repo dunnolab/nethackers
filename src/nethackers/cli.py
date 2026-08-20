@@ -62,6 +62,7 @@ from rich.text import Text
 from rich_argparse import RichHelpFormatter
 
 from nethackers.eval.runner import eval_batch
+from nethackers.harness.discovery import preflight_model
 from nethackers.harness.launch import EvolveParams, _now, prepare_evolve
 from nethackers.hub.objectives import CATALOG
 from nethackers.hubclient import credentials as _cred
@@ -412,6 +413,18 @@ def _run(argv: list[str] | None) -> int:
             from_seed=args.from_seed, select_k=args.select_k, select_temp=args.select_temp,
             model=args.model, effort=args.effort,
         )
+
+        # Preflight only when a model is pinned: harness-default has nothing to
+        # validate, and this keeps the model=None path (the common case + every
+        # existing wiring test) free of any CLI/network probe. A confident
+        # refuse stops here -- no run dir, no doomed spin; unknown only warns.
+        if args.model:
+            pf = preflight_model(args.operator, args.model)
+            if pf.action == "refuse":
+                err.print(f"[red]{pf.message}[/]")
+                return 2
+            if pf.action == "warn":
+                err.print(f"[yellow]{pf.message}[/]")
         plan = prepare_evolve(params)
 
         if sys.stdout.isatty() and args.output != "json" and not args.no_tui:
