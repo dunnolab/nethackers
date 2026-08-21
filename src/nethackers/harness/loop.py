@@ -16,7 +16,6 @@ from nethackers.harness.brief import build_brief
 from nethackers.harness.evaluate import evaluate
 from nethackers.harness.gate import passes_gate
 from nethackers.harness.metering import TokenUsage
-from nethackers.harness.operator import OperatorResult
 from nethackers.harness.register import register_win
 from nethackers.harness.seeds import dev_spec, validation_spec
 from nethackers.harness.select import top_trusted_elite
@@ -182,38 +181,23 @@ def run_loop(
             try:
                 op = operator.run(worktree, brief, on_line=_log_cb(tag), stop=stop)
             except Exception as e:
-                # A RAISE here (e.g. subprocess.Popen's FileNotFoundError for a
-                # missing/renamed CLI binary) means "the operator did not run",
-                # same as a non-zero exit -- route it through the SAME breaker
-                # path below instead of letting it fall to the generic outer
-                # `except`, which does not increment consecutive_errors and
-                # would fast-spin the whole `iterations` budget in milliseconds
-                # against a persistently-broken operator.
-                op = OperatorResult(backend="operator", usage=TokenUsage(),
-                                    stopped_reason="completed", returncode=1,
-                                    error_tail=f"operator failed to start: {e}")
-
-            # Operator-error circuit-breaker: a non-zero exit is the confirmed
-            # signal of an unavailable model / stale CLI / auth failure (its
-            # stderr -- e.g. codex's "json body error" -- is now captured). This
-            # is distinct from a HEALTHY run that simply didn't improve, which
-            # must NOT trip the breaker. Without this, a persistently-failing
-            # model spins the whole `iterations` budget in seconds.
-            op_errored = (op.stopped_reason != "killed"
-                          and op.returncode not in (0, None))
-            if op_errored:
+                # run_operator RAISES on a non-zero backend exit / startup failure
+                # (missing or renamed binary, unavailable model, stale CLI, auth),
+                # carrying the CLI's real error. Trip a circuit-breaker with
+                # backoff rather than letting the generic outer `except` fast-
+                # `continue` -- which would spin the whole `iterations` budget in
+                # milliseconds against a persistently-broken operator. A HEALTHY
+                # run resets the counter below, so an ordinary no-improvement
+                # iteration never trips the breaker.
                 consecutive_errors += 1
-                detail = (op.error_tail or "").strip() or f"exit {op.returncode}"
-                _emit("error", k + 1, tokens=op.total, detail=detail)
-                report(f"{tag} · ✗ operator error (exit {op.returncode}): {detail}")
-                _record(k + 1, IterationResult(False, f"operator-error:{op.returncode}",
-                                               tokens=op.total, usage=op.usage,
-                                               stopped_reason=op.stopped_reason))
+                detail = str(e)
+                _emit("error", k + 1, detail=detail)
+                report(f"{tag} · ✗ operator error: {detail}")
+                _record(k + 1, IterationResult(False, f"operator-error:{detail}"))
                 if consecutive_errors >= max_consecutive_errors:
-                    msg = (f"aborting after {consecutive_errors} consecutive operator "
-                           f"failures — last error: {detail}")
                     _emit("aborted", k + 1, detail=detail)
-                    report(f"{tag} · ✗✗ {msg}")
+                    report(f"{tag} · ✗✗ aborting after {consecutive_errors} "
+                           f"consecutive operator failures — last: {detail}")
                     break
                 sleep(min(2 ** (consecutive_errors - 1), 30))   # 1s, 2s, 4s… capped
                 continue

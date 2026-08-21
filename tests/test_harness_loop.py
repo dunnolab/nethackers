@@ -6,7 +6,7 @@ import pytest
 
 from nethackers.harness import loop as loop_mod
 from nethackers.harness.loop import IterationResult, run_loop
-from nethackers.harness.metering import TokenUsage, TokenUsage as _TU
+from nethackers.harness.metering import TokenUsage
 from nethackers.harness.store import LocalTreeStore
 
 
@@ -47,22 +47,14 @@ class _RaisingOperator:
         raise RuntimeError("boom")
 
 
-class _FailingOperator:
-    """Operator that always errors (non-zero exit) -- e.g. an unavailable model."""
-    def run(self, worktree, brief, *, on_line=None, stop=None):
-        from nethackers.harness.operator import OperatorResult
-        return OperatorResult(backend="codex", usage=_TU(), stopped_reason="completed",
-                              returncode=1, error_tail='{"error":"json body error"}')
-
-
 class _KilledOperator:
-    """Operator that reports a manual stop (SIGKILL shape: stopped_reason=
-    "killed" with a non-zero returncode) -- a user-initiated stop is not a
-    model failure, so it must NOT count toward the operator-error breaker."""
+    """Operator that reports a manual stop (stopped_reason="killed"). A kill
+    returns normally (run_operator does not raise on a kill), so it must NOT
+    count toward the operator-error breaker -- it falls through to the normal
+    gate path."""
     def run(self, worktree, brief, *, on_line=None, stop=None):
         from nethackers.harness.operator import OperatorResult
-        return OperatorResult(backend="codex", usage=_TU(), stopped_reason="killed",
-                              returncode=-9)
+        return OperatorResult(backend="codex", usage=TokenUsage(), stopped_reason="killed")
 
 
 def _fitness_runner(progress_by_version):
@@ -181,24 +173,9 @@ def test_loop_non_operator_raise_does_not_trip_the_operator_breaker(tmp_path, mo
     assert slept == []
 
 
-def test_loop_circuit_breaker_stops_after_consecutive_operator_errors(tmp_path):
-    slept: list[float] = []
-    results = run_loop(
-        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
-        tree_store=LocalTreeStore(tmp_path / "store"), operator=_FailingOperator(),
-        hub=_FakeHub(), image="img:dev", token="t", owner="o", iterations=10,
-        validation_n=3, now_fn=lambda: "2026-08-10T00:00:00Z",
-        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
-        max_consecutive_errors=3, sleep=slept.append)
-    # 10 iterations requested, but 3 straight operator errors trip the breaker
-    assert len(results) == 3
-    assert all(r.reason.startswith("operator-error") for r in results)
-    assert slept == [1, 2]   # backoff after error 1 and 2; error 3 breaks (no sleep)
-
-
 def test_loop_no_gain_does_not_trip_the_breaker(tmp_path):
-    # a HEALTHY operator (rc defaults to None) that never improves must run all
-    # iterations -- an unlucky run is not an error.
+    # a HEALTHY operator that never improves must run all iterations --
+    # an unlucky run is not an operator error.
     results = run_loop(
         objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
         tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
@@ -211,10 +188,10 @@ def test_loop_no_gain_does_not_trip_the_breaker(tmp_path):
 
 
 def test_loop_killed_operator_does_not_trip_the_breaker(tmp_path):
-    # SIGKILL shape (stopped_reason="killed", returncode=-9) must NOT be
-    # classified as an operator-error -- it falls through to the normal gate
-    # path (here: rejected as a no-op, since the killed operator never
-    # touched the worktree) without ever incrementing the breaker.
+    # A killed operator (stopped_reason="killed") must NOT be classified as an
+    # operator-error -- it returns normally and falls through to the normal gate
+    # path (here: rejected as a no-op, since the killed operator never touched
+    # the worktree) without ever incrementing the breaker.
     slept: list[float] = []
     results = run_loop(
         objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),

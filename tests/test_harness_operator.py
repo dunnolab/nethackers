@@ -1,6 +1,7 @@
 # tests/test_harness_operator.py
 import json
 import shutil
+import subprocess
 import threading
 from pathlib import Path
 
@@ -19,20 +20,19 @@ _RESULT = ('{"type":"result","usage":{"input_tokens":10,"output_tokens":20,'
 
 
 class _FakeProc:
-    def __init__(self, lines):
+    def __init__(self, lines, returncode=0):
         self.stdout = iter(lines)
         self._terminated = False
-        self.stderr = iter(())     # new: run_operator now drains stderr
-        self.returncode = 0        # new: run_operator now reads the exit code
+        self._returncode = returncode
 
     def poll(self):
-        return None if not self._terminated else 0
+        return None if not self._terminated else self._returncode
 
     def terminate(self):
         self._terminated = True
 
     def wait(self, timeout=None):
-        return 0
+        return self._returncode
 
 
 def _popen_factory(lines):
@@ -40,21 +40,6 @@ def _popen_factory(lines):
     def popen(cmd, **kwargs):
         return _FakeProc(lines)
     return popen
-
-
-class _FakeProcRC:
-    """Fake Popen exposing stdout, stderr, returncode -- for the new capture."""
-    def __init__(self, out_lines, err_lines=(), returncode=0):
-        self.stdout = iter(out_lines)
-        self.stderr = iter(err_lines)
-        self.returncode = returncode
-        self._terminated = False
-    def poll(self):
-        return None if not self._terminated else self.returncode
-    def terminate(self):
-        self._terminated = True
-    def wait(self, timeout=None):
-        return self.returncode
 
 
 def test_run_operator_meters_faithfully_from_result_line(tmp_path):
@@ -107,19 +92,24 @@ def test_run_operator_reaps_the_process(tmp_path):
     assert proc_box.get("waited") is True
 
 
-def test_run_operator_captures_returncode_and_stderr(tmp_path):
-    def popen(cmd, **kwargs):
-        return _FakeProcRC([_RESULT], err_lines=['{"error":"json body error"}\n'], returncode=1)
-    res = run_operator(["fake"], tmp_path, backend="codex", popen=popen)
-    assert res.returncode == 1
-    assert "json body error" in (res.error_tail or "")
+def test_run_operator_surfaces_nonzero_exit_and_stderr(tmp_path):
+    seen: list[str] = []
 
-
-def test_run_operator_clean_run_has_zero_rc_and_no_error_tail(tmp_path):
     def popen(cmd, **kwargs):
-        return _FakeProcRC([_RESULT], err_lines=(), returncode=0)
-    res = run_operator(["fake"], tmp_path, backend="claude", popen=popen)
-    assert res.returncode == 0 and res.error_tail is None
+        assert kwargs["stderr"] is subprocess.STDOUT
+        return _FakeProc([
+            "error: unexpected argument '--stale-flag'\n",
+            "For more information, try '--help'.\n",
+        ], returncode=2)
+
+    with pytest.raises(RuntimeError, match=(
+            r"codex operator exited with status 2: .*unexpected argument")):
+        run_operator(["fake"], tmp_path, backend="codex", on_line=seen.append,
+                     popen=popen)
+    assert seen == [
+        "error: unexpected argument '--stale-flag'\n",
+        "For more information, try '--help'.\n",
+    ]
 
 
 def test_claude_cmd_includes_hermeticity_flags_and_brief():
@@ -145,7 +135,8 @@ def test_codex_cmd_includes_hermeticity_flags_and_brief():
     cmd = _codex_cmd("codex", "BRIEF", None, None)
     assert cmd[:3] == ["codex", "exec", "BRIEF"]
     assert "--json" in cmd
-    assert "--full-auto" in cmd
+    assert "--approve-for-me" in cmd
+    assert "--full-auto" not in cmd
     assert "--ephemeral" in cmd
     assert "--ignore-user-config" in cmd
     assert "--ignore-rules" in cmd

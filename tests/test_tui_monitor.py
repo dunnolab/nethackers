@@ -4,9 +4,12 @@ detaches WITHOUT stopping the run, `s` stops it. (The worker->Run reductions
 themselves are covered by test_tui_run.py.)"""
 from __future__ import annotations
 
+from unittest.mock import patch
+
 from textual.app import App
 from textual.widgets import ListView, RichLog
 
+from nethackers.hubclient.live import episode_table
 from nethackers.tui.run import Run
 from nethackers.tui.screens.monitor import RunMonitor
 from nethackers.tui.status import EvolveConfig
@@ -72,6 +75,22 @@ async def test_live_render_mounts_a_new_batch_table():
         mon.render_episode("iter 2/3 · dev", {})
         await pilot.pause()
         assert len(mon.query("#tables Static")) == before + 1  # a new batch table mounted
+        assert run.current_batch().done is True
+
+
+async def test_finish_rerenders_final_batch_as_complete():
+    run = _populated_run()
+    host = _Host(run)
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        mon = host.screen
+        assert isinstance(mon, RunMonitor)
+        run.finish(results=[])
+        with patch("nethackers.tui.screens.monitor.episode_table",
+                   wraps=episode_table) as render_table:
+            mon.render_state()
+        await pilot.pause()
+        assert render_table.call_args.kwargs["done"] is True
 
 
 async def test_escape_detaches_without_stopping_the_run():

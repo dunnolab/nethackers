@@ -92,9 +92,15 @@ class Run:
         self.counts[ep["status"]] = self.counts.get(ep["status"], 0) + 1
         rows = batch.rows()
         mean = sum(float(r["progress"]) for r in rows) / len(rows)
+        total = int(ep["total"])
+        # Each callback represents a finished episode. Seal the batch as soon
+        # as every expected result has arrived; otherwise a completed batch
+        # incorrectly keeps showing "running… n/n" throughout a following
+        # non-evaluation phase such as mutation.
+        batch.done = len(rows) >= total
         # done/total = how many of this batch's episodes have finished (a true
         # completed-count), not the arriving episode's own (out-of-order) index.
-        self.eval_step = (len(rows), int(ep["total"]), mean)
+        self.eval_step = (len(rows), total, mean)
 
     def apply_log(self, tag: str, line: str) -> None:
         self.logs.setdefault(tag, []).extend(prettify(self.cfg.backend, line))
@@ -105,6 +111,9 @@ class Run:
         self.results = results
         self.error = error
         self.finished_at = time.monotonic()
+        batch = self.current_batch()
+        if batch is not None:
+            batch.done = True
         if error is not None:
             self.status = "failed"
         elif self.stop.is_set():
