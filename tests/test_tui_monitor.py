@@ -174,6 +174,21 @@ async def test_agent_log_labels_the_iteration_follows_it_and_arrows_swap():
         assert str(rl.border_title) == "iter 1/3" and run.sel_tag == "iter 1/3"
 
 
+async def test_scorecard_renders_the_per_identity_breakdown_for_a_set_run():
+    # a set objective's state carries identities/parent_means -- the monitor
+    # should populate #scorecard with the weakest build (the floor) shown.
+    run = Run("run-1", CFG)
+    run.apply_state(_state("mutating",
+                            identities=["wiz-elf-cha-mal", "wiz-orc-cha-mal"],
+                            parent_means={"wiz-elf-cha-mal": 0.4, "wiz-orc-cha-mal": 0.1}))
+    host = _Host(run)
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        mon = host.screen
+        assert isinstance(mon, RunMonitor)
+        assert "wiz-orc-cha-mal" in str(mon.query_one("#scorecard").render())
+
+
 async def test_arrows_navigate_tabs_and_panes_then_enter_interacts():
     from textual.widgets import Tab
 
