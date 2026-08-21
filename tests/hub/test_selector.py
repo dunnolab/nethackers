@@ -1,6 +1,7 @@
 import pytest
+
+from nethackers.hub.objectives import IDENTITIES
 from nethackers.hub.selector import ResolvedObjective, resolve
-from nethackers.hub.objectives import IDENTITIES, ROLES, VALID, ROLE_GENDERS
 
 
 def _role_members(role: str) -> tuple[str, ...]:
