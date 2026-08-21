@@ -4,7 +4,7 @@ against fake ``http`` doubles that record calls and return canned
 responses, never real ``httpx``/a real network call. ``HubClient``'s
 methods are checked against Task 12's actual API surface
 (``nethackers.hub.api``): same paths, same ``?param=`` names, the register
-body's three keys, and the register ``Authorization: Bearer`` header.
+body's link shape, and the register ``Authorization: Bearer`` header.
 """
 
 from __future__ import annotations
@@ -158,26 +158,30 @@ def test_solution_frontier_gets_frontier_path():
     assert http.calls == [("GET", "http://localhost:8000/solutions/abc/frontier", None)]
 
 
-def test_register_posts_bearer_header_and_three_key_body():
-    http = _FakeHttp(response={"solution_digest": "sha256:x"})
-    client = HubClient("http://localhost:8000", http=http)
-    reference = {"repo": "github.com/sam/x", "commit": "a" * 40}
-    manifest = {"root": ".", "entrypoint": "bot.py"}
-    evidence = {"solution_digest": "sha256:x"}
+def test_client_register_body():
+    sent = {}
 
-    result = client.register(
-        token="tok-sam", reference=reference, manifest=manifest, evidence=evidence
+    class H:
+        def post(self, url, json=None, headers=None):
+            sent.update(url=url, json=json, headers=headers)
+
+            class R:
+                def raise_for_status(self):
+                    pass
+
+                def json(self):
+                    return {"solution_id": "x"}
+
+            return R()
+
+    HubClient("https://hub", http=H()).register(
+        token="t", repo="github.com/sam/nethacker", commit="c" * 40, root="bot"
     )
-
-    assert result == {"solution_digest": "sha256:x"}
-    assert http.calls == [
-        (
-            "POST",
-            "http://localhost:8000/register",
-            {"reference": reference, "manifest": manifest, "evidence": evidence},
-            {"Authorization": "Bearer tok-sam"},
-        )
-    ]
+    assert sent["json"] == {
+        "reference": {"repo": "github.com/sam/nethacker", "commit": "c" * 40},
+        "root": "bot",
+    }
+    assert sent["headers"]["Authorization"] == "Bearer t"
 
 
 def test_base_url_trailing_slash_is_stripped():
