@@ -31,11 +31,13 @@ printf '%s\n' "${deploy_key}" >/home/nethacker/.ssh/authorized_keys
 chown nethacker:nethacker /home/nethacker/.ssh/authorized_keys
 chmod 0600 /home/nethacker/.ssh/authorized_keys
 
-# Host layout. data/ + backups/ are owned by the container's nonroot user
-# (distroless "nonroot" = uid/gid 65532) so the read-only hub can write its SQLite DB.
+# Host layout. The hub container runs as root (see hub/Dockerfile) with all Linux
+# capabilities dropped, no-new-privileges, and a read-only rootfs; it writes its
+# SQLite DB to the /data bind mount. data/+backups/ stay root-owned (group nethacker
+# can read backups). Running the hub image as a dedicated nonroot user is a
+# documented hardening follow-up; if you switch to one, chown these to that uid.
 install -d -m 0750 -o nethacker -g nethacker /srv/nethackers
-install -d -m 0750 /srv/nethackers/data /srv/nethackers/backups
-chown 65532:65532 /srv/nethackers/data /srv/nethackers/backups
+install -d -m 0750 -o root -g nethacker /srv/nethackers/data /srv/nethackers/backups
 install -d -m 0750 -o root -g nethacker /etc/nethackers
 
 # 2 GiB swap only if the host has none.

@@ -14,5 +14,11 @@ COPY pyproject.toml ./
 COPY src ./src
 RUN pip install --no-cache-dir ".[hub]"
 
+# Read-only rootfs at runtime (see deploy/compose.yaml): don't write .pyc, and
+# stream logs unbuffered.
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 EXPOSE 8000
-CMD ["uvicorn", "nethackers.hub.api:create_default_app", "--factory", "--host", "0.0.0.0", "--port", "8000"]
+# `nethackers-hub` (the [hub]-extra console script) matches deploy/compose.yaml's
+# `command:`. It is equivalent to the old `uvicorn ... --factory` line --
+# server.main() just runs uvicorn.run(create_default_app, factory=True).
+CMD ["nethackers-hub", "--host", "0.0.0.0", "--port", "8000"]

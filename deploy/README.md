@@ -15,8 +15,8 @@ Everything the deploy touches, after `provision.sh` has run:
 
 ```
 /srv/nethackers/
-├── data/          # hub SQLite DB (hub.sqlite3); owned by container nonroot uid 65532
-├── backups/       # your DB snapshots (chown 65532:65532)
+├── data/          # hub SQLite DB (hub.sqlite3); root-owned, written by the hub container
+├── backups/       # your DB snapshots (root:nethacker, mode 0750)
 └── Caddyfile      # copied from deploy/Caddyfile; mounted read-only into caddy
 /etc/nethackers/
 └── hub.env        # NETHACKERS_CLIENT_ID + NETHACKERS_HUB_IMAGE (mode 0640 root:nethacker)
@@ -96,7 +96,9 @@ a snapshot into `/srv/nethackers/backups/` before a risky upgrade.
 - The hub container runs read-only with all Linux capabilities dropped, no new
   privileges, and tight CPU/memory/pids limits (see `compose.yaml`). Its only writable
   paths are the `/data` volume and a small `tmpfs` at `/tmp`.
-- `data/` and `backups/` are owned by the container's nonroot user (uid/gid `65532`,
-  the distroless "nonroot" identity). If a future hub image runs as a different user,
-  re-`chown` those directories to match, or the SQLite DB won't be writable.
+- The hub image runs as **root** inside that locked-down container (all caps dropped,
+  no-new-privileges, read-only rootfs), so `data/`/`backups/` stay root-owned and the
+  SQLite DB is writable with no chown dance. Running the hub as a dedicated nonroot user
+  is a hardening follow-up (see the design spec's public-launch gaps); if you switch,
+  chown those directories to that uid.
 - Self-hosting is unsupported: you host it, you own it.
