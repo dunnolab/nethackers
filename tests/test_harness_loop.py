@@ -355,3 +355,41 @@ def test_loop_no_migration_when_not_strictly_better(tmp_path, monkeypatch):
     states = _run_with_migration(tmp_path, monkeypatch, migrate=True,
                                  better_version=7, score=0.0)
     assert not any(s["phase"] == "migrated" for s in states)
+
+
+# -- generalist (set) objectives: register a per-identity slice, not a union
+# registration; _emit carries the live per-identity parent snapshot (Task 8).
+
+class _SeedSetHub:
+    """Records each registration's evidence['objective']['seed_set'] (not
+    its solution_digest, unlike _FakeHub) -- so a set win's per-identity
+    slices are individually assertable. `migrate=False` in the set test
+    below keeps `.elites` out of scope; not implemented here."""
+    def __init__(self): self.seed_sets = []
+    def register(self, *, token, reference, manifest, evidence):
+        self.seed_sets.append(evidence["objective"]["seed_set"])
+        return {}
+
+
+def test_loop_registers_a_slice_per_identity_for_a_set_objective(tmp_path):
+    """A set objective ("wiz-elf-cha-mal,wiz-orc-cha-mal") must register ONE
+    win per identity (register_win_slices), not a single union registration
+    -- and the "mutating" on_state payload must carry the live per-identity
+    parent snapshot (identities/parent_means) for a set-aware brief/monitor."""
+    hub = _SeedSetHub()
+    states: list[dict] = []
+    run_loop(
+        objective="wiz-elf-cha-mal,wiz-orc-cha-mal", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+        hub=hub, image="img:dev", token="dev-token", owner="dev", iterations=1,
+        validation_n=3, migrate=False,
+        now_fn=lambda: "2026-08-10T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
+        on_state=states.append)
+
+    assert len(hub.seed_sets) == 2
+    assert set(hub.seed_sets) == {"wiz-elf-cha-mal", "wiz-orc-cha-mal"}
+
+    mutating = next(s for s in states if s["phase"] == "mutating")
+    assert len(mutating["identities"]) == 2
+    assert isinstance(mutating["parent_means"], dict)
