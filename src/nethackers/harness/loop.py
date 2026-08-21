@@ -175,7 +175,16 @@ def run_loop(
                 shutil.rmtree(worktree)
             shutil.copytree(elite.tree, worktree)
 
-            brief = build_brief(objective, character, elite.dev_evidence)
+            # Hand the TRAINING seeds in as data (spec §3.6): the mutator image
+            # has no harness/seeds.py to derive them, so the brief is where it
+            # learns which seeds to develop against -- never the held-out ones.
+            brief = build_brief(objective, character, elite.dev_evidence,
+                                training_seeds=sorted({s for s, _c in dev.batch}))
+            # Head the iteration's log with the brief it was given, so a reader
+            # sees what the mutator was asked to do (persisted to the run log +
+            # rendered in the TUI's agent-log via prettify's brief event).
+            if on_log is not None:
+                on_log(tag, json.dumps({"type": "nethackers_brief", "text": brief}))
             _emit("mutating", k + 1)
             report(f"{tag} · mutating…")
             try:

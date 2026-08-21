@@ -64,6 +64,11 @@ from rich_argparse import RichHelpFormatter
 from nethackers.eval.runner import eval_batch
 from nethackers.harness.discovery import ModelInfo, list_models, preflight_model
 from nethackers.harness.launch import EvolveParams, _now, prepare_evolve
+from nethackers.harness.sandbox_preflight import (
+    build_mutator_image,
+    image_present,
+    preflight as sandbox_preflight,
+)
 from nethackers.hub.objectives import CATALOG
 from nethackers.hubclient import credentials as _cred
 from nethackers.hubclient.client import (
@@ -219,9 +224,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
     mo = sub.add_parser(
         "models", parents=[common], formatter_class=RichHelpFormatter,
-        help="List the models the installed operator CLI can actually serve on this machine.",
+        help="List the models the operator CLI can serve inside the mutator sandbox image.",
     )
     mo.add_argument("--operator", choices=["codex", "claude"], default="codex")
+    mo.add_argument(
+        "--mutator-image", default="nethackers/mutator:latest",
+        help="Probe this image's operator CLI (the one a run uses), not the host's "
+        "(default: %(default)s).",
+    )
 
     evolve = sub.add_parser(
         "evolve", parents=[common], formatter_class=RichHelpFormatter,
@@ -255,6 +265,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--effort", default=None,
         help="Reasoning effort: low|medium|high|xhigh|max (codex also 'ultra'); "
         "default: the harness's own default.",
+    )
+    evolve.add_argument(
+        "--mutator-image", default="nethackers/mutator:latest",
+        help="Container image the mutator runs in (default: %(default)s). The "
+        "mutator always runs sandboxed in this image; a working container "
+        "runtime and the selected --operator's host login are required.",
     )
     evolve.add_argument("--iterations", type=int, default=1)
     evolve.add_argument("--validation-n", type=int, default=15)
@@ -420,7 +436,7 @@ def _run(argv: list[str] | None) -> int:
         return 0
 
     if args.cmd == "models":
-        models: list[ModelInfo] | None = list_models(args.operator)
+        models: list[ModelInfo] | None = list_models(args.operator, image=args.mutator_image)
         if models is None:
             err.print(f"[yellow]couldn't determine {args.operator}'s models[/] "
                       "(offline, old CLI, or logged out) — check `"
@@ -434,6 +450,25 @@ def _run(argv: list[str] | None) -> int:
         return 0
 
     if args.cmd == "evolve":
+        # The mutator ALWAYS runs sandboxed -- there is no host-execution path.
+        # Fail fast, before any hub SELECT call / run-dir creation, rather than a
+        # mid-loop crash. The same preflight backs the in-app form (evolve_form).
+        msg = sandbox_preflight(args.operator)
+        if msg is not None:
+            err.print(msg)
+            return 1
+        # Auto-provision the sandbox image (users never run `make` themselves):
+        # if it isn't built yet, build it here with a one-time progress note.
+        if not image_present(args.mutator_image):
+            err.print("[yellow]setting up the mutation sandbox[/] (first run — this "
+                      "compiles NLE and can take a few minutes)…")
+            berr = build_mutator_image(args.mutator_image,
+                                       on_line=lambda ln: err.print(f"[dim]{ln}[/]"))
+            if berr is not None:
+                err.print(berr)
+                return 1
+            err.print("[green]✓ sandbox ready[/]")
+
         _creds = _load_creds()
         # SELECT (compounding from the hub's top trusted elite) + run.json +
         # run wiring all live in prepare_evolve, shared with the in-app form.
@@ -445,7 +480,7 @@ def _run(argv: list[str] | None) -> int:
             token=args.token or (_creds.token if _creds else "dev-token"),
             owner=args.owner or (_creds.login if _creds else "dev"),
             from_seed=args.from_seed, select_k=args.select_k, select_temp=args.select_temp,
-            model=args.model, effort=args.effort,
+            model=args.model, effort=args.effort, mutator_image=args.mutator_image,
         )
 
         # Preflight only when a model is pinned: harness-default has nothing to
@@ -453,7 +488,7 @@ def _run(argv: list[str] | None) -> int:
         # existing wiring test) free of any CLI/network probe. A confident
         # refuse stops here -- no run dir, no doomed spin; unknown only warns.
         if args.model:
-            pf = preflight_model(args.operator, args.model)
+            pf = preflight_model(args.operator, args.model, image=args.mutator_image)
             if pf.action == "refuse":
                 err.print(f"[red]{pf.message}[/]")
                 return 2

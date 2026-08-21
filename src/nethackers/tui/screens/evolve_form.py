@@ -26,9 +26,14 @@ from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Button, Input, Label, OptionList, Select, Static
 from textual.widgets.option_list import Option
 
-from nethackers.harness.discovery import CliInfo, ModelInfo, detect_cli, list_models
+from nethackers.harness.discovery import CliInfo, ModelInfo, probe_operator
 from nethackers.harness.launch import EvolveParams, prepare_evolve
 from nethackers.harness.models import EFFORTS, MODELS
+from nethackers.harness.sandbox_preflight import (
+    build_mutator_image,
+    image_present,
+    preflight as sandbox_preflight,
+)
 from nethackers.hub.objectives import CATALOG
 from nethackers.hubclient.credentials import Credentials
 
@@ -37,6 +42,10 @@ if TYPE_CHECKING:
 
 # random first (the north-star), then the identities sorted; drop "all".
 _OBJECTIVES: list[str] = ["random"] + sorted(k for k in CATALOG if k not in ("random", "all"))
+
+# The form doesn't expose an image picker, so live discovery probes the default
+# mutator image (matches launch.EvolveParams.mutator_image / the CLI default).
+_MUTATOR_IMAGE = "nethackers/mutator:latest"
 
 
 def _seed_roots() -> list[str]:
@@ -94,6 +103,9 @@ class EvolveForm(Vertical):
         self._creds = creds
         self._objective: str | None = None
         self._live: dict[str, ModelInfo] = {}  # id -> discovered model (drives efforts)
+        # One ~1s container probe per operator, cached: switching operators back
+        # and forth (or reopening) is then instant, not another probe.
+        self._probe_cache: dict[str, tuple[CliInfo, list[ModelInfo] | None]] = {}
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="form", classes="panel"):
@@ -176,20 +188,34 @@ class EvolveForm(Vertical):
             model.value = ""
             self.query_one("#f_model_custom", Input).display = False
             self._set_effort_options("")             # reset efforts to the shared default
-            self._refresh_models(str(event.value))   # then refine from the live catalog
+            self._maybe_refresh_models(str(event.value))   # refine from the live catalog
         elif event.select.id == "f_model":
             self.query_one("#f_model_custom", Input).display = event.value == "__custom__"
             self._set_effort_options(str(event.value))  # efforts follow the selected model
 
+    def _maybe_refresh_models(self, backend: str) -> None:
+        # Cache hit -> apply instantly on the UI thread (no docker). Miss -> the
+        # off-thread probe below. Keeps operator switches snappy.
+        cached = self._probe_cache.get(backend)
+        if cached is not None:
+            self._apply_discovery(backend, *cached)
+        else:
+            self._refresh_models(backend)
+
     @work(exclusive=True, thread=True)
     def _refresh_models(self, backend: str) -> None:
-        # Live discovery does subprocess/HTTP (~1-2s) -- off the UI thread. One
-        # dispatch fetches BOTH the detected CLI (version + auth) and the model
-        # catalog. On None models (offline / old CLI / logged out) the static
-        # model list stays; the version line still reflects what was detected.
-        cli = detect_cli(backend)
-        models = list_models(backend)
-        self.app.call_from_thread(self._apply_discovery, backend, cli, models)
+        # ONE container probe (probe_operator) runs the operator CLI INSIDE the
+        # mutator image -- off the UI thread -- so version + the version-filtered
+        # catalog match what a run actually uses, not the host's possibly-
+        # different CLI. On a None catalog (image not built / offline / logged
+        # out) the static list stays; the version line still reflects detection.
+        cli, models = probe_operator(backend, image=_MUTATOR_IMAGE)
+        self.app.call_from_thread(self._cache_and_apply, backend, cli, models)
+
+    def _cache_and_apply(self, backend: str, cli: CliInfo,
+                         models: list[ModelInfo] | None) -> None:
+        self._probe_cache[backend] = (cli, models)
+        self._apply_discovery(backend, cli, models)
 
     def _apply_discovery(self, backend: str, cli: CliInfo,
                          models: list[ModelInfo] | None) -> None:
@@ -261,5 +287,36 @@ class EvolveForm(Vertical):
         except ValueError as exc:
             self.query_one("#f_err", Static).update(f"[red]{exc}[/red]")
             return
+        # The mutator always runs sandboxed -- surface a missing container
+        # runtime / login here (same preflight the CLI uses), not as a
+        # mid-run crash inside the pushed monitor.
+        msg = sandbox_preflight(params.operator)
+        if msg is not None:
+            self.query_one("#f_err", Static).update(msg)
+            return
+        # The sandbox image is auto-provisioned: if it isn't built yet, build it
+        # (off the UI thread, streaming progress into #f_err) and launch once
+        # ready -- the user never runs `make`. Already built -> launch straight.
+        if image_present(params.mutator_image):
+            self._launch(params)
+        else:
+            self.query_one("#f_err", Static).update(
+                "[yellow]setting up the sandbox[/] (first run — compiling NLE, a few minutes)…")
+            self._build_then_launch(params)
+
+    def _launch(self, params: EvolveParams) -> None:
         plan = prepare_evolve(params)
         cast("NetHackersApp", self.app).start_run(plan)  # background run + open its monitor
+
+    @work(exclusive=True, thread=True)
+    def _build_then_launch(self, params: EvolveParams) -> None:
+        def _line(ln: str) -> None:
+            self.app.call_from_thread(
+                lambda: self.query_one("#f_err", Static).update(
+                    f"[yellow]setting up the sandbox…[/] [dim]{ln}[/]"))
+        err = build_mutator_image(params.mutator_image, on_line=_line)
+        if err is not None:
+            self.app.call_from_thread(
+                lambda: self.query_one("#f_err", Static).update(err))
+            return
+        self.app.call_from_thread(self._launch, params)

@@ -11,10 +11,11 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from nethackers.harness import runlog
+from nethackers.harness.container_operator import ContainerOperator
 from nethackers.harness.loop import run_loop
-from nethackers.harness.operator import ClaudeOperator, CodexOperator
 from nethackers.harness.select import select_parent
 from nethackers.harness.store import LocalTreeStore
 from nethackers.hubclient.client import HubClient
@@ -69,6 +70,7 @@ class EvolveParams:
     select_temp: float = 1.0
     model: str | None = None   # pin the operator's model (None = harness default)
     effort: str | None = None  # reasoning effort level (None = harness default)
+    mutator_image: str = "nethackers/mutator:latest"  # image the mutator always runs in
 
 
 @dataclass
@@ -106,13 +108,18 @@ def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
         "objective": params.objective, "seed": str(params.seed), "operator": params.operator,
         "iterations": params.iterations, "validation_n": params.validation_n,
         "max_parallel_evals": params.max_parallel_evals, "image": params.image,
+        "mutator_image": params.mutator_image,
         "parent": parent_digest or "seed", "select_k": params.select_k,
         "select_temp": params.select_temp, "migrate": params.migrate,
         "model": params.model, "effort": params.effort,
     })
     _point_latest(runs_dir, rid)
-    operator = {"codex": CodexOperator, "claude": ClaudeOperator}[params.operator](
-        model=params.model, effort=params.effort)
+    # The mutator ALWAYS runs sandboxed: there is no host-execution path. The
+    # `operator` is `Any` (run_loop's own param is `Any` too, in loop.py) --
+    # duck-typed on `.run(worktree, brief, *, on_line, stop)`.
+    operator: Any = ContainerOperator(
+        harness=params.operator, image=params.mutator_image,
+        model=params.model, effort=params.effort, run_id=rid)
     cfg = EvolveConfig(objective=params.objective, backend=params.operator,
                        iterations=params.iterations, model=params.model,
                        effort=params.effort)

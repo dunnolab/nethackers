@@ -105,3 +105,31 @@ def test_codex_never_crashes_on_bad_shapes():
                     "item": {"type": "file_change", "changes": "weird"}})) == []
     assert prettify("codex", json.dumps({"type": "item.completed",
                     "item": {"type": "agent_message", "text": "   "}})) == []
+
+
+def test_long_commands_are_not_truncated():
+    # regression: commands used to be clipped at 80 chars with a "…"; the agent
+    # log must show the full command (RichLog wraps) so nothing is hidden.
+    long_cmd = "sed -n '1,320p' /opt/nethackers/src/nethackers/arena/run.py && " \
+               "rg -n 'evaluate|progress|milestone' /opt/nethackers/src/nethackers/eval/runner.py"
+    line = json.dumps({"type": "item.started",
+                       "item": {"type": "command_execution", "command": long_cmd}})
+    assert prettify("codex", line) == [("tool", long_cmd)]
+    assert "…" not in prettify("codex", line)[0][1]
+
+
+def test_brief_event_heads_the_log_backend_agnostic():
+    # the loop emits a synthetic brief event; it renders as a "brief" line for
+    # either backend, with a header so a reader sees the iteration's instruction.
+    line = json.dumps({"type": "nethackers_brief", "text": "Improve progression as val-wiz."})
+    for backend in ("codex", "claude"):
+        out = prettify(backend, line)
+        assert len(out) == 1
+        kind, text = out[0]
+        assert kind == "brief"
+        assert "brief" in text and "Improve progression as val-wiz." in text
+
+
+def test_brief_event_empty_text_skipped():
+    assert prettify("codex", json.dumps({"type": "nethackers_brief", "text": "  "})) == []
+    assert prettify("codex", json.dumps({"type": "nethackers_brief"})) == []

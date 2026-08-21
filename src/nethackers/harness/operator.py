@@ -119,22 +119,6 @@ def _claude_cmd(cli: str, brief: str, model: str | None, effort: str | None) -> 
     return cmd
 
 
-class ClaudeOperator:
-    def __init__(self, *, cli: str = "claude", model: str | None = None,
-                 effort: str | None = None) -> None:
-        self._cli = cli
-        self._model = model
-        self._effort = effort
-
-    def run(
-        self, worktree: Path, brief: str, *,
-        on_line: Callable[[str], None] | None = None,
-        stop: threading.Event | None = None,
-    ) -> OperatorResult:
-        return run_operator(_claude_cmd(self._cli, brief, self._model, self._effort),
-                            worktree, backend="claude", on_line=on_line, stop=stop)
-
-
 def _codex_cmd(cli: str, brief: str, model: str | None, effort: str | None) -> list[str]:
     # --skip-git-repo-check is MANDATORY, not hygiene: the operator worktree is
     # a plain shutil.copytree of the elite tree (loop.py -- no .git), and
@@ -159,19 +143,3 @@ def _codex_cmd(cli: str, brief: str, model: str | None, effort: str | None) -> l
     if effort:
         cmd += ["-c", f"model_reasoning_effort={effort}"]
     return cmd
-
-
-class CodexOperator:
-    def __init__(self, *, cli: str = "codex", model: str | None = None,
-                 effort: str | None = None) -> None:
-        self._cli = cli
-        self._model = model
-        self._effort = effort
-
-    def run(
-        self, worktree: Path, brief: str, *,
-        on_line: Callable[[str], None] | None = None,
-        stop: threading.Event | None = None,
-    ) -> OperatorResult:
-        return run_operator(_codex_cmd(self._cli, brief, self._model, self._effort),
-                            worktree, backend="codex", on_line=on_line, stop=stop)

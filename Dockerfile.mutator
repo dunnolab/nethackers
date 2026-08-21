@@ -1,0 +1,72 @@
+# Mutator sandbox runtime: the resource-capped cage `ContainerOperator`
+# (src/nethackers/harness/container_operator.py) runs a headless coding-agent
+# CLI inside. Implements docs/superpowers/specs/2026-08-16-mutator-sandbox-design.md
+# §3.2 (image layering) / §3.6 (info diet) / §3.7 (ContainerOperator).
+#
+# Built FROM the shared nle-base (NOT the arena image): the mutator gets a
+# byte-identical compiled NLE, but the nethackers PACKAGE is not installed here
+# -- so there is no `nethackers` CLI and, critically, no `nethackers.harness`
+# (whose seeds.py derives the held-out seeds by formula, `validation_spec(start=
+# 1000)` / smoke `start=9000`). The info-diet wall (§3.6) is the image boundary,
+# not trust: `import nethackers.harness.seeds` MUST fail in here.
+#
+# For PARITY, the mutator still gets the *seed-free* scoring building blocks --
+# `nethackers.arena` + `nethackers.contracts` only -- copied onto PYTHONPATH.
+# The agent rolls a candidate against live NLE with the exact metric the sealed
+# scorer uses, but on the TRAINING seeds it is handed as data (via the brief),
+# never seeds it can enumerate. arena/ imports nothing outside arena+contracts
+# (verified), so this subtree is self-contained.
+#
+# No fixed *command*: ContainerOperator supplies the whole in-cage argv per
+# iteration. What IS fixed is a generic entrypoint shim (docker-entrypoint.sh)
+# that starts as root only long enough to align the non-root `agent` account's
+# UID/GID with whichever host user owns the bind-mounted /workspace (explicit
+# `-e PUID=`/`-e PGID=` win, else auto-detected from /workspace's owner), then
+# drops to `agent` via `gosu` and execs the operator's command. Claude Code
+# hard-refuses --dangerously-skip-permissions as root, so this handoff is
+# required, not cosmetic -- see docker-entrypoint.sh.
+ARG NLE_BASE=nethackers/nle-base:dev
+FROM ${NLE_BASE}
+
+# Node.js (the two harness CLIs below are npm packages) + gosu (drops
+# root->agent in the entrypoint shim without a setuid binary). Node's version
+# is pinned via NodeSource's version-specific setup script -- the same "pinned,
+# deterministic" spirit as nle-base's uv:0.11.2 pin.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl gnupg gosu \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Headless coding-agent CLIs the ContainerOperator can wrap
+# (harness/operator.py's _claude_cmd/_codex_cmd choose the harness at runtime).
+# Pi + opencode are deferred to Plan B -- not yet wired into operator.py.
+RUN npm install -g @anthropic-ai/claude-code @openai/codex \
+    && npm cache clean --force
+
+# Seed-free experimentation kit onto PYTHONPATH: ONLY nethackers.arena (the
+# scorer's env + progression metric) + nethackers.contracts (its data models).
+# Deliberately NOT harness/ (the seed formula), cli.py, hub/, hubclient/, eval/,
+# or tui/. All __init__.py under nethackers/{arena,contracts} are empty and the
+# subtree imports nothing outside itself, so this partial package imports
+# cleanly while `import nethackers.harness.seeds` raises ModuleNotFoundError.
+COPY src/nethackers/__init__.py /opt/kit/nethackers/__init__.py
+COPY src/nethackers/arena /opt/kit/nethackers/arena
+COPY src/nethackers/contracts /opt/kit/nethackers/contracts
+ENV PYTHONPATH=/opt/kit
+
+# Non-root `agent` user -- Claude Code refuses --dangerously-skip-permissions as
+# root. UID/GID 1000 is only the baked default; docker-entrypoint.sh remaps both
+# at start to match /workspace's real owner. The home dir matches what
+# harness/auth_inject.py mounts credentials into (/home/agent/.codex, .claude).
+RUN useradd --create-home --home-dir /home/agent --uid 1000 --shell /bin/bash agent
+
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+WORKDIR /workspace
+
+# No secret is ever baked into or mounted by this Dockerfile -- the only
+# credential that reaches the running container is injected at `docker run` time
+# by harness/auth_inject.py's -v/-e args (the host's own existing CLI login).
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]
