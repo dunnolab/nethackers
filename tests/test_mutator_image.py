@@ -123,10 +123,16 @@ def test_default_entrypoint_drops_root_to_agent() -> None:
     # `gosu` line and regressing the image back to root-by-default, which
     # would also break Claude Code (it hard-refuses
     # --dangerously-skip-permissions as root).
-    r = _run([IMAGE, "whoami"])
+    #
+    # --security-opt no-new-privileges is included because build_docker_argv
+    # ALWAYS sets it in production (container_operator.py) -- the gosu
+    # root→agent drop is a privilege *reduction*, which no-new-privileges
+    # does not block, but this test should exercise the real flag rather
+    # than a friendlier stand-in that happens to also pass.
+    r = _run(["--security-opt", "no-new-privileges", IMAGE, "whoami"])
     assert "agent" in r.stdout
 
-    r = _run([IMAGE, "id", "-u"])
+    r = _run(["--security-opt", "no-new-privileges", IMAGE, "id", "-u"])
     assert "1000" in r.stdout
 
 
