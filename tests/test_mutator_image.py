@@ -152,3 +152,21 @@ def test_harness_clis_present() -> None:
     for cli in ("claude", "codex"):
         r = _run(["--entrypoint", cli, IMAGE, "--version"])
         assert r.returncode == 0
+
+
+def test_info_diet_wall_no_seeds_no_cli() -> None:
+    """The info-diet wall (spec §3.6) is the image boundary: the mutator must
+    NOT be able to derive the held-out seeds or reach the nethackers CLI. It
+    only carries the seed-free scoring kit (arena + contracts) for parity."""
+    # the seed formula (harness/seeds.py: validation_spec start=1000) is absent
+    leak = _run(["--entrypoint", "python", IMAGE, "-c",
+                 "import nethackers.harness.seeds"])
+    assert leak.returncode != 0
+    assert "ModuleNotFoundError" in leak.stderr or "No module" in leak.stderr
+    # no `nethackers` CLI on PATH
+    cli = _run(["--entrypoint", "bash", IMAGE, "-c", "command -v nethackers || echo ABSENT"])
+    assert "ABSENT" in cli.stdout
+    # but the seed-free scoring kit IS present (parity self-testing)
+    kit = _run(["--entrypoint", "python", IMAGE, "-c",
+                "import nethackers.arena.progress, nethackers.contracts.models; print('KIT')"])
+    assert "KIT" in kit.stdout
