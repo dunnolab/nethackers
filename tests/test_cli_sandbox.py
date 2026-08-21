@@ -13,6 +13,8 @@ ever invoked. The two preflight checks (``cli._docker_available`` and
 ``cli.auth_docker_args``) are monkeypatched independently so each test
 exercises exactly one thing.
 """
+import json
+
 from nethackers import cli
 from nethackers.harness import launch
 from nethackers.harness.auth_inject import AuthUnavailable
@@ -88,6 +90,46 @@ def test_sandbox_passes_model_and_effort_through(tmp_path, monkeypatch):
     assert rc == 0
     op = captured["operator"]
     assert op.model == "gpt-5.6-sol" and op.effort == "high"
+
+
+# --- provenance: a run's on-disk run.json must show whether it was
+# sandboxed, and in which image -- needed to reproduce/attribute the run
+# (docs/superpowers/specs/2026-08-12-run-isolation-design.md's run.json
+# contract already records operator/image/model/effort the same way). -----
+
+
+def test_sandbox_records_sandbox_and_mutator_image_in_run_config(tmp_path, monkeypatch):
+    seed = _seed(tmp_path)
+    monkeypatch.setattr(launch, "run_loop", lambda **kw: [], raising=False)
+    _stub_preflights_ok(monkeypatch)
+
+    rc = cli._run(_evolve_argv(seed, tmp_path, "--sandbox",
+                               "--mutator-image", "custom/mutator:tag"))
+
+    assert rc == 0
+    runs = tmp_path / "w" / "runs"
+    run_dir = next(p for p in runs.iterdir() if p.name != "latest")
+    cfg = json.loads((run_dir / "run.json").read_text())
+    assert cfg["sandbox"] is True
+    assert cfg["mutator_image"] == "custom/mutator:tag"
+
+
+def test_non_sandbox_records_sandbox_false_and_default_mutator_image(tmp_path, monkeypatch):
+    """run.json carries both keys unconditionally, sandboxed or not -- a
+    run's provenance shouldn't change shape depending on the mode it ran
+    in (same convention as model/effort, which are recorded even when
+    unset)."""
+    seed = _seed(tmp_path)
+    monkeypatch.setattr(launch, "run_loop", lambda **kw: [], raising=False)
+
+    rc = cli._run(_evolve_argv(seed, tmp_path))
+
+    assert rc == 0
+    runs = tmp_path / "w" / "runs"
+    run_dir = next(p for p in runs.iterdir() if p.name != "latest")
+    cfg = json.loads((run_dir / "run.json").read_text())
+    assert cfg["sandbox"] is False
+    assert cfg["mutator_image"] == "nethackers/mutator:latest"
 
 
 def test_without_sandbox_keeps_using_the_host_operator(tmp_path, monkeypatch):
