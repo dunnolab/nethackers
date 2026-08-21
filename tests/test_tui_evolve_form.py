@@ -379,3 +379,41 @@ def test_toggle_off_clears_selection():
     form._toggle_selection("wiz-elf-cha-mal")     # toggle the same id again -> off
     assert form._selector() == ""
     assert form._objective is None
+
+
+def test_toggle_role_then_member_resolves_to_the_whole_role_no_duplicates():
+    # The brief's own canonical case: a role plus one of its members must
+    # collapse to that role's full set, not raise, and not duplicate.
+    form = EvolveForm("http://h", None)
+    form._toggle_selection("role:wiz")
+    form._toggle_selection("wiz-elf-cha-mal")
+    resolved = resolve(form._selector())              # must not raise
+    wiz_all = resolve("wiz").identities                # ground truth: the 10 wiz builds
+    assert resolved.identities == wiz_all
+    assert len(resolved.identities) == 10
+    assert len(set(resolved.identities)) == len(resolved.identities)   # no duplication
+
+
+def test_random_then_identity_replaces_random():
+    # "random" has no discrete identities (resolve("random").identities ==
+    # ()), so unioning it with a pick would silently drop the "random"
+    # intent -- instead picking an identity after "random" REPLACES it.
+    form = EvolveForm("http://h", None)
+    form._toggle_selection("random")
+    assert form._selected == ["random"]
+    form._toggle_selection("wiz-elf-cha-mal")
+    assert form._selected == ["wiz-elf-cha-mal"]       # random dropped, not unioned
+    assert form._selector() == "wiz-elf-cha-mal"
+    assert form._objective == "wiz-elf-cha-mal"
+
+
+def test_identity_then_random_replaces_identity():
+    # The reverse direction: picking "random" after an identity REPLACES
+    # the whole selection with ["random"], not a union.
+    form = EvolveForm("http://h", None)
+    form._toggle_selection("wiz-elf-cha-mal")
+    assert form._selected == ["wiz-elf-cha-mal"]
+    form._toggle_selection("random")
+    assert form._selected == ["random"]
+    assert form._selector() == "random"
+    assert form._objective == "random"

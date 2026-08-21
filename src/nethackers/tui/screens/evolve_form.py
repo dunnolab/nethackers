@@ -193,36 +193,57 @@ class EvolveForm(Vertical):
         self._toggle_selection(option_id)
         chip = self.query_one("#f_obj_sel", Static)
         if self._objective:
-            count = len(resolve(self._objective).identities)
-            chip.update(f"objective: [b]{self._objective}[/] — {count} build(s)")
+            resolved = resolve(self._objective)
+            if resolved.kind in ("random", "all"):
+                # a broad marker, not a discrete identity list -- no "N
+                # build(s)" count to show (random: 0 by design; all: every
+                # identity, not what the user picked one-by-one).
+                chip.update(f"objective: [b]{self._objective}[/]")
+            else:
+                chip.update(
+                    f"objective: [b]{self._objective}[/] — {len(resolved.identities)} build(s)")
         else:
             chip.update("[dim]none selected[/]")
 
+    # "random"/"all" are broad, non-set catalog markers -- they can't be
+    # unioned with identities/roles, so they're mutually exclusive with
+    # everything else in _selected (see _toggle_selection).
+    _BROAD = ("random", "all")
+
     def _toggle_selection(self, option_id: str) -> None:
-        """Toggle *option_id* (a plain identity id or a ``role:<role>`` id)
-        in/out of the ordered multi-selection, then recompute ``_objective``
-        from the result via ``_selector()``. Pure state -- no widget
-        queries -- so it runs standalone in a unit test without a mount."""
-        if option_id in self._selected:
-            self._selected.remove(option_id)
+        """Toggle *option_id* (a plain identity id, a ``role:<role>`` id, or
+        a broad marker -- ``"random"``/``"all"``) in/out of the ordered
+        multi-selection, then recompute ``_objective`` from the result via
+        ``_selector()``. Pure state -- no widget queries -- so it runs
+        standalone in a unit test without a mount.
+
+        ``"random"``/``"all"`` can't be unioned with anything else
+        (``resolve("random").identities`` is empty, so mixing it in would
+        silently vanish that intent) -- picking one REPLACES the whole
+        selection (or clears it, toggling off an already-sole pick);
+        picking an identity/role drops any broad marker first."""
+        if option_id in self._BROAD:
+            self._selected = [] if self._selected == [option_id] else [option_id]
         else:
-            self._selected.append(option_id)
+            self._selected = [s for s in self._selected if s not in self._BROAD]
+            if option_id in self._selected:
+                self._selected.remove(option_id)
+            else:
+                self._selected.append(option_id)
         self._objective = self._selector() or None
 
     def _selector(self) -> str:
         """Render ``self._selected`` to a token ``selector.resolve`` accepts:
-        ``""`` when empty, the bare role/identity for a single pick, else a
-        sorted, deduped comma-list of the union of every selected identity
-        (expanding any role pick to its members first)."""
+        ``""`` when empty, the bare role/identity/broad-marker for a single
+        pick, else a sorted, deduped comma-list of the union of every
+        selected identity (expanding any role pick to its members first)."""
         if not self._selected:
             return ""
         if len(self._selected) == 1:
-            only = self._selected[0]
-            return only.removeprefix("role:") if only.startswith("role:") else only
+            return self._selected[0].removeprefix("role:")
         identities: set[str] = set()
         for option_id in self._selected:
-            token = option_id.removeprefix("role:") if option_id.startswith("role:") else option_id
-            identities.update(resolve(token).identities)
+            identities.update(resolve(option_id.removeprefix("role:")).identities)
         return ",".join(sorted(identities))
 
     @staticmethod
