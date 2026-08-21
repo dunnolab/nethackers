@@ -5,14 +5,17 @@ creds) and hands it to ``harness.launch.prepare_evolve``. On success the
 returned ``EvolvePlan`` drives a pushed ``EvolveScreen`` -- the same live
 monitor the CLI path uses.
 
-Objective is a **filter + pick** over the catalog (74 entries: ``random``
-plus the 73 identities; ``all`` is excluded -- it's a hub-query marker with
-no episodes to evolve against), so you type a fragment (``wiz``, ``val``)
-and choose from the narrowed list instead of typing an exact
-``role-race-align-gender`` string. Seed root is a dropdown of the solution
-roots discovered under ``roots/`` (dirs with a ``nethackers.solution.json``).
-The evolve loop consumes a single objective (``CATALOG[name]``); a
-multi-objective picker awaits loop support and is not wired here.
+Objective is a **filter + multi-pick** over the catalog (74 entries:
+``random`` plus the 73 identities; ``all`` is excluded -- it's a hub-query
+marker with no episodes to evolve against), so you type a fragment
+(``wiz``, ``val``) and choose from the narrowed list instead of typing an
+exact ``role-race-align-gender`` string. A filter that names a whole role
+(e.g. ``wiz``) also offers a "whole role" option; picking several entries
+(roles and/or identities) builds a set. Either way ``EvolveParams.objective``
+ends up a single identity, a bare role, or a sorted comma-list of
+identities -- every shape ``nethackers.hub.selector.resolve`` accepts. Seed
+root is a dropdown of the solution roots discovered under ``roots/`` (dirs
+with a ``nethackers.solution.json``).
 """
 from __future__ import annotations
 
@@ -34,7 +37,8 @@ from nethackers.harness.sandbox_preflight import (
     image_present,
     preflight as sandbox_preflight,
 )
-from nethackers.hub.objectives import CATALOG
+from nethackers.hub.objectives import CATALOG, ROLES
+from nethackers.hub.selector import resolve
 from nethackers.hubclient.credentials import Credentials
 
 if TYPE_CHECKING:
@@ -102,6 +106,11 @@ class EvolveForm(Vertical):
         self._hub = hub
         self._creds = creds
         self._objective: str | None = None
+        # Ordered multi-selection of OptionList ids: a plain identity id
+        # (e.g. "wiz-elf-cha-mal") or a role id ("role:wiz"). _objective is
+        # always kept in sync (via _toggle_selection) as _selector()'s
+        # rendering of this set -- the single source of truth _params() reads.
+        self._selected: list[str] = []
         self._live: dict[str, ModelInfo] = {}  # id -> discovered model (drives efforts)
         # One ~1s container probe per operator, cached: switching operators back
         # and forth (or reopening) is then instant, not another probe.
@@ -162,18 +171,59 @@ class EvolveForm(Vertical):
             self.app.set_focus(None)
 
     def on_input_changed(self, event: Input.Changed) -> None:
-        """Narrow the objective list as the filter is typed."""
+        """Narrow the objective list as the filter is typed. A query that
+        names a whole role (e.g. "wiz") gets a "whole role" option prepended
+        (id ``role:<role>``) so one pick selects every identity in it."""
         if event.input.id != "f_obj_filter":
             return
         q = event.value.strip().lower()
         matches = [o for o in _OBJECTIVES if q in o.lower()]
+        row_options = [Option(o, id=o) for o in matches]
+        if q in ROLES:
+            count = len(resolve(q).identities)
+            row_options.insert(0, Option(f"{q} — whole role ({count})", id=f"role:{q}"))
         options = self.query_one("#f_obj_list", OptionList)
         options.clear_options()
-        options.add_options([Option(o, id=o) for o in matches])
+        options.add_options(row_options)
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        self._objective = event.option.id
-        self.query_one("#f_obj_sel", Static).update(f"objective: [b]{self._objective}[/]")
+        option_id = event.option.id
+        if option_id is None:
+            return
+        self._toggle_selection(option_id)
+        chip = self.query_one("#f_obj_sel", Static)
+        if self._objective:
+            count = len(resolve(self._objective).identities)
+            chip.update(f"objective: [b]{self._objective}[/] — {count} build(s)")
+        else:
+            chip.update("[dim]none selected[/]")
+
+    def _toggle_selection(self, option_id: str) -> None:
+        """Toggle *option_id* (a plain identity id or a ``role:<role>`` id)
+        in/out of the ordered multi-selection, then recompute ``_objective``
+        from the result via ``_selector()``. Pure state -- no widget
+        queries -- so it runs standalone in a unit test without a mount."""
+        if option_id in self._selected:
+            self._selected.remove(option_id)
+        else:
+            self._selected.append(option_id)
+        self._objective = self._selector() or None
+
+    def _selector(self) -> str:
+        """Render ``self._selected`` to a token ``selector.resolve`` accepts:
+        ``""`` when empty, the bare role/identity for a single pick, else a
+        sorted, deduped comma-list of the union of every selected identity
+        (expanding any role pick to its members first)."""
+        if not self._selected:
+            return ""
+        if len(self._selected) == 1:
+            only = self._selected[0]
+            return only.removeprefix("role:") if only.startswith("role:") else only
+        identities: set[str] = set()
+        for option_id in self._selected:
+            token = option_id.removeprefix("role:") if option_id.startswith("role:") else option_id
+            identities.update(resolve(token).identities)
+        return ",".join(sorted(identities))
 
     @staticmethod
     def _model_options(backend: str) -> list[tuple[str, str]]:

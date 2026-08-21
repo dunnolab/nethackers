@@ -16,6 +16,7 @@ from textual.widgets import Button, Input, Select, Static
 
 import nethackers.tui.screens.evolve_form as ef
 from nethackers.harness.discovery import CliInfo, ModelInfo
+from nethackers.hub.selector import resolve
 from nethackers.hubclient.credentials import Credentials
 from nethackers.tui.app import NetHackersApp
 from nethackers.tui.screens.evolve_form import EvolveForm
@@ -334,3 +335,47 @@ async def test_operator_switch_uses_cache_second_time(monkeypatch):
         form.query_one("#f_op", Select).value = "claude"     # cached -> NO re-probe
         await pilot.pause()
         assert calls == ["claude", "codex"]   # the switch back to claude hit the cache
+
+
+# ---------------------------------------------------------------------------
+# Multi-select objective "set builder" (Task 13): _toggle_selection/_selector
+# are pure state helpers -- no widget queries -- so they're exercised here
+# directly on a bare (unmounted) EvolveForm, no full render needed. The
+# existing tests above keep poking ._objective directly and never touch
+# ._selected/_toggle_selection, so they keep flowing to params unchanged.
+# ---------------------------------------------------------------------------
+
+def test_toggle_single_identity_selects_it():
+    form = EvolveForm("http://h", None)
+    form._toggle_selection("wiz-elf-cha-mal")
+    assert form._selector() == "wiz-elf-cha-mal"
+    assert form._objective == "wiz-elf-cha-mal"
+    resolved = resolve(form._selector())
+    assert resolved.identities == ("wiz-elf-cha-mal",)
+
+
+def test_toggle_role_option_selects_whole_role():
+    form = EvolveForm("http://h", None)
+    form._toggle_selection("role:wiz")           # the role option's id
+    assert form._selector() == "wiz"              # collapses to the bare role
+    assert form._objective == "wiz"
+    resolved = resolve(form._selector())
+    assert len(resolved.identities) == 10          # all 10 wiz builds
+
+
+def test_toggle_two_identities_yields_sorted_comma_list():
+    form = EvolveForm("http://h", None)
+    form._toggle_selection("wiz-elf-cha-mal")
+    form._toggle_selection("val-hum-law-fem")
+    token = form._selector()
+    assert token == "val-hum-law-fem,wiz-elf-cha-mal"   # sorted, deduped
+    resolved = resolve(token)                            # must not raise
+    assert resolved.identities == ("val-hum-law-fem", "wiz-elf-cha-mal")
+
+
+def test_toggle_off_clears_selection():
+    form = EvolveForm("http://h", None)
+    form._toggle_selection("wiz-elf-cha-mal")
+    form._toggle_selection("wiz-elf-cha-mal")     # toggle the same id again -> off
+    assert form._selector() == ""
+    assert form._objective is None
