@@ -177,3 +177,12 @@ def test_cli_pull_invokes_pull(monkeypatch, capsys, tmp_path):
     assert rc == 0
     assert seen == {"repo_at_commit": "dunnolab/nethacker@abc123", "dest": dest}
     assert capsys.readouterr().out.strip() == str(dest)
+
+
+# --- default hub URL --------------------------------------------------
+
+
+def test_default_hub_is_prod(monkeypatch):
+    from nethackers import cli
+    monkeypatch.delenv("NETHACKERS_HUB", raising=False)
+    assert cli._default_hub() == "https://nethackers.dunnolab.ai"
