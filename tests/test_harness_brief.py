@@ -21,6 +21,7 @@ def test_brief_targets_progression_not_proxies():
     b = build_brief("ascend", "val-wiz", _evidence(mean=12.3, episodes=8, tally={"starved": 5}))
     assert "progression" in b.lower()
     assert "reach deeper" not in b and "survive longer" not in b   # old proxy line gone
+    assert "objective 'ascend'" in b                               # objective_name is used
 
 
 def test_brief_has_antigaming_and_generalization_and_gate():

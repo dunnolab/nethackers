@@ -32,11 +32,11 @@ def build_brief(
 
     return (
         f"**Objective.** Improve this NetHack bot's **progression score** as {character} "
-        "— the BALROG-style milestone metric the evaluator computes. Maximize *that*; "
-        "depth/turn-count/survival matter only insofar as they raise it. **Don't game "
-        "it:** no branching on seed fingerprints (initial glyphs/inventory) to replay a "
-        "canned run, no exploiting scorer/NLE quirks — such candidates fail on held-out "
-        "seeds and are rejected.\n\n"
+        f"(objective '{objective_name}') — the BALROG-style milestone metric the evaluator "
+        "computes. Maximize *that*; depth/turn-count/survival matter only insofar as they "
+        "raise it. **Don't game it:** no branching on seed fingerprints (initial "
+        "glyphs/inventory) to replay a canned run, no exploiting scorer/NLE quirks — such "
+        "candidates fail on held-out seeds and are rejected.\n\n"
         f"**Where it currently loses progression.** Mean {mean:.2f} over "
         f"{parent_evidence.episodes} games; outcomes: {tally}.\n\n"
         "**Make one focused change.** One well-reasoned, localized change per candidate; "
