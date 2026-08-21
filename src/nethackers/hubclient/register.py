@@ -127,26 +127,3 @@ def refresh_access_token(
     if "access_token" not in token_response:
         raise DeviceFlowError(token_response.get("error") or "refresh failed")
     return _token_set(token_response)
-
-
-def register_solution(
-    *,
-    hub,
-    reference: dict[str, Any],
-    manifest: dict[str, Any],
-    evidence: dict[str, Any],
-    client_id: str = DEFAULT_CLIENT_ID,
-    http=httpx,
-    prompt=print,
-    sleep=time.sleep,
-) -> Any:
-    """Run the GitHub device flow to get a user token, then call
-    ``hub.register(token=..., reference=reference, manifest=manifest,
-    evidence=evidence)`` and return its result.
-
-    The device flow itself (request a device code, prompt the user, poll for
-    the token, raise ``DeviceFlowError`` on a terminal error) lives in
-    ``device_login`` -- this just supplies the token to ``hub.register``.
-    """
-    token = device_login(client_id=client_id, http=http, prompt=prompt, sleep=sleep)["access_token"]
-    return hub.register(token=token, reference=reference, manifest=manifest, evidence=evidence)
