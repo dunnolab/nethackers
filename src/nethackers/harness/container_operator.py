@@ -36,7 +36,10 @@ class ContainerCaps:
     pids: int = 512
     memory: str = "8g"
     cpus: str = "4"
-    timeout_s: int = 1800
+    timeout_s: int = 28800  # 8h: a real mutation may experiment against live NLE
+                            # for a long time; this is a runaway ceiling, not a
+                            # target -- the agent exits (and the container is
+                            # reaped) as soon as it finishes.
 
 
 # Module-level singleton, not a `ContainerCaps()` call in ContainerOperator's
