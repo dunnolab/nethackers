@@ -3,10 +3,23 @@
 docs/superpowers/specs/2026-08-16-mutator-sandbox-design.md §4: a fork bomb
 dies at the container's ``--pids-limit`` with the host unharmed, ``rm -rf /``
 is scoped to the (disposable, ``--rm``) container, no host secret is
-reachable (nothing sensitive is ever mounted), and both harness CLIs the
+reachable (nothing sensitive is ever mounted), both harness CLIs the
 ``ContainerOperator`` wraps (harness/container_operator.py) are present and
-runnable inside the image, alongside the NLE + gymnasium the mutator
-experiments against.
+runnable inside the image, and -- through the real (non-``--entrypoint``-
+overridden) entrypoint -- the container actually drops root to the non-root
+``agent`` user via docker-entrypoint.sh's ``gosu`` handoff, alongside the
+NLE + gymnasium the mutator experiments against.
+
+Most of these tests pass ``--entrypoint`` to isolate one specific check,
+which bypasses docker-entrypoint.sh and runs as root -- fine for what each
+of *those* checks is verifying, but it means none of them alone proves the
+image's headline non-root requirement.
+``test_default_entrypoint_drops_root_to_agent`` is the one test that invokes
+the image exactly as ``ContainerOperator`` does (no ``--entrypoint``), so
+the real ``gosu``-drop actually runs; ``test_no_host_secrets_reachable``
+deliberately reuses that same real path so ``~`` resolves against the
+actual runtime home (``/home/agent``, where ``harness/auth_inject.py``
+lands its mounts) instead of root's unrelated ``/root``.
 
 Collection-safe like tests/test_docker_smoke.py: only stdlib + pytest are
 imported at module scope, and the only thing that runs at collection time is
@@ -99,8 +112,33 @@ def test_rm_rf_root_scoped_to_container() -> None:
     assert "still alive" in survivor.stdout
 
 
+def test_default_entrypoint_drops_root_to_agent() -> None:
+    # Every other test in this file passes --entrypoint, which bypasses
+    # docker-entrypoint.sh entirely and runs as root -- none of them exercise
+    # the actual non-root handoff. This is the one test that invokes the
+    # image exactly as ContainerOperator does (build_docker_argv never
+    # passes --entrypoint -- see harness/container_operator.py), so the real
+    # `gosu`-drop + PUID/PGID auto-detect path in docker-entrypoint.sh
+    # actually runs. Guards against a future edit silently deleting the
+    # `gosu` line and regressing the image back to root-by-default, which
+    # would also break Claude Code (it hard-refuses
+    # --dangerously-skip-permissions as root).
+    r = _run([IMAGE, "whoami"])
+    assert "agent" in r.stdout
+
+    r = _run([IMAGE, "id", "-u"])
+    assert "1000" in r.stdout
+
+
 def test_no_host_secrets_reachable() -> None:
-    r = _run(["--entrypoint", "bash", IMAGE, "-c", "cat ~/.ssh/id_* 2>&1 | head -1"])
+    # No --entrypoint override here either, deliberately: the real runtime
+    # identity is `agent` (home /home/agent -- confirmed by the previous
+    # test, and where harness/auth_inject.py actually lands its .codex/
+    # .claude mounts), not root's unrelated /root that --entrypoint bash
+    # would otherwise resolve `~` against. `bash -c` is still needed since
+    # there's no --entrypoint override to swap the default `bash` shell in
+    # for something else, and `~` needs a shell to expand.
+    r = _run([IMAGE, "bash", "-c", "cat ~/.ssh/id_* 2>&1 | head -1"])
     assert "No such file" in r.stdout or "No such file" in r.stderr
 
 
