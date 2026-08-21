@@ -13,7 +13,7 @@ import pytest
 
 from nethackers.hubclient import register as r
 from nethackers.hubclient.client import HubClient
-from nethackers.hubclient.register import DeviceFlowError, device_login, register_solution
+from nethackers.hubclient.register import device_login
 
 
 class _FakeResponse:
@@ -195,11 +195,10 @@ def test_base_url_trailing_slash_is_stripped():
 
 # --- Property 2: device_login's GitHub device flow -------------------------
 #
-# device_login() is the device-flow half extracted out of register_solution
-# (Task 5) so a future `nethackers login` verb can call it directly.
-# register_solution now just calls device_login() then hub.register() -- its
-# own tests below (Property 3) still exercise the whole thing end-to-end and
-# must keep passing unchanged.
+# device_login() runs the GitHub device flow and returns the user token set
+# ({access_token, refresh_token, expires_in}); `nethackers login` calls it and
+# persists the result. refresh_access_token() renews an expired token set
+# without a client secret (the device-flow allowance).
 
 
 def test_device_login_returns_access_token():
@@ -262,7 +261,9 @@ class _FakeResp:
 
 def test_device_login_returns_full_token_set():
     seq = [
-        _FakeResp({"device_code": "d", "user_code": "WDJB-MJHT", "verification_uri": "u", "interval": 0}),
+        _FakeResp(
+            {"device_code": "d", "user_code": "WDJB-MJHT", "verification_uri": "u", "interval": 0}
+        ),
         _FakeResp({"error": "authorization_pending"}),
         _FakeResp({"access_token": "ghu_x", "refresh_token": "ghr_y", "expires_in": 28800}),
     ]
@@ -280,7 +281,9 @@ def test_refresh_access_token():
     class H:
         def post(self, url, data=None, headers=None):
             assert data["grant_type"] == "refresh_token"
-            return _FakeResp({"access_token": "ghu_new", "refresh_token": "ghr_new", "expires_in": 28800})
+            return _FakeResp(
+                {"access_token": "ghu_new", "refresh_token": "ghr_new", "expires_in": 28800}
+            )
 
     out = r.refresh_access_token("ghr_old", client_id="cid", http=H())
     assert out["access_token"] == "ghu_new"
@@ -293,98 +296,3 @@ def test_refresh_error_raises():
 
     with pytest.raises(r.DeviceFlowError):
         r.refresh_access_token("ghr_old", client_id="cid", http=H())
-
-
-# --- Property 3: register_solution's device flow ---------------------------
-
-_DEVICE_CODE_RESPONSE = {
-    "device_code": "devcode123",
-    "user_code": "ABCD-1234",
-    "verification_uri": "https://github.com/login/device",
-    "interval": 5,
-}
-
-
-class _FakeDeviceHttp:
-    """Scripts a sequence of POST responses (device-code call, then each
-    token poll) and records every posted body/headers."""
-
-    def __init__(self, responses):
-        self._responses = list(responses)
-        self.posts: list[tuple[str, dict, dict]] = []
-
-    def post(self, url, *, data=None, headers=None):
-        self.posts.append((url, data, headers))
-        return _FakeResponse(self._responses.pop(0))
-
-
-class _FakeHub:
-    """Records every ``register`` call; returns a canned result."""
-
-    def __init__(self, result=None):
-        self.calls: list[dict] = []
-        self._result = result if result is not None else {"solution_digest": "sha256:x"}
-
-    def register(self, *, token, reference, manifest, evidence):
-        self.calls.append(
-            {"token": token, "reference": reference, "manifest": manifest, "evidence": evidence}
-        )
-        return self._result
-
-
-def test_register_solution_polls_on_pending_then_registers():
-    http = _FakeDeviceHttp(
-        [_DEVICE_CODE_RESPONSE, {"error": "authorization_pending"}, {"access_token": "gho_x"}]
-    )
-    hub = _FakeHub(result={"solution_digest": "sha256:x", "owner": "sam"})
-    prompts: list[str] = []
-    sleeps: list[float] = []
-    reference = {"repo": "github.com/sam/x", "commit": "a" * 40}
-    manifest = {"root": "."}
-    evidence = {"solution_digest": "sha256:x"}
-
-    result = register_solution(
-        hub=hub,
-        reference=reference,
-        manifest=manifest,
-        evidence=evidence,
-        http=http,
-        prompt=prompts.append,
-        sleep=sleeps.append,
-    )
-
-    assert result == {"solution_digest": "sha256:x", "owner": "sam"}
-    # Polling: authorization_pending must have triggered exactly one sleep,
-    # using the device response's own interval.
-    assert sleeps == [5]
-    # The prompt shown to the user carries both the verification URL and
-    # the user code from the device-code response.
-    assert len(prompts) == 1
-    assert "https://github.com/login/device" in prompts[0]
-    assert "ABCD-1234" in prompts[0]
-    # hub.register only ever sees the resulting access token, plus the
-    # reference/manifest/evidence passed straight through unchanged.
-    assert hub.calls == [
-        {"token": "gho_x", "reference": reference, "manifest": manifest, "evidence": evidence}
-    ]
-    # 1 device-code POST + 2 token polls (pending, then success).
-    assert len(http.posts) == 3
-
-
-def test_register_solution_terminal_error_raises_device_flow_error():
-    http = _FakeDeviceHttp([_DEVICE_CODE_RESPONSE, {"error": "access_denied"}])
-    hub = _FakeHub()
-
-    with pytest.raises(DeviceFlowError):
-        register_solution(
-            hub=hub,
-            reference={},
-            manifest={},
-            evidence={},
-            http=http,
-            prompt=lambda _msg: None,
-            sleep=lambda _seconds: None,
-        )
-
-    # A terminal error must never reach the hub.
-    assert hub.calls == []
