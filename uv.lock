@@ -537,6 +537,9 @@ hub = [
 nle = [
     { name = "nle" },
 ]
+worker = [
+    { name = "nle" },
+]
 
 [package.dev-dependencies]
 dev = [
@@ -554,6 +557,7 @@ requires-dist = [
     { name = "httpx", specifier = ">=0.27" },
     { name = "httpx", marker = "extra == 'hub'", specifier = ">=0.27" },
     { name = "nle", marker = "extra == 'nle'", specifier = "==1.3.0" },
+    { name = "nle", marker = "extra == 'worker'", specifier = "==1.3.0" },
     { name = "nltk", marker = "extra == 'autoascend'", specifier = ">=3.9" },
     { name = "numba", marker = "extra == 'autoascend'", specifier = ">=0.60" },
     { name = "opencv-python-headless", marker = "extra == 'autoascend'", specifier = ">=4.9,<5" },
@@ -564,7 +568,7 @@ requires-dist = [
     { name = "toolz", marker = "extra == 'autoascend'", specifier = ">=1.0" },
     { name = "uvicorn", marker = "extra == 'hub'", specifier = ">=0.30" },
 ]
-provides-extras = ["nle", "autoascend", "hub"]
+provides-extras = ["nle", "autoascend", "hub", "worker"]
 
 [package.metadata.requires-dev]
 dev = [
