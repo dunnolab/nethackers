@@ -26,7 +26,7 @@ from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Button, Input, Label, OptionList, Select, Static
 from textual.widgets.option_list import Option
 
-from nethackers.harness.discovery import ModelInfo, list_models
+from nethackers.harness.discovery import CliInfo, ModelInfo, detect_cli, list_models
 from nethackers.harness.launch import EvolveParams, prepare_evolve
 from nethackers.harness.models import EFFORTS, MODELS
 from nethackers.hub.objectives import CATALOG
@@ -50,6 +50,17 @@ def _seed_roots() -> list[str]:
             if child.is_dir() and (child / "nethackers.solution.json").exists():
                 found.append(child.as_posix())
     return found or ["roots/autoascend"]
+
+
+def _version_line(backend: str, cli: CliInfo) -> str:
+    """One muted status line for the detected operator CLI: version + auth
+    state, or a clear 'not found' when the binary is missing from PATH."""
+    if not cli.installed:
+        return f"[#c04040]{backend} not found on PATH[/]"
+    ver = cli.version or f"{backend} (version unknown)"
+    if cli.logged_in is False:
+        return f"[dim]{ver}[/] · [#c04040]not logged in[/]"
+    return f"[dim]{ver}[/]"
 
 
 class EvolveForm(Vertical):
@@ -82,6 +93,7 @@ class EvolveForm(Vertical):
         self._hub = hub
         self._creds = creds
         self._objective: str | None = None
+        self._live: dict[str, ModelInfo] = {}  # id -> discovered model (drives efforts)
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="form", classes="panel"):
@@ -97,6 +109,7 @@ class EvolveForm(Vertical):
                 [("claude", "claude"), ("codex", "codex")],
                 value="claude", allow_blank=False, id="f_op",
             )
+            yield Static("[dim]detecting…[/]", id="f_op_version")
             yield Label("Model")
             yield Select(self._model_options("claude"), value="",
                          allow_blank=False, id="f_model")
@@ -162,20 +175,27 @@ class EvolveForm(Vertical):
             model.set_options(self._model_options(str(event.value)))
             model.value = ""
             self.query_one("#f_model_custom", Input).display = False
+            self._set_effort_options("")             # reset efforts to the shared default
             self._refresh_models(str(event.value))   # then refine from the live catalog
-        elif event.select.id == "f_model":  # reveal the id field only for Custom…
+        elif event.select.id == "f_model":
             self.query_one("#f_model_custom", Input).display = event.value == "__custom__"
+            self._set_effort_options(str(event.value))  # efforts follow the selected model
 
     @work(exclusive=True, thread=True)
     def _refresh_models(self, backend: str) -> None:
-        # Live discovery does subprocess/HTTP (~1-2s) -- off the UI thread. On
-        # None (offline / old CLI / logged out) we keep the static fallback.
+        # Live discovery does subprocess/HTTP (~1-2s) -- off the UI thread. One
+        # dispatch fetches BOTH the detected CLI (version + auth) and the model
+        # catalog. On None models (offline / old CLI / logged out) the static
+        # model list stays; the version line still reflects what was detected.
+        cli = detect_cli(backend)
         models = list_models(backend)
-        self.app.call_from_thread(self._apply_live_models, backend, models)
+        self.app.call_from_thread(self._apply_discovery, backend, cli, models)
 
-    def _apply_live_models(self, backend: str, models: list[ModelInfo] | None) -> None:
+    def _apply_discovery(self, backend: str, cli: CliInfo,
+                         models: list[ModelInfo] | None) -> None:
         if str(self.query_one("#f_op", Select).value) != backend:
             return   # operator changed since this fetch started -- stale, drop it
+        self.query_one("#f_op_version", Static).update(_version_line(backend, cli))
         if not models:
             return   # keep the static fallback
         sel = self.query_one("#f_model", Select)
@@ -183,9 +203,27 @@ class EvolveForm(Vertical):
         options = [("Harness default", ""),
                    *[(m.label + (" (deprecated)" if m.deprecated else ""), m.id) for m in models],
                    ("Custom…", "__custom__")]
+        self._live = {m.id: m for m in models}
         sel.set_options(options)
         valid = {m.id for m in models} | {"", "__custom__"}
         sel.value = current if current in valid else ""
+        self._set_effort_options(str(sel.value))   # efforts now reflect the live model
+
+    def _effort_options(self, model_id: str) -> list[tuple[str, str]]:
+        # Efforts the selected model actually supports (from live discovery);
+        # fall back to the shared static EFFORTS for an unknown / custom /
+        # harness-default pick or when discovery gave no per-model reasoning.
+        m = self._live.get(model_id)
+        levels = list(m.reasoning) if (m and m.reasoning) else list(EFFORTS)
+        return [("Harness default", ""), *((e, e) for e in levels)]
+
+    def _set_effort_options(self, model_id: str) -> None:
+        eff = self.query_one("#f_effort", Select)
+        current = str(eff.value)
+        options = self._effort_options(model_id)
+        eff.set_options(options)
+        valid = {v for _label, v in options}
+        eff.value = current if current in valid else ""
 
     def _model(self) -> str | None:
         value = str(self.query_one("#f_model", Select).value)

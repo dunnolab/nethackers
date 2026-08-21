@@ -15,7 +15,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Input, Select, Static
 
 import nethackers.tui.screens.evolve_form as ef
-from nethackers.harness.discovery import ModelInfo
+from nethackers.harness.discovery import CliInfo, ModelInfo
 from nethackers.hubclient.credentials import Credentials
 from nethackers.tui.app import NetHackersApp
 from nethackers.tui.screens.evolve_form import EvolveForm
@@ -25,7 +25,10 @@ from nethackers.tui.screens.evolve_form import EvolveForm
 def _no_live_models(monkeypatch):
     # Default: discovery "unavailable" -> the form keeps its static fallback,
     # so every existing test sees exactly today's behavior (and no real probe).
+    # detect_cli is stubbed too so the version-line worker never shells out.
     monkeypatch.setattr(ef, "list_models", lambda *a, **k: None)
+    monkeypatch.setattr(ef, "detect_cli",
+                        lambda backend, **k: CliInfo(backend, True, f"{backend} 9.9.9", True))
 
 
 class _Host(App):
@@ -185,3 +188,58 @@ async def test_model_picker_dispatches_exactly_once_on_mount(monkeypatch):
         await app.workers.wait_for_complete()
         await pilot.pause()
         assert calls == ["claude"]        # exactly one dispatch on mount, not two
+
+
+async def test_operator_version_line_shows_detected_cli(monkeypatch):
+    # The form surfaces the detected operator CLI's version (spec 3C) via the
+    # same single discovery worker that populates the model list.
+    monkeypatch.setattr(ef, "detect_cli",
+                        lambda backend, **k: CliInfo(backend, True, "claude 2.1.237", True))
+    app = _Host(None)
+    async with app.run_test(size=(100, 50)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        line = str(app.query_one("#f_op_version", Static).render())
+        assert "2.1.237" in line          # detected version shown for the default operator
+
+
+async def test_operator_version_line_shows_not_found_when_missing(monkeypatch):
+    monkeypatch.setattr(ef, "detect_cli",
+                        lambda backend, **k: CliInfo(backend, False, None, None))
+    app = _Host(None)
+    async with app.run_test(size=(100, 50)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        line = str(app.query_one("#f_op_version", Static).render()).lower()
+        assert "not found" in line         # missing binary flagged, not a crash
+
+
+async def test_effort_options_follow_selected_model(monkeypatch):
+    # The Reasoning-effort picker is driven by the selected model's discovered
+    # efforts (not a hardcoded list); a model with no reasoning falls back to
+    # the shared static EFFORTS.
+    monkeypatch.setattr(
+        ef, "list_models",
+        lambda backend, **k: (
+            [ModelInfo("m-rich", "Rich", ("low", "high", "ultra"), False),
+             ModelInfo("m-bare", "Bare", (), False)]
+            if backend == "claude" else None
+        ),
+    )
+    app = _Host(None)
+    async with app.run_test(size=(100, 50)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        form = app.query_one(ef.EvolveForm)
+        assert form._effort_options("m-rich") == [
+            ("Harness default", ""), ("low", "low"), ("high", "high"), ("ultra", "ultra")]
+        assert form._effort_options("m-bare") == [
+            ("Harness default", ""), *((e, e) for e in ef.EFFORTS)]   # fallback
+        form.query_one("#f_model", Select).value = "m-rich"
+        await pilot.pause()
+        eff = form.query_one("#f_effort", Select)
+        eff.value = "ultra"                # a live-only level absent from static EFFORTS
+        assert eff.value == "ultra"        # picker was repopulated from live reasoning
