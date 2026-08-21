@@ -1,0 +1,60 @@
+# Mutator sandbox runtime: the resource-capped cage `ContainerOperator`
+# (src/nethackers/harness/container_operator.py) runs a headless coding-agent
+# CLI inside. Built FROM the arena eval image (arena/Dockerfile) to reuse its
+# already-compiled NLE -- perfect environment parity between what the
+# mutator experiments against and what the scorer grades on, with no second
+# native NLE build. Implements
+# docs/superpowers/specs/2026-08-16-mutator-sandbox-design.md §3.2 (image
+# layering) / §3.7 (ContainerOperator).
+#
+# Unlike arena/Dockerfile's fixed ENTRYPOINT (one opinionated eval command),
+# this image bakes in no fixed *command* -- ContainerOperator supplies the
+# whole in-cage argv per iteration (`timeout <n> claude|codex ...`,
+# build_docker_argv) as `docker run`'s trailing args. What IS fixed is a
+# generic entrypoint shim (docker-entrypoint.sh) that starts as root only
+# long enough to align the non-root `agent` account's UID/GID with whichever
+# host user owns the bind-mounted /workspace (the "PUID/PGID" trick --
+# explicit `-e PUID=`/`-e PGID=` win if the caller sets them, else
+# auto-detected from /workspace's own owner), then drops to `agent` via
+# `gosu` and execs the operator's command. Claude Code hard-refuses
+# `--dangerously-skip-permissions` as root, so this non-root handoff is
+# required, not cosmetic -- see docker-entrypoint.sh for the full mechanism.
+ARG ARENA_IMAGE=nethackers/arena:dev
+FROM ${ARENA_IMAGE}
+
+# Node.js (the two harness CLIs below are npm packages) + gosu (drops
+# root->agent in the entrypoint shim without a setuid binary). Node's
+# version is pinned via NodeSource's version-specific setup script -- the
+# same "pinned, deterministic" spirit as arena/Dockerfile's uv:0.11.2 pin.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates curl gnupg gosu \
+    && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+    && apt-get install -y --no-install-recommends nodejs \
+    && rm -rf /var/lib/apt/lists/*
+
+# Headless coding-agent CLIs the ContainerOperator can wrap
+# (harness/operator.py's _claude_cmd/_codex_cmd choose the harness at
+# runtime). Pi (@earendil-works/pi-coding-agent) and opencode (opencode-ai)
+# are deferred to Plan B -- not yet wired into operator.py.
+RUN npm install -g @anthropic-ai/claude-code @openai/codex \
+    && npm cache clean --force
+
+# Non-root `agent` user -- Claude Code refuses --dangerously-skip-permissions
+# as root (the whole reason ContainerOperator's cage needs one), and it is
+# the right default regardless. UID/GID 1000 is only the image's baked-in
+# default: docker-entrypoint.sh remaps both at container start to match the
+# bind-mounted /workspace's real owner (see the header comment above). The
+# home dir matches what harness/auth_inject.py's auth_docker_args() mounts
+# credentials into (/home/agent/.codex, /home/agent/.claude/...).
+RUN useradd --create-home --home-dir /home/agent --uid 1000 --shell /bin/bash agent
+
+COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
+RUN chmod +x /usr/local/bin/docker-entrypoint.sh
+
+WORKDIR /workspace
+
+# No secret is ever baked into or mounted by this Dockerfile -- the only
+# credential that reaches the running container is injected at `docker run`
+# time by harness/auth_inject.py's -v/-e args (the host's own existing CLI
+# login), never a file this Dockerfile COPYs or a value it ARGs/ENVs.
+ENTRYPOINT ["/usr/local/bin/docker-entrypoint.sh"]

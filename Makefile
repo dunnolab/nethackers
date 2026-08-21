@@ -1,8 +1,10 @@
 # NetHackers -- dev convenience targets. Requires: uv, docker, curl.
-.PHONY: install uninstall arena up down wait-hub hub hub-down hub-reset test check smoke
+.PHONY: install uninstall arena mutator up down wait-hub hub hub-down hub-reset test check smoke
 
 # Arena eval image tag (override: `make up ARENA_IMAGE=you/arena:tag`).
 ARENA_IMAGE ?= nethackers/arena:dev
+# Mutator sandbox image tag (override: `make mutator MUTATOR_IMAGE=you/mutator:tag`).
+MUTATOR_IMAGE ?= nethackers/mutator:latest
 
 # Install the `nethackers` CLI into an isolated uv tool env. The cache-clean is
 # required because the package version is pinned 0.0.0, so uv would otherwise
@@ -28,6 +30,14 @@ hub-reset:
 # image is never stale). `nethackers evolve`/`eval` default to $(ARENA_IMAGE).
 arena:
 	docker build -f arena/Dockerfile -t $(ARENA_IMAGE) .
+
+# Build the mutator sandbox image FROM the arena image (reuses its already-
+# compiled NLE -- perfect eval parity, no second native build); depends on
+# `arena` so the base always exists first. Adds the harness CLIs + a
+# non-root `agent` user -- see Dockerfile.mutator. `nethackers evolve
+# --sandbox` defaults to $(MUTATOR_IMAGE).
+mutator: arena
+	docker build -f Dockerfile.mutator --build-arg ARENA_IMAGE=$(ARENA_IMAGE) -t $(MUTATOR_IMAGE) .
 
 # ONE command to bring the whole local stack up: (re)build the arena image,
 # (re)build + start the hub, then wait until the hub answers. Run this before
