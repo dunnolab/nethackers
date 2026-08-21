@@ -19,7 +19,13 @@ from nethackers.contracts.models import (
     DEFAULT_NO_PROGRESS_TIMEOUT,
     ObjectiveSpec,
 )
-from nethackers.hub.objectives import CATALOG, IDENTITIES, PUBLIC_SECRET, build_catalog
+from nethackers.hub.objectives import (
+    CATALOG,
+    IDENTITIES,
+    PUBLIC_SECRET,
+    build_catalog,
+    build_union_spec,
+)
 
 # Race -> legal alignments, transcribed independently of objectives.py (not
 # imported from it) so this is a genuine check of the invariant against a
@@ -196,3 +202,20 @@ def test_random_batch_seeds_are_hmac_derived_from_the_public_secret():
     mine = trajectory_spec(PUBLIC_SECRET, "catalog:random", 0)
     other = trajectory_spec("not-" + PUBLIC_SECRET, "catalog:random", 0)
     assert mine.core_seed != other.core_seed
+
+
+def test_union_spec_is_concatenation_of_member_batches():
+    members = ["wiz-elf-cha-mal", "wiz-orc-cha-mal"]
+    spec = build_union_spec(members, name="wiz-pair")
+    assert spec.kind == "set"
+    assert spec.name == "wiz-pair"
+    # each member contributes exactly its published batch, seeds 0..14
+    for ident in members:
+        member_pairs = [(s, c) for (s, c) in spec.batch if c == ident]
+        assert member_pairs == list(CATALOG[ident].batch)
+    assert len(spec.batch) == 15 * len(members)
+
+
+def test_union_spec_single_member_equals_identity_batch():
+    spec = build_union_spec(["wiz-elf-cha-mal"], name="wiz-elf-cha-mal")
+    assert list(spec.batch) == list(CATALOG["wiz-elf-cha-mal"].batch)

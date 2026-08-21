@@ -65,6 +65,7 @@ and reproducible: rebuilding the catalog always yields byte-identical
 from __future__ import annotations
 
 import random
+from collections.abc import Sequence
 
 from nethackers.arena.seeds import trajectory_spec
 from nethackers.contracts.models import (
@@ -250,6 +251,30 @@ def build_catalog(
     )
 
     return catalog
+
+
+def build_union_spec(
+    identities: Sequence[str], *, name: str, per_identity_size: int = 15
+) -> ObjectiveSpec:
+    """A generalist objective's dev spec: the concatenation of each member
+    identity's published per-identity batch (seeds 0..per_identity_size-1),
+    in sorted-identity order. kind='set', mean aggregation. No CATALOG entry
+    is created -- this spec is built on demand for the evolve loop; wins are
+    registered as per-identity slices."""
+    batch = tuple(
+        (seed, ident)
+        for ident in sorted(identities)
+        for seed in range(per_identity_size)
+    )
+    return ObjectiveSpec(
+        name=name,
+        kind="set",
+        batch=batch,
+        max_steps=DEFAULT_MAX_STEPS,
+        no_progress_timeout=DEFAULT_NO_PROGRESS_TIMEOUT,
+        action_timeout_seconds=ACTION_TIMEOUT_SECONDS,
+        aggregation="mean",
+    )
 
 
 CATALOG: dict[str, ObjectiveSpec] = build_catalog()
