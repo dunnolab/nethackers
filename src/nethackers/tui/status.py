@@ -103,7 +103,8 @@ def scorecard(parent_means: dict[str, float],
     present, total = len([i for i in identities if i in shown]), len(identities)
     umean = sum(shown.get(i, 0.0) for i in identities if i in shown) / max(1, present)
     order = sorted(identities, key=lambda i: shown.get(i, -1.0))
-    flo = order[0] if order and order[0] in shown else None
+    present_ids = [i for i in identities if i in shown]
+    flo = min(present_ids, key=lambda i: shown[i]) if present_ids else None
     header = f"builds · union x̄ {umean:.2f}"
     if flo is not None:
         header += f" · floor {flo} {shown[flo]:.2f} · coverage {present}/{total}"
@@ -114,7 +115,7 @@ def scorecard(parent_means: dict[str, float],
             rows.append(f"  {i:<18} —  (missing)")
             continue
         delta = ""
-        if candidate_means is not None and i in parent_means:
+        if candidate_means and i in parent_means:
             delta = f"  Δ{candidate_means[i] - parent_means[i]:+.2f}"
         rows.append(f"  {i:<18} {_bar(val)} {val:.2f}{delta}")
     return header + "\n" + "\n".join(rows)
