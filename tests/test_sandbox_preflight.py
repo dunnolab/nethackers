@@ -5,6 +5,7 @@ for the CLI and TUI to display. No real docker, network, or login is touched --
 ``shutil.which`` / the ``run`` callable / ``auth_docker_args`` are injected.
 """
 from pathlib import Path
+from types import SimpleNamespace
 
 from nethackers.harness import sandbox_preflight as sp
 from nethackers.harness.auth_inject import AuthUnavailable
@@ -83,3 +84,68 @@ def test_preflight_passes_operator_to_auth(monkeypatch):
 
     sp.preflight("claude", system="Linux", home=Path("/h"))
     assert seen["operator"] == "claude"
+
+
+# --- preflight no longer gates on the image: it's auto-built on demand -------
+
+
+def test_preflight_does_not_probe_for_the_image(monkeypatch):
+    # The image is auto-provisioned (build_mutator_image), NOT a precondition the
+    # user must satisfy -- so preflight (docker + login) never touches it.
+    monkeypatch.setattr(sp, "docker_available", lambda **kw: True)
+    monkeypatch.setattr(sp, "auth_docker_args", lambda *a, **kw: [])
+    called = {"n": 0}
+    monkeypatch.setattr(sp, "image_present", lambda *a, **kw: called.update(n=called["n"] + 1))
+    assert sp.preflight("codex", system="Linux", home=Path("/h")) is None
+    assert called["n"] == 0
+
+
+def test_image_present_true_on_zero_exit():
+    assert sp.image_present("img", run=lambda *a, **k: SimpleNamespace(returncode=0)) is True
+    assert sp.image_present("img", run=lambda *a, **k: SimpleNamespace(returncode=1)) is False
+
+
+# --- auto-build: the first run provisions the image itself (no `make` for users)
+
+
+class _FakeProc:
+    def __init__(self, lines, rc):
+        self.stdout = iter(lines)
+        self._rc = rc
+
+    def wait(self):
+        return self._rc
+
+
+def test_build_mutator_image_streams_and_succeeds(monkeypatch, tmp_path):
+    # a repo root (Dockerfile.mutator + Makefile) is found; `make mutator` runs,
+    # its output streams to on_line, rc 0 -> None (success).
+    (tmp_path / "Dockerfile.mutator").write_text("x")
+    (tmp_path / "Makefile").write_text("x")
+    monkeypatch.setattr(sp.Path, "cwd", classmethod(lambda cls: tmp_path))
+    seen = {"argv": None, "cwd": None, "lines": []}
+
+    def _popen(argv, **kw):
+        seen["argv"], seen["cwd"] = argv, kw.get("cwd")
+        return _FakeProc(["step 1/10", "step 2/10"], 0)
+
+    assert sp.build_mutator_image("my/mut:tag", on_line=seen["lines"].append,
+                                  popen=_popen) is None
+    assert seen["argv"] == ["make", "mutator", "MUTATOR_IMAGE=my/mut:tag"]
+    assert seen["cwd"] == str(tmp_path)
+    assert seen["lines"] == ["step 1/10", "step 2/10"]
+
+
+def test_build_mutator_image_reports_build_failure(monkeypatch, tmp_path):
+    (tmp_path / "Dockerfile.mutator").write_text("x")
+    (tmp_path / "Makefile").write_text("x")
+    monkeypatch.setattr(sp.Path, "cwd", classmethod(lambda cls: tmp_path))
+    err = sp.build_mutator_image("img", popen=lambda *a, **k: _FakeProc([], 2))
+    assert err is not None and "setup failed" in err.lower()
+
+
+def test_build_mutator_image_errors_outside_the_repo(monkeypatch, tmp_path):
+    # no Dockerfile.mutator/Makefile up the tree -> can't build; clear message.
+    monkeypatch.setattr(sp.Path, "cwd", classmethod(lambda cls: tmp_path))
+    err = sp.build_mutator_image("img", popen=lambda *a, **k: _FakeProc([], 0))
+    assert err is not None and "repo" in err.lower()

@@ -29,7 +29,11 @@ from textual.widgets.option_list import Option
 from nethackers.harness.discovery import CliInfo, ModelInfo, detect_cli, list_models
 from nethackers.harness.launch import EvolveParams, prepare_evolve
 from nethackers.harness.models import EFFORTS, MODELS
-from nethackers.harness.sandbox_preflight import preflight as sandbox_preflight
+from nethackers.harness.sandbox_preflight import (
+    build_mutator_image,
+    image_present,
+    preflight as sandbox_preflight,
+)
 from nethackers.hub.objectives import CATALOG
 from nethackers.hubclient.credentials import Credentials
 
@@ -276,5 +280,29 @@ class EvolveForm(Vertical):
         if msg is not None:
             self.query_one("#f_err", Static).update(msg)
             return
+        # The sandbox image is auto-provisioned: if it isn't built yet, build it
+        # (off the UI thread, streaming progress into #f_err) and launch once
+        # ready -- the user never runs `make`. Already built -> launch straight.
+        if image_present(params.mutator_image):
+            self._launch(params)
+        else:
+            self.query_one("#f_err", Static).update(
+                "[yellow]setting up the sandbox[/] (first run — compiling NLE, a few minutes)…")
+            self._build_then_launch(params)
+
+    def _launch(self, params: EvolveParams) -> None:
         plan = prepare_evolve(params)
         cast("NetHackersApp", self.app).start_run(plan)  # background run + open its monitor
+
+    @work(exclusive=True, thread=True)
+    def _build_then_launch(self, params: EvolveParams) -> None:
+        def _line(ln: str) -> None:
+            self.app.call_from_thread(
+                lambda: self.query_one("#f_err", Static).update(
+                    f"[yellow]setting up the sandbox…[/] [dim]{ln}[/]"))
+        err = build_mutator_image(params.mutator_image, on_line=_line)
+        if err is not None:
+            self.app.call_from_thread(
+                lambda: self.query_one("#f_err", Static).update(err))
+            return
+        self.app.call_from_thread(self._launch, params)

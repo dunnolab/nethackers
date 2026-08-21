@@ -57,10 +57,13 @@ class _Plan:
 
 @pytest.fixture(autouse=True)
 def _sandbox_preflight_ok(monkeypatch):
-    # the form runs the sandbox preflight before prepare_evolve; stub it green
-    # so these wiring tests proceed (no real docker/login is touched). The
-    # failure path is covered by test_preflight_failure_shows_error_no_start.
+    # the form runs the sandbox preflight + image check before prepare_evolve;
+    # stub both green (preflight ok, image already built) so these wiring tests
+    # launch straight without touching real docker/login. The failure path is
+    # covered by test_preflight_failure_shows_error_no_start; the auto-build
+    # path by test_missing_image_builds_then_launches.
     monkeypatch.setattr(ef, "sandbox_preflight", lambda *a, **k: None)
+    monkeypatch.setattr(ef, "image_present", lambda *a, **k: True)
 
 
 async def test_start_builds_params_and_starts_a_run(monkeypatch):
@@ -271,3 +274,36 @@ async def test_effort_options_follow_selected_model(monkeypatch):
         eff = form.query_one("#f_effort", Select)
         eff.value = "ultra"                # a live-only level absent from static EFFORTS
         assert eff.value == "ultra"        # picker was repopulated from live reasoning
+
+
+async def test_missing_image_builds_then_launches(monkeypatch):
+    """When the sandbox image isn't built, Start builds it (off the UI thread,
+    streaming progress into #f_err) and launches once ready -- the user never
+    runs `make`."""
+    seen: dict = {}
+
+    def _fake_prepare(p, **k):
+        seen["prepared"] = True
+        return _Plan()
+
+    monkeypatch.setattr(ef, "prepare_evolve", _fake_prepare)
+    monkeypatch.setattr(ef, "image_present", lambda *a, **k: False)   # not built -> build path
+    built: dict = {}
+
+    def _build(image, on_line=None, **k):
+        built["image"] = image
+        if on_line:
+            on_line("compiling nle…")     # exercises the streamed-progress path
+        return None                        # success
+
+    monkeypatch.setattr(ef, "build_mutator_image", _build)
+    app = _Host(None)
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()   # the build-then-launch worker
+        await pilot.pause()
+        assert built.get("image")                # the image was auto-built
+        assert seen.get("prepared") is True       # prepare_evolve ran after the build
+        assert isinstance(app.started, _Plan)     # and the plan reached start_run

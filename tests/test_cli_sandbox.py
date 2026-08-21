@@ -36,8 +36,10 @@ def _evolve_argv(seed, tmp_path, *extra):
 
 def _stub_preflight_ok(monkeypatch):
     """Both evolve preflights pass: the sandbox (runtime up, login resolvable)
-    and the model-availability check (proceed, even for a pinned --model)."""
+    and the model-availability check (proceed, even for a pinned --model), and
+    the sandbox image is already built (no auto-build)."""
     monkeypatch.setattr(cli, "sandbox_preflight", lambda *a, **kw: None)
+    monkeypatch.setattr(cli, "image_present", lambda *a, **kw: True)
     monkeypatch.setattr(
         cli, "preflight_model",
         lambda operator, model, **kw: Preflight(
@@ -193,3 +195,41 @@ def test_preflight_failure_never_reaches_run_loop(tmp_path, monkeypatch, capsys)
     captured = capsys.readouterr()
     assert "codex login" in captured.err            # the preflight's own message fired
     assert "unexpected error" not in captured.err    # not main()'s generic fallback
+
+
+# --- auto-provision: a missing sandbox image is built here, not by the user ---
+
+
+def test_missing_image_triggers_auto_build_then_proceeds(tmp_path, monkeypatch):
+    seed = _seed(tmp_path)
+    built = {}
+    monkeypatch.setattr(cli, "sandbox_preflight", lambda *a, **kw: None)
+    monkeypatch.setattr(cli, "image_present", lambda *a, **kw: False)   # not built yet
+    monkeypatch.setattr(cli, "build_mutator_image",
+                        lambda image, **kw: built.update(image=image))  # returns None (ok)
+    captured = {}
+    monkeypatch.setattr(launch, "run_loop",
+                        lambda **kw: captured.update(kw) or [], raising=False)
+
+    rc = cli._run(_evolve_argv(seed, tmp_path, "--mutator-image", "my/mut:tag"))
+
+    assert rc == 0
+    assert built.get("image") == "my/mut:tag"     # auto-built the requested image
+    assert "operator" in captured                  # and then the run proceeded
+
+
+def test_auto_build_failure_exits_nonzero_without_starting(tmp_path, capsys, monkeypatch):
+    seed = _seed(tmp_path)
+    monkeypatch.setattr(cli, "sandbox_preflight", lambda *a, **kw: None)
+    monkeypatch.setattr(cli, "image_present", lambda *a, **kw: False)
+    monkeypatch.setattr(cli, "build_mutator_image",
+                        lambda *a, **kw: "[red]sandbox setup failed[/] — build did not complete")
+
+    def _boom(**kw):
+        raise AssertionError("run_loop must not start when the build failed")
+    monkeypatch.setattr(launch, "run_loop", _boom, raising=False)
+
+    rc = cli.main(_evolve_argv(seed, tmp_path))
+
+    assert rc != 0
+    assert "setup failed" in capsys.readouterr().err.lower()

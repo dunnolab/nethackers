@@ -318,3 +318,28 @@ def test_detect_cli_with_image_ignores_host_which_and_reads_container_version():
         return SimpleNamespace(returncode=0, stdout="codex-cli 0.149.0")
     info = detect_cli("codex", image="img", run=_ver, which=lambda n: None)
     assert info.installed is True and info.version == "codex-cli 0.149.0"
+
+
+# --- image not built: degrade to 'unknown', never the host CLI's stale cache --
+
+
+def _inspect_fails(*a, **k):
+    return SimpleNamespace(returncode=1, stdout="")   # `docker image inspect` -> absent
+
+
+def test_list_models_image_absent_returns_none_not_host_cache():
+    # the whole point of the container probe: an unbuilt image must NOT silently
+    # fall back to the host's ~/.codex/models_cache.json (the wrong version).
+    assert list_models("codex", image="nope:tag", run=_inspect_fails) is None
+
+
+def test_detect_cli_image_absent_reports_not_installed():
+    info = detect_cli("codex", image="nope:tag", run=_inspect_fails)
+    assert info.installed is False and info.version is None
+
+
+def test_codex_models_skips_host_cache_when_cache_disabled():
+    # container mode passes allow_cache=False; a failed probe returns None rather
+    # than reading a (wrong-version) host cache.
+    assert _disc._codex_models(run=_inspect_fails, home=Path("/does/not/exist"),
+                               allow_cache=False) is None

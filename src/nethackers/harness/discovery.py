@@ -25,6 +25,7 @@ from pathlib import Path
 import httpx
 
 from nethackers.harness.auth_inject import AuthUnavailable, auth_docker_args
+from nethackers.harness.sandbox_preflight import image_present
 
 _ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models?limit=100"
 _ANTHROPIC_VERSION = "2023-06-01"
@@ -75,9 +76,11 @@ def list_models(
     home: Path | None = None,
 ) -> list[ModelInfo] | None:
     if image is not None:
+        if not image_present(image, run=run):
+            return None   # image not built -> unknown; never the host CLI's cache
         run = _container_run(image, run=run)   # probe the mutator container, not the host
     if backend == "codex":
-        return _codex_models(run=run, home=home)
+        return _codex_models(run=run, home=home, allow_cache=image is None)
     if backend == "claude":
         return _claude_models(run=run, http=http, home=home)
     return None
@@ -119,7 +122,8 @@ def _codex_parse(doc: object) -> list[ModelInfo] | None:
     return out
 
 
-def _codex_models(*, run: Callable, home: Path | None) -> list[ModelInfo] | None:
+def _codex_models(*, run: Callable, home: Path | None,
+                  allow_cache: bool = True) -> list[ModelInfo] | None:
     try:
         proc = run(["codex", "debug", "models"], capture_output=True, text=True, timeout=30)
         if proc.returncode == 0 and (proc.stdout or "").strip():
@@ -128,6 +132,8 @@ def _codex_models(*, run: Callable, home: Path | None) -> list[ModelInfo] | None
                 return parsed
     except Exception:
         pass
+    if not allow_cache:
+        return None   # container probe: the HOST's ~/.codex cache is the wrong version
     cache = (home or Path.home()) / ".codex" / "models_cache.json"
     try:
         return _codex_parse(json.loads(cache.read_text()))
@@ -258,6 +264,8 @@ def _logged_in(backend: str, *, run: Callable) -> bool | None:
 def detect_cli(backend: str, *, image: str | None = None, run: Callable = subprocess.run,
                which: Callable = shutil.which) -> CliInfo:
     if image is not None:
+        if not image_present(image, run=run):
+            return CliInfo(backend, False, None, None)   # image not built
         run, which = _container_run(image, run=run), _image_which
     binary = {"codex": "codex", "claude": "claude"}[backend]
     if which(binary) is None:

@@ -45,11 +45,60 @@ def docker_available(*, run=subprocess.run) -> bool:
     return result.returncode == 0
 
 
+def image_present(image: str, *, docker: str = "docker", run=subprocess.run) -> bool:
+    """Is the mutator image available locally? Cheap ``docker image inspect`` (no
+    pull). Used to decide whether to auto-build it (``build_mutator_image``) and
+    by discovery, so an unbuilt image degrades quietly instead of silently
+    reporting the host CLI's models."""
+    try:
+        return run([docker, "image", "inspect", image],
+                   capture_output=True, timeout=10).returncode == 0
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _repo_root() -> Path | None:
+    """The nethackers repo checkout (the dir holding ``Dockerfile.mutator`` +
+    ``Makefile``), searched from CWD upward -- the build context the sandbox
+    image is built from. ``None`` when nethackers isn't being run from its repo
+    (then the image can't be auto-built and must be pulled/built out of band)."""
+    for base in (Path.cwd(), *Path.cwd().parents):
+        if (base / "Dockerfile.mutator").is_file() and (base / "Makefile").is_file():
+            return base
+    return None
+
+
+def build_mutator_image(image: str, *, on_line=None, popen=subprocess.Popen) -> str | None:
+    """Build the mutator sandbox image (``make mutator`` -> nle-base + mutator),
+    streaming each build line to ``on_line``. ``None`` on success, else a styled
+    error. The mutator ALWAYS runs sandboxed, so the very first run auto-provisions
+    the image here (users never run ``make`` themselves) -- the only cost is the
+    one-time NLE compile."""
+    root = _repo_root()
+    if root is None:
+        return ("[red]can't set up the sandbox[/]: run nethackers from its repo "
+                "(the sandbox image builds from Dockerfile.mutator there)")
+    try:
+        proc = popen(["make", "mutator", f"MUTATOR_IMAGE={image}"], cwd=str(root),
+                     stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
+        for line in proc.stdout:
+            if on_line is not None:
+                on_line(line.rstrip())
+        rc = proc.wait()
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"[red]sandbox setup failed[/]: {exc}"
+    if rc != 0:
+        return "[red]sandbox setup failed[/] — the build did not complete (see the log above)"
+    return None
+
+
 def preflight(operator: str, *, system: str | None = None,
               home: Path | None = None, run=subprocess.run) -> str | None:
     """``None`` if the mutator sandbox can run; else a styled, human-facing
     error. Two checks, in order: a working container runtime, then a resolvable
-    host login for ``operator`` (the token/creds the container reuses)."""
+    host login for ``operator`` (the token/creds the container reuses). The
+    image itself is auto-built on demand (``build_mutator_image``), not a
+    precondition the user must satisfy."""
     if not docker_available(run=run):
         return (
             f"[red]sandbox unavailable[/]: no working container runtime found "

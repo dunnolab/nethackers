@@ -21,6 +21,7 @@ def _sandbox_preflight_ok(monkeypatch):
     # stub the preflight green; its real behaviour is covered in
     # test_sandbox_preflight.py and test_cli_sandbox.py.
     monkeypatch.setattr(cli, "sandbox_preflight", lambda *a, **kw: None)
+    monkeypatch.setattr(cli, "image_present", lambda *a, **kw: True)   # sandbox image ready
 
 
 def test_evolve_parses_and_invokes_loop(tmp_path, monkeypatch):

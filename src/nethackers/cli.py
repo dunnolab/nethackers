@@ -64,7 +64,11 @@ from rich_argparse import RichHelpFormatter
 from nethackers.eval.runner import eval_batch
 from nethackers.harness.discovery import ModelInfo, list_models, preflight_model
 from nethackers.harness.launch import EvolveParams, _now, prepare_evolve
-from nethackers.harness.sandbox_preflight import preflight as sandbox_preflight
+from nethackers.harness.sandbox_preflight import (
+    build_mutator_image,
+    image_present,
+    preflight as sandbox_preflight,
+)
 from nethackers.hub.objectives import CATALOG
 from nethackers.hubclient import credentials as _cred
 from nethackers.hubclient.client import (
@@ -447,13 +451,23 @@ def _run(argv: list[str] | None) -> int:
 
     if args.cmd == "evolve":
         # The mutator ALWAYS runs sandboxed -- there is no host-execution path.
-        # Fail fast, before any hub SELECT call / run-dir creation / the TUI
-        # even opens, rather than a mid-loop crash once run_loop starts. The
-        # same preflight backs the in-app form (tui/screens/evolve_form.py).
+        # Fail fast, before any hub SELECT call / run-dir creation, rather than a
+        # mid-loop crash. The same preflight backs the in-app form (evolve_form).
         msg = sandbox_preflight(args.operator)
         if msg is not None:
             err.print(msg)
             return 1
+        # Auto-provision the sandbox image (users never run `make` themselves):
+        # if it isn't built yet, build it here with a one-time progress note.
+        if not image_present(args.mutator_image):
+            err.print("[yellow]setting up the mutation sandbox[/] (first run — this "
+                      "compiles NLE and can take a few minutes)…")
+            berr = build_mutator_image(args.mutator_image,
+                                       on_line=lambda ln: err.print(f"[dim]{ln}[/]"))
+            if berr is not None:
+                err.print(berr)
+                return 1
+            err.print("[green]✓ sandbox ready[/]")
 
         _creds = _load_creds()
         # SELECT (compounding from the hub's top trusted elite) + run.json +
