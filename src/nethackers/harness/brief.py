@@ -6,6 +6,24 @@ from collections import Counter
 from nethackers.contracts.models import Evidence
 
 
+def _set_block(identities: list[str], per_identity: dict[str, float] | None) -> str:
+    n = len(identities)
+    lines = [f"**Objective — a set of {n} builds.** You are optimizing ONE bot to "
+             f"raise its **average** progression across these {n} character builds, "
+             f"and especially to lift its **weakest** ones."]
+    if per_identity:
+        ordered = sorted(identities, key=lambda i: per_identity.get(i, 0.0))
+        table = "  ".join(f"{i} {per_identity[i]:.2f}" for i in ordered if i in per_identity)
+        lines.append(f"**Per-build now (weakest first).** {table}")
+    else:
+        lines.append("Builds: " + ", ".join(identities))
+    lines.append(
+        "You needn't roll every build every cycle — sample a few seeds across a "
+        "spread of builds, prioritizing the weak ones; the full grading is done "
+        "for you on held-out seeds.")
+    return "\n\n".join(lines)
+
+
 def build_brief(
     objective_name: str,
     character: str,
@@ -13,6 +31,8 @@ def build_brief(
     *,
     training_seeds: list[int] | None = None,
     wiki_path: str | None = None,
+    identities: list[str] | None = None,
+    per_identity: dict[str, float] | None = None,
 ) -> str:
     ends = Counter(r.end_status or "unknown" for r in parent_evidence.results)
     tally = ", ".join(f"{end}×{n}" for end, n in ends.most_common())
@@ -29,6 +49,20 @@ def build_brief(
         )
     else:
         have = "**What you have.** Live Python + NLE; the current bot is your starting point."
+
+    if identities and len(identities) > 1:
+        head = _set_block(identities, per_identity)
+        return (
+            head + "\n\n"
+            "**Don't game it:** no branching on seed fingerprints, no exploiting "
+            "scorer/NLE quirks — such candidates fail on held-out seeds.\n\n"
+            "**Make one focused change** per candidate; leave a `# hypothesis: …` "
+            "comment at the edit.\n\n"
+            f"**Seeds & the real test.** Develop against your training seeds"
+            f"{seeds_note}. Scored on held-out seeds you'll never see.\n\n"
+            f"{have}\n\n"
+            "**Before you finalize.** Must import cleanly, keep the `make_agent()` → "
+            "`reset()`/`act()` contract, and not crash across a handful of seeds.")
 
     return (
         f"**Objective.** Improve this NetHack bot's **progression score** as {character} "
