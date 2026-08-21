@@ -94,3 +94,36 @@ def test_split_from_phase_then_batch_label():
         "index": 0, "total": 1, "seed": 0, "character": "val-dwa-law-fem",
         "progress": 0.1, "status": "completed", "turns": 1, "depth": 1})
     assert r.split() == "held"  # falls back to the current batch label
+
+
+def test_candidate_means_groups_current_batch_rows_by_character():
+    r = Run("r1", CFG)
+    r.apply_episode("iter 1/3 · dev", {"index": 0, "total": 3, "progress": 0.2,
+                                        "status": "died", "character": "wiz-elf-cha-mal"})
+    r.apply_episode("iter 1/3 · dev", {"index": 1, "total": 3, "progress": 0.4,
+                                        "status": "died", "character": "wiz-elf-cha-mal"})
+    r.apply_episode("iter 1/3 · dev", {"index": 2, "total": 3, "progress": 0.6,
+                                        "status": "died", "character": "wiz-orc-cha-mal"})
+    means = r.candidate_means()
+    assert set(means) == {"wiz-elf-cha-mal", "wiz-orc-cha-mal"}
+    assert round(means["wiz-elf-cha-mal"], 3) == 0.3  # mean(0.2, 0.4)
+    assert round(means["wiz-orc-cha-mal"], 3) == 0.6
+
+
+def test_candidate_means_empty_when_no_batch_yet():
+    r = Run("r1", CFG)
+    assert r.candidate_means() == {}
+
+
+def test_identities_and_parent_means_read_from_state():
+    r = Run("r1", CFG)
+    r.apply_state(_state("mutating", identities=["a", "b"], parent_means={"a": 0.1, "b": 0.2}))
+    assert r.identities() == ["a", "b"]
+    assert r.parent_means() == {"a": 0.1, "b": 0.2}
+
+
+def test_identities_and_parent_means_default_empty_when_absent():
+    r = Run("r1", CFG)
+    r.apply_state(_state("mutating"))  # single/random objectives never set these keys
+    assert r.identities() == []
+    assert r.parent_means() == {}
