@@ -61,7 +61,7 @@ def metric_record(iteration: int, result: IterationResult) -> dict:
         outcome = "baseline"
     elif result.registered:
         outcome = "registered"
-    elif result.reason.startswith("error"):
+    elif result.reason.startswith(("error", "operator-error")):
         outcome = "error"
     else:
         outcome = "rejected"

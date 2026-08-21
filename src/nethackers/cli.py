@@ -62,6 +62,7 @@ from rich.text import Text
 from rich_argparse import RichHelpFormatter
 
 from nethackers.eval.runner import eval_batch
+from nethackers.harness.discovery import ModelInfo, list_models, preflight_model
 from nethackers.harness.launch import EvolveParams, _now, prepare_evolve
 from nethackers.hub.objectives import CATALOG
 from nethackers.hubclient import credentials as _cred
@@ -96,6 +97,20 @@ def _default_hub() -> str:
 
 def _load_creds() -> Credentials | None:
     return _cred.load()
+
+
+def _models_table(operator: str, rows: list[dict[str, Any]]):
+    from rich.table import Table
+    table = Table(title=f"{operator} models", title_style="bold")
+    table.add_column("id")
+    table.add_column("label")
+    table.add_column("effort")
+    for r in rows:
+        name = r["id"] + (" [dim](deprecated)[/]" if r["deprecated"] else "")
+        # str() each item defensively: a display command must never crash on an
+        # unexpected reasoning shape (see discovery._codex_reasoning).
+        table.add_row(name, r["label"], ", ".join(str(x) for x in r["reasoning"]))
+    return table
 
 
 def _common_parser() -> argparse.ArgumentParser:
@@ -201,6 +216,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--max-parallel-evals", type=int, default=8,
         help="Cap on episodes the arena runs concurrently (default: %(default)s).",
     )
+
+    mo = sub.add_parser(
+        "models", parents=[common], formatter_class=RichHelpFormatter,
+        help="List the models the installed operator CLI can actually serve on this machine.",
+    )
+    mo.add_argument("--operator", choices=["codex", "claude"], default="codex")
 
     evolve = sub.add_parser(
         "evolve", parents=[common], formatter_class=RichHelpFormatter,
@@ -398,6 +419,20 @@ def _run(argv: list[str] | None) -> int:
         print(json.dumps(evidence.to_dict(), indent=2))
         return 0
 
+    if args.cmd == "models":
+        models: list[ModelInfo] | None = list_models(args.operator)
+        if models is None:
+            err.print(f"[yellow]couldn't determine {args.operator}'s models[/] "
+                      "(offline, old CLI, or logged out) — check `"
+                      f"{args.operator} --version` / login.")
+            models = []
+        data = [{"id": m.id, "label": m.label, "reasoning": list(m.reasoning),
+                 "deprecated": m.deprecated} for m in models]
+        emit(data, args.output,
+             table=lambda rows: _models_table(args.operator, rows),
+             plain=lambda rows: "\n".join(r["id"] for r in rows))
+        return 0
+
     if args.cmd == "evolve":
         _creds = _load_creds()
         # SELECT (compounding from the hub's top trusted elite) + run.json +
@@ -412,6 +447,18 @@ def _run(argv: list[str] | None) -> int:
             from_seed=args.from_seed, select_k=args.select_k, select_temp=args.select_temp,
             model=args.model, effort=args.effort,
         )
+
+        # Preflight only when a model is pinned: harness-default has nothing to
+        # validate, and this keeps the model=None path (the common case + every
+        # existing wiring test) free of any CLI/network probe. A confident
+        # refuse stops here -- no run dir, no doomed spin; unknown only warns.
+        if args.model:
+            pf = preflight_model(args.operator, args.model)
+            if pf.action == "refuse":
+                err.print(f"[red]{pf.message}[/]")
+                return 2
+            if pf.action == "warn":
+                err.print(f"[yellow]{pf.message}[/]")
         plan = prepare_evolve(params)
 
         if sys.stdout.isatty() and args.output != "json" and not args.no_tui:

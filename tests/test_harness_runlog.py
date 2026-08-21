@@ -47,6 +47,7 @@ def test_metric_record_maps_outcome():
     assert metric_record(0, base)["outcome"] == "baseline"
     assert metric_record(2, IterationResult(False, "no-dev-gain"))["outcome"] == "rejected"
     assert metric_record(4, IterationResult(False, "error: boom"))["outcome"] == "error"
+    assert metric_record(1, IterationResult(False, "operator-error:1"))["outcome"] == "error"
 
 
 def test_metric_record_uses_faithful_usage_when_present():

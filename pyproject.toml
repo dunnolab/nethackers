@@ -42,6 +42,7 @@ asyncio_mode = "auto"
 markers = [
   "nle: requires the optional NLE dependency and a real NetHack environment",
   "docker: requires Docker and the built arena image",
+  "codex_live: requires the real codex CLI + login (model-discovery regression)",
   "claude_live: requires the real claude CLI + network (live hermeticity regression)",
 ]
 

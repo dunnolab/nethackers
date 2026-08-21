@@ -5,6 +5,7 @@ import json
 import shutil
 import subprocess
 import threading
+import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -56,6 +57,8 @@ def run_loop(
     validation_n: int,
     max_parallel_evals: int = 8,
     migrate: bool = True,
+    max_consecutive_errors: int = 3,
+    sleep: Callable[[float], None] = time.sleep,
     stop: threading.Event | None = None,
     now_fn: Callable[[], str],
     report: Callable[[str], None] = lambda _: None,
@@ -134,6 +137,7 @@ def run_loop(
                                     validation_fitness=elite.validation_fitness))
 
     results: list[IterationResult] = []
+    consecutive_errors = 0
 
     def _record(iteration: int, result: IterationResult) -> None:
         results.append(result)
@@ -174,7 +178,31 @@ def run_loop(
             brief = build_brief(objective, character, elite.dev_evidence)
             _emit("mutating", k + 1)
             report(f"{tag} · mutating…")
-            op = operator.run(worktree, brief, on_line=_log_cb(tag), stop=stop)
+            try:
+                op = operator.run(worktree, brief, on_line=_log_cb(tag), stop=stop)
+            except Exception as e:
+                # run_operator RAISES on a non-zero backend exit / startup failure
+                # (missing or renamed binary, unavailable model, stale CLI, auth),
+                # carrying the CLI's real error. Trip a circuit-breaker with
+                # backoff rather than letting the generic outer `except` fast-
+                # `continue` -- which would spin the whole `iterations` budget in
+                # milliseconds against a persistently-broken operator. A HEALTHY
+                # run resets the counter below, so an ordinary no-improvement
+                # iteration never trips the breaker.
+                consecutive_errors += 1
+                detail = str(e)
+                _emit("error", k + 1, detail=detail)
+                report(f"{tag} · ✗ operator error: {detail}")
+                _record(k + 1, IterationResult(False, f"operator-error:{detail}"))
+                if consecutive_errors >= max_consecutive_errors:
+                    _emit("aborted", k + 1, detail=detail)
+                    report(f"{tag} · ✗✗ aborting after {consecutive_errors} "
+                           f"consecutive operator failures — last: {detail}")
+                    break
+                sleep(min(2 ** (consecutive_errors - 1), 30))   # 1s, 2s, 4s… capped
+                continue
+            consecutive_errors = 0   # a healthy operator run resets the breaker
+
             report(f"{tag} · operator: {op.total} tok ({op.stopped_reason}); gating…")
             _emit("gating", k + 1, tokens=op.total)
 

@@ -50,7 +50,7 @@ wait-hub:
 # Fast suite (no NLE/Docker/live-Claude), types+lint, and the isolated
 # docker-compose smoke.
 test:
-	uv run pytest -m "not nle and not docker and not claude_live" -q
+	uv run pytest -m "not nle and not docker and not claude_live and not codex_live" -q
 check:
 	uv run mypy src/nethackers tests
 	uv run ruff check .
