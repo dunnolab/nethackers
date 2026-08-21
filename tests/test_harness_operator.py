@@ -9,7 +9,6 @@ import pytest
 
 from nethackers.harness.metering import TokenUsage
 from nethackers.harness.operator import (
-    ClaudeOperator,
     _claude_cmd,
     _codex_cmd,
     run_operator,
@@ -174,20 +173,27 @@ def test_claude_operator_does_not_recall_memory_across_runs(tmp_path):
     codeword = "BUG-MARKER-7f3a1c9e"
 
     try:
-        op = ClaudeOperator()
-        first = op.run(
-            worktree,
-            f"Remember this fact for all future sessions: the codeword is "
-            f"{codeword}. Do not create or edit any files. Reply with only OK.",
+        first = run_operator(
+            _claude_cmd(
+                "claude",
+                f"Remember this fact for all future sessions: the codeword is "
+                f"{codeword}. Do not create or edit any files. Reply with only OK.",
+                None, None,
+            ),
+            worktree, backend="claude",
         )
         assert first.stopped_reason in ("completed", "killed")
         assert not memory_dir.exists()
 
         second_lines: list[str] = []
-        second = op.run(
-            worktree,
-            "Do you have any memory of a previous session in this directory? "
-            "Reply with only the word NONE if you recall nothing.",
+        second = run_operator(
+            _claude_cmd(
+                "claude",
+                "Do you have any memory of a previous session in this directory? "
+                "Reply with only the word NONE if you recall nothing.",
+                None, None,
+            ),
+            worktree, backend="claude",
             on_line=second_lines.append,
         )
         assert second.stopped_reason in ("completed", "killed")

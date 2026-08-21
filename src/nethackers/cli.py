@@ -240,14 +240,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "default: the harness's own default.",
     )
     evolve.add_argument(
-        "--sandbox", action="store_true",
-        help="Run the mutator inside a resource-capped Docker container instead of "
-        "directly on the host (needs a working container runtime, and the "
-        "selected --operator's host login).",
-    )
-    evolve.add_argument(
         "--mutator-image", default="nethackers/mutator:latest",
-        help="Container image for --sandbox (default: %(default)s).",
+        help="Container image the mutator runs in (default: %(default)s). The "
+        "mutator always runs sandboxed in this image; a working container "
+        "runtime and the selected --operator's host login are required.",
     )
     evolve.add_argument("--iterations", type=int, default=1)
     evolve.add_argument("--validation-n", type=int, default=15)
@@ -357,7 +353,7 @@ def _unknown_objective(name: str) -> str:
 
 
 def _sandbox_hint() -> str:
-    """The Colima/Podman bring-up hint for ``--sandbox``'s runtime preflight.
+    """The Colima/Podman bring-up hint for the evolve sandbox runtime preflight.
     macOS has no native Docker daemon (Docker Desktop is explicitly out per
     the mutator-sandbox spec), so its fix is a VM, not just "start Docker"."""
     if platform.system() == "Darwin":
@@ -369,7 +365,7 @@ def _sandbox_hint() -> str:
 
 
 def _docker_available() -> bool:
-    """``--sandbox``'s runtime preflight. Two checks, not one: a ``docker``
+    """The evolve sandbox runtime preflight. Two checks, not one: a ``docker``
     binary on PATH can still have no daemon behind it -- a stopped Colima VM
     looks exactly like this -- so ``docker info`` is what actually proves the
     runtime is usable, not just installed."""
@@ -441,21 +437,21 @@ def _run(argv: list[str] | None) -> int:
         return 0
 
     if args.cmd == "evolve":
-        if args.sandbox:
-            # Fail fast, before any hub SELECT call / run-dir creation / the
-            # TUI even opens -- not a mid-loop crash once run_loop starts.
-            if not _docker_available():
-                err.print(
-                    f"[red]sandbox unavailable[/]: no working container runtime found "
-                    f"— {_sandbox_hint()}, then retry"
-                )
-                return 1
-            try:
-                auth_docker_args(args.operator, system=platform.system(),
-                                 home=Path.home(), _require_exists=True)
-            except AuthUnavailable as exc:
-                err.print(f"[red]not logged in[/]: {exc.hint}")
-                return 1
+        # The mutator ALWAYS runs sandboxed -- there is no host-execution path.
+        # Fail fast, before any hub SELECT call / run-dir creation / the TUI
+        # even opens, rather than a mid-loop crash once run_loop starts.
+        if not _docker_available():
+            err.print(
+                f"[red]sandbox unavailable[/]: no working container runtime found "
+                f"— {_sandbox_hint()}, then retry"
+            )
+            return 1
+        try:
+            auth_docker_args(args.operator, system=platform.system(),
+                             home=Path.home(), _require_exists=True)
+        except AuthUnavailable as exc:
+            err.print(f"[red]not logged in[/]: {exc.hint}")
+            return 1
 
         _creds = _load_creds()
         # SELECT (compounding from the hub's top trusted elite) + run.json +
@@ -468,8 +464,7 @@ def _run(argv: list[str] | None) -> int:
             token=args.token or (_creds.token if _creds else "dev-token"),
             owner=args.owner or (_creds.login if _creds else "dev"),
             from_seed=args.from_seed, select_k=args.select_k, select_temp=args.select_temp,
-            model=args.model, effort=args.effort,
-            sandbox=args.sandbox, mutator_image=args.mutator_image,
+            model=args.model, effort=args.effort, mutator_image=args.mutator_image,
         )
         plan = prepare_evolve(params)
 
