@@ -33,7 +33,8 @@ from nethackers.tui.art import tombstone
 from nethackers.tui.nav import dedup_visible, nearest_in_direction
 from nethackers.tui.run import Run
 
-_KIND_STYLE = {"assistant": "", "tool": "cyan", "result": "green b", "meta": "dim"}
+_KIND_STYLE = {"assistant": "", "tool": "cyan", "result": "green b", "meta": "dim",
+               "brief": "#d2a24c"}  # the iteration's instruction, in the shell's gold
 
 
 class RunMonitor(Screen):

@@ -300,7 +300,10 @@ validation_n=3,
         now_fn=lambda: "2026-08-10T00:00:00Z",
         runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
         on_log=lambda tag, line: logs.append((tag, line)))
-    assert logs and logs[0][0] == "iter 1/1" and "editing" in logs[0][1]
+    # the brief heads the iteration log (so a reader sees the instruction),
+    # then the operator's own stream lines follow.
+    assert logs and logs[0][0] == "iter 1/1" and "nethackers_brief" in logs[0][1]
+    assert any(tag == "iter 1/1" and "editing" in line for tag, line in logs)
 
 
 def _run_with_migration(tmp_path, monkeypatch, *, migrate, better_version=5, score=0.99):

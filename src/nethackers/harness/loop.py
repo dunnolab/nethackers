@@ -176,6 +176,11 @@ def run_loop(
             shutil.copytree(elite.tree, worktree)
 
             brief = build_brief(objective, character, elite.dev_evidence)
+            # Head the iteration's log with the brief it was given, so a reader
+            # sees what the mutator was asked to do (persisted to the run log +
+            # rendered in the TUI's agent-log via prettify's brief event).
+            if on_log is not None:
+                on_log(tag, json.dumps({"type": "nethackers_brief", "text": brief}))
             _emit("mutating", k + 1)
             report(f"{tag} · mutating…")
             try:
