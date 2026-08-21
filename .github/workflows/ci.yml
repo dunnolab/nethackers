@@ -1,0 +1,25 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+
+jobs:
+  test:
+    name: test + typecheck + lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+
+      - name: Run fast test suite
+        run: uv run pytest -m "not nle and not docker and not claude_live and not codex_live and not github_live" -q
+
+      - name: Typecheck (mypy)
+        run: uv run mypy src/nethackers tests
+
+      - name: Lint (ruff)
+        run: uv run ruff check .
