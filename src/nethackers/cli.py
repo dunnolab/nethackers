@@ -51,6 +51,9 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import platform
+import shutil
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -62,6 +65,7 @@ from rich.text import Text
 from rich_argparse import RichHelpFormatter
 
 from nethackers.eval.runner import eval_batch
+from nethackers.harness.auth_inject import AuthUnavailable, auth_docker_args
 from nethackers.harness.launch import EvolveParams, _now, prepare_evolve
 from nethackers.hub.objectives import CATALOG
 from nethackers.hubclient import credentials as _cred
@@ -235,6 +239,16 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Reasoning effort: low|medium|high|xhigh|max (codex also 'ultra'); "
         "default: the harness's own default.",
     )
+    evolve.add_argument(
+        "--sandbox", action="store_true",
+        help="Run the mutator inside a resource-capped Docker container instead of "
+        "directly on the host (needs a working container runtime, and the "
+        "selected --operator's host login).",
+    )
+    evolve.add_argument(
+        "--mutator-image", default="nethackers/mutator:latest",
+        help="Container image for --sandbox (default: %(default)s).",
+    )
     evolve.add_argument("--iterations", type=int, default=1)
     evolve.add_argument("--validation-n", type=int, default=15)
     evolve.add_argument(
@@ -342,6 +356,34 @@ def _unknown_objective(name: str) -> str:
     )
 
 
+def _sandbox_hint() -> str:
+    """The Colima/Podman bring-up hint for ``--sandbox``'s runtime preflight.
+    macOS has no native Docker daemon (Docker Desktop is explicitly out per
+    the mutator-sandbox spec), so its fix is a VM, not just "start Docker"."""
+    if platform.system() == "Darwin":
+        return (
+            "start one, e.g. `colima start --cpu 6 --memory 12 --vm-type vz "
+            "--mount-type virtiofs` (or Podman)"
+        )
+    return "start Docker or Podman"
+
+
+def _docker_available() -> bool:
+    """``--sandbox``'s runtime preflight. Two checks, not one: a ``docker``
+    binary on PATH can still have no daemon behind it -- a stopped Colima VM
+    looks exactly like this -- so ``docker info`` is what actually proves the
+    runtime is usable, not just installed."""
+    if shutil.which("docker") is None:
+        return False
+    try:
+        # Timeout is generous but bounded: covers a slow-to-answer Colima VM
+        # without hanging the CLI indefinitely if the runtime is just gone.
+        result = subprocess.run(["docker", "info"], capture_output=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return result.returncode == 0
+
+
 def _run(argv: list[str] | None) -> int:
     """Parse args and dispatch one subcommand. May raise -- ``main`` is the
     single place that turns any failure into a clean message, so nothing here
@@ -399,6 +441,22 @@ def _run(argv: list[str] | None) -> int:
         return 0
 
     if args.cmd == "evolve":
+        if args.sandbox:
+            # Fail fast, before any hub SELECT call / run-dir creation / the
+            # TUI even opens -- not a mid-loop crash once run_loop starts.
+            if not _docker_available():
+                err.print(
+                    f"[red]sandbox unavailable[/]: no working container runtime found "
+                    f"— {_sandbox_hint()}, then retry"
+                )
+                return 1
+            try:
+                auth_docker_args(args.operator, system=platform.system(),
+                                 home=Path.home(), _require_exists=True)
+            except AuthUnavailable as exc:
+                err.print(f"[red]not logged in[/]: {exc.hint}")
+                return 1
+
         _creds = _load_creds()
         # SELECT (compounding from the hub's top trusted elite) + run.json +
         # run wiring all live in prepare_evolve, shared with the in-app form.
@@ -411,6 +469,7 @@ def _run(argv: list[str] | None) -> int:
             owner=args.owner or (_creds.login if _creds else "dev"),
             from_seed=args.from_seed, select_k=args.select_k, select_temp=args.select_temp,
             model=args.model, effort=args.effort,
+            sandbox=args.sandbox, mutator_image=args.mutator_image,
         )
         plan = prepare_evolve(params)
 

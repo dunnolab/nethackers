@@ -11,8 +11,10 @@ import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 from nethackers.harness import runlog
+from nethackers.harness.container_operator import ContainerOperator
 from nethackers.harness.loop import run_loop
 from nethackers.harness.operator import ClaudeOperator, CodexOperator
 from nethackers.harness.select import select_parent
@@ -69,6 +71,8 @@ class EvolveParams:
     select_temp: float = 1.0
     model: str | None = None   # pin the operator's model (None = harness default)
     effort: str | None = None  # reasoning effort level (None = harness default)
+    sandbox: bool = False      # run the operator in a ContainerOperator, not the host
+    mutator_image: str = "nethackers/mutator:latest"  # image for sandbox=True
 
 
 @dataclass
@@ -111,8 +115,16 @@ def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
         "model": params.model, "effort": params.effort,
     })
     _point_latest(runs_dir, rid)
-    operator = {"codex": CodexOperator, "claude": ClaudeOperator}[params.operator](
-        model=params.model, effort=params.effort)
+    # No shared Operator protocol exists yet (run_loop's own `operator` param
+    # is `Any` too, in loop.py) -- ClaudeOperator/CodexOperator/ContainerOperator
+    # are related only by duck typing (`.run(worktree, brief, *, on_line, stop)`).
+    operator: Any
+    if params.sandbox:
+        operator = ContainerOperator(harness=params.operator, image=params.mutator_image,
+                                     model=params.model, effort=params.effort)
+    else:
+        operator = {"codex": CodexOperator, "claude": ClaudeOperator}[params.operator](
+            model=params.model, effort=params.effort)
     cfg = EvolveConfig(objective=params.objective, backend=params.operator,
                        iterations=params.iterations, model=params.model,
                        effort=params.effort)
