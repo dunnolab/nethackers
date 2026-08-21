@@ -44,7 +44,13 @@ class RunMonitor(Screen):
     CSS = """
     RunMonitor #cockpit { height: auto; margin: 1 2 0 2; }
     RunMonitor #influences { color: #7c745f; }
-    RunMonitor #scorecard { height: auto; margin: 0 1 1 1; color: #d7c9a2; }
+    /* the per-identity scorecard (set objectives): bounded + scrollable so a
+       large set never pushes the episode table off-screen; on a tall terminal
+       it just shows the whole card. */
+    RunMonitor #scorecard {
+        height: auto; max-height: 50%; overflow-y: auto;
+        margin: 0 1 1 1; color: #d7c9a2;
+    }
     RunMonitor #navhint { color: #7c745f; height: 1; margin: 0 2; }
     RunMonitor TabbedContent { width: 1fr; height: 1fr; margin: 0 2; }
     #tables { padding: 1 1; }
