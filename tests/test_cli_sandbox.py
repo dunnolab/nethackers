@@ -242,14 +242,25 @@ def test_sandbox_auth_preflight_uses_the_selected_operator_as_harness(tmp_path, 
     assert seen["harness"] == "claude"
 
 
-def test_sandbox_auth_preflight_never_reaches_run_loop(tmp_path, monkeypatch):
-    """The ruling requires this fail fast, before run_loop starts -- pin it:
-    if auth fails, run_loop must never even be called."""
+def test_sandbox_auth_preflight_never_reaches_run_loop(tmp_path, monkeypatch, capsys):
+    """The ruling requires this fail fast, before run_loop starts. `rc != 0`
+    alone can't pin that: if a regression let this fall through, the `_boom`
+    stub below would raise AssertionError from inside run_loop, and main()'s
+    generic `except Exception -> return 1` guard would swallow THAT into
+    rc=1 too -- indistinguishable from the correct early return's rc=1.
+    Asserting the preflight's own hint landed in stderr (proving IT is what
+    fired) and that the generic fallback's "unexpected error" wording did
+    NOT (proving nothing was caught-and-swallowed downstream) is what
+    actually tells the two apart. `_boom` stays as a second, independent
+    layer: even if a future stderr-wording change weakened those two
+    assertions, a real regression still crashes loudly here instead of
+    silently invoking a real operator/hub call.
+    """
     seed = _seed(tmp_path)
     monkeypatch.setattr(cli, "_docker_available", lambda: True)
 
     def _raise(*a, **kw):
-        raise AuthUnavailable("codex", "hint")
+        raise AuthUnavailable("codex", "run `codex login` on this host, then retry")
     monkeypatch.setattr(cli, "auth_docker_args", _raise)
 
     def _boom(**kw):
@@ -259,3 +270,6 @@ def test_sandbox_auth_preflight_never_reaches_run_loop(tmp_path, monkeypatch):
     rc = cli.main(_evolve_argv(seed, tmp_path, "--operator", "codex", "--sandbox"))
 
     assert rc != 0
+    captured = capsys.readouterr()
+    assert "codex login" in captured.err            # the preflight's own message fired
+    assert "unexpected error" not in captured.err    # not main()'s generic fallback
