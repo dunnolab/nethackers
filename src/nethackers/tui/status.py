@@ -91,3 +91,30 @@ def status_line(cfg: EvolveConfig, state: dict, *, live_tokens: int,
     return (f"{cfg.objective}  gen:{state['generation']}  "
             f"tok:{_compact(live_tokens)}  T:{_clock(elapsed_s)}  "
             f"best:{best}  w:{state['wins']}")
+
+
+def scorecard(parent_means: dict[str, float],
+              candidate_means: dict[str, float] | None,
+              identities: list[str]) -> str:
+    """A weakest-first, one-row-per-build block for generalist objectives:
+    ``build  bar  x̄  Δ``, headed by the union mean, the weakest build
+    (floor), and how many of the identities have a mean yet."""
+    shown = candidate_means or parent_means
+    present, total = len([i for i in identities if i in shown]), len(identities)
+    umean = sum(shown.get(i, 0.0) for i in identities if i in shown) / max(1, present)
+    order = sorted(identities, key=lambda i: shown.get(i, -1.0))
+    flo = order[0] if order and order[0] in shown else None
+    header = f"builds · union x̄ {umean:.2f}"
+    if flo is not None:
+        header += f" · floor {flo} {shown[flo]:.2f} · coverage {present}/{total}"
+    rows = []
+    for i in order:
+        val = shown.get(i)
+        if val is None:
+            rows.append(f"  {i:<18} —  (missing)")
+            continue
+        delta = ""
+        if candidate_means is not None and i in parent_means:
+            delta = f"  Δ{candidate_means[i] - parent_means[i]:+.2f}"
+        rows.append(f"  {i:<18} {_bar(val)} {val:.2f}{delta}")
+    return header + "\n" + "\n".join(rows)
