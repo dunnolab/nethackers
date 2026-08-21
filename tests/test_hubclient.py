@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import pytest
 
+from nethackers.hubclient import register as r
 from nethackers.hubclient.client import HubClient
 from nethackers.hubclient.register import DeviceFlowError, device_login, register_solution
 
@@ -231,8 +232,63 @@ def test_device_login_returns_access_token():
 
     prompts = []
     token = device_login(http=FakeHttp(), prompt=prompts.append, sleep=lambda _s: calls.append(1))
-    assert token == "gho_realtoken"
+    # device_login now returns the full token set, not a bare string.
+    assert token["access_token"] == "gho_realtoken"
     assert any("WXYZ" in p for p in prompts)  # user shown the code
+
+
+# --- Property 2b: full token set + silent refresh --------------------------
+#
+# device_login now returns {"access_token", "refresh_token"|None,
+# "expires_in"|None} so the CLI can persist a refreshable credential, and
+# refresh_access_token exchanges a stored refresh token for a fresh set
+# without a new device prompt (raising DeviceFlowError on a terminal error).
+
+
+class _FakeResp:
+    def __init__(self, payload):
+        self._p = payload
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._p
+
+
+def test_device_login_returns_full_token_set():
+    seq = [
+        _FakeResp({"device_code": "d", "user_code": "WDJB-MJHT", "verification_uri": "u", "interval": 0}),
+        _FakeResp({"error": "authorization_pending"}),
+        _FakeResp({"access_token": "ghu_x", "refresh_token": "ghr_y", "expires_in": 28800}),
+    ]
+    calls = iter(seq)
+
+    class H:
+        def post(self, url, data=None, headers=None):
+            return next(calls)
+
+    out = r.device_login(client_id="cid", http=H(), prompt=lambda *_: None, sleep=lambda *_: None)
+    assert out == {"access_token": "ghu_x", "refresh_token": "ghr_y", "expires_in": 28800}
+
+
+def test_refresh_access_token():
+    class H:
+        def post(self, url, data=None, headers=None):
+            assert data["grant_type"] == "refresh_token"
+            return _FakeResp({"access_token": "ghu_new", "refresh_token": "ghr_new", "expires_in": 28800})
+
+    out = r.refresh_access_token("ghr_old", client_id="cid", http=H())
+    assert out["access_token"] == "ghu_new"
+
+
+def test_refresh_error_raises():
+    class H:
+        def post(self, url, data=None, headers=None):
+            return _FakeResp({"error": "bad_refresh_token"})
+
+    with pytest.raises(r.DeviceFlowError):
+        r.refresh_access_token("ghr_old", client_id="cid", http=H())
 
 
 # --- Property 3: register_solution's device flow ---------------------------
