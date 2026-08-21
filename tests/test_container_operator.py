@@ -88,10 +88,13 @@ def test_stop_docker_kills_named_container(tmp_path):
     (tmp_path / ".codex").mkdir()
     op._docker_kill = lambda name: killed.append(name)
     # drive the stop-watcher directly (unit): a set event → docker kill invoked
+    # (name is an arbitrary stand-in for whatever run() computed -- shaped
+    # like the real mut-${RUN_ID}-${ITER} scheme, not the old worktree-
+    # parent-derived one, since _maybe_kill_on_stop just relays it verbatim)
     stop = threading.Event()
     stop.set()
-    op._maybe_kill_on_stop("mut-work-iter-9", stop)
-    assert killed == ["mut-work-iter-9"]
+    op._maybe_kill_on_stop("mut-r9-iter-9", stop)
+    assert killed == ["mut-r9-iter-9"]
 
 
 class _GatedFakePopen:
@@ -140,7 +143,8 @@ def test_stop_kills_the_same_name_baked_into_the_docker_argv(tmp_path):
     killed = []
     release = threading.Event()
 
-    op = ContainerOperator(harness="codex", image="img:test", system="Linux", home=tmp_path)
+    op = ContainerOperator(harness="codex", image="img:test", system="Linux",
+                           home=tmp_path, run_id="r7")
     (tmp_path / ".codex").mkdir()
     wt = tmp_path / "work" / "iter-7"
     wt.mkdir(parents=True)
@@ -160,9 +164,50 @@ def test_stop_kills_the_same_name_baked_into_the_docker_argv(tmp_path):
     op.run(wt, "BRIEF-TEXT", stop=stop)
 
     name_in_argv = seen["cmd"][seen["cmd"].index("--name") + 1]
-    assert name_in_argv == "mut-work-iter-7"
+    assert name_in_argv == "mut-r7-iter-7"
     assert killed                        # _docker_kill fired at least once
     assert set(killed) == {name_in_argv}  # every call used the SAME name
+
+
+def test_run_id_makes_container_name_unique_across_two_concurrent_runs(tmp_path):
+    """Regression for the cross-run collision the final review caught: the
+    container name used to be derived from `worktree.parent.name`, which is
+    ALWAYS the literal "work" (worktree == <workdir>/runs/<rid>/work/iter-N),
+    so two concurrent `evolve --sandbox` runs collided on the exact same
+    `mut-work-iter-0` name regardless of run id -- and a hard-stop's `docker
+    kill <name>` could then target the WRONG run's live container. Spec
+    §3.3 requires `mut-${RUN_ID}-${ITER}`; pin that two ContainerOperators
+    constructed with DIFFERENT run ids, driving the SAME iteration number
+    (iter-0 -- the exact shape of the pre-fix collision), get DIFFERENT
+    docker --name values.
+    """
+    (tmp_path / ".codex").mkdir()
+    seen_a: dict = {}
+    seen_b: dict = {}
+
+    op_a = ContainerOperator(harness="codex", image="img:test", system="Linux",
+                             home=tmp_path, run_id="run-aaa")
+    op_b = ContainerOperator(harness="codex", image="img:test", system="Linux",
+                             home=tmp_path, run_id="run-bbb")
+    op_a._popen = lambda cmd, **kw: seen_a.setdefault("cmd", cmd) and FakePopen(cmd, **kw)
+    op_b._popen = lambda cmd, **kw: seen_b.setdefault("cmd", cmd) and FakePopen(cmd, **kw)
+
+    # Same iteration number under each run's own work dir -- the exact shape
+    # of the pre-fix collision (both worktrees' parent is literally "work").
+    wt_a = tmp_path / "run-aaa" / "work" / "iter-0"
+    wt_b = tmp_path / "run-bbb" / "work" / "iter-0"
+    wt_a.mkdir(parents=True)
+    wt_b.mkdir(parents=True)
+
+    op_a.run(wt_a, "BRIEF-A")
+    op_b.run(wt_b, "BRIEF-B")
+
+    name_a = seen_a["cmd"][seen_a["cmd"].index("--name") + 1]
+    name_b = seen_b["cmd"][seen_b["cmd"].index("--name") + 1]
+
+    assert name_a != name_b
+    assert name_a == "mut-run-aaa-iter-0"
+    assert name_b == "mut-run-bbb-iter-0"
 
 
 class _StillRunningFakePopen:

@@ -122,7 +122,7 @@ def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
     operator: Any
     if params.sandbox:
         operator = ContainerOperator(harness=params.operator, image=params.mutator_image,
-                                     model=params.model, effort=params.effort)
+                                     model=params.model, effort=params.effort, run_id=rid)
     else:
         operator = {"codex": CodexOperator, "claude": ClaudeOperator}[params.operator](
             model=params.model, effort=params.effort)

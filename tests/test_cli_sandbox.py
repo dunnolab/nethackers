@@ -62,6 +62,13 @@ def test_sandbox_selects_container_operator_with_harness_and_image(tmp_path, mon
     assert isinstance(op, ContainerOperator)
     assert op.harness == "codex"
     assert op.image == "my/mutator:tag"
+    # run_id must be threaded through from launch.py's `rid` so the
+    # container name is `mut-${RUN_ID}-${ITER}` (spec §3.3), not a
+    # `worktree.parent.name`-derived "work" literal that collides across
+    # every run (see container_operator.py's `run_id` param + `run()`).
+    runs = tmp_path / "w" / "runs"
+    run_dir = next(p for p in runs.iterdir() if p.name != "latest")
+    assert op._run_id == run_dir.name
 
 
 def test_sandbox_defaults_mutator_image(tmp_path, monkeypatch):

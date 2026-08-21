@@ -130,6 +130,7 @@ class ContainerOperator:
         system: str | None = None,
         home: Path | None = None,
         docker: str = "docker",
+        run_id: str | None = None,
     ) -> None:
         self.harness = harness
         self.image = image
@@ -137,6 +138,16 @@ class ContainerOperator:
         self.model = model
         self.effort = effort
         self.caps = caps
+        # Threaded into the container name (see `run`) so it satisfies spec
+        # §3.3's `mut-${RUN_ID}-${ITER}` -- `worktree.parent.name` alone is
+        # ALWAYS the literal "work" (worktree == <workdir>/runs/<rid>/work/
+        # iter-N), so without this every run would collide on the same name
+        # (e.g. `mut-work-iter-0`), racing on `docker run --name` and letting
+        # a hard-stop's `docker kill` hit the wrong run's live container.
+        # None keeps the old worktree-derived form as a fallback, so callers
+        # that don't (yet) have a run id -- e.g. existing unit tests -- still
+        # work; every real caller (launch.py) always passes one.
+        self._run_id = run_id
         # Resolved once at construction (not per-run): callers that care
         # about the real host (production) leave these unset; tests inject a
         # fake system/home so the auth preflight below never touches the
@@ -154,7 +165,13 @@ class ContainerOperator:
         on_line: Callable[[str], None] | None = None,
         stop: threading.Event | None = None,
     ) -> OperatorResult:
-        name = f"mut-{worktree.parent.name}-{worktree.name}"
+        # `worktree.name` is already `iter-N`; prefer the run id (spec §3.3:
+        # `mut-${RUN_ID}-${ITER}`) so two runs never collide on the same
+        # container name -- see the __init__ comment on `self._run_id`.
+        if self._run_id is not None:
+            name = f"mut-{self._run_id}-{worktree.name}"
+        else:
+            name = f"mut-{worktree.parent.name}-{worktree.name}"
         # Preflight BEFORE shelling out to docker at all: a not-logged-in
         # host would otherwise have docker silently bind-mount an empty dir
         # (auth_docker_args is pure string formatting by default) and the
