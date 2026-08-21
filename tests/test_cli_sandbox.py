@@ -16,6 +16,7 @@ import json
 from nethackers import cli
 from nethackers.harness import launch
 from nethackers.harness.container_operator import ContainerOperator
+from nethackers.harness.discovery import CliInfo, Preflight
 
 
 def _seed(tmp_path):
@@ -34,8 +35,13 @@ def _evolve_argv(seed, tmp_path, *extra):
 
 
 def _stub_preflight_ok(monkeypatch):
-    """The sandbox preflight passes (runtime up, login resolvable)."""
+    """Both evolve preflights pass: the sandbox (runtime up, login resolvable)
+    and the model-availability check (proceed, even for a pinned --model)."""
     monkeypatch.setattr(cli, "sandbox_preflight", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        cli, "preflight_model",
+        lambda operator, model, **kw: Preflight(
+            "proceed", "", CliInfo(operator, True, f"{operator} x", True), None))
 
 
 # --- selection: evolve always builds a ContainerOperator, passed through to

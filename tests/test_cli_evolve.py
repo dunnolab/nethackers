@@ -5,6 +5,7 @@ import pytest
 
 from nethackers import cli
 from nethackers.harness import launch
+from nethackers.harness.discovery import CliInfo, Preflight
 
 # run_loop + select_parent are called from harness.launch.prepare_evolve (the
 # shared CLI + in-app evolve setup), so these wiring tests patch them there,
@@ -245,3 +246,38 @@ def test_evolve_rejects_removed_budget_and_timeout_flags(tmp_path):
         with pytest.raises(SystemExit):   # argparse rejects the deleted flag
             cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed), "--from-seed",
                       removed, "1", "--workdir", str(tmp_path / "w")])
+
+
+def _seed(tmp_path):
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    (seed / "nethackers.solution.json").write_text(
+        '{"root":".","entrypoint":"bot.py","parents":[],"influences":[]}')
+    (seed / "bot.py").write_text("x=1\n")
+    return seed
+
+
+def test_evolve_refuses_unavailable_model(tmp_path, monkeypatch):
+    seed = _seed(tmp_path)
+    called = {"prepared": False}
+    monkeypatch.setattr(cli, "prepare_evolve",
+                        lambda *a, **k: called.update(prepared=True), raising=False)
+    monkeypatch.setattr(cli, "preflight_model", lambda *a, **k: Preflight(
+        "refuse", "codex 0.50.0 can't serve 'gpt-5.6-sol'.",
+        CliInfo("codex", True, "codex-cli 0.50.0", True), []))
+    rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed), "--from-seed",
+                   "--operator", "codex", "--model", "gpt-5.6-sol",
+                   "--workdir", str(tmp_path / "w")])
+    assert rc == 2
+    assert called["prepared"] is False        # never built a run for a doomed model
+
+
+def test_evolve_skips_preflight_without_a_pinned_model(tmp_path, monkeypatch):
+    seed = _seed(tmp_path)
+    fired = {"preflight": False}
+    monkeypatch.setattr(cli, "preflight_model",
+                        lambda *a, **k: fired.update(preflight=True))
+    monkeypatch.setattr(launch, "run_loop", lambda **k: [], raising=False)
+    rc = cli._run(["evolve", "random", "--seed", str(seed), "--from-seed",
+                   "--workdir", str(tmp_path / "w")])       # no --model
+    assert rc == 0 and fired["preflight"] is False          # guarded by `if args.model`
