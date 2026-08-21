@@ -52,7 +52,10 @@ class _Plan:
 
     rid = "run-x"
     cfg = "CFG"
-    run = staticmethod(lambda cb=None: [])
+
+    @staticmethod
+    def run(cb=None):
+        return []
 
 
 async def test_start_builds_params_and_starts_a_run(monkeypatch):

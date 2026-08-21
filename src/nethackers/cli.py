@@ -90,7 +90,6 @@ from nethackers.hubclient.render import (
 )
 from nethackers.tui.app import NetHackersApp
 
-
 # Time seam: tests monkeypatch ``cli._time_now`` to make credential
 # expiry/refresh deterministic (avoids a wall-clock ``time.time()`` read).
 _time_now = time.time

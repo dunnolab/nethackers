@@ -34,9 +34,9 @@ _DEAD_HUB = "http://127.0.0.1:1"
 
 
 def _p(renderable) -> str:
-    console = Console(width=90, file=io.StringIO())
-    console.print(renderable)
-    return console.file.getvalue()
+    buf = io.StringIO()
+    Console(width=90, file=buf).print(renderable)
+    return buf.getvalue()
 
 
 # --- leaderboard_panel: owner-keyed, "you" highlight on the right row -----

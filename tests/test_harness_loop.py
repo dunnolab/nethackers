@@ -82,7 +82,9 @@ validation_n=3,
         now_fn=lambda: "2026-08-10T00:00:00Z",
         runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work")
     assert results[0].registered is True
-    assert len(hub.registered) == 1
+    # M1: the loop accepts the win as its new local elite but no longer
+    # auto-publishes to the hub (register_win is a no-op) -- hub stays untouched.
+    assert hub.registered == []
 
 
 def test_loop_records_faithful_usage(tmp_path):

@@ -13,7 +13,8 @@ def test_parse_repo(repo, exp): assert parse_repo(repo) == exp
 
 
 def test_parse_repo_bad():
-    with pytest.raises(ValueError): parse_repo("nethacker")
+    with pytest.raises(ValueError):
+        parse_repo("nethacker")
 
 
 class _Resp:
