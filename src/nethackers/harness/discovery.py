@@ -24,9 +24,38 @@ from pathlib import Path
 
 import httpx
 
+from nethackers.harness.auth_inject import AuthUnavailable, auth_docker_args
+
 _ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models?limit=100"
 _ANTHROPIC_VERSION = "2023-06-01"
 _ANTHROPIC_OAUTH_BETA = "oauth-2025-04-20"   # required on the Bearer (OAuth) tiers only
+
+
+def _image_which(name: str) -> str:
+    """A ``which`` that always resolves: the codex/claude binaries are baked
+    into the mutator image, so container-mode discovery never gates on a host
+    PATH lookup (a failed ``docker run`` is what surfaces a truly-missing one)."""
+    return name
+
+
+def _container_run(image: str, *, docker: str = "docker",
+                   run: Callable = subprocess.run) -> Callable:
+    """A ``run`` adapter that executes the coding-agent CLIs INSIDE the mutator
+    image -- so the version + (version-filtered) catalog reflect exactly what a
+    run actually uses, not the host's possibly-different CLI. Host-only helpers
+    (the macOS keychain probe) still run on the host. Auth is the same
+    mount/token a real run gets; if the login can't be resolved the probe simply
+    runs unauthenticated and returns fewer/no models -- warn, never block."""
+    def _run(argv, **kw):
+        binary = argv[0] if argv else ""
+        if binary in ("codex", "claude"):
+            try:
+                auth = auth_docker_args(binary, system=platform.system(), home=Path.home())
+            except AuthUnavailable:
+                auth = []
+            return run([docker, "run", "--rm", *auth, image, *argv], **kw)
+        return run(argv, **kw)   # host-side (e.g. the `security` keychain read)
+    return _run
 
 
 @dataclass(frozen=True)
@@ -40,10 +69,13 @@ class ModelInfo:
 def list_models(
     backend: str,
     *,
+    image: str | None = None,
     run: Callable = subprocess.run,
     http: Callable = httpx.get,
     home: Path | None = None,
 ) -> list[ModelInfo] | None:
+    if image is not None:
+        run = _container_run(image, run=run)   # probe the mutator container, not the host
     if backend == "codex":
         return _codex_models(run=run, home=home)
     if backend == "claude":
@@ -184,6 +216,7 @@ def is_model_available(
     model: str,
     *,
     models: list[ModelInfo] | None = None,
+    image: str | None = None,
     run: Callable = subprocess.run,
     http: Callable = httpx.get,
     home: Path | None = None,
@@ -191,7 +224,7 @@ def is_model_available(
     if backend == "claude" and model in _CLAUDE_ALIASES:
         return True
     if models is None:
-        models = list_models(backend, run=run, http=http, home=home)
+        models = list_models(backend, image=image, run=run, http=http, home=home)
     if models is None:
         return None
     check = model
@@ -222,8 +255,10 @@ def _logged_in(backend: str, *, run: Callable) -> bool | None:
         return None
 
 
-def detect_cli(backend: str, *, run: Callable = subprocess.run,
+def detect_cli(backend: str, *, image: str | None = None, run: Callable = subprocess.run,
                which: Callable = shutil.which) -> CliInfo:
+    if image is not None:
+        run, which = _container_run(image, run=run), _image_which
     binary = {"codex": "codex", "claude": "claude"}[backend]
     if which(binary) is None:
         return CliInfo(backend, False, None, None)
@@ -249,12 +284,13 @@ def preflight_model(
     backend: str,
     model: str | None,
     *,
+    image: str | None = None,
     run: Callable = subprocess.run,
     http: Callable = httpx.get,
     home: Path | None = None,
     which: Callable = shutil.which,
 ) -> Preflight:
-    cli = detect_cli(backend, run=run, which=which)
+    cli = detect_cli(backend, image=image, run=run, which=which)
     if not cli.installed:
         return Preflight("refuse", f"{backend} is not installed / not on PATH.", cli, None)
     if cli.logged_in is False:
@@ -264,7 +300,7 @@ def preflight_model(
         return Preflight("proceed", "", cli, None)   # harness default: nothing pinned to check
     if backend == "claude" and model in _CLAUDE_ALIASES:
         return Preflight("proceed", "", cli, None)   # aliases are always valid -- skip the probe
-    models = list_models(backend, run=run, http=http, home=home)
+    models = list_models(backend, image=image, run=run, http=http, home=home)
     ver = f" {cli.version}" if cli.version else ""
     if models is None:
         return Preflight(

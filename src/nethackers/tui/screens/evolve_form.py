@@ -39,6 +39,10 @@ if TYPE_CHECKING:
 # random first (the north-star), then the identities sorted; drop "all".
 _OBJECTIVES: list[str] = ["random"] + sorted(k for k in CATALOG if k not in ("random", "all"))
 
+# The form doesn't expose an image picker, so live discovery probes the default
+# mutator image (matches launch.EvolveParams.mutator_image / the CLI default).
+_MUTATOR_IMAGE = "nethackers/mutator:latest"
+
 
 def _seed_roots() -> list[str]:
     """Solution roots discovered under ``roots/`` (a dir with a
@@ -184,12 +188,15 @@ class EvolveForm(Vertical):
 
     @work(exclusive=True, thread=True)
     def _refresh_models(self, backend: str) -> None:
-        # Live discovery does subprocess/HTTP (~1-2s) -- off the UI thread. One
-        # dispatch fetches BOTH the detected CLI (version + auth) and the model
-        # catalog. On None models (offline / old CLI / logged out) the static
-        # model list stays; the version line still reflects what was detected.
-        cli = detect_cli(backend)
-        models = list_models(backend)
+        # Live discovery runs the operator CLI INSIDE the mutator image (a few
+        # `docker run`s, ~seconds) -- off the UI thread -- so the version + the
+        # version-filtered catalog match what a run actually uses, not the host's
+        # possibly-different CLI. One dispatch fetches BOTH the detected CLI
+        # (version + auth) and the catalog. On None models (image not built /
+        # offline / logged out) the static list stays; the version line still
+        # reflects whatever was detected.
+        cli = detect_cli(backend, image=_MUTATOR_IMAGE)
+        models = list_models(backend, image=_MUTATOR_IMAGE)
         self.app.call_from_thread(self._apply_discovery, backend, cli, models)
 
     def _apply_discovery(self, backend: str, cli: CliInfo,

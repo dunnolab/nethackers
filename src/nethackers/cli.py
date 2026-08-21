@@ -220,9 +220,14 @@ def _build_parser() -> argparse.ArgumentParser:
 
     mo = sub.add_parser(
         "models", parents=[common], formatter_class=RichHelpFormatter,
-        help="List the models the installed operator CLI can actually serve on this machine.",
+        help="List the models the operator CLI can serve inside the mutator sandbox image.",
     )
     mo.add_argument("--operator", choices=["codex", "claude"], default="codex")
+    mo.add_argument(
+        "--mutator-image", default="nethackers/mutator:latest",
+        help="Probe this image's operator CLI (the one a run uses), not the host's "
+        "(default: %(default)s).",
+    )
 
     evolve = sub.add_parser(
         "evolve", parents=[common], formatter_class=RichHelpFormatter,
@@ -427,7 +432,7 @@ def _run(argv: list[str] | None) -> int:
         return 0
 
     if args.cmd == "models":
-        models: list[ModelInfo] | None = list_models(args.operator)
+        models: list[ModelInfo] | None = list_models(args.operator, image=args.mutator_image)
         if models is None:
             err.print(f"[yellow]couldn't determine {args.operator}'s models[/] "
                       "(offline, old CLI, or logged out) — check `"
@@ -469,7 +474,7 @@ def _run(argv: list[str] | None) -> int:
         # existing wiring test) free of any CLI/network probe. A confident
         # refuse stops here -- no run dir, no doomed spin; unknown only warns.
         if args.model:
-            pf = preflight_model(args.operator, args.model)
+            pf = preflight_model(args.operator, args.model, image=args.mutator_image)
             if pf.action == "refuse":
                 err.print(f"[red]{pf.message}[/]")
                 return 2

@@ -253,3 +253,68 @@ def test_preflight_proceeds_without_a_pinned_model_and_makes_no_model_calls():
         return SimpleNamespace(returncode=0, stdout="")
     pf = preflight_model("codex", "", which=_which_ok, run=run)
     assert pf.action == "proceed" and calls["debug"] == 0
+
+
+# --- container-probe: discovery runs the operator CLI INSIDE the mutator image
+# (image=...) so version + version-filtered catalog match what a run uses ------
+
+from nethackers.harness import discovery as _disc  # noqa: E402
+
+
+def test_container_run_wraps_operator_cli_in_docker_with_image_and_auth():
+    seen = {}
+
+    def _capture(argv, **k):
+        seen["argv"] = argv
+        return SimpleNamespace(returncode=0, stdout=_CODEX_JSON)
+
+    run = _disc._container_run("nethackers/mutator:latest", run=_capture)
+    run(["codex", "debug", "models"], capture_output=True, text=True)
+    argv = seen["argv"]
+    assert argv[:3] == ["docker", "run", "--rm"]
+    i = argv.index("nethackers/mutator:latest")
+    assert argv[i + 1:] == ["codex", "debug", "models"]   # operator sub-argv after the image
+    assert "-v" in argv[:i]                                # codex auth mount precedes the image
+
+
+def test_container_run_leaves_host_only_commands_on_the_host():
+    # the macOS keychain probe must NOT be wrapped in docker (no keychain in the
+    # linux container) -- only codex/claude route into the image.
+    seen = {}
+    run = _disc._container_run("img", run=lambda argv, **k: seen.setdefault("argv", argv))
+    run(["security", "find-generic-password", "-s", "x", "-w"])
+    assert seen["argv"][0] == "security"
+
+
+def test_container_run_unauthenticated_when_login_unresolvable(monkeypatch):
+    # if auth can't be resolved the probe runs without a mount (warn, never block)
+    def _raise(*a, **k):
+        raise _disc.AuthUnavailable("codex", "hint")
+    monkeypatch.setattr(_disc, "auth_docker_args", _raise)
+    seen = {}
+    run = _disc._container_run("img", run=lambda argv, **k: seen.setdefault("argv", argv))
+    run(["codex", "debug", "models"])
+    argv = seen["argv"]
+    assert argv[:3] == ["docker", "run", "--rm"] and "-v" not in argv
+    assert argv[-3:] == ["codex", "debug", "models"]
+
+
+def test_list_models_with_image_probes_the_container():
+    seen = {}
+
+    def _capture(argv, **k):
+        seen["argv"] = argv
+        return SimpleNamespace(returncode=0, stdout=_CODEX_JSON)
+
+    models = list_models("codex", image="my/mut:tag", run=_capture)
+    assert models and models[0].id == "gpt-5.6-sol"
+    assert seen["argv"][:3] == ["docker", "run", "--rm"] and "my/mut:tag" in seen["argv"]
+
+
+def test_detect_cli_with_image_ignores_host_which_and_reads_container_version():
+    # `which` must not gate in image mode -- the binary is baked into the image;
+    # a host `which` miss would wrongly report not-installed on the host path.
+    def _ver(argv, **k):
+        return SimpleNamespace(returncode=0, stdout="codex-cli 0.149.0")
+    info = detect_cli("codex", image="img", run=_ver, which=lambda n: None)
+    assert info.installed is True and info.version == "codex-cli 0.149.0"
