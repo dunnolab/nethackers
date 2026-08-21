@@ -14,6 +14,7 @@ dependencies = [
 nle = ["nle==1.3.0"]
 autoascend = ["numba>=0.60", "opencv-python-headless>=4.9,<5", "scipy>=1.11", "nltk>=3.9", "toolz>=1.0"]
 hub = ["fastapi>=0.110", "uvicorn>=0.30", "httpx>=0.27"]
+worker = ["nle==1.3.0"]
 
 [dependency-groups]
 dev = [
@@ -27,6 +28,8 @@ dev = [
 
 [project.scripts]
 nethackers = "nethackers.cli:main"
+nethackers-hub = "nethackers.hub.server:main"
+nethackers-worker = "nethackers.worker.server:main"
 
 [build-system]
 requires = ["hatchling"]
@@ -44,6 +47,7 @@ markers = [
   "docker: requires Docker and the built arena image",
   "codex_live: requires the real codex CLI + login (model-discovery regression)",
   "claude_live: requires the real claude CLI + network (live hermeticity regression)",
+  "github_live: requires the real GitHub App + network",
 ]
 
 [tool.mypy]
@@ -70,6 +74,8 @@ module = [
     "autoascend.*",
     "arena_adapter.*",
     "bot",
+    "uvicorn",
+    "uvicorn.*",
 ]
 ignore_missing_imports = true
 
