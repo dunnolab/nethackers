@@ -26,7 +26,7 @@ from textual.containers import Vertical, VerticalScroll
 from textual.widgets import Button, Input, Label, OptionList, Select, Static
 from textual.widgets.option_list import Option
 
-from nethackers.harness.discovery import CliInfo, ModelInfo, detect_cli, list_models
+from nethackers.harness.discovery import CliInfo, ModelInfo, probe_operator
 from nethackers.harness.launch import EvolveParams, prepare_evolve
 from nethackers.harness.models import EFFORTS, MODELS
 from nethackers.harness.sandbox_preflight import (
@@ -103,6 +103,9 @@ class EvolveForm(Vertical):
         self._creds = creds
         self._objective: str | None = None
         self._live: dict[str, ModelInfo] = {}  # id -> discovered model (drives efforts)
+        # One ~1s container probe per operator, cached: switching operators back
+        # and forth (or reopening) is then instant, not another probe.
+        self._probe_cache: dict[str, tuple[CliInfo, list[ModelInfo] | None]] = {}
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="form", classes="panel"):
@@ -185,23 +188,34 @@ class EvolveForm(Vertical):
             model.value = ""
             self.query_one("#f_model_custom", Input).display = False
             self._set_effort_options("")             # reset efforts to the shared default
-            self._refresh_models(str(event.value))   # then refine from the live catalog
+            self._maybe_refresh_models(str(event.value))   # refine from the live catalog
         elif event.select.id == "f_model":
             self.query_one("#f_model_custom", Input).display = event.value == "__custom__"
             self._set_effort_options(str(event.value))  # efforts follow the selected model
 
+    def _maybe_refresh_models(self, backend: str) -> None:
+        # Cache hit -> apply instantly on the UI thread (no docker). Miss -> the
+        # off-thread probe below. Keeps operator switches snappy.
+        cached = self._probe_cache.get(backend)
+        if cached is not None:
+            self._apply_discovery(backend, *cached)
+        else:
+            self._refresh_models(backend)
+
     @work(exclusive=True, thread=True)
     def _refresh_models(self, backend: str) -> None:
-        # Live discovery runs the operator CLI INSIDE the mutator image (a few
-        # `docker run`s, ~seconds) -- off the UI thread -- so the version + the
-        # version-filtered catalog match what a run actually uses, not the host's
-        # possibly-different CLI. One dispatch fetches BOTH the detected CLI
-        # (version + auth) and the catalog. On None models (image not built /
-        # offline / logged out) the static list stays; the version line still
-        # reflects whatever was detected.
-        cli = detect_cli(backend, image=_MUTATOR_IMAGE)
-        models = list_models(backend, image=_MUTATOR_IMAGE)
-        self.app.call_from_thread(self._apply_discovery, backend, cli, models)
+        # ONE container probe (probe_operator) runs the operator CLI INSIDE the
+        # mutator image -- off the UI thread -- so version + the version-filtered
+        # catalog match what a run actually uses, not the host's possibly-
+        # different CLI. On a None catalog (image not built / offline / logged
+        # out) the static list stays; the version line still reflects detection.
+        cli, models = probe_operator(backend, image=_MUTATOR_IMAGE)
+        self.app.call_from_thread(self._cache_and_apply, backend, cli, models)
+
+    def _cache_and_apply(self, backend: str, cli: CliInfo,
+                         models: list[ModelInfo] | None) -> None:
+        self._probe_cache[backend] = (cli, models)
+        self._apply_discovery(backend, cli, models)
 
     def _apply_discovery(self, backend: str, cli: CliInfo,
                          models: list[ModelInfo] | None) -> None:

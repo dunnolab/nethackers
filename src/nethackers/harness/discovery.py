@@ -67,6 +67,72 @@ class ModelInfo:
     deprecated: bool = False
 
 
+_PROBE_SEP = "@@nh-probe@@"
+
+
+def _run_image_script(image: str, binary: str, script: str, *, run: Callable) -> str | None:
+    """ONE ``docker run`` of ``bash -lc <script>`` in the mutator image, with the
+    same auth a real run gets. Returns stdout (whatever was captured, even on a
+    non-zero last command -- earlier echoes still printed), or ``None`` if the
+    run couldn't start. Amortizes docker's ~1s startup across every probe."""
+    try:
+        auth = auth_docker_args(binary, system=platform.system(), home=Path.home())
+    except AuthUnavailable:
+        auth = []
+    try:
+        proc = run(["docker", "run", "--rm", *auth, image, "bash", "-lc", script],
+                   capture_output=True, text=True, timeout=40)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return proc.stdout
+
+
+def probe_operator(
+    backend: str,
+    *,
+    image: str,
+    run: Callable = subprocess.run,
+    http: Callable = httpx.get,
+    home: Path | None = None,
+) -> tuple[CliInfo, list[ModelInfo] | None]:
+    """Detect the container CLI + its catalog in ONE ``docker run`` (vs the ~1s
+    each of separate ``detect_cli``/``list_models`` probes) -- for the TUI model
+    picker, which refreshes on every operator switch. Codex gets version + login
+    + catalog from a single combined command; claude's catalog stays the HTTP
+    ``/v1/models`` (account-gated, version-independent). Never raises; an unbuilt
+    image / unparseable output degrades to (not-installed / no-version, None)."""
+    binary = {"codex": "codex", "claude": "claude"}[backend]
+    if not image_present(image, run=run):
+        return CliInfo(backend, False, None, None), None
+    if backend == "codex":
+        script = (f"codex --version; echo {_PROBE_SEP}; "
+                  f"(codex login status >/dev/null 2>&1 && echo OK || echo NO); "
+                  f"echo {_PROBE_SEP}; codex debug models")
+    else:
+        script = f"claude --version; echo {_PROBE_SEP}; claude auth status --json 2>/dev/null"
+    parts = (_run_image_script(image, binary, script, run=run) or "").split(_PROBE_SEP)
+    version = parts[0].strip() or None if parts else None
+    if backend == "codex":
+        logged_in = ("OK" in parts[1]) if len(parts) > 1 else None
+        models: list[ModelInfo] | None = None
+        if len(parts) > 2:
+            try:
+                models = _codex_parse(json.loads(parts[2]))
+            except Exception:
+                models = None
+        return CliInfo("codex", True, version, logged_in), models
+    logged_in = None
+    if len(parts) > 1:
+        try:
+            logged_in = bool(json.loads(parts[1]).get("loggedIn"))
+        except Exception:
+            logged_in = None
+    # claude's catalog is account-gated (version-independent) -> host HTTP, not
+    # another container round-trip.
+    claude_models = _claude_models(run=run, http=http, home=home)
+    return CliInfo("claude", True, version, logged_in), claude_models
+
+
 def list_models(
     backend: str,
     *,

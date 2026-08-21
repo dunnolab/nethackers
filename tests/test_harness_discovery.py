@@ -343,3 +343,29 @@ def test_codex_models_skips_host_cache_when_cache_disabled():
     # than reading a (wrong-version) host cache.
     assert _disc._codex_models(run=_inspect_fails, home=Path("/does/not/exist"),
                                allow_cache=False) is None
+
+
+# --- probe_operator: ONE docker run gets version + login + catalog -----------
+
+
+def test_probe_operator_codex_is_a_single_docker_run():
+    combined = (f"codex-cli 0.149.0\n{_disc._PROBE_SEP}\nOK\n"
+                f"{_disc._PROBE_SEP}\n{_CODEX_JSON}")
+    runs = {"docker_run": 0}
+
+    def _run(argv, **k):
+        if argv[:3] == ["docker", "image", "inspect"]:      # image_present
+            return SimpleNamespace(returncode=0, stdout="")
+        runs["docker_run"] += 1
+        assert argv[:3] == ["docker", "run", "--rm"] and "bash" in argv
+        return SimpleNamespace(returncode=0, stdout=combined)
+
+    cli, models = _disc.probe_operator("codex", image="img", run=_run)
+    assert runs["docker_run"] == 1                           # ONE probe, not three
+    assert cli.installed and cli.version == "codex-cli 0.149.0" and cli.logged_in is True
+    assert [m.id for m in models] == ["gpt-5.6-sol", "gpt-5.4"]
+
+
+def test_probe_operator_image_absent_is_not_installed():
+    cli, models = _disc.probe_operator("codex", image="nope", run=_inspect_fails)
+    assert cli.installed is False and cli.version is None and models is None

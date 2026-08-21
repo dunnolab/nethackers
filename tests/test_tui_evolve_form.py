@@ -23,12 +23,12 @@ from nethackers.tui.screens.evolve_form import EvolveForm
 
 @pytest.fixture(autouse=True)
 def _no_live_models(monkeypatch):
-    # Default: discovery "unavailable" -> the form keeps its static fallback,
-    # so every existing test sees exactly today's behavior (and no real probe).
-    # detect_cli is stubbed too so the version-line worker never shells out.
-    monkeypatch.setattr(ef, "list_models", lambda *a, **k: None)
-    monkeypatch.setattr(ef, "detect_cli",
-                        lambda backend, **k: CliInfo(backend, True, f"{backend} 9.9.9", True))
+    # Default: discovery detects the CLI but returns no catalog -> the form keeps
+    # its static fallback, so every existing test sees today's behavior (and no
+    # real `docker run` probe). One probe_operator call fetches both.
+    monkeypatch.setattr(
+        ef, "probe_operator",
+        lambda backend, **k: (CliInfo(backend, True, f"{backend} 9.9.9", True), None))
 
 
 class _Host(App):
@@ -185,9 +185,10 @@ async def test_preflight_failure_shows_error_no_start(monkeypatch):
 
 async def test_model_picker_populates_from_live_discovery(monkeypatch):
     monkeypatch.setattr(
-        ef, "list_models",
+        ef, "probe_operator",
         lambda backend, **k: (
-            [ModelInfo("live-sol-9", "Live Sol 9")] if backend == "claude" else None
+            CliInfo(backend, True, f"{backend} x", True),
+            [ModelInfo("live-sol-9", "Live Sol 9")] if backend == "claude" else None,
         ),
     )
     app = _Host(None)
@@ -204,15 +205,15 @@ async def test_model_picker_dispatches_exactly_once_on_mount(monkeypatch):
     # Regression: the default operator's Select is built with a non-blank
     # initial value, so mounting it organically fires one Select.Changed
     # (-> one _refresh_models("claude")) all on its own. An extra explicit
-    # kick from on_mount would double-dispatch list_models -- two real
-    # Keychain+HTTP round-trips per form mount in production. Lock it at one.
+    # kick from on_mount would double-dispatch probe_operator -- two real
+    # `docker run` probes per form mount in production. Lock it at one.
     calls: list[str] = []
 
-    def _counting_list_models(backend, **k):
+    def _counting_probe(backend, **k):
         calls.append(backend)
-        return None
+        return CliInfo(backend, True, f"{backend} x", True), None
 
-    monkeypatch.setattr(ef, "list_models", _counting_list_models)
+    monkeypatch.setattr(ef, "probe_operator", _counting_probe)
     app = _Host(None)
     async with app.run_test(size=(100, 50)) as pilot:
         await pilot.pause()
@@ -224,8 +225,8 @@ async def test_model_picker_dispatches_exactly_once_on_mount(monkeypatch):
 async def test_operator_version_line_shows_detected_cli(monkeypatch):
     # The form surfaces the detected operator CLI's version (spec 3C) via the
     # same single discovery worker that populates the model list.
-    monkeypatch.setattr(ef, "detect_cli",
-                        lambda backend, **k: CliInfo(backend, True, "claude 2.1.237", True))
+    monkeypatch.setattr(ef, "probe_operator",
+                        lambda backend, **k: (CliInfo(backend, True, "claude 2.1.237", True), None))
     app = _Host(None)
     async with app.run_test(size=(100, 50)) as pilot:
         await pilot.pause()
@@ -236,8 +237,8 @@ async def test_operator_version_line_shows_detected_cli(monkeypatch):
 
 
 async def test_operator_version_line_shows_not_found_when_missing(monkeypatch):
-    monkeypatch.setattr(ef, "detect_cli",
-                        lambda backend, **k: CliInfo(backend, False, None, None))
+    monkeypatch.setattr(ef, "probe_operator",
+                        lambda backend, **k: (CliInfo(backend, False, None, None), None))
     app = _Host(None)
     async with app.run_test(size=(100, 50)) as pilot:
         await pilot.pause()
@@ -252,11 +253,12 @@ async def test_effort_options_follow_selected_model(monkeypatch):
     # efforts (not a hardcoded list); a model with no reasoning falls back to
     # the shared static EFFORTS.
     monkeypatch.setattr(
-        ef, "list_models",
+        ef, "probe_operator",
         lambda backend, **k: (
+            CliInfo(backend, True, f"{backend} x", True),
             [ModelInfo("m-rich", "Rich", ("low", "high", "ultra"), False),
              ModelInfo("m-bare", "Bare", (), False)]
-            if backend == "claude" else None
+            if backend == "claude" else None,
         ),
     )
     app = _Host(None)
@@ -307,3 +309,28 @@ async def test_missing_image_builds_then_launches(monkeypatch):
         assert built.get("image")                # the image was auto-built
         assert seen.get("prepared") is True       # prepare_evolve ran after the build
         assert isinstance(app.started, _Plan)     # and the plan reached start_run
+
+
+async def test_operator_switch_uses_cache_second_time(monkeypatch):
+    """One probe per operator: switching back to an already-probed operator is
+    instant (a cache hit), not another ~1s `docker run`."""
+    calls: list[str] = []
+
+    def _probe(backend, **k):
+        calls.append(backend)
+        return CliInfo(backend, True, f"{backend} x", True), None
+
+    monkeypatch.setattr(ef, "probe_operator", _probe)
+    app = _Host(None)
+    async with app.run_test(size=(100, 50)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()   # mount probes the default (claude)
+        await pilot.pause()
+        form = app.query_one(ef.EvolveForm)
+        form.query_one("#f_op", Select).value = "codex"      # probes codex
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        form.query_one("#f_op", Select).value = "claude"     # cached -> NO re-probe
+        await pilot.pause()
+        assert calls == ["claude", "codex"]   # the switch back to claude hit the cache
