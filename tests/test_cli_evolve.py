@@ -13,13 +13,13 @@ from nethackers.harness import launch
 
 
 @pytest.fixture(autouse=True)
-def _sandbox_preflights_ok(monkeypatch):
-    # evolve now ALWAYS sandboxes, so every run first clears the docker + auth
-    # preflight. These are host-path wiring tests (run_loop is faked and no
-    # container is ever launched), so stub both preflights green here; their
-    # real failure behaviour is covered in test_cli_sandbox.py.
-    monkeypatch.setattr(cli, "_docker_available", lambda: True)
-    monkeypatch.setattr(cli, "auth_docker_args", lambda *a, **kw: [])
+def _sandbox_preflight_ok(monkeypatch):
+    # evolve now ALWAYS sandboxes, so every run first clears the sandbox
+    # preflight (a working container runtime + a resolvable login). These are
+    # wiring tests (run_loop is faked and no container is ever launched), so
+    # stub the preflight green; its real behaviour is covered in
+    # test_sandbox_preflight.py and test_cli_sandbox.py.
+    monkeypatch.setattr(cli, "sandbox_preflight", lambda *a, **kw: None)
 
 
 def test_evolve_parses_and_invokes_loop(tmp_path, monkeypatch):

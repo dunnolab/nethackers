@@ -10,6 +10,7 @@ test -- the real one builds a run dir on disk and spins up an operator, which
 this suite must never do."""
 from __future__ import annotations
 
+import pytest
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Input, Select, Static
 
@@ -41,6 +42,14 @@ class _Plan:
     rid = "run-x"
     cfg = "CFG"
     run = staticmethod(lambda cb=None: [])
+
+
+@pytest.fixture(autouse=True)
+def _sandbox_preflight_ok(monkeypatch):
+    # the form runs the sandbox preflight before prepare_evolve; stub it green
+    # so these wiring tests proceed (no real docker/login is touched). The
+    # failure path is covered by test_preflight_failure_shows_error_no_start.
+    monkeypatch.setattr(ef, "sandbox_preflight", lambda *a, **k: None)
 
 
 async def test_start_builds_params_and_starts_a_run(monkeypatch):
@@ -138,3 +147,23 @@ async def test_missing_objective_shows_error_no_start(monkeypatch):
         assert app.started is None         # no run started
         err_text = str(app.query_one("#f_err", Static).render()).lower()
         assert "objective" in err_text
+
+
+async def test_preflight_failure_shows_error_no_start(monkeypatch):
+    """A valid form whose sandbox preflight fails (no runtime / no login) shows
+    the preflight's message in #f_err and must NOT call prepare_evolve or start
+    a run -- the same fail-fast the CLI gives, surfaced in the form."""
+    seen: dict = {}
+    monkeypatch.setattr(ef, "prepare_evolve", lambda *a, **k: seen.update(called=True))
+    monkeypatch.setattr(
+        ef, "sandbox_preflight",
+        lambda *a, **k: "[red]sandbox unavailable[/]: start colima (or Podman)")
+    app = _Host(None)
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        assert "called" not in seen        # prepare_evolve blocked by the preflight
+        assert app.started is None          # no run started
+        err_text = str(app.query_one("#f_err", Static).render()).lower()
+        assert "sandbox unavailable" in err_text

@@ -51,9 +51,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import platform
-import shutil
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -65,8 +62,8 @@ from rich.text import Text
 from rich_argparse import RichHelpFormatter
 
 from nethackers.eval.runner import eval_batch
-from nethackers.harness.auth_inject import AuthUnavailable, auth_docker_args
 from nethackers.harness.launch import EvolveParams, _now, prepare_evolve
+from nethackers.harness.sandbox_preflight import preflight as sandbox_preflight
 from nethackers.hub.objectives import CATALOG
 from nethackers.hubclient import credentials as _cred
 from nethackers.hubclient.client import (
@@ -352,34 +349,6 @@ def _unknown_objective(name: str) -> str:
     )
 
 
-def _sandbox_hint() -> str:
-    """The Colima/Podman bring-up hint for the evolve sandbox runtime preflight.
-    macOS has no native Docker daemon (Docker Desktop is explicitly out per
-    the mutator-sandbox spec), so its fix is a VM, not just "start Docker"."""
-    if platform.system() == "Darwin":
-        return (
-            "start one, e.g. `colima start --cpu 6 --memory 12 --vm-type vz "
-            "--mount-type virtiofs` (or Podman)"
-        )
-    return "start Docker or Podman"
-
-
-def _docker_available() -> bool:
-    """The evolve sandbox runtime preflight. Two checks, not one: a ``docker``
-    binary on PATH can still have no daemon behind it -- a stopped Colima VM
-    looks exactly like this -- so ``docker info`` is what actually proves the
-    runtime is usable, not just installed."""
-    if shutil.which("docker") is None:
-        return False
-    try:
-        # Timeout is generous but bounded: covers a slow-to-answer Colima VM
-        # without hanging the CLI indefinitely if the runtime is just gone.
-        result = subprocess.run(["docker", "info"], capture_output=True, timeout=10)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return result.returncode == 0
-
-
 def _run(argv: list[str] | None) -> int:
     """Parse args and dispatch one subcommand. May raise -- ``main`` is the
     single place that turns any failure into a clean message, so nothing here
@@ -439,18 +408,11 @@ def _run(argv: list[str] | None) -> int:
     if args.cmd == "evolve":
         # The mutator ALWAYS runs sandboxed -- there is no host-execution path.
         # Fail fast, before any hub SELECT call / run-dir creation / the TUI
-        # even opens, rather than a mid-loop crash once run_loop starts.
-        if not _docker_available():
-            err.print(
-                f"[red]sandbox unavailable[/]: no working container runtime found "
-                f"— {_sandbox_hint()}, then retry"
-            )
-            return 1
-        try:
-            auth_docker_args(args.operator, system=platform.system(),
-                             home=Path.home(), _require_exists=True)
-        except AuthUnavailable as exc:
-            err.print(f"[red]not logged in[/]: {exc.hint}")
+        # even opens, rather than a mid-loop crash once run_loop starts. The
+        # same preflight backs the in-app form (tui/screens/evolve_form.py).
+        msg = sandbox_preflight(args.operator)
+        if msg is not None:
+            err.print(msg)
             return 1
 
         _creds = _load_creds()

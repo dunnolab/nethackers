@@ -27,6 +27,7 @@ from textual.widgets.option_list import Option
 
 from nethackers.harness.launch import EvolveParams, prepare_evolve
 from nethackers.harness.models import EFFORTS, MODELS
+from nethackers.harness.sandbox_preflight import preflight as sandbox_preflight
 from nethackers.hub.objectives import CATALOG
 from nethackers.hubclient.credentials import Credentials
 
@@ -191,6 +192,13 @@ class EvolveForm(Vertical):
             params = self._params()
         except ValueError as exc:
             self.query_one("#f_err", Static).update(f"[red]{exc}[/red]")
+            return
+        # The mutator always runs sandboxed -- surface a missing container
+        # runtime / login here (same preflight the CLI uses), not as a
+        # mid-run crash inside the pushed monitor.
+        msg = sandbox_preflight(params.operator)
+        if msg is not None:
+            self.query_one("#f_err", Static).update(msg)
             return
         plan = prepare_evolve(params)
         cast("NetHackersApp", self.app).start_run(plan)  # background run + open its monitor
