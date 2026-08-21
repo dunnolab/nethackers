@@ -51,6 +51,22 @@ def list_models(
     return None
 
 
+def _codex_reasoning(levels: object) -> tuple[str, ...]:
+    # `supported_reasoning_levels` is a list of {"effort", "description"} dicts in
+    # the real `codex debug models` output (older builds may emit bare strings).
+    # Keep just the effort NAME as a string -- storing the dicts crashes the
+    # `nethackers models` table renderer (``", ".join`` over non-strings).
+    if not isinstance(levels, list):
+        return ()
+    out: list[str] = []
+    for lv in levels:
+        if isinstance(lv, dict) and isinstance(lv.get("effort"), str):
+            out.append(lv["effort"])
+        elif isinstance(lv, str):
+            out.append(lv)
+    return tuple(out)
+
+
 def _codex_parse(doc: object) -> list[ModelInfo] | None:
     raw = doc.get("models") if isinstance(doc, dict) else None
     if not isinstance(raw, list):
@@ -62,11 +78,10 @@ def _codex_parse(doc: object) -> list[ModelInfo] | None:
         slug = m.get("slug")
         if not slug:
             continue
-        levels = m.get("supported_reasoning_levels")
         out.append(ModelInfo(
             id=str(slug),
             label=str(m.get("display_name") or slug),
-            reasoning=tuple(levels) if isinstance(levels, list) else (),
+            reasoning=_codex_reasoning(m.get("supported_reasoning_levels")),
             deprecated=m.get("upgrade") is not None,
         ))
     return out
@@ -117,6 +132,24 @@ def _claude_auth_headers(*, run: Callable, home: Path | None) -> dict[str, str] 
     return None
 
 
+_EFFORT_ORDER = ("low", "medium", "high", "xhigh", "max", "ultra")
+
+
+def _claude_reasoning(capabilities: object) -> tuple[str, ...]:
+    # /v1/models exposes capabilities.effort = {"supported": bool,
+    # "<level>": {"supported": bool}, ...}. Collect the supported effort level
+    # names in canonical low..max order (skipping the top-level "supported" flag).
+    if not isinstance(capabilities, dict):
+        return ()
+    effort = capabilities.get("effort")
+    if not isinstance(effort, dict) or not effort.get("supported"):
+        return ()
+    return tuple(
+        level for level in _EFFORT_ORDER
+        if isinstance(effort.get(level), dict) and effort[level].get("supported")
+    )
+
+
 def _claude_models(*, run: Callable, http: Callable, home: Path | None) -> list[ModelInfo] | None:
     auth = _claude_auth_headers(run=run, home=home)
     if auth is None:
@@ -138,7 +171,8 @@ def _claude_models(*, run: Callable, http: Callable, home: Path | None) -> list[
     for d in data:
         if not isinstance(d, dict) or not d.get("id"):
             continue
-        out.append(ModelInfo(id=str(d["id"]), label=str(d.get("display_name") or d["id"])))
+        out.append(ModelInfo(id=str(d["id"]), label=str(d.get("display_name") or d["id"]),
+                             reasoning=_claude_reasoning(d.get("capabilities"))))
     return out
 
 

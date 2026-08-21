@@ -107,7 +107,9 @@ def _models_table(operator: str, rows: list[dict[str, Any]]):
     table.add_column("effort")
     for r in rows:
         name = r["id"] + (" [dim](deprecated)[/]" if r["deprecated"] else "")
-        table.add_row(name, r["label"], ", ".join(r["reasoning"]))
+        # str() each item defensively: a display command must never crash on an
+        # unexpected reasoning shape (see discovery._codex_reasoning).
+        table.add_row(name, r["label"], ", ".join(str(x) for x in r["reasoning"]))
     return table
 
 

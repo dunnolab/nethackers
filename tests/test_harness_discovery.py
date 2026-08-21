@@ -11,9 +11,13 @@ from nethackers.harness.discovery import (
     preflight_model,
 )
 
+# `supported_reasoning_levels` is a list of {"effort", "description"} DICTS in the
+# real `codex debug models` output (NOT bare strings) -- the fixture mirrors that
+# so the parser is exercised against the real shape.
 _CODEX_JSON = json.dumps({"models": [
-    {"slug": "gpt-5.6-sol", "display_name": "gpt-5.6-sol",
-     "visibility": "list", "supported_reasoning_levels": ["low", "high"], "upgrade": None},
+    {"slug": "gpt-5.6-sol", "display_name": "gpt-5.6-sol", "visibility": "list",
+     "supported_reasoning_levels": [{"effort": "low", "description": "Fast"},
+                                    {"effort": "high", "description": "Deep"}], "upgrade": None},
     {"slug": "gpt-5.4", "display_name": "gpt-5.4",
      "visibility": "list", "supported_reasoning_levels": [], "upgrade": "gpt-5.6-terra"},
     {"slug": "codex-auto-review", "display_name": "auto", "visibility": "hide"},
@@ -48,9 +52,13 @@ def test_list_models_codex_returns_none_when_nothing_available(tmp_path):
     assert list_models("codex", run=_run_fail, home=tmp_path) is None   # no cache file either
 
 
+# capabilities.effort = {"supported", "<level>": {"supported"}} in the real
+# /v1/models output -> reasoning is the supported effort levels, low..max order.
 _ANTHROPIC_OK = {"data": [
-    {"id": "claude-opus-5", "display_name": "Opus 5"},
-    {"id": "claude-fable-5", "display_name": "Fable 5"},
+    {"id": "claude-opus-5", "display_name": "Opus 5",
+     "capabilities": {"effort": {"supported": True, "low": {"supported": True},
+                                 "high": {"supported": True}, "max": {"supported": False}}}},
+    {"id": "claude-fable-5", "display_name": "Fable 5"},   # no capabilities -> reasoning ()
 ], "has_more": False}
 
 
@@ -70,6 +78,8 @@ def test_list_models_claude_from_api(tmp_path, monkeypatch):
     )
     assert [m.id for m in models] == ["claude-opus-5", "claude-fable-5"]
     assert models[0].label == "Opus 5"
+    assert models[0].reasoning == ("low", "high")   # supported efforts (max: supported=False)
+    assert models[1].reasoning == ()                 # no capabilities -> empty
 
 
 def test_list_models_claude_401_is_unknown_not_empty(tmp_path, monkeypatch):
