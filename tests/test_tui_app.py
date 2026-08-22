@@ -50,16 +50,16 @@ async def test_shell_guest_when_logged_out():
 
 async def test_escape_leaves_a_focused_field_so_q_can_quit():
     """A focused text ``Input`` swallows letters, so the advertised ``q`` quit
-    is dead while you're typing in the Evolve form's objective filter (Textual
-    ``Input`` consumes printable keys before any binding, ``priority`` or not).
-    ``escape`` hands control back to the modal nav (navigate mode, nothing
-    focused), restoring the global ``q`` / ``1–6`` keys -- the way out of the
-    field a stuck user needs."""
+    is dead while you're typing in one of the Evolve form's text fields (e.g.
+    iterations; Textual ``Input`` consumes printable keys before any binding,
+    ``priority`` or not). ``escape`` hands control back to the modal nav
+    (navigate mode, nothing focused), restoring the global ``q`` / ``1–6``
+    keys -- the way out of the field a stuck user needs."""
     app = NetHackersApp(hub=_DEAD_HUB, creds=Credentials("castiel", "t"))
     async with app.run_test() as pilot:
         await pilot.press("6")  # -> Evolve
         await pilot.pause()
-        app.query_one("#f_obj_filter", Input).focus()
+        app.query_one("#f_iters", Input).focus()
         await pilot.pause()
         assert isinstance(app.focused, Input)  # in a text field, `q` would type
 

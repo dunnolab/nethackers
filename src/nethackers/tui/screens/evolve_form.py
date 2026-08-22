@@ -5,17 +5,16 @@ creds) and hands it to ``harness.launch.prepare_evolve``. On success the
 returned ``EvolvePlan`` drives a pushed ``EvolveScreen`` -- the same live
 monitor the CLI path uses.
 
-Objective is a **filter + multi-pick** over the catalog (74 entries:
-``random`` plus the 73 identities; ``all`` is excluded -- it's a hub-query
-marker with no episodes to evolve against), so you type a fragment
-(``wiz``, ``val``) and choose from the narrowed list instead of typing an
-exact ``role-race-align-gender`` string. A filter that names a whole role
-(e.g. ``wiz``) also offers a "whole role" option; picking several entries
-(roles and/or identities) builds a set. Either way ``EvolveParams.objective``
-ends up a single identity, a bare role, or a sorted comma-list of
-identities -- every shape ``nethackers.hub.selector.resolve`` accepts. Seed
-root is a dropdown of the solution roots discovered under ``roots/`` (dirs
-with a ``nethackers.solution.json``).
+Objective is a **selection grid** (``tui.identity_grid.IdentityGrid``) that
+mirrors the Frontier view: a 4-column grid of role cards, one ``◻``/``◼``
+box per variation, plus a ``random`` toggle on top. Space toggles the cursor
+cell (an identity, a whole role via its header, or ``random``); ``a`` selects
+all 73, ``c`` clears all; ←/→ hop between roles. The grid resolves to
+``EvolveParams.objective`` -- a single identity, a bare role, ``"*"`` (all),
+``"random"``, or a sorted comma-list -- every shape
+``nethackers.hub.selector.resolve`` accepts. Seed root is a dropdown of the
+solution roots discovered under ``roots/`` (dirs with a
+``nethackers.solution.json``).
 """
 from __future__ import annotations
 
@@ -26,8 +25,7 @@ from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Vertical, VerticalScroll
-from textual.widgets import Button, Input, Label, OptionList, Select, Static
-from textual.widgets.option_list import Option
+from textual.widgets import Button, Input, Label, Select, Static
 
 from nethackers.harness.discovery import CliInfo, ModelInfo, probe_operator
 from nethackers.harness.launch import EvolveParams, prepare_evolve
@@ -37,15 +35,12 @@ from nethackers.harness.sandbox_preflight import (
     image_present,
     preflight as sandbox_preflight,
 )
-from nethackers.hub.objectives import CATALOG, ROLES
 from nethackers.hub.selector import resolve
 from nethackers.hubclient.credentials import Credentials
+from nethackers.tui.identity_grid import IdentityGrid
 
 if TYPE_CHECKING:
     from nethackers.tui.app import NetHackersApp
-
-# random first (the north-star), then the identities sorted; drop "all".
-_OBJECTIVES: list[str] = ["random"] + sorted(k for k in CATALOG if k not in ("random", "all"))
 
 # The form doesn't expose an image picker, so live discovery probes the default
 # mutator image (matches launch.EvolveParams.mutator_image / the CLI default).
@@ -94,7 +89,8 @@ class EvolveForm(Vertical):
     EvolveForm { align: center middle; }
     EvolveForm > #form { width: 74; height: auto; max-height: 100%; padding: 1 2; }
     EvolveForm Label { text-style: bold; color: #d2a24c; margin-top: 1; }
-    EvolveForm #f_obj_list { height: 6; border: round #7c745f; }
+    EvolveForm #f_obj_grid { height: auto; border: round #7c745f; padding: 0 1; }
+    EvolveForm #f_obj_grid:focus, EvolveForm #f_obj_grid.-cursor { border: round #ffd54a; }
     EvolveForm #f_obj_sel { color: #d7c9a2; }
     EvolveForm #f_start { margin-top: 1; width: 100%; }
     EvolveForm #f_err { height: auto; color: #c04040; }
@@ -105,12 +101,10 @@ class EvolveForm(Vertical):
         super().__init__(**kw)
         self._hub = hub
         self._creds = creds
+        # The objective grid keeps the live selection; `_objective` is the token
+        # it resolves to (updated on every IdentityGrid.Changed) -- the single
+        # source of truth `_params()` reads.
         self._objective: str | None = None
-        # Ordered multi-selection of OptionList ids: a plain identity id
-        # (e.g. "wiz-elf-cha-mal") or a role id ("role:wiz"). _objective is
-        # always kept in sync (via _toggle_selection) as _selector()'s
-        # rendering of this set -- the single source of truth _params() reads.
-        self._selected: list[str] = []
         self._live: dict[str, ModelInfo] = {}  # id -> discovered model (drives efforts)
         # One ~1s container probe per operator, cached: switching operators back
         # and forth (or reopening) is then instant, not another probe.
@@ -118,9 +112,8 @@ class EvolveForm(Vertical):
 
     def compose(self) -> ComposeResult:
         with VerticalScroll(id="form", classes="panel"):
-            yield Label("Objective — type to filter, then pick one · esc to leave")
-            yield Input(placeholder="filter…  e.g. wiz · val · random", id="f_obj_filter")
-            yield OptionList(*(Option(o, id=o) for o in _OBJECTIVES), id="f_obj_list")
+            yield Label("Objective — space toggle · a all · c clear · ←→ hop role · esc leave")
+            yield IdentityGrid(id="f_obj_grid", classes="panel")
             yield Static("[dim]none selected[/]", id="f_obj_sel")
             yield Label("Seed root")
             roots = _seed_roots()
@@ -170,81 +163,23 @@ class EvolveForm(Vertical):
         else:
             self.app.set_focus(None)
 
-    def on_input_changed(self, event: Input.Changed) -> None:
-        """Narrow the objective list as the filter is typed. A query that
-        names a whole role (e.g. "wiz") gets a "whole role" option prepended
-        (id ``role:<role>``) so one pick selects every identity in it."""
-        if event.input.id != "f_obj_filter":
-            return
-        q = event.value.strip().lower()
-        matches = [o for o in _OBJECTIVES if q in o.lower()]
-        row_options = [Option(o, id=o) for o in matches]
-        if q in ROLES:
-            count = len(resolve(q).identities)
-            row_options.insert(0, Option(f"{q} — whole role ({count})", id=f"role:{q}"))
-        options = self.query_one("#f_obj_list", OptionList)
-        options.clear_options()
-        options.add_options(row_options)
-
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        option_id = event.option.id
-        if option_id is None:
-            return
-        self._toggle_selection(option_id)
+    def on_identity_grid_changed(self, event: IdentityGrid.Changed) -> None:
+        """The objective grid changed -> recompute ``_objective`` (the token it
+        resolves to) and the chip. ``_objective`` stays the single source of
+        truth ``_params()`` reads."""
+        self._objective = event.grid.token() or None
         chip = self.query_one("#f_obj_sel", Static)
-        if self._objective:
-            resolved = resolve(self._objective)
-            if resolved.kind in ("random", "all"):
-                # a broad marker, not a discrete identity list -- no "N
-                # build(s)" count to show (random: 0 by design; all: every
-                # identity, not what the user picked one-by-one).
-                chip.update(f"objective: [b]{self._objective}[/]")
-            else:
-                chip.update(
-                    f"objective: [b]{self._objective}[/] — {len(resolved.identities)} build(s)")
-        else:
+        if not self._objective:
             chip.update("[dim]none selected[/]")
-
-    # "random"/"all" are broad, non-set catalog markers -- they can't be
-    # unioned with identities/roles, so they're mutually exclusive with
-    # everything else in _selected (see _toggle_selection).
-    _BROAD = ("random", "all")
-
-    def _toggle_selection(self, option_id: str) -> None:
-        """Toggle *option_id* (a plain identity id, a ``role:<role>`` id, or
-        a broad marker -- ``"random"``/``"all"``) in/out of the ordered
-        multi-selection, then recompute ``_objective`` from the result via
-        ``_selector()``. Pure state -- no widget queries -- so it runs
-        standalone in a unit test without a mount.
-
-        ``"random"``/``"all"`` can't be unioned with anything else
-        (``resolve("random").identities`` is empty, so mixing it in would
-        silently vanish that intent) -- picking one REPLACES the whole
-        selection (or clears it, toggling off an already-sole pick);
-        picking an identity/role drops any broad marker first."""
-        if option_id in self._BROAD:
-            self._selected = [] if self._selected == [option_id] else [option_id]
-        else:
-            self._selected = [s for s in self._selected if s not in self._BROAD]
-            if option_id in self._selected:
-                self._selected.remove(option_id)
-            else:
-                self._selected.append(option_id)
-        self._objective = self._selector() or None
-
-    def _selector(self) -> str:
-        """Render ``self._selected`` to a token ``selector.resolve`` accepts:
-        ``""`` when empty, the bare role/identity/broad-marker for a single
-        pick, else a sorted, deduped comma-list of the union of every
-        selected identity (expanding any role pick to its members first)."""
-        if not self._selected:
-            return ""
-        if len(self._selected) == 1:
-            return self._selected[0].removeprefix("role:")
-        identities: set[str] = set()
-        for option_id in self._selected:
-            identities.update(resolve(option_id.removeprefix("role:")).identities)
-        return ",".join(sorted(identities))
+            return
+        resolved = resolve(self._objective)
+        if resolved.kind == "random":
+            chip.update("objective: [b]random[/]  broad natural-weighted sample")
+        elif "," in self._objective:  # an arbitrary set -> show the count, not the long list
+            chip.update(f"objective: [b]{len(resolved.identities)} builds[/] selected")
+        else:  # a single identity, a role, or "*" (all)
+            chip.update(
+                f"objective: [b]{self._objective}[/] — {len(resolved.identities)} build(s)")
 
     @staticmethod
     def _model_options(backend: str) -> list[tuple[str, str]]:

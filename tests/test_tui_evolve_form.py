@@ -16,9 +16,9 @@ from textual.widgets import Button, Input, Select, Static
 
 import nethackers.tui.screens.evolve_form as ef
 from nethackers.harness.discovery import CliInfo, ModelInfo
-from nethackers.hub.selector import resolve
 from nethackers.hubclient.credentials import Credentials
 from nethackers.tui.app import NetHackersApp
+from nethackers.tui.identity_grid import IdentityGrid
 from nethackers.tui.screens.evolve_form import EvolveForm
 
 
@@ -338,82 +338,34 @@ async def test_operator_switch_uses_cache_second_time(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Multi-select objective "set builder" (Task 13): _toggle_selection/_selector
-# are pure state helpers -- no widget queries -- so they're exercised here
-# directly on a bare (unmounted) EvolveForm, no full render needed. The
-# existing tests above keep poking ._objective directly and never touch
-# ._selected/_toggle_selection, so they keep flowing to params unchanged.
+# Objective selection grid (IdentityGrid). The grid's own toggle/token logic
+# is unit-tested in test_tui_identity_grid.py; here we verify the FORM wiring
+# -- an IdentityGrid.Changed updates the form's `_objective` (the single
+# source of truth `_params()` reads) and the chip. The tests above keep poking
+# `._objective` directly, which still flows to params unchanged.
 # ---------------------------------------------------------------------------
 
-def test_toggle_single_identity_selects_it():
-    form = EvolveForm("http://h", None)
-    form._toggle_selection("wiz-elf-cha-mal")
-    assert form._selector() == "wiz-elf-cha-mal"
-    assert form._objective == "wiz-elf-cha-mal"
-    resolved = resolve(form._selector())
-    assert resolved.identities == ("wiz-elf-cha-mal",)
+async def test_grid_selection_drives_objective_and_chip():
+    app = _Host(None)
+    async with app.run_test(size=(120, 50)) as pilot:
+        form = app.query_one(ef.EvolveForm)
+        grid = form.query_one(IdentityGrid)
+        grid.cursor = "role:wiz"
+        grid._toggle()                       # select the whole Wizard role
+        await pilot.pause()
+        assert form._objective == "wiz"      # the form's source of truth updated
+        chip = str(form.query_one("#f_obj_sel", Static).render())
+        assert "wiz" in chip and "10 build" in chip
+        grid.clear_all()
+        await pilot.pause()
+        assert form._objective is None       # cleared -> back to no objective
 
 
-def test_toggle_role_option_selects_whole_role():
-    form = EvolveForm("http://h", None)
-    form._toggle_selection("role:wiz")           # the role option's id
-    assert form._selector() == "wiz"              # collapses to the bare role
-    assert form._objective == "wiz"
-    resolved = resolve(form._selector())
-    assert len(resolved.identities) == 10          # all 10 wiz builds
-
-
-def test_toggle_two_identities_yields_sorted_comma_list():
-    form = EvolveForm("http://h", None)
-    form._toggle_selection("wiz-elf-cha-mal")
-    form._toggle_selection("val-hum-law-fem")
-    token = form._selector()
-    assert token == "val-hum-law-fem,wiz-elf-cha-mal"   # sorted, deduped
-    resolved = resolve(token)                            # must not raise
-    assert resolved.identities == ("val-hum-law-fem", "wiz-elf-cha-mal")
-
-
-def test_toggle_off_clears_selection():
-    form = EvolveForm("http://h", None)
-    form._toggle_selection("wiz-elf-cha-mal")
-    form._toggle_selection("wiz-elf-cha-mal")     # toggle the same id again -> off
-    assert form._selector() == ""
-    assert form._objective is None
-
-
-def test_toggle_role_then_member_resolves_to_the_whole_role_no_duplicates():
-    # The brief's own canonical case: a role plus one of its members must
-    # collapse to that role's full set, not raise, and not duplicate.
-    form = EvolveForm("http://h", None)
-    form._toggle_selection("role:wiz")
-    form._toggle_selection("wiz-elf-cha-mal")
-    resolved = resolve(form._selector())              # must not raise
-    wiz_all = resolve("wiz").identities                # ground truth: the 10 wiz builds
-    assert resolved.identities == wiz_all
-    assert len(resolved.identities) == 10
-    assert len(set(resolved.identities)) == len(resolved.identities)   # no duplication
-
-
-def test_random_then_identity_replaces_random():
-    # "random" has no discrete identities (resolve("random").identities ==
-    # ()), so unioning it with a pick would silently drop the "random"
-    # intent -- instead picking an identity after "random" REPLACES it.
-    form = EvolveForm("http://h", None)
-    form._toggle_selection("random")
-    assert form._selected == ["random"]
-    form._toggle_selection("wiz-elf-cha-mal")
-    assert form._selected == ["wiz-elf-cha-mal"]       # random dropped, not unioned
-    assert form._selector() == "wiz-elf-cha-mal"
-    assert form._objective == "wiz-elf-cha-mal"
-
-
-def test_identity_then_random_replaces_identity():
-    # The reverse direction: picking "random" after an identity REPLACES
-    # the whole selection with ["random"], not a union.
-    form = EvolveForm("http://h", None)
-    form._toggle_selection("wiz-elf-cha-mal")
-    assert form._selected == ["wiz-elf-cha-mal"]
-    form._toggle_selection("random")
-    assert form._selected == ["random"]
-    assert form._selector() == "random"
-    assert form._objective == "random"
+async def test_grid_is_a_nav_target_but_scroll_pane_is_not():
+    app = NetHackersApp(hub="http://h", creds=None, start="evolve")
+    async with app.run_test(size=(120, 50)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        targets = app._nav_targets()
+        assert app.query_one("#f_obj_grid", IdentityGrid) in targets  # the grid is reachable
+        assert app.query_one("#form") not in targets                  # the scroll pane isn't
