@@ -71,6 +71,7 @@ def run_loop(
     on_iteration: Callable[[int, IterationResult], None] = lambda _i, _r: None,
     runner=subprocess.run,
     workdir: Path,
+    publish: Callable[[Path], dict[str, str] | None] | None = None,
 ) -> list[IterationResult]:
     dev = dev_spec(objective)
     resolved = resolve(objective)
@@ -284,13 +285,20 @@ def run_loop(
 
             digest = tree_store.save(worktree)
             manifest = json.loads((worktree / "nethackers.solution.json").read_text())
-            if identities:
-                register_win_slices(hub, token=token, owner=owner, child_manifest=manifest,
+            # Publish the win to a real repo@commit (so it's fetchable and passes
+            # the hub's commit-exists check), then register the self-reported
+            # evidence. No publisher (or a failed publish) -> accept as a local
+            # elite only, never a synthetic, unfetchable hub reference.
+            reference = publish(worktree) if publish is not None else None
+            if reference is None:
+                report(f"{tag} · ✓ new local elite (not published to the hub)")
+            elif identities:
+                register_win_slices(hub, token=token, child_manifest=manifest,
                                     evidence=dev_ev, identities=identities,
-                                    parent_digest=elite.digest)
+                                    parent_digest=elite.digest, reference=reference)
             else:
-                register_win(hub, token=token, owner=owner, child_manifest=manifest,
-                             evidence=dev_ev, parent_digest=elite.digest)
+                register_win(hub, token=token, child_manifest=manifest,
+                             evidence=dev_ev, parent_digest=elite.digest, reference=reference)
             # A rising union mean can still hide a per-identity drop on a set
             # objective -- diff the OLD parent (elite, not yet reassigned)
             # against the winning child so a regression is surfaced, not

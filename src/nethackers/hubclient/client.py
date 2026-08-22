@@ -102,15 +102,23 @@ class HubClient:
         """``GET /solutions/{digest}/frontier``."""
         return self._get(f"/solutions/{digest}/frontier")
 
-    def register(self, *, token: str, repo: str, commit: str, root: str = "") -> Any:
-        """``POST /register`` with a ``Bearer`` token and the link-only
-        ``{"reference": {"repo", "commit"}, "root"}`` body the hub's
-        ``/register`` contract expects. The pinned ``commit`` SHA is the
-        solution identity -- this method only transports the ``repo@commit``
-        link, it never clones, hashes, or validates it."""
+    def register(
+        self,
+        *,
+        token: str,
+        reference: dict[str, Any],
+        manifest: dict[str, Any],
+        evidence: dict[str, Any],
+    ) -> Any:
+        """``POST /register`` with a ``Bearer`` token and the
+        ``{reference, manifest, evidence}`` body the hub expects: the
+        ``repo@commit`` link (``reference``, the solution identity), the
+        solution ``manifest``, and the self-reported ``evidence`` (an
+        ``Evidence.to_dict()``). This method only transports them -- the hub
+        validates the link and the batch and writes per-identity atoms."""
         response = self._http.post(
             self._base + "/register",
-            json={"reference": {"repo": repo, "commit": commit}, "root": root},
+            json={"reference": reference, "manifest": manifest, "evidence": evidence},
             headers={"Authorization": f"Bearer {token}"},
         )
         response.raise_for_status()

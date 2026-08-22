@@ -16,6 +16,7 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
+from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
 from nethackers.hub.api import create_app
 from nethackers.hub.auth import LocalStubAuth
 from nethackers.hub.github import GitHubReadError
@@ -30,6 +31,37 @@ SHA = "b" * 40  # a well-formed (if fake) 40-hex sha
 # A real, published identity objective, used by the read-endpoint tests.
 IDENTITY = "val-dwa-law-fem"
 BATCH_SIZE = len(CATALOG[IDENTITY].batch)
+
+MANIFEST = {"root": "bot", "entrypoint": "bot.py"}
+
+
+def _evidence_dict(objective_name: str = IDENTITY) -> dict[str, Any]:
+    """A valid self-reported ``Evidence`` (as a JSON dict) whose
+    ``(trajectory_id, character)`` set is exactly ``objective_name``'s
+    published batch -- what ``POST /register`` carries in its body."""
+    results = tuple(
+        TrajectoryResult(
+            trajectory_id=seed, status="completed", progress=0.5, ascended=False,
+            steps=1, turns=1, max_depth=1, end_status="died", error=None,
+            wall_seconds=0.1, character=character, milestone=None,
+        )
+        for seed, character in CATALOG[objective_name].batch
+    )
+    return Evidence.from_results(
+        solution_digest="sha256:" + "ab" * 32,
+        objective=Objective(character=None, seed_set=objective_name),
+        evaluator_image="img", results=results, created_at="t",
+    ).to_dict()
+
+
+def _register_body(repo: str = REPO, commit: str = SHA) -> dict[str, Any]:
+    """The ``{reference, manifest, evidence}`` register envelope the hub now
+    expects (was ``{reference, root}``)."""
+    return {
+        "reference": {"repo": repo, "commit": commit},
+        "manifest": MANIFEST,
+        "evidence": _evidence_dict(),
+    }
 
 
 def _app(tmp_path: Any, exists: bool = True) -> tuple[TestClient, Store]:
@@ -65,7 +97,7 @@ def test_register_link_ok(tmp_path: Any) -> None:
 
     response = client.post(
         "/register",
-        json={"reference": {"repo": REPO, "commit": SHA}, "root": "bot"},
+        json=_register_body(),
         headers=_auth_headers(),
     )
 
@@ -85,7 +117,7 @@ def test_register_requires_token(tmp_path: Any) -> None:
     # No Authorization header at all -> 401 (from _bearer_token), nothing stored.
     client, store = _app(tmp_path)
 
-    response = client.post("/register", json={"reference": {"repo": REPO, "commit": SHA}})
+    response = client.post("/register", json=_register_body())
 
     assert response.status_code == 401
     assert store.get_solution(f"{REPO}@{SHA}") is None
@@ -97,7 +129,7 @@ def test_register_wrong_owner_403(tmp_path: Any) -> None:
 
     response = client.post(
         "/register",
-        json={"reference": {"repo": "github.com/eve/nethacker", "commit": SHA}},
+        json=_register_body(repo="github.com/eve/nethacker"),
         headers=_auth_headers(),
     )
 
@@ -111,7 +143,7 @@ def test_register_bad_token_401(tmp_path: Any) -> None:
 
     response = client.post(
         "/register",
-        json={"reference": {"repo": REPO, "commit": SHA}},
+        json=_register_body(),
         headers=_auth_headers("bogus"),
     )
 
@@ -126,7 +158,7 @@ def test_register_missing_commit_400(tmp_path: Any) -> None:
 
     response = client.post(
         "/register",
-        json={"reference": {"repo": REPO, "commit": SHA}},
+        json=_register_body(),
         headers=_auth_headers(),
     )
 
@@ -149,7 +181,7 @@ def test_register_github_error_502(tmp_path: Any) -> None:
 
     response = client.post(
         "/register",
-        json={"reference": {"repo": REPO, "commit": SHA}},
+        json=_register_body(),
         headers=_auth_headers(),
     )
 
@@ -240,7 +272,7 @@ def test_search_lists_and_owner_filter(tmp_path: Any) -> None:
 
     registered = client.post(
         "/register",
-        json={"reference": {"repo": REPO, "commit": SHA}, "root": "bot"},
+        json=_register_body(),
         headers=_auth_headers(),
     )
     assert registered.status_code == 200

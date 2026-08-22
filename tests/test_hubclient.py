@@ -175,11 +175,15 @@ def test_client_register_body():
             return R()
 
     HubClient("https://hub", http=H()).register(
-        token="t", repo="github.com/sam/nethacker", commit="c" * 40, root="bot"
+        token="t",
+        reference={"repo": "github.com/sam/nethacker", "commit": "c" * 40},
+        manifest={"root": "bot", "entrypoint": "bot.py"},
+        evidence={"solution_digest": "sha256:x"},
     )
     assert sent["json"] == {
         "reference": {"repo": "github.com/sam/nethacker", "commit": "c" * 40},
-        "root": "bot",
+        "manifest": {"root": "bot", "entrypoint": "bot.py"},
+        "evidence": {"solution_digest": "sha256:x"},
     }
     assert sent["headers"]["Authorization"] == "Bearer t"
 

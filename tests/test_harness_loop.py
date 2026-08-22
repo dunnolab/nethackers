@@ -98,9 +98,24 @@ def test_loop_registers_an_improvement(tmp_path):
         hub=hub, image="img:dev", token="dev-token", owner="dev", iterations=1,
 validation_n=3,
         now_fn=lambda: "2026-08-10T00:00:00Z",
-        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work")
+        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
+        publish=lambda wt: {"repo": "github.com/dev/nethacker", "commit": "a" * 40})
     assert results[0].registered is True
     assert len(hub.registered) == 1
+
+
+def test_loop_win_without_publisher_is_a_local_elite(tmp_path):
+    # No `publish` hook -> the win is accepted as a local elite only, never
+    # registered against the hub (no synthetic, unfetchable reference).
+    hub = _FakeHub()
+    results = run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+        hub=hub, image="img:dev", token="dev-token", owner="dev", iterations=1,
+        validation_n=3, now_fn=lambda: "2026-08-10T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work")
+    assert results[0].registered is True   # still a new (local) elite
+    assert hub.registered == []            # but nothing went to the hub
 
 
 def test_loop_records_faithful_usage(tmp_path):
@@ -403,6 +418,7 @@ def test_loop_registers_a_slice_per_identity_for_a_set_objective(tmp_path):
         validation_n=3, migrate=False,
         now_fn=lambda: "2026-08-10T00:00:00Z",
         runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
+        publish=lambda wt: {"repo": "github.com/dev/nethacker", "commit": "a" * 40},
         on_state=states.append)
 
     assert len(hub.seed_sets) == 2

@@ -39,7 +39,7 @@ from typing import Any
 from fastapi import FastAPI, Header, HTTPException
 from pydantic import BaseModel
 
-from nethackers.contracts.models import ObjectiveSpec
+from nethackers.contracts.models import Evidence, ObjectiveSpec
 from nethackers.hub.auth import AuthError, AuthProvider, GitHubAppAuth, LocalStubAuth
 from nethackers.hub.github import GitHubRead, GitHubReadError
 from nethackers.hub.objectives import CATALOG
@@ -73,7 +73,8 @@ class RegisterRequest(BaseModel):
     subdirectory the solution lives under (default: the repo root)."""
 
     reference: dict[str, str]
-    root: str = ""
+    manifest: dict[str, Any]
+    evidence: dict[str, Any]
 
 
 def _bearer_token(authorization: str | None) -> str:
@@ -189,14 +190,16 @@ def create_app(
         token = _bearer_token(authorization)
         git = git_factory(token)
         reference = SolutionReference(**body.reference)
+        evidence = Evidence.from_dict(body.evidence)
         try:
             result = register(
                 store,
                 auth,
                 token=token,
                 reference=reference,
+                manifest=body.manifest,
+                evidence=evidence,
                 git=git,
-                root=body.root,
                 now=datetime.now(UTC).isoformat(),
             )
         except AuthError as e:

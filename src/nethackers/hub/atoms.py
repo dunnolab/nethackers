@@ -24,14 +24,22 @@ from __future__ import annotations
 from nethackers.contracts.models import Atom, Evidence, ObjectiveSpec
 
 
-def evidence_to_atoms(evidence: Evidence, *, owner: str, spec: ObjectiveSpec) -> list[Atom]:
+def evidence_to_atoms(
+    evidence: Evidence, *, owner: str, spec: ObjectiveSpec, solution_id: str | None = None
+) -> list[Atom]:
     """One ``Atom`` per entry in ``evidence.results``, in order (``[]`` for
     empty results). ``objective_digest`` is ``spec.digest()``, computed
-    once here and reused for every atom -- see module docstring."""
+    once here and reused for every atom -- see module docstring.
+
+    ``solution_id`` overrides the atom's solution key: the hub identifies a
+    solution by its ``repo@commit`` link (not the content digest), so atoms
+    are keyed by that id to FK-link the solution row. Defaults to
+    ``evidence.solution_digest`` when not given (backward compatible)."""
     objective_digest = spec.digest()
+    key = solution_id if solution_id is not None else evidence.solution_digest
     return [
         Atom(
-            solution_digest=evidence.solution_digest,
+            solution_digest=key,
             objective_digest=objective_digest,
             owner=owner,
             tier=evidence.tier,

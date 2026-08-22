@@ -402,10 +402,12 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     r.add_argument("--repo", required=True, help="e.g. github.com/owner/name")
     r.add_argument("--commit", required=True, help="40-hex commit sha")
-    r.add_argument(
-        "--root", default="",
-        help="Path to the solution within the repo (default: the repo root).",
-    )
+    r.add_argument("--evidence", required=True,
+                   help="Path to an evidence JSON (from `nethackers eval`).")
+    r.add_argument("--root", default=".",
+                   help="Solution root within the repo (default: the repo root).")
+    r.add_argument("--entrypoint", default="bot.py",
+                   help="Solution entrypoint file (default: %(default)s).")
 
     sm = sub.add_parser(
         "submit", parents=[common], formatter_class=RichHelpFormatter,
@@ -420,6 +422,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--message", default="nethackers submit",
         help="Commit message for the published solution.",
     )
+    sm.add_argument("--objective", required=True,
+                    help="A catalog objective name to evaluate on (self-reported score).")
+    sm.add_argument("--image", default="nethackers/arena:dev", help="Arena image to run.")
+    sm.add_argument("--max-parallel-evals", type=int, default=8,
+                    help="Cap on concurrent episodes (default: %(default)s).")
 
     return parser
 
@@ -665,8 +672,12 @@ def _run(argv: list[str] | None) -> int:
         if token is None:
             err.print("[yellow]not logged in[/] — run `nethackers login`")
             return 1
+        evidence = json.loads(Path(args.evidence).read_text())
+        manifest = {"root": args.root, "entrypoint": args.entrypoint,
+                    "parents": [], "influences": []}
         result = HubClient(args.hub).register(
-            token=token, repo=args.repo, commit=args.commit, root=args.root,
+            token=token, reference={"repo": args.repo, "commit": args.commit},
+            manifest=manifest, evidence=evidence,
         )
         emit(
             result, args.output,
@@ -692,6 +703,15 @@ def _run(argv: list[str] | None) -> int:
         if token is None:  # unreachable (creds is set) -- narrows for the type checker
             err.print("[yellow]not logged in[/] — run `nethackers login`")
             return 1
+        spec = CATALOG.get(args.objective)
+        if spec is None:
+            err.print(_unknown_objective(args.objective))
+            return 2
+        # self-reported score: evaluate the local solution on the objective's batch
+        evidence = eval_batch(
+            Path(args.solution_dir), spec, args.image, now=_now(),
+            max_parallel_evals=args.max_parallel_evals,
+        )
         slug = f"{creds.login}/{args.repo_name}"
         try:
             ensure_repo(slug)
@@ -699,8 +719,12 @@ def _run(argv: list[str] | None) -> int:
         except PublishError as e:
             err.print(f"[red]publish failed[/] — {e}")
             return 1
+        mpath = Path(args.solution_dir) / "nethackers.solution.json"
+        manifest = (json.loads(mpath.read_text()) if mpath.is_file()
+                    else {"root": ".", "entrypoint": "bot.py", "parents": [], "influences": []})
         result = HubClient(args.hub).register(
-            token=token, repo=f"github.com/{slug}", commit=sha, root="",
+            token=token, reference={"repo": f"github.com/{slug}", "commit": sha},
+            manifest=manifest, evidence=evidence.to_dict(),
         )
         emit(
             result, args.output,
