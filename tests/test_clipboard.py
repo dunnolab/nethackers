@@ -1,0 +1,54 @@
+import subprocess
+
+from nethackers import clipboard
+
+
+def test_copy_success_uses_first_available_tool():
+    seen = []
+
+    def run(cmd, **kw):
+        seen.append(cmd[0])
+        return None
+
+    assert clipboard.copy("hi", run=run) is True
+    assert seen == ["pbcopy"]  # first candidate wins
+
+
+def test_copy_falls_through_when_a_tool_is_missing():
+    seen = []
+
+    def run(cmd, **kw):
+        seen.append(cmd[0])
+        if cmd[0] in ("pbcopy", "wl-copy"):
+            raise FileNotFoundError
+        return None
+
+    assert clipboard.copy("hi", run=run) is True
+    assert seen == ["pbcopy", "wl-copy", "xclip"]  # tried in order until one works
+
+
+def test_copy_returns_false_when_no_tool_works():
+    def run(cmd, **kw):
+        raise FileNotFoundError
+
+    assert clipboard.copy("hi", run=run) is False
+
+
+def test_copy_passes_text_via_stdin():
+    got = {}
+
+    def run(cmd, **kw):
+        got.update(kw)
+        return None
+
+    clipboard.copy("WDJB-MJHT", run=run)
+    assert got["input"] == "WDJB-MJHT"
+
+
+def test_copy_treats_tool_failure_as_fall_through():
+    def run(cmd, **kw):
+        if cmd[0] == "pbcopy":
+            raise subprocess.CalledProcessError(1, cmd)
+        return None
+
+    assert clipboard.copy("hi", run=run) is True

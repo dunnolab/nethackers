@@ -62,6 +62,7 @@ from rich.panel import Panel
 from rich.text import Text
 from rich_argparse import RichHelpFormatter
 
+from nethackers import clipboard
 from nethackers.eval.runner import eval_batch
 from nethackers.harness.discovery import ModelInfo, list_models, preflight_model
 from nethackers.harness.launch import EvolveParams, _now, prepare_evolve
@@ -103,12 +104,18 @@ def _default_hub() -> str:
 
 def _login_prompt(verification_uri: str, user_code: str) -> None:
     """Styled device-flow prompt: the URL and the code on their own lines in a
-    bordered panel, printed to stderr so ``-o json`` / pipes stay clean."""
+    bordered panel, printed to stderr so ``-o json`` / pipes stay clean. The
+    code is copied to the clipboard (best effort) so it can be pasted, not
+    retyped."""
+    copied = clipboard.copy(user_code)
     body = Text()
     body.append("1  Open this URL in your browser\n", style="dim")
     body.append(f"     {verification_uri}\n\n", style="bold cyan")
-    body.append("2  Enter this code\n", style="dim")
-    body.append(f"     {user_code}", style="bold yellow")
+    body.append("2  Enter this code", style="dim")
+    if copied:
+        body.append("   (copied to clipboard)", style="green")
+    body.append("\n     ", style="dim")
+    body.append(user_code, style="bold yellow")
     err.print(Panel(body, title="[b green]Authorize NetHackers[/]",
                     border_style="green", expand=False, padding=(1, 2)))
 
