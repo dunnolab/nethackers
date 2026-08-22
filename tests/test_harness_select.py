@@ -132,3 +132,108 @@ def test_top_trusted_elite_none_on_resolve_failure(tmp_path):
     hub = _Hub([{"solution_digest": "sha256:claimed", "score": 0.5, "owner": "me",
                  "tier": "self-reported", "repo": "r", "commit_sha": "c"}])
     assert top_trusted_elite(hub, "obj", store, "me", fetch=fetch) is None
+
+
+# -- coverage-gated selection over an identity set (Task 7) -----------------
+# "wiz-elf-cha-mal" / "wiz-orc-cha-mal" are real IDENTITIES entries, so
+# `resolve("wiz-elf-cha-mal,wiz-orc-cha-mal")` yields kind="set".
+
+class _HubByIdentity:
+    """Per-identity elite pools -- unlike `_Hub`, `.elites(x)` depends on x."""
+    def __init__(self, pools):
+        self.pools = pools  # {identity: [entry, ...]}
+        self.calls = []
+    def elites(self, objective):
+        self.calls.append(objective)
+        return list(self.pools.get(objective, []))
+
+
+def _entry(digest, score, owner="dev", tier="verified"):
+    return {"solution_digest": digest, "score": score, "owner": owner, "tier": tier,
+            "repo": "r", "commit_sha": "c"}
+
+
+def test_set_select_resolves_cached_covered_entry(tmp_path):
+    store = LocalTreeStore(tmp_path / "store")
+    digest = store.save(_tree(tmp_path, "p1", "p1-code"))  # already cached, e.g. our own win
+    hub = _HubByIdentity({
+        "wiz-elf-cha-mal": [_entry(digest, 0.6)],
+        "wiz-orc-cha-mal": [_entry(digest, 0.4)],
+    })
+    seed = _tree(tmp_path, "seed")
+    tree, chosen = select_parent(hub, "wiz-elf-cha-mal,wiz-orc-cha-mal", store, seed, owner="dev")
+    assert chosen == digest and tree == store.path(digest)
+
+
+def test_set_select_scores_by_mean_and_excludes_partial_coverage(tmp_path):
+    # P1 covers both identities (mean of .6/.4 = .5); P2 covers only one, even
+    # with a higher raw score (.9) there -> excluded, never chosen.
+    hub = _HubByIdentity({
+        "wiz-elf-cha-mal": [_entry("sha256:P1", 0.6), _entry("sha256:P2", 0.9)],
+        "wiz-orc-cha-mal": [_entry("sha256:P1", 0.4)],
+    })
+    store = LocalTreeStore(tmp_path / "store")
+    seed = _tree(tmp_path, "seed")
+    seen = {}
+    def spy(entry, dest):
+        seen["digest"] = entry["solution_digest"]
+        seen["score"] = entry["score"]
+        return None  # force cache-miss + fetch-failure: asserts the CHOICE, not the bytes
+    tree, chosen = select_parent(hub, "wiz-elf-cha-mal,wiz-orc-cha-mal", store, seed,
+                                 owner="dev", fetch=spy)
+    assert seen["digest"] == "sha256:P1" and seen["score"] == 0.5
+    assert tree == seed and chosen is None  # unresolvable here -> cold-start fallback
+
+
+def test_set_select_empty_intersection_falls_back_to_seed(tmp_path):
+    hub = _HubByIdentity({
+        "wiz-elf-cha-mal": [_entry("sha256:P2", 0.9)],
+        "wiz-orc-cha-mal": [],
+    })
+    store = LocalTreeStore(tmp_path / "store")
+    seed = _tree(tmp_path, "seed")
+    tree, chosen = select_parent(hub, "wiz-elf-cha-mal,wiz-orc-cha-mal", store, seed, owner="dev")
+    assert tree == seed and chosen is None
+    # queried per-identity (proves the set was actually decomposed, not just
+    # treated as one opaque unknown-objective key that happens to fall back too)
+    assert hub.calls == ["wiz-elf-cha-mal", "wiz-orc-cha-mal"]
+
+
+def test_set_select_drops_untrusted_entries_before_intersecting(tmp_path):
+    # Same digest in both raw pools, but a stranger's self-report in one
+    # member is untrusted -> filtered out before the intersection, so
+    # coverage never completes even though the raw digest lines up.
+    hub = _HubByIdentity({
+        "wiz-elf-cha-mal": [_entry("sha256:P1", 0.9, owner="dev", tier="verified")],
+        "wiz-orc-cha-mal": [_entry("sha256:P1", 0.9, owner="stranger", tier="self-reported")],
+    })
+    store = LocalTreeStore(tmp_path / "store")
+    seed = _tree(tmp_path, "seed")
+    tree, chosen = select_parent(hub, "wiz-elf-cha-mal,wiz-orc-cha-mal", store, seed, owner="dev")
+    assert tree == seed and chosen is None
+    assert hub.calls == ["wiz-elf-cha-mal", "wiz-orc-cha-mal"]
+
+
+def test_top_trusted_elite_set_picks_max_mean_score(tmp_path):
+    hub = _HubByIdentity({
+        "wiz-elf-cha-mal": [_entry("sha256:P1", 0.6), _entry("sha256:P3", 0.9)],
+        "wiz-orc-cha-mal": [_entry("sha256:P1", 0.4), _entry("sha256:P3", 0.7)],
+    })
+    store = LocalTreeStore(tmp_path / "store")
+    seen = {}
+    def spy(entry, dest):
+        seen["digest"] = entry["solution_digest"]
+        return None
+    result = top_trusted_elite(hub, "wiz-elf-cha-mal,wiz-orc-cha-mal", store, "dev", fetch=spy)
+    assert result is None                  # unresolvable bytes here -> None
+    assert seen["digest"] == "sha256:P3"    # mean .8 beats P1's mean .5 -> greedy max
+
+
+def test_top_trusted_elite_set_empty_intersection_returns_none(tmp_path):
+    hub = _HubByIdentity({
+        "wiz-elf-cha-mal": [_entry("sha256:P2", 0.9)],
+        "wiz-orc-cha-mal": [],
+    })
+    store = LocalTreeStore(tmp_path / "store")
+    assert top_trusted_elite(hub, "wiz-elf-cha-mal,wiz-orc-cha-mal", store, "dev") is None
+    assert hub.calls == ["wiz-elf-cha-mal", "wiz-orc-cha-mal"]

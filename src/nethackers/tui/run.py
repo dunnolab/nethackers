@@ -75,7 +75,8 @@ class Run:
         if pd and (not self.chain or self.chain[-1] != pd):
             self.chain.append(pd)  # seed -> elite1 -> elite2 ...
         if phase == "registered":
-            self.ledger_rows.append((state["iteration"], True, "registered"))
+            reason = "registered" + (f" {state['detail']}" if state.get("detail") else "")
+            self.ledger_rows.append((state["iteration"], True, reason))
         elif phase == "rejected":
             self.ledger_rows.append(
                 (state["iteration"], False, state["detail"] or "rejected"))
@@ -166,3 +167,27 @@ class Run:
             return "held"
         batch = self.current_batch()
         return "held" if (batch and "held" in batch.label) else "dev"
+
+    def identities(self) -> list[str]:
+        """The set objective's identities, or [] -- the loop only puts
+        "identities" in state for set objectives; single/random runs never
+        set it, so this stays empty for them."""
+        return list(self.state.get("identities") or [])
+
+    def parent_means(self) -> dict[str, float]:
+        """The parent's per-identity means, or {} when absent (single/random
+        objectives, or before the first mutating state)."""
+        return dict(self.state.get("parent_means") or {})
+
+    def candidate_means(self) -> dict[str, float]:
+        """Per-identity means of the current dev batch's rows, grouped by
+        each episode's ``character``. {} before any batch exists."""
+        batch = self.current_batch()
+        if batch is None:
+            return {}
+        buckets: dict[str, list[float]] = {}
+        for row in batch.rows():
+            c = row.get("character")
+            if c:
+                buckets.setdefault(c, []).append(float(row["progress"]))
+        return {c: sum(v) / len(v) for c, v in buckets.items()}

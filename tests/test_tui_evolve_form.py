@@ -18,6 +18,7 @@ import nethackers.tui.screens.evolve_form as ef
 from nethackers.harness.discovery import CliInfo, ModelInfo
 from nethackers.hubclient.credentials import Credentials
 from nethackers.tui.app import NetHackersApp
+from nethackers.tui.identity_grid import IdentityGrid
 from nethackers.tui.screens.evolve_form import EvolveForm
 
 
@@ -113,17 +114,18 @@ async def test_start_pins_model_and_effort_from_the_pickers(monkeypatch):
 
 
 async def test_form_scroll_pane_is_not_a_nav_target():
-    # regression: making #form a VerticalScroll turned the whole-form panel into
-    # a focusable nav stop that shadowed the fields -- the operator select became
-    # unreachable/"not selectable". The pane must scroll without being a stop.
+    # regression: a subwindow VerticalScroll must scroll without itself being a
+    # focusable nav stop that shadows its fields (the operator select became
+    # unreachable/"not selectable" when the whole pane grabbed the cursor).
     app = NetHackersApp(hub="http://h", creds=None, start="evolve")
-    async with app.run_test(size=(100, 42)) as pilot:
+    async with app.run_test(size=(120, 42)) as pilot:
         await pilot.pause()
         await pilot.pause()
         targets = app._nav_targets()
-        assert app.query_one("#form") not in targets          # the scroll pane isn't a stop
-        assert app.query_one("#f_op", Select) in targets       # but the operator is
-        assert app.query_one("#f_model", Select) in targets    # and the new pickers
+        assert app.query_one("#f_objective") not in targets    # subwindow panes aren't stops
+        assert app.query_one("#f_operator") not in targets
+        assert app.query_one("#f_op", Select) in targets       # but the fields are
+        assert app.query_one("#f_model", Select) in targets
         assert app.query_one("#f_effort", Select) in targets
 
 
@@ -334,3 +336,37 @@ async def test_operator_switch_uses_cache_second_time(monkeypatch):
         form.query_one("#f_op", Select).value = "claude"     # cached -> NO re-probe
         await pilot.pause()
         assert calls == ["claude", "codex"]   # the switch back to claude hit the cache
+
+
+# ---------------------------------------------------------------------------
+# Objective selection grid (IdentityGrid). The grid's own toggle/token logic
+# is unit-tested in test_tui_identity_grid.py; here we verify the FORM wiring
+# -- an IdentityGrid.Changed updates the form's `_objective` (the single
+# source of truth `_params()` reads) and the chip. The tests above keep poking
+# `._objective` directly, which still flows to params unchanged.
+# ---------------------------------------------------------------------------
+
+async def test_grid_selection_drives_objective_and_chip():
+    app = _Host(None)
+    async with app.run_test(size=(120, 50)) as pilot:
+        form = app.query_one(ef.EvolveForm)
+        grid = form.query_one(IdentityGrid)
+        grid.cursor = "role:wiz"
+        grid._toggle()                       # select the whole Wizard role
+        await pilot.pause()
+        assert form._objective == "wiz"      # the form's source of truth updated
+        chip = str(form.query_one("#f_obj_sel", Static).render())
+        assert "wiz" in chip and "10 build" in chip
+        grid.clear_all()
+        await pilot.pause()
+        assert form._objective is None       # cleared -> back to no objective
+
+
+async def test_grid_is_a_nav_target_but_scroll_pane_is_not():
+    app = NetHackersApp(hub="http://h", creds=None, start="evolve")
+    async with app.run_test(size=(120, 50)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        targets = app._nav_targets()
+        assert app.query_one("#f_obj_grid", IdentityGrid) in targets  # the grid is reachable
+        assert app.query_one("#f_objective") not in targets           # its subwindow pane isn't

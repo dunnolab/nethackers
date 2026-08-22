@@ -44,3 +44,35 @@ def test_wiki_line_is_conditional():
 def test_training_seeds_render_when_given():
     b = build_brief("o", "c", _evidence(1, 1, {}), training_seeds=[3, 17, 42])
     assert "3, 17, 42" in b
+
+# --- generalist (set) brief -----------------------------------------------
+
+def test_set_brief_lists_builds_and_weakest_first():
+    per_identity = {"wiz-elf-cha-mal": 0.5, "wiz-orc-cha-mal": 0.1, "wiz-gno-neu-fem": 0.3}
+    text = build_brief(
+        "wiz", "wiz-elf-cha-mal", _evidence(mean=0.3, episodes=3, tally={}),
+        identities=list(per_identity), per_identity=per_identity, training_seeds=[0, 1, 2])
+    assert "3 builds" in text or "3 identities" in text
+    # weakest build appears before the strongest in the breakdown
+    assert text.index("wiz-orc-cha-mal") < text.index("wiz-elf-cha-mal")
+    assert "sample" in text.lower()   # the soft "don't roll every build" note
+
+def test_set_brief_keeps_contract_line():
+    per_identity = {"a": 0.1, "b": 0.2}
+    text = build_brief("set", "a", _evidence(mean=0.1, episodes=2, tally={}),
+                       identities=["a", "b"], per_identity=per_identity)
+    assert "make_agent()" in text
+
+def test_set_brief_has_heldout_and_antigaming_and_hypothesis():
+    per_identity = {"a": 0.1, "b": 0.2}
+    text = build_brief("set", "a", _evidence(mean=0.1, episodes=2, tally={}),
+                       identities=["a", "b"], per_identity=per_identity)
+    assert "held-out" in text.lower()
+    assert "fingerprint" in text.lower()          # named exploit #1
+    assert "scorer/nle quirks" in text.lower()    # named exploit #2
+    assert "hypothesis" in text.lower()           # focused-change comment
+
+def test_single_identity_brief_unaffected_by_new_kwargs_when_absent():
+    # identities=None (default) must still take the original, single-build path.
+    b = build_brief("ascend", "val-wiz", _evidence(mean=1.0, episodes=4, tally={}))
+    assert "a set of" not in b.lower()

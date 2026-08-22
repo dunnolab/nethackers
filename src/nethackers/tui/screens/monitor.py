@@ -26,6 +26,7 @@ from textual.widgets import (
     TabPane,
 )
 
+from nethackers.hub.selector import resolve
 from nethackers.hubclient.live import episode_table
 from nethackers.tui import status as S
 from nethackers.tui._util import _slug
@@ -44,6 +45,13 @@ class RunMonitor(Screen):
     CSS = """
     RunMonitor #cockpit { height: auto; margin: 1 2 0 2; }
     RunMonitor #influences { color: #7c745f; }
+    /* the per-identity scorecard (set objectives): bounded + scrollable so a
+       large set never pushes the episode table off-screen; on a tall terminal
+       it just shows the whole card. */
+    RunMonitor #scorecard {
+        height: auto; max-height: 50%; overflow-y: auto;
+        margin: 0 1 1 1; color: #d7c9a2;
+    }
     RunMonitor #navhint { color: #7c745f; height: 1; margin: 0 2; }
     RunMonitor TabbedContent { width: 1fr; height: 1fr; margin: 0 2; }
     #tables { padding: 1 1; }
@@ -96,6 +104,7 @@ class RunMonitor(Screen):
         yield Static("↑↓←→ move · enter use · esc back · c copy log", id="navhint")
         with TabbedContent():
             with TabPane("Monitor", id="tab_mon"):
+                yield Static(id="scorecard")
                 yield VerticalScroll(id="tables")
             with TabPane("Agent log", id="tab_logs"), Horizontal():
                 yield ListView(id="logs_list")
@@ -107,8 +116,21 @@ class RunMonitor(Screen):
         cfg = self.run.cfg
         pin = "".join([f" · {cfg.model}" if cfg.model else "",
                        f" · {cfg.effort}" if cfg.effort else ""])
+        # a set run's identities may not be in state yet at mount (they arrive
+        # with the first apply_state) -- append the size when already known,
+        # else leave the plain title; the scorecard is the primary signal.
+        n = len(self.run.identities())
+        setn = f" ({n})" if n else ""
+        # cfg.objective is the raw selector token -- a long comma list for a
+        # form/CLI-built set. Show the selector's resolved, compact name
+        # instead (e.g. a role, a glob, or "set:<n>:<hash>"); fall back to the
+        # raw token on any error (never let a title render crash the screen).
+        try:
+            name = resolve(cfg.objective).name
+        except Exception:
+            name = cfg.objective
         self.query_one("#cockpit").border_title = (
-            f"⚔ Evolution · {cfg.objective} · {cfg.backend}{pin}")
+            f"⚔ Evolution · {name}{setn} · {cfg.backend}{pin}")
         # defer: the TabbedContent's panes (#tables/#logs_list/#logview) aren't
         # mounted yet during a Screen's on_mount, so backfill would NoMatches.
         self.call_after_refresh(self._backfill)
@@ -163,6 +185,22 @@ class RunMonitor(Screen):
         self.query_one("#lineage", Static).update(S.lineage_strip(
             run.chain, best_dev=st["best_dev"], baseline_dev=st["baseline_dev"]))
         self.query_one("#ledger", Static).update(S.iterations_ledger(run.ledger_rows))
+        # generalist (set) objectives only: the loop puts "identities" in
+        # state, so this stays a no-op for single/random runs and their
+        # #scorecard/#influences are left as-is (unused, hidden by height:auto).
+        idents = run.identities()
+        if idents:
+            # candidate_means only during evaluating-dev -- other phases would
+            # show a stale or wrong-split (held) breakdown against the dev-only
+            # parent_means, which a reviewer flagged as misleading.
+            cand = run.candidate_means() if st.get("phase") == "evaluating-dev" else None
+            self.query_one("#scorecard", Static).update(
+                S.scorecard(run.parent_means(), cand, idents))
+            cov = st.get("coverage")
+            pd = str(st.get("parent_digest", ""))[:4]
+            infl = (f"influence  #{pd} · covers {cov[0]}/{cov[1]}" if (pd and cov)
+                    else "influence  seed · cold-start")
+            self.query_one("#influences", Static).update(infl)
         # the bottom status bar is the run's persistent gauge: cumulative tokens
         # (across every iteration) and total run time -- both always advancing.
         self.query_one("#statusline", Static).update(S.status_line(

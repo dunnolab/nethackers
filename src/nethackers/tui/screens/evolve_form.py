@@ -5,14 +5,15 @@ creds) and hands it to ``harness.launch.prepare_evolve``. On success the
 returned ``EvolvePlan`` drives a pushed ``EvolveScreen`` -- the same live
 monitor the CLI path uses.
 
-Objective is a **filter + pick** over the catalog (74 entries: ``random``
-plus the 73 identities; ``all`` is excluded -- it's a hub-query marker with
-no episodes to evolve against), so you type a fragment (``wiz``, ``val``)
-and choose from the narrowed list instead of typing an exact
-``role-race-align-gender`` string. Seed root is a dropdown of the solution
-roots discovered under ``roots/`` (dirs with a ``nethackers.solution.json``).
-The evolve loop consumes a single objective (``CATALOG[name]``); a
-multi-objective picker awaits loop support and is not wired here.
+Objective is a **selection grid** (``tui.identity_grid.IdentityGrid``) that
+mirrors the Frontier view: a grid of role cards, one ``◻``/``◼`` box per
+variation. Space toggles the cursor cell (an identity, or a whole role via its
+header); ``a`` selects all 73, ``c`` clears all; ←/→ hop between roles. The
+grid resolves to ``EvolveParams.objective`` -- a single identity, a bare role,
+``"*"`` (all), or a sorted comma-list -- every shape
+``nethackers.hub.selector.resolve`` accepts. Seed root is a dropdown of the
+solution roots discovered under ``roots/`` (dirs with a
+``nethackers.solution.json``).
 """
 from __future__ import annotations
 
@@ -22,9 +23,8 @@ from typing import TYPE_CHECKING, Any, cast
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
-from textual.containers import Vertical, VerticalScroll
-from textual.widgets import Button, Input, Label, OptionList, Select, Static
-from textual.widgets.option_list import Option
+from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.widgets import Button, Input, Label, Select, Static
 
 from nethackers.harness.discovery import CliInfo, ModelInfo, probe_operator
 from nethackers.harness.launch import EvolveParams, prepare_evolve
@@ -34,14 +34,12 @@ from nethackers.harness.sandbox_preflight import (
     image_present,
     preflight as sandbox_preflight,
 )
-from nethackers.hub.objectives import CATALOG
+from nethackers.hub.selector import resolve
 from nethackers.hubclient.credentials import Credentials
+from nethackers.tui.identity_grid import IdentityGrid
 
 if TYPE_CHECKING:
     from nethackers.tui.app import NetHackersApp
-
-# random first (the north-star), then the identities sorted; drop "all".
-_OBJECTIVES: list[str] = ["random"] + sorted(k for k in CATALOG if k not in ("random", "all"))
 
 # The form doesn't expose an image picker, so live discovery probes the default
 # mutator image (matches launch.EvolveParams.mutator_image / the CLI default).
@@ -87,13 +85,28 @@ class EvolveForm(Vertical):
     BINDINGS = [Binding("escape", "leave_field", "Back to menu", show=False)]
 
     DEFAULT_CSS = """
-    EvolveForm { align: center middle; }
-    EvolveForm > #form { width: 74; height: auto; max-height: 100%; padding: 1 2; }
+    EvolveForm { layout: vertical; padding: 1 2; }
     EvolveForm Label { text-style: bold; color: #d2a24c; margin-top: 1; }
-    EvolveForm #f_obj_list { height: 6; border: round #7c745f; }
-    EvolveForm #f_obj_sel { color: #d7c9a2; }
-    EvolveForm #f_start { margin-top: 1; width: 100%; }
-    EvolveForm #f_err { height: auto; color: #c04040; }
+    /* two side-by-side subwindows over a full-width start bar */
+    EvolveForm #f_panels { height: 1fr; }
+    EvolveForm #f_objective {
+        width: 2fr; border: round #7c745f; border-title-color: #d2a24c;
+        border-title-align: left; padding: 0 1; margin-right: 1;
+    }
+    EvolveForm #f_operator {
+        width: 1fr; border: round #7c745f; border-title-color: #d2a24c;
+        border-title-align: left; padding: 0 1;
+    }
+    /* the grid is a .panel only so it's a nav stop -- suppress .panel's heavy
+       border/padding (the subwindow frames it); a faint lift marks focus. */
+    EvolveForm #f_obj_grid { height: auto; border: none; background: transparent; padding: 0; }
+    EvolveForm #f_obj_grid:focus, EvolveForm #f_obj_grid.-cursor {
+        border: none; background: #16160f;
+    }
+    EvolveForm #f_obj_sel { color: #d7c9a2; margin-top: 1; }
+    EvolveForm #f_startbar { height: auto; margin-top: 1; }
+    EvolveForm #f_start { width: auto; min-width: 18; }
+    EvolveForm #f_err { width: 1fr; height: auto; color: #c04040; padding: 0 2; }
     EvolveForm #f_model_custom { display: none; }  /* shown only for Custom… */
     """
 
@@ -101,6 +114,9 @@ class EvolveForm(Vertical):
         super().__init__(**kw)
         self._hub = hub
         self._creds = creds
+        # The objective grid keeps the live selection; `_objective` is the token
+        # it resolves to (updated on every IdentityGrid.Changed) -- the single
+        # source of truth `_params()` reads.
         self._objective: str | None = None
         self._live: dict[str, ModelInfo] = {}  # id -> discovered model (drives efforts)
         # One ~1s container probe per operator, cached: switching operators back
@@ -108,40 +124,52 @@ class EvolveForm(Vertical):
         self._probe_cache: dict[str, tuple[CliInfo, list[ModelInfo] | None]] = {}
 
     def compose(self) -> ComposeResult:
-        with VerticalScroll(id="form", classes="panel"):
-            yield Label("Objective — type to filter, then pick one · esc to leave")
-            yield Input(placeholder="filter…  e.g. wiz · val · random", id="f_obj_filter")
-            yield OptionList(*(Option(o, id=o) for o in _OBJECTIVES), id="f_obj_list")
-            yield Static("[dim]none selected[/]", id="f_obj_sel")
-            yield Label("Seed root")
-            roots = _seed_roots()
-            yield Select(((r, r) for r in roots), value=roots[0], allow_blank=False, id="f_seed")
-            yield Label("Operator")
-            yield Select(
-                [("claude", "claude"), ("codex", "codex")],
-                value="claude", allow_blank=False, id="f_op",
-            )
-            yield Static("[dim]detecting…[/]", id="f_op_version")
-            yield Label("Model")
-            yield Select(self._model_options("claude"), value="",
-                         allow_blank=False, id="f_model")
-            yield Input(placeholder="custom model id…", id="f_model_custom")
-            yield Label("Reasoning effort")
-            yield Select([("Harness default", ""), *((e, e) for e in EFFORTS)],
-                         value="", allow_blank=False, id="f_effort")
-            yield Label("Iterations")
-            yield Input(value="1", id="f_iters")
+        with Horizontal(id="f_panels"):
+            # left subwindow: the objective selection grid
+            with VerticalScroll(id="f_objective"):
+                yield Label("↑↓←→ move · enter toggle · a all · c clear · esc leave")
+                # classes="panel" makes it a modal-nav stop (app._nav_targets
+                # collects focusable .panel widgets); its border is suppressed
+                # below since the subwindow already frames it.
+                yield IdentityGrid(id="f_obj_grid", classes="panel")
+                yield Static("[dim]none selected[/]", id="f_obj_sel")
+            # right subwindow: operator + model + effort + seed + iterations
+            with VerticalScroll(id="f_operator"):
+                yield Label("Operator")
+                yield Select(
+                    [("claude", "claude"), ("codex", "codex")],
+                    value="claude", allow_blank=False, id="f_op",
+                )
+                yield Static("[dim]detecting…[/]", id="f_op_version")
+                yield Label("Model")
+                yield Select(self._model_options("claude"), value="",
+                             allow_blank=False, id="f_model")
+                yield Input(placeholder="custom model id…", id="f_model_custom")
+                yield Label("Reasoning effort")
+                yield Select([("Harness default", ""), *((e, e) for e in EFFORTS)],
+                             value="", allow_blank=False, id="f_effort")
+                yield Label("Seed root")
+                roots = _seed_roots()
+                yield Select(((r, r) for r in roots), value=roots[0],
+                             allow_blank=False, id="f_seed")
+                yield Label("Iterations")
+                yield Input(value="1", id="f_iters")
+        # full-width start bar below the two subwindows
+        with Horizontal(id="f_startbar"):
             yield Button("Start", id="f_start", variant="success")
             yield Static("", id="f_err")
 
     def on_mount(self) -> None:
-        form = self.query_one("#form")
-        form.border_title = "⚔ Start an Evolve Run"
-        # the scroll pane holds the fields but is NOT itself a nav stop -- else
-        # the whole-form panel (a focusable .panel) competes with every field
-        # for the cursor. It still scrolls: each field's scroll_visible() drives
-        # it as the cursor lands.
-        form.can_focus = False
+        # the two subwindows carry their own titles; their scroll panes are NOT
+        # nav stops (their fields are), so blur them so a field never gets
+        # shadowed by the whole-panel cursor. They still scroll via each
+        # field's scroll_visible() as the cursor lands.
+        obj = self.query_one("#f_objective")
+        obj.border_title = "⚔ Objective"
+        obj.can_focus = False
+        op = self.query_one("#f_operator")
+        op.border_title = "Operator & run"
+        op.can_focus = False
         # No explicit _refresh_models("claude") kick here: #f_op is built with
         # a non-blank initial value, so Select's own _on_mount organically
         # fires one Select.Changed (-> on_select_changed's "f_op" branch calls
@@ -161,19 +189,21 @@ class EvolveForm(Vertical):
         else:
             self.app.set_focus(None)
 
-    def on_input_changed(self, event: Input.Changed) -> None:
-        """Narrow the objective list as the filter is typed."""
-        if event.input.id != "f_obj_filter":
+    def on_identity_grid_changed(self, event: IdentityGrid.Changed) -> None:
+        """The objective grid changed -> recompute ``_objective`` (the token it
+        resolves to) and the chip. ``_objective`` stays the single source of
+        truth ``_params()`` reads."""
+        self._objective = event.grid.token() or None
+        chip = self.query_one("#f_obj_sel", Static)
+        if not self._objective:
+            chip.update("[dim]none selected[/]")
             return
-        q = event.value.strip().lower()
-        matches = [o for o in _OBJECTIVES if q in o.lower()]
-        options = self.query_one("#f_obj_list", OptionList)
-        options.clear_options()
-        options.add_options([Option(o, id=o) for o in matches])
-
-    def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        self._objective = event.option.id
-        self.query_one("#f_obj_sel", Static).update(f"objective: [b]{self._objective}[/]")
+        resolved = resolve(self._objective)
+        if "," in self._objective:  # an arbitrary set -> show the count, not the long list
+            chip.update(f"objective: [b]{len(resolved.identities)} builds[/] selected")
+        else:  # a single identity, a role, or "*" (all)
+            chip.update(
+                f"objective: [b]{self._objective}[/] — {len(resolved.identities)} build(s)")
 
     @staticmethod
     def _model_options(backend: str) -> list[tuple[str, str]]:

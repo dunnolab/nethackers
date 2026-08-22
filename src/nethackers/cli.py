@@ -70,6 +70,7 @@ from nethackers.harness.sandbox_preflight import (
     preflight as sandbox_preflight,
 )
 from nethackers.hub.objectives import CATALOG
+from nethackers.hub.selector import resolve
 from nethackers.hubclient import credentials as _cred
 from nethackers.hubclient.client import (
     HubClient,
@@ -374,8 +375,9 @@ def _load_manifest(args: argparse.Namespace) -> dict[str, Any]:
 
 def _unknown_objective(name: str) -> str:
     return (
-        f"unknown objective {name!r}. Use 'random', 'all', or a full identity such as "
-        f"'wiz-elf-cha-mal' (the hub catalog has {len(CATALOG)} objectives)."
+        f"unknown objective {name!r}. Use 'random', 'all', a full identity such as "
+        f"'wiz-elf-cha-mal', a role (e.g. 'wiz'), a comma list, or a glob like "
+        f"'*-elf-*-*' (the hub catalog has {len(CATALOG)} objectives)."
     )
 
 
@@ -450,6 +452,22 @@ def _run(argv: list[str] | None) -> int:
         return 0
 
     if args.cmd == "evolve":
+        # Validate the objective selector before anything docker/sandbox-shaped
+        # (sandbox_preflight below can fail first and mask a bad selector, and a
+        # doomed run shouldn't wait on a container probe to find out it's doomed).
+        # 'all' resolves fine -- it's a real set of every identity -- but it's the
+        # hub board's leaderboard view, not something to evolve *at*; steer people
+        # to the '*' glob instead.
+        try:
+            _r = resolve(args.objective)
+        except ValueError:
+            err.print(_unknown_objective(args.objective))   # "unknown objective 'X'. Use <forms>"
+            return 2
+        if _r.kind == "all":
+            err.print("[red]'all' is a leaderboard view, not an evolve target; "
+                      "use the glob '*' to evolve across every identity[/red]")
+            return 2
+
         # The mutator ALWAYS runs sandboxed -- there is no host-execution path.
         # Fail fast, before any hub SELECT call / run-dir creation, rather than a
         # mid-loop crash. The same preflight backs the in-app form (evolve_form).

@@ -13,6 +13,7 @@ from nethackers.tui.status import (
     iterations_ledger,
     lineage_strip,
     parent_panel,
+    scorecard,
     status_line,
 )
 
@@ -127,3 +128,37 @@ def test_status_line_motif():
     assert s == "wiz-elf-cha-mal  gen:1  tok:92.0k  T:3:14  best:Dlvl:23  w:1"
     assert "wiz-elf-cha-mal" in s and "gen:1" in s and "tok:92" in s and "w:1" in s
     assert "best:Dlvl" in s
+
+
+# ---- scorecard -------------------------------------------------------
+
+def test_scorecard_weakest_first_with_floor_header():
+    means = {"wiz-elf-cha-mal": 0.5, "wiz-orc-cha-mal": 0.1, "wiz-gno-neu-fem": 0.3}
+    text = scorecard(means, None, list(means))
+    # weakest build listed first
+    assert text.index("wiz-orc-cha-mal") < text.index("wiz-elf-cha-mal")
+    assert "floor" in text and "coverage 3/3" in text
+
+
+def test_scorecard_shows_delta_when_candidate_present():
+    parent = {"a": 0.2, "b": 0.4}
+    cand = {"a": 0.5, "b": 0.3}
+    text = scorecard(parent, cand, ["a", "b"])
+    assert "+0.30" in text or "+0.3" in text  # a improved
+
+
+def test_scorecard_floor_and_coverage_survive_partial_coverage():
+    # A missing identity ("c") must not blank out the floor/coverage header --
+    # the floor is the weakest identity that HAS data, not a missing one.
+    text = scorecard({"a": 0.5, "b": 0.3}, None, ["a", "b", "c"])
+    assert "floor" in text and "coverage 2/3" in text
+    assert "c" in text and "(missing)" in text
+
+
+def test_scorecard_empty_candidate_means_no_crash_no_delta():
+    # candidate_means == {} falls back to showing parent_means (truthy check,
+    # not `is not None`) -- must not KeyError on candidate_means[i], and must
+    # show no delta since there's no live candidate data yet.
+    text = scorecard({"a": 0.5, "b": 0.3}, {}, ["a", "b"])
+    assert isinstance(text, str)
+    assert "Δ" not in text  # no Delta
