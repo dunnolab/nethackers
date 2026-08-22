@@ -74,33 +74,24 @@ async def test_escape_leaves_a_focused_field_so_q_can_quit():
         assert not app.is_running  # `q` quits again
 
 
-async def test_evolve_section_uses_native_focus_flow():
-    """The Evolve form flows with native focus, not the modal cursor: diving in
-    FOCUSES the grid (no separate 'activate' step), tab cycles to the next
-    field, and esc returns to the tab bar so q/1-6 work again."""
-    from nethackers.tui.identity_grid import IdentityGrid
+async def test_evolve_select_opens_on_one_enter_not_two():
+    """Navigating the modal cursor onto a Select must NOT open it (↑↓ just move
+    on); a single enter both focuses AND opens its list -- the fix for the
+    'enter twice to open the operator' friction."""
+    from textual.widgets import Select
 
     app = NetHackersApp(hub=_DEAD_HUB, creds=None, start="evolve")
     async with app.run_test(size=(120, 45)) as pilot:
         await pilot.pause()
-        await pilot.press("down")  # dive into the form
+        await pilot.press("down")            # dive into the form (navigate mode)
         await pilot.pause()
-        assert app._nav_mode == "interact"
-        assert isinstance(app.focused, IdentityGrid)      # grid focused directly, no activate
-        await pilot.press("tab")                          # tab -> next field (the operator Select)
+        op = app.query_one("#f_op", Select)
+        app._nav_set_cursor(op)              # cursor onto the operator Select
+        assert app._nav_mode == "navigate"   # still navigating...
+        assert not op.expanded               # ...and navigating never opened the list
+        await pilot.press("enter")           # ONE enter opens it
         await pilot.pause()
-        assert app.focused is not None and not isinstance(app.focused, IdentityGrid)
-        from textual.widgets import Select
-        if isinstance(app.focused, Select):               # one enter opens the list, not two
-            await pilot.press("enter")
-            await pilot.pause()
-            assert app.query_one("#f_op", Select).expanded
-            await pilot.press("escape")                   # close the overlay first
-            await pilot.pause()
-        await pilot.press("escape")                       # esc -> back to the tab bar
-        await pilot.pause()
-        assert app.focused is None
-        assert app._nav_cursor is not None and (app._nav_cursor.id or "").startswith("tab-")
+        assert op.expanded
 
 
 async def test_navigate_recovers_when_the_cursor_element_vanished():
