@@ -94,6 +94,30 @@ async def test_evolve_select_opens_on_one_enter_not_two():
         assert op.expanded
 
 
+async def test_closed_select_does_not_reopen_on_arrows():
+    """After you pick from a Select it closes but stays focused; ↑↓ must then
+    MOVE ON (back to navigate), not reopen the list."""
+    from textual.widgets import Select
+
+    app = NetHackersApp(hub=_DEAD_HUB, creds=None, start="evolve")
+    async with app.run_test(size=(120, 45)) as pilot:
+        await pilot.pause()
+        await pilot.press("down")            # dive into the form
+        await pilot.pause()
+        op = app.query_one("#f_op", Select)
+        app._nav_set_cursor(op)
+        await pilot.press("enter")           # open the list
+        await pilot.pause()
+        assert op.expanded
+        await pilot.press("enter")           # pick the highlighted value -> closes, keeps focus
+        await pilot.pause()
+        assert not op.expanded
+        await pilot.press("down")            # must NOT reopen -> navigate on
+        await pilot.pause()
+        assert not op.expanded               # stayed closed
+        assert app._nav_mode == "navigate"   # returned to navigate mode
+
+
 async def test_navigate_recovers_when_the_cursor_element_vanished():
     # regression: opening a run from the Runs list put the cursor on its button;
     # stopping the run removed that button, so returning to navigate mode re-added

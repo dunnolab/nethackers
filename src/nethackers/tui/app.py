@@ -444,6 +444,19 @@ class NetHackersApp(App):
             if event.key == "escape":
                 self._nav_to_navigate()
                 event.stop()
+                return
+            # After you pick from a Select, its overlay closes but the Select
+            # keeps focus -- so ↑↓ would REOPEN the list. Once it's closed,
+            # treat an arrow as "done here": return to navigate and move the
+            # cursor on. (While the overlay is open, focus is on the overlay,
+            # not the Select, so this doesn't fire and ↑↓ walk the options.)
+            focused = self.focused
+            if (event.key in ("up", "down", "left", "right")
+                    and isinstance(focused, Select) and not focused.expanded):
+                self._nav_to_navigate()
+                self._nav_move(event.key)
+                event.stop()
+                return
             return  # otherwise the focused widget handles it
         if event.key in ("up", "down", "left", "right"):
             self._nav_move(event.key)
