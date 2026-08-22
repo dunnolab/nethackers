@@ -63,14 +63,21 @@ uv run nethackers login
 #   -> prints a github.com/login/device URL + an 8-char code; authorize in a browser.
 #   -> "logged in as @<you>"; credential saved to ~/.nethackers/credentials.json (chmod 600).
 
-# Push any solution to YOUR public repo first, note the full commit SHA. Then:
+# One-shot (needs `gh` installed and `gh auth login` as the SAME account):
+uv run nethackers submit ./solution
+#   -> creates github.com/<you>/nethacker if missing, pushes ./solution, registers the commit:
+#      {"solution_id": "github.com/<you>/nethacker@<sha>", ...}
+
+# Or, if you manage the repo yourself: push it, note the full SHA, then:
 uv run nethackers register --repo github.com/<you>/nethacker --commit <full-40-hex-sha>
-#   -> {"solution_id": "github.com/<you>/nethacker@<sha>", "owner": "<you>", ...}
 
 uv run nethackers search --owner <you>    # your registered link should appear
 ```
 
 **Things worth deliberately checking (all should behave):**
+- `submit` with `gh` logged in as a **different** account than `nethackers login` → refuses with a "sign in to the same account" message (never pushes).
+- `submit` with `gh` not installed / not authed → friendly "install the GitHub CLI and `gh auth login`".
+- `submit ./solution` a second time with no changes → idempotent (re-registers the same commit, no empty commit).
 - Register a repo you **don't** own → `403` "does not own".
 - Register with a branch name instead of a 40-hex SHA → `400` (must be a pinned commit).
 - Register a **private**/nonexistent repo → clear "unknown commit / private repo" error (public-only in M1).

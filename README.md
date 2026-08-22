@@ -1,13 +1,15 @@
 # nethackers
 
-Solve NetHack by evolving symbolic players. This is the evaluation-and-registration core: from one CLI you log in with GitHub, register a solution as a public `repo@commit` link, and browse the hub. Registrations go to the shared hub at `https://nethackers.dunnolab.ai` by default.
+Solve NetHack by evolving symbolic players. This is the evaluation-and-registration core: from one CLI you log in with GitHub, publish a solution to your own public `nethacker` repo, and register it with the shared hub at `https://nethackers.dunnolab.ai` (the default).
 
 ## Quickstart (contributors)
 
 1. `pip install nethackers` — install the CLI from PyPI; that is all a contributor needs.
-2. `nethackers login` — authenticate once with GitHub via the device flow; the token is stored and refreshed silently.
-3. `nethackers register --repo github.com/<you>/nethacker --commit <full-sha>` — register a public repo you own, pinned to a full 40-hex commit SHA.
-4. `nethackers board` — show a leaderboard, solutions ranked on an objective.
+2. `nethackers login` — authenticate once with GitHub (device flow; token stored + refreshed silently). Also have `gh` installed and `gh auth login`'d as the **same** account — `submit` uses it to create/push your repo.
+3. `nethackers submit ./solution` — publish your solution to your public `github.com/<you>/nethacker` repo (created if it doesn't exist) and register the resulting `repo@commit`. One command, no manual git.
+4. `nethackers board` — browse the leaderboard.
+
+Prefer to manage the repo yourself? `nethackers register --repo github.com/<you>/nethacker --commit <full-sha>` registers an existing pinned commit directly.
 
 ---
 

@@ -284,6 +284,27 @@ real GitHub App, set `client_id` → full end-to-end: real `nethackers login` �
 
 ---
 
+### 3.7 Onboarding: one-command `submit` (added post-approval)
+
+To make "no hassle" literal, `nethackers submit ./solution` does the whole
+publish+register in one step, and it keeps repo **write on the client**:
+
+- **Write is `gh`, not the hub.** The CLI shells out to the GitHub CLI (`gh`)
+  with the *user's own* credentials to create `github.com/<you>/nethacker` if
+  missing and push the solution — so the hub still holds **no write-capable
+  token** and never writes. `gh` failures/absence surface as a friendly
+  `PublishError`, never a traceback.
+- **Identity stays on our narrow App token** (decision): the hub check still
+  uses the `nethackers login` credential (Contents:read App token), *not* `gh`'s
+  broad token. `submit` therefore requires being both logged in *and* `gh`-authed
+  **as the same account**, and refuses (without pushing) on a mismatch.
+- **Flow:** preflight (login + `gh` match) → `ensure_repo` → clone/sync/commit/push
+  (`hubclient/publish.py`, all shell-outs behind an injected `run` for tests) →
+  capture the pushed sha → hand `repo@commit` to the existing register path. One
+  durable `<you>/nethacker` repo, a new commit per submission; re-submitting
+  identical content is idempotent. `nethackers register --repo --commit` remains
+  the manual form for contributors who manage their own repo.
+
 ## 4. Security & threat model (trusted now, public-ready later)
 
 - **Identity/attribution:** server-enforced via GitHub token → login; you can
