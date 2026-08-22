@@ -58,6 +58,7 @@ from typing import Any
 
 import httpx
 from rich.live import Live
+from rich.panel import Panel
 from rich.text import Text
 from rich_argparse import RichHelpFormatter
 
@@ -98,6 +99,18 @@ _time_now = time.time
 
 def _default_hub() -> str:
     return os.environ.get("NETHACKERS_HUB", "https://nethackers.dunnolab.ai")
+
+
+def _login_prompt(verification_uri: str, user_code: str) -> None:
+    """Styled device-flow prompt: the URL and the code on their own lines in a
+    bordered panel, printed to stderr so ``-o json`` / pipes stay clean."""
+    body = Text()
+    body.append("1  Open this URL in your browser\n", style="dim")
+    body.append(f"     {verification_uri}\n\n", style="bold cyan")
+    body.append("2  Enter this code\n", style="dim")
+    body.append(f"     {user_code}", style="bold yellow")
+    err.print(Panel(body, title="[b green]Authorize NetHackers[/]",
+                    border_style="green", expand=False, padding=(1, 2)))
 
 
 def _load_creds() -> Credentials | None:
@@ -416,7 +429,7 @@ def _run(argv: list[str] | None) -> int:
         return 0
 
     if args.cmd == "login":
-        tok = device_login()
+        tok = device_login(prompt=_login_prompt)
         login = whoami_from_token(tok["access_token"])
         _cred.save(Credentials(
             login=login,

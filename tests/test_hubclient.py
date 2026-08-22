@@ -234,10 +234,11 @@ def test_device_login_returns_access_token():
             return FakeResp({"access_token": "gho_realtoken"})
 
     prompts = []
-    token = device_login(http=FakeHttp(), prompt=prompts.append, sleep=lambda _s: calls.append(1))
+    token = device_login(http=FakeHttp(), prompt=lambda uri, code: prompts.append((uri, code)),
+                         sleep=lambda _s: calls.append(1))
     # device_login now returns the full token set, not a bare string.
     assert token["access_token"] == "gho_realtoken"
-    assert any("WXYZ" in p for p in prompts)  # user shown the code
+    assert any(code == "WXYZ" for _uri, code in prompts)  # user shown the code
 
 
 # --- Property 2b: full token set + silent refresh --------------------------

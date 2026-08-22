@@ -51,11 +51,17 @@ def _token_set(resp: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _announce(verification_uri: str, user_code: str) -> None:
+    """Default device-flow prompt -- two plain lines, no rich dependency at the
+    library layer. The CLI passes a styled panel instead (``cli._login_prompt``)."""
+    print(f"To authorize, open {verification_uri}\nand enter code: {user_code}")
+
+
 def device_login(
     *,
     client_id: str = DEFAULT_CLIENT_ID,
     http=httpx,
-    prompt=print,
+    prompt=_announce,
     sleep=time.sleep,
 ) -> dict[str, Any]:
     """Run the GitHub device flow and return the resulting user token set.
@@ -78,9 +84,7 @@ def device_login(
         return response.json()
 
     device = _post(GITHUB_DEVICE_CODE_URL, {"client_id": client_id, "scope": ""})
-    prompt(
-        f"To authorize, open {device['verification_uri']} and enter code: {device['user_code']}"
-    )
+    prompt(device["verification_uri"], device["user_code"])
     interval = int(device.get("interval", 5))
 
     while True:

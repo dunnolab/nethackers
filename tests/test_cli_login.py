@@ -82,7 +82,7 @@ def test_login_saves_full_credential(monkeypatch, tmp_path):
     monkeypatch.setattr(c, "path", lambda: tmp_path / "credentials.json")
     monkeypatch.setattr(
         cli, "device_login",
-        lambda: {"access_token": "ghu_x", "refresh_token": "ghr_y", "expires_in": 28800},
+        lambda **_k: {"access_token": "ghu_x", "refresh_token": "ghr_y", "expires_in": 28800},
     )
     monkeypatch.setattr(cli, "whoami_from_token", lambda tok: "sam")
     monkeypatch.setattr(cli, "_time_now", lambda: 1000.0)
