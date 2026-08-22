@@ -10,8 +10,12 @@ from typing import Protocol
 
 
 class _HasCharProgress(Protocol):
-    character: str
-    progress: float
+    # read-only properties (not bare attrs) so a frozen dataclass like
+    # TrajectoryResult satisfies the protocol covariantly (mypy invariance fix).
+    @property
+    def character(self) -> str: ...
+    @property
+    def progress(self) -> float: ...
 
 
 def per_identity_means(results: Sequence[_HasCharProgress]) -> dict[str, float]:
