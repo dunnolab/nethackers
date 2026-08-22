@@ -12,14 +12,16 @@ from pathlib import Path
 from typing import Any
 
 from nethackers.contracts.models import Evidence
+from nethackers.harness import aggregate
 from nethackers.harness.brief import build_brief
 from nethackers.harness.evaluate import evaluate
 from nethackers.harness.gate import passes_gate
 from nethackers.harness.metering import TokenUsage
-from nethackers.harness.register import register_win
+from nethackers.harness.register import register_win, register_win_slices
 from nethackers.harness.seeds import dev_spec, validation_spec
 from nethackers.harness.select import top_trusted_elite
 from nethackers.harness.store import LocalTreeStore
+from nethackers.hub.selector import resolve
 
 
 @dataclass
@@ -41,6 +43,7 @@ class IterationResult:
     usage: TokenUsage | None = None
     digest: str | None = None
     stopped_reason: str | None = None
+    regressions: list[tuple[str, float]] | None = None
 
 
 def run_loop(
@@ -70,8 +73,14 @@ def run_loop(
     workdir: Path,
 ) -> list[IterationResult]:
     dev = dev_spec(objective)
+    resolved = resolve(objective)
+    identities = sorted(resolved.identities) if resolved.kind == "set" else []
     validation = validation_spec(objective, n=validation_n, start=1000)
-    smoke = validation_spec(objective, n=1, start=9000, max_steps=2000)
+    # A set's smoke check uses ONE member (cheap 1-ep contract check), not
+    # |S| episodes -- the full union dev eval below is what actually catches
+    # per-build breakage; smoke only guards against an outright crash.
+    smoke = validation_spec(
+        identities[0] if identities else objective, n=1, start=9000, max_steps=2000)
     character = dev.characters()[0]
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
@@ -96,7 +105,7 @@ def run_loop(
     def _emit(phase: str, iteration: int, *, tokens: int = 0, detail: str = "") -> None:
         if on_state is None:
             return
-        on_state({
+        payload = {
             "phase": phase, "iteration": iteration,
             "baseline_dev": base_dev, "baseline_held": base_validation,
             "best_dev": elite.dev_fitness, "best_held": elite.validation_fitness,
@@ -107,7 +116,18 @@ def run_loop(
             # not wins -- so the monitor's `gen` visibly moves even before a win.
             "parent_digest": elite.digest, "parent_dev": elite.dev_fitness,
             "parent_held": elite.validation_fitness, "generation": iteration,
-        })
+        }
+        if identities:
+            # Live from the CURRENT elite (a closure var reassigned on a win
+            # or migration) -- never memoized -- so the parent snapshot
+            # doesn't go stale after either event.
+            pm = aggregate.per_identity_means(elite.dev_evidence.results)
+            payload.update({
+                "identities": identities,
+                "parent_means": pm,
+                "coverage": aggregate.coverage(pm, identities),
+            })
+        on_state(payload)
 
     def _score_elite(tree_path: Path, digest: str, *, dev_label: str,
                      val_label: str) -> EliteState:
@@ -175,7 +195,21 @@ def run_loop(
                 shutil.rmtree(worktree)
             shutil.copytree(elite.tree, worktree)
 
-            brief = build_brief(objective, character, elite.dev_evidence)
+            # Hand the TRAINING seeds in as data (spec §3.6): the mutator image
+            # has no harness/seeds.py to derive them, so the brief is where it
+            # learns which seeds to develop against -- never the held-out ones.
+            # parent_means: live from the CURRENT elite, same rule as _emit.
+            parent_means = (aggregate.per_identity_means(elite.dev_evidence.results)
+                            if identities else {})
+            brief = build_brief(objective, character, elite.dev_evidence,
+                                training_seeds=sorted({s for s, _c in dev.batch}),
+                                identities=identities or None,
+                                per_identity=parent_means or None)
+            # Head the iteration's log with the brief it was given, so a reader
+            # sees what the mutator was asked to do (persisted to the run log +
+            # rendered in the TUI's agent-log via prettify's brief event).
+            if on_log is not None:
+                on_log(tag, json.dumps({"type": "nethackers_brief", "text": brief}))
             _emit("mutating", k + 1)
             report(f"{tag} · mutating…")
             try:
@@ -250,16 +284,30 @@ def run_loop(
 
             digest = tree_store.save(worktree)
             manifest = json.loads((worktree / "nethackers.solution.json").read_text())
-            register_win(hub, token=token, owner=owner, child_manifest=manifest,
-                         evidence=dev_ev, parent_digest=elite.digest)
+            if identities:
+                register_win_slices(hub, token=token, owner=owner, child_manifest=manifest,
+                                    evidence=dev_ev, identities=identities,
+                                    parent_digest=elite.digest)
+            else:
+                register_win(hub, token=token, owner=owner, child_manifest=manifest,
+                             evidence=dev_ev, parent_digest=elite.digest)
+            # A rising union mean can still hide a per-identity drop on a set
+            # objective -- diff the OLD parent (elite, not yet reassigned)
+            # against the winning child so a regression is surfaced, not
+            # silently absorbed into the aggregate win (spec decision C §5/§9).
+            regs = (aggregate.regressions(
+                        aggregate.per_identity_means(elite.dev_evidence.results),   # OLD parent
+                        aggregate.per_identity_means(dev_ev.results))               # winning child
+                    if identities else [])
             elite = EliteState(digest, tree_store.path(digest), dev_fit, val_fit, dev_ev)
             wins += 1
-            _emit("registered", k + 1, tokens=op.total)
+            _emit("registered", k + 1, tokens=op.total, detail=(f"⚠{len(regs)}" if regs else ""))
             report(f"{tag} · ✓ REGISTERED dev={dev_fit:.3f} validation={val_fit:.3f}")
             _record(k + 1, IterationResult(True, "registered", dev_fitness=dev_fit,
                                            validation_fitness=val_fit, tokens=op.total,
                                            usage=op.usage, digest=digest,
-                                           stopped_reason=op.stopped_reason))
+                                           stopped_reason=op.stopped_reason,
+                                           regressions=regs or None))
         except Exception as e:
             _emit("error", k + 1, detail=str(e))
             report(f"{tag} · ✗ error: {e}")

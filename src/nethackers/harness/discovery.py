@@ -24,9 +24,39 @@ from pathlib import Path
 
 import httpx
 
+from nethackers.harness.auth_inject import AuthUnavailable, auth_docker_args
+from nethackers.harness.sandbox_preflight import image_present
+
 _ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models?limit=100"
 _ANTHROPIC_VERSION = "2023-06-01"
 _ANTHROPIC_OAUTH_BETA = "oauth-2025-04-20"   # required on the Bearer (OAuth) tiers only
+
+
+def _image_which(name: str) -> str:
+    """A ``which`` that always resolves: the codex/claude binaries are baked
+    into the mutator image, so container-mode discovery never gates on a host
+    PATH lookup (a failed ``docker run`` is what surfaces a truly-missing one)."""
+    return name
+
+
+def _container_run(image: str, *, docker: str = "docker",
+                   run: Callable = subprocess.run) -> Callable:
+    """A ``run`` adapter that executes the coding-agent CLIs INSIDE the mutator
+    image -- so the version + (version-filtered) catalog reflect exactly what a
+    run actually uses, not the host's possibly-different CLI. Host-only helpers
+    (the macOS keychain probe) still run on the host. Auth is the same
+    mount/token a real run gets; if the login can't be resolved the probe simply
+    runs unauthenticated and returns fewer/no models -- warn, never block."""
+    def _run(argv, **kw):
+        binary = argv[0] if argv else ""
+        if binary in ("codex", "claude"):
+            try:
+                auth = auth_docker_args(binary, system=platform.system(), home=Path.home())
+            except AuthUnavailable:
+                auth = []
+            return run([docker, "run", "--rm", *auth, image, *argv], **kw)
+        return run(argv, **kw)   # host-side (e.g. the `security` keychain read)
+    return _run
 
 
 @dataclass(frozen=True)
@@ -37,15 +67,86 @@ class ModelInfo:
     deprecated: bool = False
 
 
+_PROBE_SEP = "@@nh-probe@@"
+
+
+def _run_image_script(image: str, binary: str, script: str, *, run: Callable) -> str | None:
+    """ONE ``docker run`` of ``bash -lc <script>`` in the mutator image, with the
+    same auth a real run gets. Returns stdout (whatever was captured, even on a
+    non-zero last command -- earlier echoes still printed), or ``None`` if the
+    run couldn't start. Amortizes docker's ~1s startup across every probe."""
+    try:
+        auth = auth_docker_args(binary, system=platform.system(), home=Path.home())
+    except AuthUnavailable:
+        auth = []
+    try:
+        proc = run(["docker", "run", "--rm", *auth, image, "bash", "-lc", script],
+                   capture_output=True, text=True, timeout=40)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    return proc.stdout
+
+
+def probe_operator(
+    backend: str,
+    *,
+    image: str,
+    run: Callable = subprocess.run,
+    http: Callable = httpx.get,
+    home: Path | None = None,
+) -> tuple[CliInfo, list[ModelInfo] | None]:
+    """Detect the container CLI + its catalog in ONE ``docker run`` (vs the ~1s
+    each of separate ``detect_cli``/``list_models`` probes) -- for the TUI model
+    picker, which refreshes on every operator switch. Codex gets version + login
+    + catalog from a single combined command; claude's catalog stays the HTTP
+    ``/v1/models`` (account-gated, version-independent). Never raises; an unbuilt
+    image / unparseable output degrades to (not-installed / no-version, None)."""
+    binary = {"codex": "codex", "claude": "claude"}[backend]
+    if not image_present(image, run=run):
+        return CliInfo(backend, False, None, None), None
+    if backend == "codex":
+        script = (f"codex --version; echo {_PROBE_SEP}; "
+                  f"(codex login status >/dev/null 2>&1 && echo OK || echo NO); "
+                  f"echo {_PROBE_SEP}; codex debug models")
+    else:
+        script = f"claude --version; echo {_PROBE_SEP}; claude auth status --json 2>/dev/null"
+    parts = (_run_image_script(image, binary, script, run=run) or "").split(_PROBE_SEP)
+    version = parts[0].strip() or None if parts else None
+    if backend == "codex":
+        logged_in = ("OK" in parts[1]) if len(parts) > 1 else None
+        models: list[ModelInfo] | None = None
+        if len(parts) > 2:
+            try:
+                models = _codex_parse(json.loads(parts[2]))
+            except Exception:
+                models = None
+        return CliInfo("codex", True, version, logged_in), models
+    logged_in = None
+    if len(parts) > 1:
+        try:
+            logged_in = bool(json.loads(parts[1]).get("loggedIn"))
+        except Exception:
+            logged_in = None
+    # claude's catalog is account-gated (version-independent) -> host HTTP, not
+    # another container round-trip.
+    claude_models = _claude_models(run=run, http=http, home=home)
+    return CliInfo("claude", True, version, logged_in), claude_models
+
+
 def list_models(
     backend: str,
     *,
+    image: str | None = None,
     run: Callable = subprocess.run,
     http: Callable = httpx.get,
     home: Path | None = None,
 ) -> list[ModelInfo] | None:
+    if image is not None:
+        if not image_present(image, run=run):
+            return None   # image not built -> unknown; never the host CLI's cache
+        run = _container_run(image, run=run)   # probe the mutator container, not the host
     if backend == "codex":
-        return _codex_models(run=run, home=home)
+        return _codex_models(run=run, home=home, allow_cache=image is None)
     if backend == "claude":
         return _claude_models(run=run, http=http, home=home)
     return None
@@ -87,7 +188,8 @@ def _codex_parse(doc: object) -> list[ModelInfo] | None:
     return out
 
 
-def _codex_models(*, run: Callable, home: Path | None) -> list[ModelInfo] | None:
+def _codex_models(*, run: Callable, home: Path | None,
+                  allow_cache: bool = True) -> list[ModelInfo] | None:
     try:
         proc = run(["codex", "debug", "models"], capture_output=True, text=True, timeout=30)
         if proc.returncode == 0 and (proc.stdout or "").strip():
@@ -96,6 +198,8 @@ def _codex_models(*, run: Callable, home: Path | None) -> list[ModelInfo] | None
                 return parsed
     except Exception:
         pass
+    if not allow_cache:
+        return None   # container probe: the HOST's ~/.codex cache is the wrong version
     cache = (home or Path.home()) / ".codex" / "models_cache.json"
     try:
         return _codex_parse(json.loads(cache.read_text()))
@@ -184,6 +288,7 @@ def is_model_available(
     model: str,
     *,
     models: list[ModelInfo] | None = None,
+    image: str | None = None,
     run: Callable = subprocess.run,
     http: Callable = httpx.get,
     home: Path | None = None,
@@ -191,7 +296,7 @@ def is_model_available(
     if backend == "claude" and model in _CLAUDE_ALIASES:
         return True
     if models is None:
-        models = list_models(backend, run=run, http=http, home=home)
+        models = list_models(backend, image=image, run=run, http=http, home=home)
     if models is None:
         return None
     check = model
@@ -222,8 +327,12 @@ def _logged_in(backend: str, *, run: Callable) -> bool | None:
         return None
 
 
-def detect_cli(backend: str, *, run: Callable = subprocess.run,
+def detect_cli(backend: str, *, image: str | None = None, run: Callable = subprocess.run,
                which: Callable = shutil.which) -> CliInfo:
+    if image is not None:
+        if not image_present(image, run=run):
+            return CliInfo(backend, False, None, None)   # image not built
+        run, which = _container_run(image, run=run), _image_which
     binary = {"codex": "codex", "claude": "claude"}[backend]
     if which(binary) is None:
         return CliInfo(backend, False, None, None)
@@ -249,12 +358,13 @@ def preflight_model(
     backend: str,
     model: str | None,
     *,
+    image: str | None = None,
     run: Callable = subprocess.run,
     http: Callable = httpx.get,
     home: Path | None = None,
     which: Callable = shutil.which,
 ) -> Preflight:
-    cli = detect_cli(backend, run=run, which=which)
+    cli = detect_cli(backend, image=image, run=run, which=which)
     if not cli.installed:
         return Preflight("refuse", f"{backend} is not installed / not on PATH.", cli, None)
     if cli.logged_in is False:
@@ -264,7 +374,7 @@ def preflight_model(
         return Preflight("proceed", "", cli, None)   # harness default: nothing pinned to check
     if backend == "claude" and model in _CLAUDE_ALIASES:
         return Preflight("proceed", "", cli, None)   # aliases are always valid -- skip the probe
-    models = list_models(backend, run=run, http=http, home=home)
+    models = list_models(backend, image=image, run=run, http=http, home=home)
     ver = f" {cli.version}" if cli.version else ""
     if models is None:
         return Preflight(

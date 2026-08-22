@@ -1,6 +1,13 @@
 """SELECT: resolve the parent to evolve from — the objective's top *trusted*
 elite (hub is the index; the local content-addressed store is the byte-cache),
-falling back to the cold-start seed. Pure + injectable (hub/store/fetch/rng)."""
+falling back to the cold-start seed. Pure + injectable (hub/store/fetch/rng).
+
+A *set* objective (role/list/glob token, resolved via
+``nethackers.hub.selector.resolve``) selects instead from the
+coverage-gated pool: only programs trusted-and-present in EVERY member
+identity's elite board, scored by the mean of their per-identity scores.
+Single/random/all objectives are unaffected -- unchanged ``hub.elites(name)``
+path below."""
 from __future__ import annotations
 
 import math
@@ -8,8 +15,10 @@ import random
 import tempfile
 from collections.abc import Callable
 from pathlib import Path
+from statistics import mean
 
 from nethackers.harness.store import LocalTreeStore
+from nethackers.hub.selector import resolve
 from nethackers.hubclient.pull import pull
 
 
@@ -26,6 +35,42 @@ def pull_fetch(entry: dict, dest: Path) -> Path | None:
 def _trusted(entry: dict, owner: str) -> bool:
     # fixed policy: verified (by anyone) OR your own self-report.
     return entry.get("tier") == "verified" or entry.get("owner") == owner
+
+
+def _set_identities(objective: str) -> tuple[str, ...] | None:
+    """The member identities iff ``objective`` resolves to a set (role/list/
+    glob); ``None`` for single/random/all/legacy-opaque strings, which take
+    the existing single-objective path. Best-effort: an objective ``resolve``
+    can't parse (e.g. the dummy tokens harness tests use) is just not a set."""
+    try:
+        r = resolve(objective)
+    except ValueError:
+        return None
+    return r.identities if r.kind == "set" else None
+
+
+def _coverage_gated_entries(hub, identities: tuple[str, ...], owner: str) -> list[dict]:
+    """Trusted programs present in EVERY member identity's elite pool, scored
+    by their mean per-identity score over S. Coverage-gated: a program missing
+    any member is excluded. Any hub error on a member -> that member
+    contributes nothing, which (correctly) empties the intersection."""
+    per_member: list[dict[str, dict]] = []
+    for ident in sorted(identities):
+        try:
+            entries = [e for e in hub.elites(ident) if _trusted(e, owner)]
+        except Exception:
+            entries = []
+        per_member.append({e["solution_digest"]: e for e in entries})
+    if not per_member or any(not m for m in per_member):
+        return []
+    common = set.intersection(*(set(m) for m in per_member))
+    out = []
+    for digest in common:
+        scores = [m[digest]["score"] for m in per_member]
+        base = dict(per_member[0][digest])
+        base["score"] = mean(scores)  # union mean over S
+        out.append(base)
+    return out
 
 
 def _sample(entries: list[dict], k: int, temperature: float,
@@ -69,6 +114,8 @@ def select_parent(
     cache-miss fetch failure, or a digest mismatch on the pulled bytes).
 
     1. ``hub.elites(objective)`` -- any exception -> cold-start fallback.
+       A *set* objective (role/list/glob) instead queries every member
+       identity and coverage-gates: see ``_coverage_gated_entries``.
     2. Keep the *trusted* entries: ``tier == "verified"`` OR
        ``owner == <me>`` (fixed policy, no ``--trust`` knob). None trusted
        -> cold-start fallback.
@@ -83,6 +130,14 @@ def select_parent(
        -> cold-start fallback.
     """
     rng = rng or random.Random()
+    identities = _set_identities(objective)
+    if identities is not None:
+        trusted = _coverage_gated_entries(hub, identities, owner)
+        if not trusted:
+            return seed_tree, None
+        chosen = _sample(trusted, k, temperature, rng)
+        resolved = _resolve(chosen, store, fetch)
+        return resolved if resolved is not None else (seed_tree, None)
     try:
         entries = list(hub.elites(objective))
     except Exception:
@@ -102,7 +157,20 @@ def top_trusted_elite(
     """The objective's single best TRUSTED elite, GREEDY (max score, never
     sampled) -- for mid-run migration (harness/loop.py). Returns ``(entry,
     tree_path)``, or ``None`` on a hub error, no trusted entries, or a
-    cache-miss + fetch/integrity failure. Never raises."""
+    cache-miss + fetch/integrity failure. Never raises.
+
+    A *set* objective (role/list/glob) is coverage-gated the same way as
+    ``select_parent``: greedy-max over the mean-scored intersection pool
+    (see ``_coverage_gated_entries``) instead of a single ``hub.elites``
+    call."""
+    identities = _set_identities(objective)
+    if identities is not None:
+        trusted = _coverage_gated_entries(hub, identities, owner)
+        if not trusted:
+            return None
+        top = max(trusted, key=lambda e: e["score"])
+        resolved = _resolve(top, store, fetch)
+        return (top, resolved[0]) if resolved is not None else None
     try:
         entries = list(hub.elites(objective))
     except Exception:

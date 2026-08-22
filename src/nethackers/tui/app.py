@@ -435,6 +435,11 @@ class NetHackersApp(App):
         else:  # Input / Select / OptionList / a focusable card -> interact
             self._nav_mode = "interact"
             w.focus()
+            # A Select otherwise needs a second enter to open its list (focus,
+            # then open). Navigating never opens it (the cursor isn't real
+            # focus, so ↑↓ just move on); one enter here both focuses AND opens.
+            if isinstance(w, Select):
+                w.expanded = True
             self._nav_update_hint()
 
     def _nav_dive(self) -> None:
@@ -462,6 +467,19 @@ class NetHackersApp(App):
             if event.key == "escape":
                 self._nav_to_navigate()
                 event.stop()
+                return
+            # After you pick from a Select, its overlay closes but the Select
+            # keeps focus -- so ↑↓ would REOPEN the list. Once it's closed,
+            # treat an arrow as "done here": return to navigate and move the
+            # cursor on. (While the overlay is open, focus is on the overlay,
+            # not the Select, so this doesn't fire and ↑↓ walk the options.)
+            focused = self.focused
+            if (event.key in ("up", "down", "left", "right")
+                    and isinstance(focused, Select) and not focused.expanded):
+                self._nav_to_navigate()
+                self._nav_move(event.key)
+                event.stop()
+                return
             return  # otherwise the focused widget handles it
         if event.key in ("up", "down", "left", "right"):
             self._nav_move(event.key)

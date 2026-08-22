@@ -27,6 +27,24 @@ def test_apply_state_builds_chain_ledger_and_selects_log():
     assert r.ledger_rows == [(1, True, "registered"), (2, False, "no dev gain")]
 
 
+def test_apply_state_registered_with_regression_detail_marks_the_ledger_reason():
+    # a "registered" state whose detail carries the regression-count marker
+    # (loop._emit's f"⚠{len(regs)}") must fold it into the ledger reason, so
+    # status.iterations_ledger's plain "{k} {✓/✗} {reason}" render surfaces it.
+    r = Run("r1", CFG)
+    r.apply_state(_state("registered", iteration=1, detail="⚠2"))
+    assert r.ledger_rows == [(1, True, "registered ⚠2")]
+
+
+def test_apply_state_registered_without_detail_keeps_the_plain_reason():
+    # single-identity wins never carry a detail marker -- the reason must stay
+    # exactly "registered" (existing behavior), not "registered " with a
+    # trailing space.
+    r = Run("r1", CFG)
+    r.apply_state(_state("registered", iteration=1, detail=""))
+    assert r.ledger_rows == [(1, True, "registered")]
+
+
 def test_apply_episode_orders_by_index_and_counts_completed():
     r = Run("r1", CFG)
     for idx in (2, 0, 1):  # arrival order != batch order (parallel eval)
@@ -94,3 +112,36 @@ def test_split_from_phase_then_batch_label():
         "index": 0, "total": 1, "seed": 0, "character": "val-dwa-law-fem",
         "progress": 0.1, "status": "completed", "turns": 1, "depth": 1})
     assert r.split() == "held"  # falls back to the current batch label
+
+
+def test_candidate_means_groups_current_batch_rows_by_character():
+    r = Run("r1", CFG)
+    r.apply_episode("iter 1/3 · dev", {"index": 0, "total": 3, "progress": 0.2,
+                                        "status": "died", "character": "wiz-elf-cha-mal"})
+    r.apply_episode("iter 1/3 · dev", {"index": 1, "total": 3, "progress": 0.4,
+                                        "status": "died", "character": "wiz-elf-cha-mal"})
+    r.apply_episode("iter 1/3 · dev", {"index": 2, "total": 3, "progress": 0.6,
+                                        "status": "died", "character": "wiz-orc-cha-mal"})
+    means = r.candidate_means()
+    assert set(means) == {"wiz-elf-cha-mal", "wiz-orc-cha-mal"}
+    assert round(means["wiz-elf-cha-mal"], 3) == 0.3  # mean(0.2, 0.4)
+    assert round(means["wiz-orc-cha-mal"], 3) == 0.6
+
+
+def test_candidate_means_empty_when_no_batch_yet():
+    r = Run("r1", CFG)
+    assert r.candidate_means() == {}
+
+
+def test_identities_and_parent_means_read_from_state():
+    r = Run("r1", CFG)
+    r.apply_state(_state("mutating", identities=["a", "b"], parent_means={"a": 0.1, "b": 0.2}))
+    assert r.identities() == ["a", "b"]
+    assert r.parent_means() == {"a": 0.1, "b": 0.2}
+
+
+def test_identities_and_parent_means_default_empty_when_absent():
+    r = Run("r1", CFG)
+    r.apply_state(_state("mutating"))  # single/random objectives never set these keys
+    assert r.identities() == []
+    assert r.parent_means() == {}

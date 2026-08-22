@@ -13,6 +13,17 @@ from nethackers.harness.discovery import CliInfo, Preflight
 # touches a real hub (hermetic), except the two tests that exercise SELECT.
 
 
+@pytest.fixture(autouse=True)
+def _sandbox_preflight_ok(monkeypatch):
+    # evolve now ALWAYS sandboxes, so every run first clears the sandbox
+    # preflight (a working container runtime + a resolvable login). These are
+    # wiring tests (run_loop is faked and no container is ever launched), so
+    # stub the preflight green; its real behaviour is covered in
+    # test_sandbox_preflight.py and test_cli_sandbox.py.
+    monkeypatch.setattr(cli, "sandbox_preflight", lambda *a, **kw: None)
+    monkeypatch.setattr(cli, "image_present", lambda *a, **kw: True)   # sandbox image ready
+
+
 def test_evolve_parses_and_invokes_loop(tmp_path, monkeypatch):
     seed = tmp_path / "seed"
     seed.mkdir()

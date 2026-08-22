@@ -7,7 +7,7 @@ import json
 import os
 import re
 
-PrettyLine = tuple[str, str]  # (kind, text); kind in {assistant, tool, result, meta}
+PrettyLine = tuple[str, str]  # (kind, text); kind in {assistant, tool, result, meta, brief}
 
 # codex wraps every shell action as `/bin/zsh -lc "<actual command>"`; show the
 # actual command, not the wrapper.
@@ -23,10 +23,6 @@ def _out_tokens(usage: object) -> int:
         return 0
     value = usage.get("output_tokens")
     return int(value) if isinstance(value, (int, float)) else 0
-
-
-def _truncate(text: str, n: int = 80) -> str:
-    return text if len(text) <= n else text[: n - 1] + "…"
 
 
 def _claude(obj: dict) -> list[PrettyLine]:
@@ -51,7 +47,7 @@ def _claude(obj: dict) -> list[PrettyLine]:
                 input_obj = block.get("input")
                 inp = input_obj if isinstance(input_obj, dict) else {}
                 arg = inp.get("file_path") or inp.get("command") or inp.get("path") or ""
-                out.append(("tool", _truncate(f"{verb} {arg}".strip())))
+                out.append(("tool", f"{verb} {arg}".strip()))
         return out
     if kind == "result":
         parts = ["done"]
@@ -98,11 +94,11 @@ def _codex(obj: dict) -> list[PrettyLine]:
         if kind == "item.started" and itype == "command_execution":
             cmd = item.get("command")
             if isinstance(cmd, str) and cmd.strip():
-                return [("tool", _truncate(_codex_command(cmd)))]
+                return [("tool", _codex_command(cmd))]
         if kind == "item.started" and itype == "file_change":
             edit = _codex_edit(item.get("changes"))
             if edit:
-                return [("tool", _truncate(edit))]
+                return [("tool", edit)]
         if kind == "item.completed" and itype == "agent_message":
             msg = item.get("text")
             if isinstance(msg, str) and msg.strip():
@@ -113,7 +109,17 @@ def _codex(obj: dict) -> list[PrettyLine]:
         return [("assistant", text.strip())]
     cmd = obj.get("command")
     if isinstance(cmd, str) and cmd.strip():
-        return [("tool", _truncate(f"bash {cmd.strip()}"))]
+        return [("tool", f"bash {cmd.strip()}")]
+    return []
+
+
+def _brief(obj: dict) -> list[PrettyLine]:
+    """The mutation brief the loop fed this iteration -- emitted once, up front,
+    as a synthetic ``{"type": "nethackers_brief", "text": ...}`` event so it
+    heads the agent log (backend-agnostic; see harness/loop.py)."""
+    text = obj.get("text")
+    if isinstance(text, str) and text.strip():
+        return [("brief", "── brief ──\n" + text.strip())]
     return []
 
 
@@ -122,6 +128,9 @@ def prettify(backend: str, line: str) -> list[PrettyLine]:
         obj = json.loads(line)
         if not isinstance(obj, dict):
             return []
+        # backend-agnostic: the loop's synthetic brief event heads each iter log.
+        if obj.get("type") == "nethackers_brief":
+            return _brief(obj)
         if backend == "claude":
             return _claude(obj)
         if backend == "codex":
