@@ -55,6 +55,11 @@ _SECTIONS = [
     ("elites", "⚑ Elites"), ("runs", "▶ Runs"), ("evolve", "⚔ Evolve"),
 ]
 
+# Sections that use NATIVE focus flow instead of the modal navigate cursor: a
+# form of many inputs reads better as "tab between fields, enter opens/toggles,
+# esc back to the menu" than as a gold cursor you must "activate" per field.
+_FORM_SECTIONS = {"evolve"}
+
 
 class NetHackersApp(App):
     """The dashboard shell. Six sections switched by ``1``..``6`` (or the
@@ -291,11 +296,12 @@ class NetHackersApp(App):
         self._nav_update_hint()
 
     def _nav_update_hint(self) -> None:
-        legend = (
-            "↑↓←→ move · enter use · 1–6 jump · q quit"
-            if self._nav_mode == "navigate"
-            else "▸ editing — esc back to navigation"
-        )
+        if self._nav_mode == "navigate":
+            legend = "↑↓←→ move · enter use · 1–6 jump · q quit"
+        elif self._body_current() in _FORM_SECTIONS:
+            legend = "tab next field · enter open/toggle · esc back to menu"
+        else:
+            legend = "▸ editing — esc back to navigation"
         with contextlib.suppress(Exception):
             self.query_one("#idbar", Static).update(f"{self._idbar_prefix}   —   {legend}")
 
@@ -367,7 +373,10 @@ class NetHackersApp(App):
             # the main tab row: left/right along the tabs, down dives in
             if direction in ("left", "right"):
                 nxt = nearest_in_direction(cur, nav_tabs, direction)
-            elif direction == "down":  # to the active subtab if any, else first control
+            elif direction == "down":  # dive in: native focus for a form, else the cursor
+                if self._body_current() in _FORM_SECTIONS:
+                    self._enter_form()
+                    return
                 nxt = self._active_subtab() or (content[0] if content else None)
             else:
                 nxt = None  # already at the top
@@ -415,10 +424,56 @@ class NetHackersApp(App):
             self._nav_update_hint()
 
     def _nav_dive(self) -> None:
+        if self._body_current() in _FORM_SECTIONS:
+            self._enter_form()
+            return
         for w in self._nav_targets():
             if not isinstance(w, Tab):
                 self._nav_set_cursor(w)
                 return
+
+    # --- native focus flow for form sections (e.g. Evolve) ----------------
+    #
+    # A form reads better with the platform's usual focus flow than with the
+    # modal cursor: diving in FOCUSES the first field (interact mode, no
+    # separate "activate"); tab / shift+tab cycle the fields; enter opens a
+    # Select / toggles a grid cell / presses a button; arrows move within the
+    # focused widget; esc returns to the tab bar (navigate mode).
+
+    def _body_current(self) -> str | None:
+        try:
+            return self.query_one("#body", ContentSwitcher).current
+        except Exception:
+            return None
+
+    def _form_fields(self) -> list[Widget]:
+        """The active form section's focusable, visible fields, in DOM order."""
+        current = self._body_current()
+        if current is None:
+            return []
+        try:
+            pane = self.query_one("#body", ContentSwitcher).get_child_by_id(current)
+        except Exception:
+            return []
+        return [w for w in pane.query("*")
+                if getattr(w, "can_focus", False) and w.display]
+
+    def _enter_form(self) -> None:
+        fields = self._form_fields()
+        if not fields:
+            return
+        self._nav_mode = "interact"
+        self._nav_set_cursor(None)  # no modal ring while native focus drives
+        fields[0].focus()
+        self._nav_update_hint()
+
+    def _cycle_form_focus(self, delta: int) -> None:
+        fields = self._form_fields()
+        if not fields:
+            return
+        cur = self.focused
+        idx = (fields.index(cur) + delta) % len(fields) if cur in fields else 0
+        fields[idx].focus()
 
     def _nav_to_navigate(self) -> None:
         self._nav_mode = "navigate"
@@ -439,6 +494,18 @@ class NetHackersApp(App):
             if event.key == "escape":
                 self._nav_to_navigate()
                 event.stop()
+                return
+            # in a form section, tab / shift+tab cycle the fields (kept inside
+            # the form, so focus never wanders onto the nav tabs).
+            if self._body_current() in _FORM_SECTIONS:
+                if event.key == "tab":
+                    self._cycle_form_focus(1)
+                    event.stop()
+                    return
+                if event.key in ("shift+tab", "backtab"):
+                    self._cycle_form_focus(-1)
+                    event.stop()
+                    return
             return  # otherwise the focused widget handles it
         if event.key in ("up", "down", "left", "right"):
             self._nav_move(event.key)

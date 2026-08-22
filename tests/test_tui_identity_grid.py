@@ -88,14 +88,14 @@ async def test_select_all_and_clear_all():
         assert grid.selected == set() and grid.token() == ""
 
 
-async def test_space_key_toggles_cursor_cell_and_posts_changed():
+async def test_enter_key_toggles_cursor_cell_and_posts_changed():
     app = _Host()
     async with app.run_test() as pilot:
         grid = app.query_one(IdentityGrid)
         grid.focus()
         await pilot.pause()
         grid.cursor = "wiz-elf-cha-mal"
-        await pilot.press("space")
+        await pilot.press("enter")
         assert "wiz-elf-cha-mal" in grid.selected
         assert app.changes >= 1
 

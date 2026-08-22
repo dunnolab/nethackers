@@ -127,7 +127,7 @@ class EvolveForm(Vertical):
         with Horizontal(id="f_panels"):
             # left subwindow: the objective selection grid
             with VerticalScroll(id="f_objective"):
-                yield Label("space toggle · a all · c clear · ←→ hop role · esc leave")
+                yield Label("↑↓←→ move · enter toggle · a all · c clear · tab next field")
                 # classes="panel" makes it a modal-nav stop (app._nav_targets
                 # collects focusable .panel widgets); its border is suppressed
                 # below since the subwindow already frames it.

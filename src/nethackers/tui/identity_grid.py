@@ -132,11 +132,11 @@ def _anchor_of(cursor: str) -> str:
 class IdentityGrid(Static):
     """The interactive objective picker: a focusable Frontier-style grid whose
     cells are selection boxes. Arrows move the cursor (up/down one cell,
-    left/right hop roles), space toggles it (an identity or a whole role via its
+    left/right hop roles), enter toggles it (an identity or a whole role via its
     header), ``a`` selects all 73, ``c`` clears all. Posts ``Changed`` on every
     selection change; ``token()`` renders the picked set to a
-    ``selector.resolve`` string. Escape is left to bubble so the form's modal
-    nav reclaims control."""
+    ``selector.resolve`` string. Tab/escape are left to bubble so the form
+    cycles fields / returns to the menu."""
 
     can_focus = True
 
@@ -205,12 +205,15 @@ class IdentityGrid(Static):
         self._changed()
 
     def on_key(self, event: events.Key) -> None:
+        # enter toggles the cursor cell (enter is the app's one action key);
+        # arrows move within the grid; a/c bulk-select. tab/escape are NOT
+        # handled here -> they bubble so the form cycles fields / leaves.
         handlers = {
             "down": lambda: self._move(1), "up": lambda: self._move(-1),
             "right": lambda: self._hop(1), "left": lambda: self._hop(-1),
-            "space": self._toggle, "a": self.select_all, "c": self.clear_all,
+            "enter": self._toggle, "a": self.select_all, "c": self.clear_all,
         }
         action = handlers.get(event.key)
         if action is not None:
             action()
-            event.stop()  # escape is NOT handled here -> bubbles to the form's modal nav
+            event.stop()

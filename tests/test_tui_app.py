@@ -74,6 +74,35 @@ async def test_escape_leaves_a_focused_field_so_q_can_quit():
         assert not app.is_running  # `q` quits again
 
 
+async def test_evolve_section_uses_native_focus_flow():
+    """The Evolve form flows with native focus, not the modal cursor: diving in
+    FOCUSES the grid (no separate 'activate' step), tab cycles to the next
+    field, and esc returns to the tab bar so q/1-6 work again."""
+    from nethackers.tui.identity_grid import IdentityGrid
+
+    app = NetHackersApp(hub=_DEAD_HUB, creds=None, start="evolve")
+    async with app.run_test(size=(120, 45)) as pilot:
+        await pilot.pause()
+        await pilot.press("down")  # dive into the form
+        await pilot.pause()
+        assert app._nav_mode == "interact"
+        assert isinstance(app.focused, IdentityGrid)      # grid focused directly, no activate
+        await pilot.press("tab")                          # tab -> next field (the operator Select)
+        await pilot.pause()
+        assert app.focused is not None and not isinstance(app.focused, IdentityGrid)
+        from textual.widgets import Select
+        if isinstance(app.focused, Select):               # one enter opens the list, not two
+            await pilot.press("enter")
+            await pilot.pause()
+            assert app.query_one("#f_op", Select).expanded
+            await pilot.press("escape")                   # close the overlay first
+            await pilot.pause()
+        await pilot.press("escape")                       # esc -> back to the tab bar
+        await pilot.pause()
+        assert app.focused is None
+        assert app._nav_cursor is not None and (app._nav_cursor.id or "").startswith("tab-")
+
+
 async def test_navigate_recovers_when_the_cursor_element_vanished():
     # regression: opening a run from the Runs list put the cursor on its button;
     # stopping the run removed that button, so returning to navigate mode re-added
