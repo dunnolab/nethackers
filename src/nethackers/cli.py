@@ -460,12 +460,12 @@ def _run(argv: list[str] | None) -> int:
         # to the '*' glob instead.
         try:
             _r = resolve(args.objective)
-            if _r.kind == "all":
-                raise ValueError(
-                    "'all' is a leaderboard view, not an evolve target; "
-                    "use the glob '*' to evolve across every identity")
-        except ValueError as exc:
-            err.print(f"[red]{exc}[/red]  " + _unknown_objective(args.objective))
+        except ValueError:
+            err.print(_unknown_objective(args.objective))   # "unknown objective 'X'. Use <forms>"
+            return 2
+        if _r.kind == "all":
+            err.print("[red]'all' is a leaderboard view, not an evolve target; "
+                      "use the glob '*' to evolve across every identity[/red]")
             return 2
 
         # The mutator ALWAYS runs sandboxed -- there is no host-execution path.

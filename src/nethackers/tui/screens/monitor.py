@@ -26,6 +26,7 @@ from textual.widgets import (
     TabPane,
 )
 
+from nethackers.hub.selector import resolve
 from nethackers.hubclient.live import episode_table
 from nethackers.tui import status as S
 from nethackers.tui._util import _slug
@@ -120,8 +121,16 @@ class RunMonitor(Screen):
         # else leave the plain title; the scorecard is the primary signal.
         n = len(self.run.identities())
         setn = f" ({n})" if n else ""
+        # cfg.objective is the raw selector token -- a long comma list for a
+        # form/CLI-built set. Show the selector's resolved, compact name
+        # instead (e.g. a role, a glob, or "set:<n>:<hash>"); fall back to the
+        # raw token on any error (never let a title render crash the screen).
+        try:
+            name = resolve(cfg.objective).name
+        except Exception:
+            name = cfg.objective
         self.query_one("#cockpit").border_title = (
-            f"⚔ Evolution · {cfg.objective}{setn} · {cfg.backend}{pin}")
+            f"⚔ Evolution · {name}{setn} · {cfg.backend}{pin}")
         # defer: the TabbedContent's panes (#tables/#logs_list/#logview) aren't
         # mounted yet during a Screen's on_mount, so backfill would NoMatches.
         self.call_after_refresh(self._backfill)

@@ -48,3 +48,7 @@ def test_evolve_rejects_all_as_leaderboard_view_not_a_target(capsys, monkeypatch
     assert "*" in combined
     assert "leaderboard" in combined.lower()
     assert "Traceback" not in combined
+    # one clean message, not the leaderboard hint doubled up with the
+    # "unknown objective" text -- 'all' resolves fine, it just isn't a legal
+    # evolve target, so the unknown-objective message must not also appear.
+    assert "unknown objective 'all'" not in combined.lower()

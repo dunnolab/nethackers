@@ -253,19 +253,18 @@ def build_catalog(
     return catalog
 
 
-def build_union_spec(
-    identities: Sequence[str], *, name: str, per_identity_size: int = 15
-) -> ObjectiveSpec:
+def build_union_spec(identities: Sequence[str], *, name: str) -> ObjectiveSpec:
     """A generalist objective's dev spec: the concatenation of each member
-    identity's published per-identity batch (seeds 0..per_identity_size-1),
-    in sorted-identity order. kind='set', mean aggregation. No CATALOG entry
-    is created -- this spec is built on demand for the evolve loop; wins are
-    registered as per-identity slices."""
-    batch = tuple(
-        (seed, ident)
-        for ident in sorted(identities)
-        for seed in range(per_identity_size)
-    )
+    identity's PUBLISHED per-identity batch (``CATALOG[ident].batch``), in
+    sorted-identity order. kind='set', mean aggregation. No CATALOG entry is
+    created -- this spec is built on demand for the evolve loop; wins are
+    registered as per-identity slices.
+
+    Concatenating the published batches (rather than rebuilding via
+    ``range(per_identity_size)``) makes each member's slice structurally
+    equal to ``CATALOG[ident].batch`` -- it can't drift from the catalog even
+    if the catalog's own per-identity size ever changes."""
+    batch = tuple(pair for ident in sorted(identities) for pair in CATALOG[ident].batch)
     return ObjectiveSpec(
         name=name,
         kind="set",

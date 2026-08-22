@@ -189,6 +189,34 @@ async def test_scorecard_renders_the_per_identity_breakdown_for_a_set_run():
         assert "wiz-orc-cha-mal" in str(mon.query_one("#scorecard").render())
 
 
+async def test_cockpit_title_uses_the_compact_resolved_name_for_a_set_objective():
+    # cfg.objective for a form/CLI-built set is a long comma list -- the
+    # border title should show selector.resolve's compact name instead
+    # (e.g. "set:2:<hash>"), not the raw list.
+    cfg = EvolveConfig("wiz-elf-cha-mal,wiz-orc-cha-mal", "claude", 3)
+    run = Run("run-1", cfg)
+    run.apply_state(_state("mutating", identities=["wiz-elf-cha-mal", "wiz-orc-cha-mal"]))
+    host = _Host(run)
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        title = str(host.screen.query_one("#cockpit").border_title)
+        assert cfg.objective not in title
+        assert "(2)" in title
+
+
+async def test_cockpit_title_falls_back_to_the_raw_objective_on_a_bad_token():
+    # resolve() can raise for a token the selector doesn't recognize; the
+    # title must never crash the screen over it -- on_mount falls back to
+    # the raw cfg.objective string.
+    cfg = EvolveConfig("not-a-real-objective", "claude", 3)
+    run = Run("run-1", cfg)
+    host = _Host(run)
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        title = str(host.screen.query_one("#cockpit").border_title)
+        assert "not-a-real-objective" in title
+
+
 async def test_arrows_navigate_tabs_and_panes_then_enter_interacts():
     from textual.widgets import Tab
 
