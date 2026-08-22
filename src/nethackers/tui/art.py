@@ -15,6 +15,29 @@ _DLVL = sorted(((k, v) for k, v in ACHIEVEMENTS.items() if k.startswith("Dlvl:")
 _ASTRAL = ACHIEVEMENTS["Astral Plane"]
 
 
+# "NETHACKERS" in figlet's `small` font (generated once with pyfiglet, hard-coded
+# so there's no runtime font dependency). 49 cols wide, 4 rows -- fits a framed
+# panel on an 80-col tty when centered. The Home view tints it amber.
+NETHACKERS_BANNER = r"""
+ _  _ ___ _____ _  _   _   ___ _  _____ ___  ___
+| \| | __|_   _| || | /_\ / __| |/ / __| _ \/ __|
+| .` | _|  | | | __ |/ _ \ (__| ' <| _||   /\__ \
+|_|\_|___| |_| |_||_/_/ \_\___|_|\_\___|_|_\|___/
+""".strip("\n")
+
+
+def platform_status_line(
+    *, programs: int | None, runs: int, wins: int, tokens_display: str
+) -> str:
+    """Your platform standing in NetHack's own status-line idiom
+    (``Label:value``). ``programs`` is ``None`` when the hub is unreachable
+    (rendered ``—``, distinct from a real ``0``). ``tokens_display`` is the
+    already-compacted token count (e.g. ``"1.2M"``)."""
+    prog = "—" if programs is None else str(programs)
+    return (f"Programs:{prog}   Runs:{runs}   Wins:{wins}   "
+            f"Evolved:{tokens_display} tok")
+
+
 def score_to_dlvl(score: float) -> str:
     """Nearest dungeon level at or below a 0–1 progression score."""
     if score >= _ASTRAL:

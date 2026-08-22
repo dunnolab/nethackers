@@ -170,30 +170,22 @@ async def test_frontier_up_from_body_returns_to_active_subtab_not_the_other():
         assert app.query_one("#ftabs", Tabs).active == "ft-universe"
 
 
-async def test_home_grid_is_arrow_navigable():
-    """The modal 2D navigator starts on the Home tab holding no real focus
-    (so nothing can eat a keystroke); Down dives into the top-left card and
-    the arrows walk the 2x2 grid, with Up from the top row returning to the
-    section tab."""
+async def test_home_is_arrow_navigable():
+    """The modal 2D navigator starts on the Home tab holding no real focus (so
+    nothing can eat a keystroke); Down dives into the Home card's single control
+    -- the login/logout button -- and Up returns to the section tab."""
     app = NetHackersApp(hub=_DEAD_HUB, creds=Credentials("castiel", "t"))
     async with app.run_test() as pilot:
         await pilot.pause()  # _nav_start runs after the first refresh
         assert app.focused is None  # navigate mode: no real focus
         assert app._nav_cursor is not None and app._nav_cursor.id == "tab-home"
 
-        await pilot.press("down")  # dive into the grid's first (top-left) card
+        await pilot.press("down")  # dive into the card's one focusable control
         await pilot.pause()
-        assert app._nav_cursor.id == "home_yours"
-        await pilot.press("right")
-        await pilot.pause()
-        assert app._nav_cursor.id == "home_board"  # top-right
-        await pilot.press("down")
-        await pilot.pause()
-        assert app._nav_cursor.id == "home_attain"  # bottom-right
-        await pilot.press("up")
+        assert app._nav_cursor.id == "home_auth"  # the login/logout button
         await pilot.press("up")
         await pilot.pause()
-        assert app._nav_cursor.id == "tab-home"  # up out of the grid, back to the tab
+        assert app._nav_cursor.id == "tab-home"  # up out of the card, back to the tab
 
 
 # --- .error/.results delegate to the pushed EvolveScreen -------------------

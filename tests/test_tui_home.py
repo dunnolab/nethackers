@@ -1,16 +1,17 @@
-"""Tests for the Home dashboard (Task 11): the four pure panel formatters
-(``your_solutions_panel``/``leaderboard_panel``/``recent_runs_panel``/
-``attainment_panel``) plus a widget smoke test for ``HomeView``.
+"""Tests for the redesigned Home view: the identity-and-standing hero.
 
-The pure panels are the tested deliverable -- each assertion below pins a
-specific, easy-to-get-wrong behavior (which row the "you" marker lands on,
-identity title-casing, the win-fraction substring, which milestone wins as
-"deepest") rather than a weak "renders something" check. ``HomeView``
-itself only gets a smoke test: it's exercised against a real (but
-instantly connection-refused) loopback URL so ``_refresh``'s try/except
-around each hub call is proven to degrade to a friendly message instead of
-crashing the app -- no network mocking needed, since a closed local port
-fails immediately.
+The Home landing screen no longer hosts the old score panels
+(``your_solutions_panel``/``leaderboard_panel``/``attainment_panel``) -- those
+boards moved to their own tabs. What stays here is ``recent_runs_panel`` (the
+Runs tab reuses it) plus ``HomeView`` itself: an ASCII wordmark, a tagline, the
+``@``-hero identity block, a login/logout button, and -- once logged in -- a
+NetHack-style status line.
+
+``HomeView`` is exercised against a real (but instantly connection-refused)
+loopback URL so ``_refresh``'s ``_registered_count`` try/except is proven to
+degrade to a friendly ``—`` instead of crashing -- no network mocking needed,
+since a closed local port fails immediately. The pure helpers
+(``_identity_text``/``_registered_count``) are unit-tested directly.
 """
 from __future__ import annotations
 
@@ -18,14 +19,15 @@ import io
 
 from rich.console import Console
 from textual.app import App, ComposeResult
+from textual.widgets import Button, Static
 
+from nethackers.tui.art import NETHACKERS_BANNER
+from nethackers.tui.screens import home as home_mod
 from nethackers.tui.screens.home import (
     HomeView,
-    _your_solutions,
-    attainment_panel,
-    leaderboard_panel,
+    _identity_text,
+    _registered_count,
     recent_runs_panel,
-    your_solutions_panel,
 )
 
 # An address nothing listens on: httpx.ConnectError fires near-instantly
@@ -37,29 +39,6 @@ def _p(renderable) -> str:
     buf = io.StringIO()
     Console(width=90, file=buf).print(renderable)
     return buf.getvalue()
-
-
-# --- leaderboard_panel: owner-keyed, "you" highlight on the right row -----
-
-
-def test_leaderboard_panel_marks_only_your_row():
-    entries = [
-        {"rank": 1, "owner": "vale", "mean_progression": 0.51},
-        {"rank": 2, "owner": "castiel", "mean_progression": 0.44},
-    ]
-    out = _p(leaderboard_panel(entries, you="castiel"))
-    assert "castiel ◀ you" in out
-    assert "vale ◀ you" not in out  # marker must not bleed onto another owner's row
-
-
-# --- your_solutions_panel: identity-keyed, title-cased, no owner column ---
-
-
-def test_your_solutions_panel_title_cases_identity_and_has_no_owner_marker():
-    rows = [{"identity": "wiz-elf-cha-mal", "score": 0.44, "solution_digest": "a" * 8}]
-    out = _p(your_solutions_panel(rows))
-    assert "Wiz-Elf-Cha-Mal" in out
-    assert "@" not in out  # identity-keyed rows never render an "@owner" cell
 
 
 # --- recent_runs_panel: objective + a distinguishable win/iteration ratio -
@@ -75,69 +54,52 @@ def test_recent_runs_panel_shows_objective_and_win_fraction():
     assert "2/5" in out  # wins/iterations, not just a lone digit that could match anything
 
 
-# --- attainment_panel: deepest milestone wins, bar is a real partial gauge
+# --- _identity_text: logged-out prompt vs. the @login hero -----------------
 
 
-def test_attainment_panel_reports_deepest_milestone_and_count():
-    cells = [{"milestone": "Dlvl:12"}, {"milestone": "Dlvl:26"}]
-    out = attainment_panel(cells, "wiz-elf-cha-mal")
-    assert "Dlvl:26" in out       # the deeper of the two cells wins
-    assert "Dlvl:12" not in out   # the shallower one must not be reported as deepest
-    assert "deepest reached" in out
-    assert "milestones lit" in out and "2" in out  # count of milestones reached
+def test_identity_text_logged_out_prompts_to_log_in():
+    out = _identity_text(None)
+    assert "not logged in" in out
+    assert "@sam" not in out  # no stray login rendered when nobody is logged in
 
 
-# --- _your_solutions: the search-digests x global-elites join -------------
-#
-# Real /search rows carry no identity/score (just registration metadata --
-# see home.py's module docstring), so "your solutions" has to be joined
-# against a global elites spread by digest. This pins that join: only a
-# digest the caller actually owns survives, others (even a higher-scoring
-# one) are filtered out.
+def test_identity_text_shows_the_login_when_present():
+    out = _identity_text("sam")
+    assert "@sam" in out
+    assert "logged in via GitHub" in out
+
+
+# --- _registered_count: counts search rows, None when the hub is down ------
 
 
 class _FakeClient:
-    """Duck-types HubClient's search()/elites() -- no real HubClient or
-    network involved."""
+    """Duck-types HubClient's ``search()`` -- no real HubClient or network."""
 
-    def __init__(self, search_rows, elite_rows):
-        self._search_rows = search_rows
-        self._elite_rows = elite_rows
-        self.elites_calls = 0
+    def __init__(self, rows=None, boom=False):
+        self._rows = rows
+        self._boom = boom
 
     def search(self, owner):
-        return self._search_rows
-
-    def elites(self, objective):
-        assert objective == "all"
-        self.elites_calls += 1
-        return self._elite_rows
+        if self._boom:
+            raise RuntimeError("hub unreachable")
+        return self._rows
 
 
-def test_your_solutions_joins_owned_digests_against_global_elites():
-    client = _FakeClient(
-        search_rows=[{"digest": "sha256:mine", "owner": "castiel"}],
-        elite_rows=[
-            {"identity": "wiz-elf-cha-mal", "solution_digest": "sha256:mine",
-             "score": 0.44, "rank": 1},
-            {"identity": "val-dwa-law-fem", "solution_digest": "sha256:not-mine",
-             "score": 0.90, "rank": 1},
-        ],
-    )
-    yours = _your_solutions(client, "castiel")
-    assert yours == [
-        {"identity": "wiz-elf-cha-mal", "solution_digest": "sha256:mine",
-         "score": 0.44, "rank": 1}
-    ]
+def test_registered_count_counts_the_search_rows():
+    client = _FakeClient(rows=[{"digest": "a"}, {"digest": "b"}, {"digest": "c"}])
+    assert _registered_count(client, "castiel") == 3
 
 
-def test_your_solutions_skips_elites_call_when_nothing_registered():
-    client = _FakeClient(search_rows=[], elite_rows=[{"should": "never be reached"}])
-    assert _your_solutions(client, "castiel") == []
-    assert client.elites_calls == 0  # no digests to join -- the 2nd hub call is skipped
+def test_registered_count_counts_zero_when_search_is_empty():
+    assert _registered_count(_FakeClient(rows=[]), "castiel") == 0
 
 
-# --- HomeView: widget smoke test -------------------------------------------
+def test_registered_count_is_none_when_search_raises():
+    # a raising hub degrades to None (Home renders "—", not a misleading 0)
+    assert _registered_count(_FakeClient(boom=True), "castiel") is None
+
+
+# --- HomeView: widget smoke tests ------------------------------------------
 
 
 class _Host(App):
@@ -149,22 +111,31 @@ class _Host(App):
         yield HomeView(_DEAD_HUB, self._login, id="home")
 
 
-async def test_home_view_survives_unreachable_hub_and_renders_friendly_messages():
-    host = _Host("tester")
-    async with host.run_test() as pilot:
-        await pilot.pause()
-        board = str(host.query_one("#home_board").render())
-        yours = str(host.query_one("#home_yours").render())
-        attain = str(host.query_one("#home_attain").render())
-        assert "unreachable" in board
-        assert "unreachable" in yours
-        assert "attainment" in attain.lower()  # attainment falls back, doesn't crash
-
-
-async def test_home_view_with_no_login_skips_search_but_still_renders():
+async def test_home_view_logged_out_renders_banner_and_login_button(monkeypatch, tmp_path):
+    # keep the standing read hermetic (never touch the user's real runs dir)
+    monkeypatch.setattr(home_mod, "_RUNS_DIR", tmp_path / "runs")
     host = _Host(None)
     async with host.run_test() as pilot:
         await pilot.pause()
-        yours = str(host.query_one("#home_yours").render())
-        # No login -> no search call attempted -> no "yours" data, no crash either.
-        assert "unreachable" not in yours
+        banner = str(host.query_one("#home_banner", Static).render())
+        assert NETHACKERS_BANNER.splitlines()[-1] in banner  # the wordmark rendered
+
+        btn = host.query_one("#home_auth", Button)
+        assert str(btn.label) == "Log in with GitHub"
+
+        # logged out -> the NetHack status line is hidden, and no crash from the dead hub
+        assert host.query_one("#home_status", Static).display is False
+
+
+async def test_home_view_logged_in_renders_status_line(monkeypatch, tmp_path):
+    monkeypatch.setattr(home_mod, "_RUNS_DIR", tmp_path / "runs")
+    host = _Host("castiel")
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        status = host.query_one("#home_status", Static)
+        assert status.display is True  # logged in -> the standing line is shown
+        # dead hub -> programs is None -> rendered as "—", not a crash
+        assert "Programs:" in str(status.render())
+
+        btn = host.query_one("#home_auth", Button)
+        assert str(btn.label) == "Log out"

@@ -1,4 +1,37 @@
-from nethackers.tui.art import highscore_table, score_to_dlvl, tombstone
+from nethackers.tui.art import (
+    NETHACKERS_BANNER,
+    highscore_table,
+    platform_status_line,
+    score_to_dlvl,
+    tombstone,
+)
+
+# --- NETHACKERS_BANNER: the 4-row figlet wordmark --------------------------
+
+
+def test_nethackers_banner_is_a_nonempty_four_row_wordmark():
+    lines = NETHACKERS_BANNER.splitlines()
+    assert NETHACKERS_BANNER.strip()          # non-empty
+    assert len(lines) == 4                     # figlet "small" font is 4 rows tall
+    assert all(line.strip() for line in lines)  # no blank rows (stripped of stray newlines)
+
+
+# --- platform_status_line: NetHack-idiom standing line ---------------------
+
+
+def test_platform_status_line_renders_unreachable_programs_as_a_dash():
+    line = platform_status_line(programs=None, runs=0, wins=0, tokens_display="0")
+    assert "Programs:—" in line                # None -> "—", distinct from a real 0
+    assert "Runs:0" in line and "Wins:0" in line
+    assert "Evolved:0 tok" in line
+
+
+def test_platform_status_line_renders_integer_counts():
+    line = platform_status_line(programs=3, runs=12, wins=5, tokens_display="1.2M")
+    assert "Programs:3" in line                # a real count, not the dash
+    assert "Runs:12" in line
+    assert "Wins:5" in line
+    assert "Evolved:1.2M tok" in line          # the already-compacted token display
 
 
 def test_score_to_dlvl_boundaries_and_monotonic():
