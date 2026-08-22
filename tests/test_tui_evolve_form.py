@@ -114,17 +114,18 @@ async def test_start_pins_model_and_effort_from_the_pickers(monkeypatch):
 
 
 async def test_form_scroll_pane_is_not_a_nav_target():
-    # regression: making #form a VerticalScroll turned the whole-form panel into
-    # a focusable nav stop that shadowed the fields -- the operator select became
-    # unreachable/"not selectable". The pane must scroll without being a stop.
+    # regression: a subwindow VerticalScroll must scroll without itself being a
+    # focusable nav stop that shadows its fields (the operator select became
+    # unreachable/"not selectable" when the whole pane grabbed the cursor).
     app = NetHackersApp(hub="http://h", creds=None, start="evolve")
-    async with app.run_test(size=(100, 42)) as pilot:
+    async with app.run_test(size=(120, 42)) as pilot:
         await pilot.pause()
         await pilot.pause()
         targets = app._nav_targets()
-        assert app.query_one("#form") not in targets          # the scroll pane isn't a stop
-        assert app.query_one("#f_op", Select) in targets       # but the operator is
-        assert app.query_one("#f_model", Select) in targets    # and the new pickers
+        assert app.query_one("#f_objective") not in targets    # subwindow panes aren't stops
+        assert app.query_one("#f_operator") not in targets
+        assert app.query_one("#f_op", Select) in targets       # but the fields are
+        assert app.query_one("#f_model", Select) in targets
         assert app.query_one("#f_effort", Select) in targets
 
 
@@ -368,4 +369,4 @@ async def test_grid_is_a_nav_target_but_scroll_pane_is_not():
         await pilot.pause()
         targets = app._nav_targets()
         assert app.query_one("#f_obj_grid", IdentityGrid) in targets  # the grid is reachable
-        assert app.query_one("#form") not in targets                  # the scroll pane isn't
+        assert app.query_one("#f_objective") not in targets           # its subwindow pane isn't
