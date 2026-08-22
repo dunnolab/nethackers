@@ -79,6 +79,7 @@ from nethackers.hubclient.credentials import Credentials, whoami_from_token
 from nethackers.hubclient.frontier import champion, champion_scores, overall_mean, universe_scores
 from nethackers.hubclient.live import EpisodeStream
 from nethackers.hubclient.output import emit, err
+from nethackers.hubclient.publish import PublishError, ensure_repo, gh_login, publish_solution
 from nethackers.hubclient.pull import pull
 from nethackers.hubclient.register import device_login, refresh_access_token
 from nethackers.hubclient.render import (
@@ -369,6 +370,20 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Path to the solution within the repo (default: the repo root).",
     )
 
+    sm = sub.add_parser(
+        "submit", parents=[common], formatter_class=RichHelpFormatter,
+        help="Publish a solution to your public <you>/nethacker repo (via gh) and register it.",
+    )
+    sm.add_argument("solution_dir", help="Path to the solution directory to publish.")
+    sm.add_argument(
+        "--repo-name", default="nethacker",
+        help="Repo under your account to publish into (default: nethacker).",
+    )
+    sm.add_argument(
+        "--message", default="nethackers submit",
+        help="Commit message for the published solution.",
+    )
+
     return parser
 
 
@@ -584,6 +599,40 @@ def _run(argv: list[str] | None) -> int:
             result, args.output,
             table=lambda r: Text(f"registered {r['solution_id']}", style="green"),
             plain=lambda r: f"registered {r['solution_id']}",
+        )
+        return 0
+
+    if args.cmd == "submit":
+        creds = _load_creds()
+        if creds is None:
+            err.print("[yellow]not logged in[/] — run `nethackers login`")
+            return 1
+        gh = gh_login()
+        if gh is None:
+            err.print("[yellow]gh unavailable[/] — install the GitHub CLI and run `gh auth login`")
+            return 1
+        if gh != creds.login:
+            err.print(f"gh is authed as [b]@{gh}[/] but you're logged in as "
+                      f"[b]@{creds.login}[/] — sign in to the same account")
+            return 1
+        token = _authed_token()
+        if token is None:  # unreachable (creds is set) -- narrows for the type checker
+            err.print("[yellow]not logged in[/] — run `nethackers login`")
+            return 1
+        slug = f"{creds.login}/{args.repo_name}"
+        try:
+            ensure_repo(slug)
+            sha = publish_solution(args.solution_dir, slug, message=args.message)
+        except PublishError as e:
+            err.print(f"[red]publish failed[/] — {e}")
+            return 1
+        result = HubClient(args.hub).register(
+            token=token, repo=f"github.com/{slug}", commit=sha, root="",
+        )
+        emit(
+            result, args.output,
+            table=lambda r: Text(f"submitted {r['solution_id']}", style="green"),
+            plain=lambda r: f"submitted {r['solution_id']}",
         )
         return 0
 
