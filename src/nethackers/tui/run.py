@@ -75,7 +75,8 @@ class Run:
         if pd and (not self.chain or self.chain[-1] != pd):
             self.chain.append(pd)  # seed -> elite1 -> elite2 ...
         if phase == "registered":
-            self.ledger_rows.append((state["iteration"], True, "registered"))
+            reason = "registered" + (f" {state['detail']}" if state.get("detail") else "")
+            self.ledger_rows.append((state["iteration"], True, reason))
         elif phase == "rejected":
             self.ledger_rows.append(
                 (state["iteration"], False, state["detail"] or "rejected"))

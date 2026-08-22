@@ -72,6 +72,24 @@ def _fitness_runner(progress_by_version):
     return fake
 
 
+def _fitness_runner_by_character(progress_fn):
+    """Fake Docker runner like `_fitness_runner`, but keyed on (version,
+    character) instead of version alone -- lets a test give per-identity
+    progress that diverges by build (one build up, another down) rather than
+    every identity moving in lockstep."""
+    def fake(cmd, check):
+        sol = next(v.removesuffix(":/sol:ro") for v in cmd if v.endswith(":/sol:ro"))
+        version = int(Path(sol, "bot.py").read_text().split("=")[1])
+        batch = json.loads(cmd[cmd.index("--batch") + 1])
+        host_out = next(v.removesuffix(":/out") for v in cmd if v.endswith(":/out"))
+        Path(host_out, "results.json").write_text(json.dumps([
+            {"trajectory_id": s, "status": "completed", "progress": progress_fn(version, c),
+             "ascended": False, "steps": 1, "turns": 1, "max_depth": 1, "end_status": "died",
+             "error": None, "wall_seconds": 0.1, "character": c, "milestone": None}
+            for s, c in batch]))
+    return fake
+
+
 def test_loop_registers_an_improvement(tmp_path):
     hub = _FakeHub()
     results = run_loop(
@@ -393,3 +411,46 @@ def test_loop_registers_a_slice_per_identity_for_a_set_objective(tmp_path):
     mutating = next(s for s in states if s["phase"] == "mutating")
     assert len(mutating["identities"]) == 2
     assert isinstance(mutating["parent_means"], dict)
+
+
+def test_loop_registers_regressions_on_a_per_identity_drop(tmp_path):
+    """The union mean can rise (winning the dev/validation gates) while one
+    member identity of a set objective drops relative to the OLD parent --
+    aggregate.regressions is dead code today (spec decision C sec 5/9 wants
+    it surfaced); the registered IterationResult must carry that regression,
+    naming the dropped build."""
+    hub = _SeedSetHub()
+
+    def progress(version, character):
+        if version == 0:  # cold-start seed: both builds tie at 0.5
+            return 0.5
+        # the winning child: wiz-elf rises, wiz-orc drops below the parent's 0.5
+        return 0.9 if character == "wiz-elf-cha-mal" else 0.3
+
+    results = run_loop(
+        objective="wiz-elf-cha-mal,wiz-orc-cha-mal", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+        hub=hub, image="img:dev", token="dev-token", owner="dev", iterations=1,
+        validation_n=3, migrate=False,
+        now_fn=lambda: "2026-08-10T00:00:00Z",
+        runner=_fitness_runner_by_character(progress), workdir=tmp_path / "work")
+
+    win = results[-1]
+    assert win.registered is True
+    assert win.regressions  # non-empty: at least one build dropped
+    assert win.regressions[0][0] == "wiz-orc-cha-mal"  # names the dropped build
+    assert win.regressions[0][1] < 0                   # a negative delta
+
+
+def test_loop_no_regressions_for_a_single_identity_objective(tmp_path):
+    # identities=[] for a single-identity objective -> regs=[] -> regressions
+    # stays None (never an empty list) on the registered result.
+    results = run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+        hub=_FakeHub(), image="img:dev", token="dev-token", owner="dev", iterations=1,
+        validation_n=3, now_fn=lambda: "2026-08-10T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work")
+    win = results[-1]
+    assert win.registered is True
+    assert win.regressions is None

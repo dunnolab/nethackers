@@ -43,6 +43,7 @@ class IterationResult:
     usage: TokenUsage | None = None
     digest: str | None = None
     stopped_reason: str | None = None
+    regressions: list[tuple[str, float]] | None = None
 
 
 def run_loop(
@@ -124,7 +125,6 @@ def run_loop(
             payload.update({
                 "identities": identities,
                 "parent_means": pm,
-                "floor": aggregate.floor(pm),
                 "coverage": aggregate.coverage(pm, identities),
             })
         on_state(payload)
@@ -291,14 +291,23 @@ def run_loop(
             else:
                 register_win(hub, token=token, owner=owner, child_manifest=manifest,
                              evidence=dev_ev, parent_digest=elite.digest)
+            # A rising union mean can still hide a per-identity drop on a set
+            # objective -- diff the OLD parent (elite, not yet reassigned)
+            # against the winning child so a regression is surfaced, not
+            # silently absorbed into the aggregate win (spec decision C §5/§9).
+            regs = (aggregate.regressions(
+                        aggregate.per_identity_means(elite.dev_evidence.results),   # OLD parent
+                        aggregate.per_identity_means(dev_ev.results))               # winning child
+                    if identities else [])
             elite = EliteState(digest, tree_store.path(digest), dev_fit, val_fit, dev_ev)
             wins += 1
-            _emit("registered", k + 1, tokens=op.total)
+            _emit("registered", k + 1, tokens=op.total, detail=(f"⚠{len(regs)}" if regs else ""))
             report(f"{tag} · ✓ REGISTERED dev={dev_fit:.3f} validation={val_fit:.3f}")
             _record(k + 1, IterationResult(True, "registered", dev_fitness=dev_fit,
                                            validation_fitness=val_fit, tokens=op.total,
                                            usage=op.usage, digest=digest,
-                                           stopped_reason=op.stopped_reason))
+                                           stopped_reason=op.stopped_reason,
+                                           regressions=regs or None))
         except Exception as e:
             _emit("error", k + 1, detail=str(e))
             report(f"{tag} · ✗ error: {e}")

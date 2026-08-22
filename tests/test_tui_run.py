@@ -27,6 +27,24 @@ def test_apply_state_builds_chain_ledger_and_selects_log():
     assert r.ledger_rows == [(1, True, "registered"), (2, False, "no dev gain")]
 
 
+def test_apply_state_registered_with_regression_detail_marks_the_ledger_reason():
+    # a "registered" state whose detail carries the regression-count marker
+    # (loop._emit's f"⚠{len(regs)}") must fold it into the ledger reason, so
+    # status.iterations_ledger's plain "{k} {✓/✗} {reason}" render surfaces it.
+    r = Run("r1", CFG)
+    r.apply_state(_state("registered", iteration=1, detail="⚠2"))
+    assert r.ledger_rows == [(1, True, "registered ⚠2")]
+
+
+def test_apply_state_registered_without_detail_keeps_the_plain_reason():
+    # single-identity wins never carry a detail marker -- the reason must stay
+    # exactly "registered" (existing behavior), not "registered " with a
+    # trailing space.
+    r = Run("r1", CFG)
+    r.apply_state(_state("registered", iteration=1, detail=""))
+    assert r.ledger_rows == [(1, True, "registered")]
+
+
 def test_apply_episode_orders_by_index_and_counts_completed():
     r = Run("r1", CFG)
     for idx in (2, 0, 1):  # arrival order != batch order (parallel eval)
