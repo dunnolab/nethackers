@@ -25,12 +25,12 @@ import httpx
 
 GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code"
 GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
-# Public GitHub App client id -- a public value, not a secret. The literal is
-# a placeholder replaced at App registration (M2a stands up no live GitHub App
-# -- see hub/auth.py's GitHubAppAuth, which resolves whatever token this flow
-# produces). Overridable via NETHACKERS_CLIENT_ID so a real id can be swapped
-# in later without a code change.
-NETHACKERS_APP_CLIENT_ID = "Iv1.PLACEHOLDER_REPLACE_AT_APP_REGISTRATION"
+# Public GitHub App client id -- a public value, not a secret, so it lives in
+# source. This is the "NetHackers Hub" App (a personal dev App today; swap for
+# the dunnolab-org App at launch). The hub resolves whatever token this flow
+# produces (hub/auth.py's GitHubAppAuth). Overridable via NETHACKERS_CLIENT_ID
+# to point at a throwaway/dev App without a code change.
+NETHACKERS_APP_CLIENT_ID = "Iv23liWooDi2WlkrDAOw"
 DEFAULT_CLIENT_ID = os.environ.get("NETHACKERS_CLIENT_ID", NETHACKERS_APP_CLIENT_ID)
 
 
