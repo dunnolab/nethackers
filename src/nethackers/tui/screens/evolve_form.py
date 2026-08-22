@@ -6,12 +6,11 @@ returned ``EvolvePlan`` drives a pushed ``EvolveScreen`` -- the same live
 monitor the CLI path uses.
 
 Objective is a **selection grid** (``tui.identity_grid.IdentityGrid``) that
-mirrors the Frontier view: a 4-column grid of role cards, one ``◻``/``◼``
-box per variation, plus a ``random`` toggle on top. Space toggles the cursor
-cell (an identity, a whole role via its header, or ``random``); ``a`` selects
-all 73, ``c`` clears all; ←/→ hop between roles. The grid resolves to
-``EvolveParams.objective`` -- a single identity, a bare role, ``"*"`` (all),
-``"random"``, or a sorted comma-list -- every shape
+mirrors the Frontier view: a grid of role cards, one ``◻``/``◼`` box per
+variation. Space toggles the cursor cell (an identity, or a whole role via its
+header); ``a`` selects all 73, ``c`` clears all; ←/→ hop between roles. The
+grid resolves to ``EvolveParams.objective`` -- a single identity, a bare role,
+``"*"`` (all), or a sorted comma-list -- every shape
 ``nethackers.hub.selector.resolve`` accepts. Seed root is a dropdown of the
 solution roots discovered under ``roots/`` (dirs with a
 ``nethackers.solution.json``).
@@ -200,9 +199,7 @@ class EvolveForm(Vertical):
             chip.update("[dim]none selected[/]")
             return
         resolved = resolve(self._objective)
-        if resolved.kind == "random":
-            chip.update("objective: [b]random[/]  broad natural-weighted sample")
-        elif "," in self._objective:  # an arbitrary set -> show the count, not the long list
+        if "," in self._objective:  # an arbitrary set -> show the count, not the long list
             chip.update(f"objective: [b]{len(resolved.identities)} builds[/] selected")
         else:  # a single identity, a role, or "*" (all)
             chip.update(

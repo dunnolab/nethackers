@@ -1,8 +1,7 @@
-"""The evolve-form's objective picker: a Frontier-style 4-column grid of role
-cards where every variation is a selection box, plus a ``random`` toggle on
-top. Pure helpers (``nav_order``/``selection_token``/``render_identity_grid``)
-live here so they unit-test without a mount; the interactive widget
-(``IdentityGrid``) wraps them.
+"""The evolve-form's objective picker: a Frontier-style grid of role cards
+where every variation is a selection box. Pure helpers (``nav_order``/
+``selection_token``/``render_identity_grid``) live here so they unit-test
+without a mount; the interactive widget (``IdentityGrid``) wraps them.
 
 Mirrors ``hubclient.render.render_frontier_grid``'s role-card layout (same
 ``ROLE_FULL``/``ROLE_ORDER`` grouping, all 73 ``IDENTITIES``) so the picker
@@ -22,8 +21,6 @@ from textual.widgets import Static
 
 from nethackers.hub.objectives import IDENTITIES
 from nethackers.hubclient.render import ROLE_FULL, ROLE_ORDER
-
-RANDOM = "random"  # the broad north-star objective, a toggle above the grid
 
 # role -> its identities (sorted), computed once from the catalog.
 _BY_ROLE: dict[str, list[str]] = defaultdict(list)
@@ -46,11 +43,10 @@ def identities_of(role: str) -> list[str]:
 
 
 def nav_order() -> list[str]:
-    """The flat cursor order over every navigable cell, in reading order:
-    ``"random"``, then for each role its header token ``"role:<role>"``
-    followed by its identity cells. Left/right hop between the ``role:`` and
-    ``"random"`` anchors; up/down step one cell."""
-    order: list[str] = [RANDOM]
+    """The flat cursor order over every navigable cell, in reading order: for
+    each role its header token ``"role:<role>"`` followed by its identity
+    cells. Left/right hop between the ``role:`` anchors; up/down step one cell."""
+    order: list[str] = []
     for role in ROLE_ORDER:
         order.append(f"role:{role}")
         order.extend(_BY_ROLE[role])
@@ -58,18 +54,15 @@ def nav_order() -> list[str]:
 
 
 def anchors() -> list[str]:
-    """The left/right hop targets: ``"random"`` + every ``"role:<role>"`` header."""
-    return [RANDOM] + [f"role:{role}" for role in ROLE_ORDER]
+    """The left/right hop targets: every ``"role:<role>"`` header."""
+    return [f"role:{role}" for role in ROLE_ORDER]
 
 
-def selection_token(selected: set[str], *, random_on: bool) -> str:
-    """Render the picked set to a token ``selector.resolve`` accepts:
-    ``""`` when nothing is picked; ``"random"`` when the random toggle is on
-    (mutually exclusive with the grid); ``"*"`` when all 73 are picked; the
-    bare role when exactly one full role (and nothing else) is picked; else a
-    sorted, deduped comma-list of the picked identities."""
-    if random_on:
-        return RANDOM
+def selection_token(selected: set[str]) -> str:
+    """Render the picked set to a token ``selector.resolve`` accepts: ``""``
+    when nothing is picked; ``"*"`` when all 73 are picked; the bare role when
+    exactly one full role (and nothing else) is picked; else a sorted, deduped
+    comma-list of the picked identities."""
     if not selected:
         return ""
     if selected == set(IDENTITIES):
@@ -93,27 +86,17 @@ def _cell(token: str, text: str, style: str, cursor: str) -> Text:
 
 
 def render_identity_grid(
-    selected: set[str], cursor: str, *, random_on: bool, ncols: int = 3
+    selected: set[str], cursor: str, *, ncols: int = 3
 ) -> RenderableType:
-    """The picker as a ``random`` toggle line above a 4-column grid of role
-    cards. Each card: ``<Role>  n/total`` header, then one ``◻``/``◼`` box per
-    variation (``race-align-gender``). The cursor cell is gold-chipped."""
-    total_sel = len(selected)
-    rnd_cur = cursor == RANDOM
-    box_style = _CURSOR if rnd_cur else (_ON if random_on else _OFF)
-    name_style = _CURSOR if rnd_cur else (_ON if random_on else _LABEL)
-    rnd = Text()
-    rnd.append(_BOX[random_on] + " ", style=box_style)
-    rnd.append("random", style=name_style)
-    rnd.append("  broad natural-weighted sample (north star)", style=_OFF)
-
+    """The picker as an ``ncols``-column grid of role cards. Each card:
+    ``<Role>  n/total`` header, then one ``◻``/``◼`` box per variation
+    (``race-align-gender``). The cursor cell is gold-chipped."""
     cards: list[Text] = []
     for role in ROLE_ORDER:
         n, tot = _role_count(role, selected)
         head_token = f"role:{role}"
         card = Text()
-        head = f"{ROLE_FULL[role]}"
-        card.append_text(_cell(head_token, head, _HEAD, cursor))
+        card.append_text(_cell(head_token, ROLE_FULL[role], _HEAD, cursor))
         card.append(f"  {n}/{tot}\n", style="dim" if head_token != cursor else _CURSOR)
         for ident in _BY_ROLE[role]:
             on = ident in selected
@@ -134,15 +117,14 @@ def render_identity_grid(
         row += [Text("")] * (ncols - len(row))
         table.add_row(*row)
 
-    summary = Text(f"\n{total_sel} build(s) selected"
-                   + ("  ·  random" if random_on else ""), style="dim")
-    return Group(rnd, Text(""), table, summary)
+    summary = Text(f"\n{len(selected)} build(s) selected", style="dim")
+    return Group(table, summary)
 
 
 def _anchor_of(cursor: str) -> str:
-    """The left/right hop anchor the cursor currently sits under: itself if it
-    is ``random``/a ``role:`` header, else its role's header."""
-    if cursor == RANDOM or cursor.startswith("role:"):
+    """The left/right hop anchor the cursor sits under: itself if it is a
+    ``role:`` header, else its role's header."""
+    if cursor.startswith("role:"):
         return cursor
     return f"role:{cursor.split('-', 1)[0]}"
 
@@ -150,11 +132,11 @@ def _anchor_of(cursor: str) -> str:
 class IdentityGrid(Static):
     """The interactive objective picker: a focusable Frontier-style grid whose
     cells are selection boxes. Arrows move the cursor (up/down one cell,
-    left/right hop roles), space toggles it (an identity, a whole role, or the
-    ``random`` marker), ``a`` selects all 73, ``c`` clears all. Posts
-    ``Changed`` on every selection change; ``token()`` renders the picked set
-    to a ``selector.resolve`` string. Escape is left to bubble so the form's
-    modal nav reclaims control."""
+    left/right hop roles), space toggles it (an identity or a whole role via its
+    header), ``a`` selects all 73, ``c`` clears all. Posts ``Changed`` on every
+    selection change; ``token()`` renders the picked set to a
+    ``selector.resolve`` string. Escape is left to bubble so the form's modal
+    nav reclaims control."""
 
     can_focus = True
 
@@ -166,25 +148,23 @@ class IdentityGrid(Static):
     def __init__(self, **kwargs: object) -> None:
         super().__init__("", **kwargs)
         self.selected: set[str] = set()
-        self.random_on: bool = False
         self._order = nav_order()
         self._anchors = anchors()
-        self.cursor: str = self._order[0]  # "random"
+        self.cursor: str = self._order[0]  # the first role header
 
     def on_mount(self) -> None:
         self._repaint()
 
     # ---- read ---------------------------------------------------------------
     def token(self) -> str:
-        return selection_token(self.selected, random_on=self.random_on)
+        return selection_token(self.selected)
 
     # ---- render -------------------------------------------------------------
     # NB: not ``_render`` -- that name is Textual Widget's own internal, which
     # must return a visual; overriding it with a None-returning repaint crashes
     # layout.
     def _repaint(self) -> None:
-        self.update(render_identity_grid(self.selected, self.cursor,
-                                         random_on=self.random_on))
+        self.update(render_identity_grid(self.selected, self.cursor))
 
     def _changed(self) -> None:
         self._repaint()
@@ -206,31 +186,22 @@ class IdentityGrid(Static):
 
     # ---- selection ----------------------------------------------------------
     def _toggle(self) -> None:
-        if self.cursor == RANDOM:
-            self.random_on = not self.random_on
-            if self.random_on:
-                self.selected.clear()
-        elif self.cursor.startswith("role:"):
+        if self.cursor.startswith("role:"):
             idents = set(identities_of(self.cursor.split(":", 1)[1]))
             self.selected = (self.selected - idents
                              if idents <= self.selected else self.selected | idents)
-            self.random_on = False
+        elif self.cursor in self.selected:
+            self.selected.discard(self.cursor)
         else:
-            if self.cursor in self.selected:
-                self.selected.discard(self.cursor)
-            else:
-                self.selected.add(self.cursor)
-            self.random_on = False
+            self.selected.add(self.cursor)
         self._changed()
 
     def select_all(self) -> None:
         self.selected = set(IDENTITIES)
-        self.random_on = False
         self._changed()
 
     def clear_all(self) -> None:
         self.selected = set()
-        self.random_on = False
         self._changed()
 
     def on_key(self, event: events.Key) -> None:

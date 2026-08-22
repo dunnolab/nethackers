@@ -19,32 +19,31 @@ _WIZ = sorted(i for i in IDENTITIES if i.startswith("wiz-"))
 
 # ---- pure helpers -------------------------------------------------------
 
-def test_nav_order_random_then_roles_then_idents():
+def test_nav_order_roles_then_idents():
     order = nav_order()
-    assert order[0] == "random"
+    assert order[0] == "role:arc"                    # first role header, no "random"
+    assert "random" not in order
     assert "role:wiz" in order
     assert order.index("role:wiz") < order.index("wiz-elf-cha-mal")
-    assert len(order) == 1 + 13 + len(IDENTITIES)  # random + 13 role headers + 73 builds
+    assert len(order) == 13 + len(IDENTITIES)        # 13 role headers + 73 builds
 
 
 def test_selection_token_cases():
-    assert selection_token(set(), random_on=False) == ""
-    assert selection_token(set(), random_on=True) == "random"
-    assert selection_token({"a"}, random_on=True) == "random"  # random wins / exclusive
-    assert selection_token(set(IDENTITIES), random_on=False) == "*"
-    assert selection_token(set(_WIZ), random_on=False) == "wiz"  # exactly one full role
+    assert selection_token(set()) == ""
+    assert selection_token(set(IDENTITIES)) == "*"
+    assert selection_token(set(_WIZ)) == "wiz"       # exactly one full role
     two = {"wiz-elf-cha-mal", "val-dwa-law-fem"}
-    assert selection_token(two, random_on=False) == "val-dwa-law-fem,wiz-elf-cha-mal"  # sorted list
+    assert selection_token(two) == "val-dwa-law-fem,wiz-elf-cha-mal"  # sorted list
     partial = set(_WIZ[:3])  # a partial role -> comma-list, not the bare role name
-    assert selection_token(partial, random_on=False) == ",".join(sorted(partial))
+    assert selection_token(partial) == ",".join(sorted(partial))
 
 
 def test_render_shows_boxes_counts_and_labels():
     sel = set(_WIZ) | {"val-dwa-law-fem"}
     out = Console(record=True, width=120)
-    out.print(render_identity_grid(sel, "wiz-gno-neu-fem", random_on=False))
+    out.print(render_identity_grid(sel, "wiz-gno-neu-fem"))
     text = out.export_text()
-    assert "random" in text
+    assert "random" not in text                      # the random toggle is gone
     assert "Wizard" in text and "10/10" in text     # full role count
     assert "◼" in text and "◻" in text              # filled + empty boxes both present
     assert "elf-cha-mal" in text                     # a variation label
@@ -89,22 +88,6 @@ async def test_select_all_and_clear_all():
         assert grid.selected == set() and grid.token() == ""
 
 
-async def test_random_is_exclusive_with_identities():
-    app = _Host()
-    async with app.run_test() as pilot:
-        grid = app.query_one(IdentityGrid)
-        grid.cursor = "wiz-elf-cha-mal"
-        grid._toggle()
-        assert grid.selected == {"wiz-elf-cha-mal"} and not grid.random_on
-        grid.cursor = "random"
-        grid._toggle()
-        await pilot.pause()
-        assert grid.random_on and grid.selected == set() and grid.token() == "random"
-        grid.cursor = "wiz-elf-cha-mal"
-        grid._toggle()
-        assert not grid.random_on and grid.selected == {"wiz-elf-cha-mal"}
-
-
 async def test_space_key_toggles_cursor_cell_and_posts_changed():
     app = _Host()
     async with app.run_test() as pilot:
@@ -123,6 +106,6 @@ async def test_arrow_down_moves_cursor():
         grid = app.query_one(IdentityGrid)
         grid.focus()
         await pilot.pause()
-        assert grid.cursor == "random"
+        assert grid.cursor == nav_order()[0]  # starts on the first role header
         await pilot.press("down")
-        assert grid.cursor == nav_order()[1]  # first role header
+        assert grid.cursor == nav_order()[1]  # into that role's first build
