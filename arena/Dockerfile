@@ -14,6 +14,9 @@ FROM ${NLE_BASE}
 
 # Application layer -- our source. `uv sync` (no longer --no-install-project)
 # installs the nethackers package itself into the venv, for scoring.
+# README.md + LICENSE: `uv sync` installs the project, so hatchling reads them
+# for the wheel's metadata (`readme`/`license` in pyproject) -- absent = build fails.
+COPY README.md LICENSE ./
 COPY src ./src
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-editable --no-dev --extra nle --extra autoascend

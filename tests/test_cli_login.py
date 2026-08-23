@@ -168,6 +168,9 @@ def test_evolve_defaults_owner_token_to_stored_creds_when_flags_absent(tmp_path,
         return []
 
     monkeypatch.setattr(launch, "run_loop", fake_run_loop, raising=False)
+    # operator auth is a host precondition, not what these cred/flag tests cover;
+    # without this they fail on any host (e.g. CI) with no claude/codex login.
+    monkeypatch.setattr(cli, "sandbox_preflight", lambda operator: None)
     monkeypatch.setattr(cli, "_load_creds", lambda: cred.Credentials("castiel", "stored-tok"))
 
     rc = cli._run(["evolve", "random", "--seed", str(seed), "--workdir", str(tmp_path / "w")])
@@ -186,6 +189,9 @@ def test_evolve_falls_back_to_dev_when_no_creds_and_no_flags(tmp_path, monkeypat
         return []
 
     monkeypatch.setattr(launch, "run_loop", fake_run_loop, raising=False)
+    # operator auth is a host precondition, not what these cred/flag tests cover;
+    # without this they fail on any host (e.g. CI) with no claude/codex login.
+    monkeypatch.setattr(cli, "sandbox_preflight", lambda operator: None)
     monkeypatch.setattr(cli, "_load_creds", lambda: None)
 
     rc = cli._run(["evolve", "random", "--seed", str(seed), "--workdir", str(tmp_path / "w")])
@@ -204,6 +210,9 @@ def test_evolve_explicit_flags_win_over_stored_creds(tmp_path, monkeypatch):
         return []
 
     monkeypatch.setattr(launch, "run_loop", fake_run_loop, raising=False)
+    # operator auth is a host precondition, not what these cred/flag tests cover;
+    # without this they fail on any host (e.g. CI) with no claude/codex login.
+    monkeypatch.setattr(cli, "sandbox_preflight", lambda operator: None)
     # Stored creds are present, but explicit flags must still win.
     monkeypatch.setattr(cli, "_load_creds", lambda: cred.Credentials("castiel", "stored-tok"))
 
