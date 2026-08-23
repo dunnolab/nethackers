@@ -1,0 +1,43 @@
+name: Publish Python CLI
+
+# Publishes the `nethackers` CLI to PyPI via OIDC trusted publishing. The trust
+# is bound to owner/repo `dunnolab/nethackers`, this workflow filename, and the
+# `pypi` environment -- keep all three stable. Testing/linting live in ci.yml;
+# this workflow only builds, checks, and publishes a tagged release.
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      release_ref:
+        description: Existing release tag to publish (e.g. v0.8.0)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    environment:
+      name: pypi
+      url: https://pypi.org/p/nethackers
+    permissions:
+      contents: read
+      id-token: write
+    runs-on: ubuntu-latest
+    env:
+      RELEASE_REF: ${{ github.event_name == 'workflow_dispatch' && inputs.release_ref || github.ref_name }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          ref: ${{ env.RELEASE_REF }}
+      - uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9 # v9.0.0
+      - name: Match the release tag to the package version
+        run: test "$RELEASE_REF" = "v$(uv version --short)"
+      - name: Build and inspect distributions
+        run: |
+          uv build --no-sources
+          uvx twine check dist/*
+      - name: Publish with PyPI OIDC
+        run: uv publish --trusted-publishing always
