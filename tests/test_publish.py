@@ -120,6 +120,31 @@ def test_publish_solution_syncs_commits_and_returns_sha(tmp_path):
     assert verbs == ["add", "commit", "push", "rev-parse"]
 
 
+def test_publish_excludes_pycache_and_build_junk(tmp_path):
+    # The worktree accumulates __pycache__ / *.pyc / numba *.nbc caches from
+    # running the bot during eval; none of that belongs in a solution repo.
+    sol = _solution(tmp_path)
+    (sol / "__pycache__").mkdir()
+    (sol / "__pycache__" / "bot.cpython-311.pyc").write_text("x")
+    (sol / "pkg" / "__pycache__").mkdir()
+    (sol / "pkg" / "__pycache__" / "helper.cpython-311.pyc").write_text("x")
+    (sol / "pkg" / "__pycache__" / "utils.bfs.py311.1.nbc").write_text("x")
+    (sol / "stray.pyc").write_text("x")
+    (sol / ".DS_Store").write_text("x")
+
+    P.publish_solution(sol, "sam/nethacker", message="m", run=FakeRun(sha="d" * 40),
+                       workdir=tmp_path / "wd")
+    repo = tmp_path / "wd" / "repo"
+
+    assert (repo / "bot.py").exists() and (repo / "pkg" / "helper.py").exists()  # source kept
+    assert not (repo / "__pycache__").exists()
+    assert not (repo / "pkg" / "__pycache__").exists()
+    assert not (repo / "stray.pyc").exists() and not (repo / ".DS_Store").exists()
+    junk = [p for p in repo.rglob("*") if p.suffix in {".pyc", ".pyo", ".nbc", ".nbi"}
+            or p.name == "__pycache__"]
+    assert junk == []
+
+
 def test_publish_solution_no_changes_skips_push(tmp_path):
     sol = _solution(tmp_path)
     fake = FakeRun(commit_rc=1, sha="c" * 40)  # "nothing to commit"

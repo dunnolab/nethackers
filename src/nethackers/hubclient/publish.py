@@ -80,11 +80,29 @@ def ensure_repo(slug: str, *, run: Run = subprocess.run) -> None:
                    "--accept-visibility-change-consequences"])
 
 
+# Build/cache artifacts that pile up in the worktree from running the bot during
+# eval/mutation -- never publish them into a solution repo.
+_JUNK_NAMES = frozenset(
+    {"__pycache__", ".DS_Store", ".pytest_cache", ".mypy_cache", ".ruff_cache"}
+)
+_JUNK_SUFFIXES = (".pyc", ".pyo", ".nbc", ".nbi")
+_junk_ignore = shutil.ignore_patterns(
+    "__pycache__", "*.pyc", "*.pyo", "*.nbc", "*.nbi",
+    ".DS_Store", ".pytest_cache", ".mypy_cache", ".ruff_cache",
+)
+
+
+def _is_junk(name: str) -> bool:
+    return name in _JUNK_NAMES or name.endswith(_JUNK_SUFFIXES)
+
+
 def _sync_tree(src: Path, repo: Path) -> None:
     """Make ``repo``'s working tree match ``src``'s files, leaving ``.git``
     alone: delete everything tracked-or-not except ``.git``, then copy every
-    top-level entry of ``src`` (skipping any ``.git``) in. ``git add -A``
-    afterwards turns this into the right adds/mods/deletes."""
+    top-level entry of ``src`` in -- skipping ``.git`` and build/cache artifacts
+    (``__pycache__``, ``*.pyc``, numba ``*.nbc``/``*.nbi``, ...) at every level.
+    ``git add -A`` afterwards turns this into the right adds/mods/deletes, so a
+    re-publish also PRUNES any junk earlier leaked into the repo."""
     for item in repo.iterdir():
         if item.name == ".git":
             continue
@@ -93,11 +111,11 @@ def _sync_tree(src: Path, repo: Path) -> None:
         else:
             item.unlink()
     for item in src.iterdir():
-        if item.name == ".git":
+        if item.name == ".git" or _is_junk(item.name):
             continue
         dest = repo / item.name
         if item.is_dir():
-            shutil.copytree(item, dest)
+            shutil.copytree(item, dest, ignore=_junk_ignore)
         else:
             shutil.copy2(item, dest)
 
