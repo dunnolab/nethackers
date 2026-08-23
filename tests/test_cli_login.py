@@ -44,6 +44,26 @@ def test_login_saves_resolved_identity(monkeypatch, capsys):
     assert "castiel" in capsys.readouterr().err
 
 
+def test_login_prompt_emits_clickable_hyperlink(monkeypatch):
+    """The verification URL is emitted as an OSC 8 terminal hyperlink -- so a
+    click opens the browser -- not merely styled text the terminal might fail to
+    auto-detect (it does, inside the bordered panel)."""
+    import io
+
+    from rich.console import Console
+
+    buf = io.StringIO()
+    monkeypatch.setattr(cli, "err", Console(file=buf, force_terminal=True, width=100))
+    monkeypatch.setattr(cli.clipboard, "copy", lambda _s: False)  # don't touch the real clipboard
+
+    url = "https://github.com/login/device"
+    cli._login_prompt(url, "WDJB-MJHT")
+    out = buf.getvalue()
+
+    assert "\x1b]8;" in out              # an OSC 8 hyperlink is emitted at all
+    assert f";{url}\x1b\\" in out        # ...and its target is the verification URL
+
+
 def test_login_passes_device_login_token_through_to_whoami_and_save(monkeypatch):
     # Strengthens the above: prove the *specific* access token device_login() returns is what
     # whoami_from_token() gets asked about, and (with the refresh token) what ends up saved --
