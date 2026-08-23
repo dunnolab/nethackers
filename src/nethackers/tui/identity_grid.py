@@ -11,6 +11,7 @@ gold cursor marks the focused cell."""
 from __future__ import annotations
 
 from collections import defaultdict
+from typing import Any
 
 from rich.console import Group, RenderableType
 from rich.table import Table
@@ -145,7 +146,7 @@ class IdentityGrid(Static):
             self.grid = grid
             super().__init__()
 
-    def __init__(self, **kwargs: object) -> None:
+    def __init__(self, **kwargs: Any) -> None:
         super().__init__("", **kwargs)
         self.selected: set[str] = set()
         self._order = nav_order()

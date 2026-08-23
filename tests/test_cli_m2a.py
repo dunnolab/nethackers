@@ -45,11 +45,6 @@ import pytest
 from rich.console import Console
 
 import nethackers.cli as C
-from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
-from nethackers.hub.auth import LocalStubAuth
-from nethackers.hub.objectives import CATALOG
-from nethackers.hub.store import Store
-from nethackers.hub.validate import LocalStubGit, SolutionReference, register
 from nethackers.hubclient import output as O
 from nethackers.hubclient.client import (
     _num,
@@ -395,93 +390,6 @@ def test_cli_show_dispatches_with_digest(monkeypatch, capsys):
     assert ("show", "sha256:abc") in calls
     payload = json.loads(capsys.readouterr().out)
     assert payload == {"digest": "sha256:abc"}
-
-
-def test_cli_register_dispatches_with_gathered_reference_manifest_evidence(
-    monkeypatch, capsys, tmp_path
-):
-    solution_dir = tmp_path / "solution"
-    solution_dir.mkdir()
-    manifest = {"root": ".", "entrypoint": "bot.py"}
-    (solution_dir / "nethackers.solution.json").write_text(json.dumps(manifest))
-
-    evidence = {"solution_digest": "sha256:abc"}
-    evidence_path = tmp_path / "evidence.json"
-    evidence_path.write_text(json.dumps(evidence))
-
-    FakeHubClient, _calls = _make_fake_hub_client({})
-    monkeypatch.setattr(C, "HubClient", FakeHubClient)
-
-    seen = {}
-
-    def fake_register_solution(*, hub, reference, manifest, evidence, prompt=print):
-        seen["hub"] = hub
-        seen["reference"] = reference
-        seen["manifest"] = manifest
-        seen["evidence"] = evidence
-        seen["prompt"] = prompt
-        return {"solution_digest": "sha256:abc", "owner": "sam"}
-
-    monkeypatch.setattr(C, "register_solution", fake_register_solution)
-
-    rc = C.main(
-        [
-            "register",
-            "--repo",
-            "github.com/sam/nethacker",
-            "--commit",
-            "a" * 40,
-            "--solution",
-            str(solution_dir),
-            "--evidence",
-            str(evidence_path),
-        ]
-    )
-
-    assert rc == 0
-    assert seen["reference"] == {"repo": "github.com/sam/nethacker", "commit": "a" * 40}
-    assert seen["manifest"] == manifest
-    assert seen["evidence"] == evidence
-    assert isinstance(seen["hub"], FakeHubClient)
-    assert callable(seen["prompt"])  # cli.py must wire a prompt sink -- see Property 5
-    payload = json.loads(capsys.readouterr().out)
-    assert payload == {"solution_digest": "sha256:abc", "owner": "sam"}
-
-
-def test_cli_register_accepts_manifest_file_directly(monkeypatch, capsys, tmp_path):
-    manifest = {"root": ".", "entrypoint": "bot.py"}
-    manifest_path = tmp_path / "manifest.json"
-    manifest_path.write_text(json.dumps(manifest))
-    evidence_path = tmp_path / "evidence.json"
-    evidence_path.write_text(json.dumps({"solution_digest": "sha256:abc"}))
-
-    FakeHubClient, _calls = _make_fake_hub_client({})
-    monkeypatch.setattr(C, "HubClient", FakeHubClient)
-
-    seen = {}
-
-    def fake_register_solution(*, hub, reference, manifest, evidence, prompt=print):
-        seen["manifest"] = manifest
-        return {"ok": True}
-
-    monkeypatch.setattr(C, "register_solution", fake_register_solution)
-
-    rc = C.main(
-        [
-            "register",
-            "--repo",
-            "x/y",
-            "--commit",
-            "a" * 40,
-            "--manifest",
-            str(manifest_path),
-            "--evidence",
-            str(evidence_path),
-        ]
-    )
-
-    assert rc == 0
-    assert seen["manifest"] == manifest
 
 
 # --- Group 1: emit dispatch (resolve()'s 3-tier precedence) ----------------
@@ -1015,7 +923,7 @@ def test_cli_show_output_plain_matches_baseline_table(monkeypatch, capsys):
 # --- Property 5: --hub default + override, before AND after the subcommand -
 
 
-def test_cli_hub_defaults_to_localhost(monkeypatch):
+def test_cli_hub_defaults_to_prod(monkeypatch):
     FakeHubClient, calls = _make_fake_hub_client({})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
     monkeypatch.delenv("NETHACKERS_HUB", raising=False)
@@ -1023,7 +931,7 @@ def test_cli_hub_defaults_to_localhost(monkeypatch):
     rc = C.main(["map"])
 
     assert rc == 0
-    assert calls[0] == ("__init__", "http://localhost:8000")
+    assert calls[0] == ("__init__", "https://nethackers.dunnolab.ai")
 
 
 def test_cli_hub_override_flag(monkeypatch):
@@ -1061,44 +969,6 @@ def test_cli_hub_flag_after_subcommand(monkeypatch):
 
 
 # --- Group 5: human chrome (register's device flow, errors) -> stderr -----
-
-
-def test_cli_register_device_flow_prompt_goes_to_stderr_not_stdout(monkeypatch, capsys, tmp_path):
-    solution_dir = tmp_path / "solution"
-    solution_dir.mkdir()
-    manifest = {"root": ".", "entrypoint": "bot.py"}
-    (solution_dir / "nethackers.solution.json").write_text(json.dumps(manifest))
-    evidence_path = tmp_path / "evidence.json"
-    evidence_path.write_text(json.dumps({"solution_digest": "sha256:abc"}))
-
-    FakeHubClient, _calls = _make_fake_hub_client({})
-    monkeypatch.setattr(C, "HubClient", FakeHubClient)
-
-    def fake_register_solution(*, hub, reference, manifest, evidence, prompt=print):
-        prompt(
-            "To authorize, open https://github.com/login/device and enter code: ABCD-1234"
-        )
-        return {"solution_digest": "sha256:abc", "owner": "sam"}
-
-    monkeypatch.setattr(C, "register_solution", fake_register_solution)
-
-    rc = C.main(
-        [
-            "register",
-            "--repo", "github.com/sam/nethacker",
-            "--commit", "a" * 40,
-            "--solution", str(solution_dir),
-            "--evidence", str(evidence_path),
-            "-o", "json",
-        ]
-    )
-
-    assert rc == 0
-    captured = capsys.readouterr()
-    assert "To authorize" in captured.err
-    assert "To authorize" not in captured.out
-    # -o json mode: stdout carries ONLY the final JSON result, nothing else.
-    assert json.loads(captured.out) == {"solution_digest": "sha256:abc", "owner": "sam"}
 
 
 def test_cli_eval_unknown_objective_error_goes_to_stderr_via_rich_console(capsys, tmp_path):
@@ -1173,58 +1043,3 @@ def test_plain_render_search_empty_is_friendly_not_bare_header():
 
 def test_plain_render_show_empty_is_friendly_not_bare_header():
     assert plain_show({}) == "no such solution."
-
-
-# --- Property 7: the loop-closing regression --------------------------------
-# The final review's blocker: CLI `eval --objective` must produce evidence
-# that `register` actually accepts. Before this fix, `eval` had no
-# `--objective` flag at all and (via the retired legacy path) always
-# produced `objective.seed_set="cli"`, which `register` always rejected with
-# UnknownObjective -- this test fails against that pre-fix CLI.
-
-
-def test_cli_eval_objective_produces_registerable_evidence(monkeypatch, capsys, tmp_path):
-    identity = "val-dwa-law-fem"
-    spec = CATALOG[identity]
-
-    def fake_eval_batch(solution, spec_arg, image, *, now, max_parallel_evals=8):
-        assert spec_arg is spec  # the CLI resolved exactly this catalog entry
-        results = [
-            TrajectoryResult(
-                trajectory_id=seed, status="completed", progress=0.1, ascended=False,
-                steps=10, turns=9, max_depth=2, end_status="died", error=None,
-                wall_seconds=0.1, character=character, milestone=None,
-            )
-            for seed, character in spec.batch
-        ]
-        objective = Objective(
-            character=None, max_steps=spec.max_steps,
-            no_progress_timeout=spec.no_progress_timeout,
-            action_timeout_seconds=spec.action_timeout_seconds, seed_set=spec.name,
-        )
-        return Evidence.from_results(
-            solution_digest="sha256:looptest", objective=objective,
-            evaluator_image=image, results=results, created_at=now,
-        )
-
-    monkeypatch.setattr(C, "eval_batch", fake_eval_batch)
-
-    rc = C.main(["eval", str(tmp_path), "--objective", identity, "--image", "img:dev"])
-    assert rc == 0
-    evidence = Evidence.from_dict(json.loads(capsys.readouterr().out))
-
-    store = Store(tmp_path / "hub.sqlite3")
-    store.init_schema()
-    auth = LocalStubAuth({"tok-sam": "sam"})
-    git = LocalStubGit(
-        manifest={"root": ".", "entrypoint": "bot.py"}, digest=evidence.solution_digest
-    )
-    reference = SolutionReference(repo="github.com/sam/nethacker", commit="a" * 40)
-
-    result = register(
-        store, auth, token="tok-sam", reference=reference, evidence=evidence,
-        git=git, now="2026-01-01T00:00:00Z",
-    )
-
-    assert result.objective == identity
-    assert result.atoms_inserted == len(spec.batch)

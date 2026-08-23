@@ -111,11 +111,11 @@ class HubClient:
         evidence: dict[str, Any],
     ) -> Any:
         """``POST /register`` with a ``Bearer`` token and the
-        ``{reference, manifest, evidence}`` body Task 12's
-        ``RegisterRequest`` expects. ``reference``/``manifest``/``evidence``
-        are plain dicts (``evidence`` is an ``Evidence.to_dict()``) -- this
-        method doesn't parse or validate their shape, it only transports
-        them."""
+        ``{reference, manifest, evidence}`` body the hub expects: the
+        ``repo@commit`` link (``reference``, the solution identity), the
+        solution ``manifest``, and the self-reported ``evidence`` (an
+        ``Evidence.to_dict()``). This method only transports them -- the hub
+        validates the link and the batch and writes per-identity atoms."""
         response = self._http.post(
             self._base + "/register",
             json={"reference": reference, "manifest": manifest, "evidence": evidence},

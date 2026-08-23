@@ -46,6 +46,7 @@ from nethackers.tui.run import Run
 from nethackers.tui.screens.evolve_form import EvolveForm
 from nethackers.tui.screens.home import HomeView
 from nethackers.tui.screens.hub import BoardsView, ElitesView, MapView
+from nethackers.tui.screens.login import LoginModal
 from nethackers.tui.screens.monitor import RunMonitor
 from nethackers.tui.screens.runs import RunsView
 from nethackers.tui.theme import CSS
@@ -59,9 +60,8 @@ _SECTIONS = [
 class NetHackersApp(App):
     """The dashboard shell. Six sections switched by ``1``..``6`` (or the
     matching tab) over a ``ContentSwitcher``, including the ``⚔ Evolve``
-    launch form (``e``/key ``6``); ``l`` remains a stub for the in-app login
-    flow a later task fills in (``nethackers login`` on the CLI already
-    works today)."""
+    launch form (``e``/key ``6``); ``l`` opens the in-app GitHub device-flow
+    login (``LoginModal``), and Home's own button logs in or out."""
 
     CSS = CSS
     BINDINGS = [
@@ -183,7 +183,30 @@ class NetHackersApp(App):
         self.action_show("evolve")
 
     def action_login(self) -> None:
-        pass  # in-app device flow deferred; `nethackers login` on the CLI works today
+        """Open the in-app GitHub device-flow login. On success the modal saves
+        the credential and hands it back; we adopt it and refresh the chrome."""
+        self.push_screen(LoginModal(), self._after_login)
+
+    def _after_login(self, creds: Credentials | None) -> None:
+        if creds is not None:
+            self._creds = creds
+            self._refresh_identity()
+
+    def action_logout(self) -> None:
+        from nethackers.hubclient import credentials
+        credentials.clear()
+        self._creds = None
+        self._refresh_identity()
+
+    def _refresh_identity(self) -> None:
+        """Re-render the identity bar and Home after a login/logout."""
+        who = f"@{self._creds.login}" if self._creds else "guest"
+        host = self._hub.split("//")[-1]
+        self._idbar_prefix = f" {who} · hub:{host}"
+        self._nav_update_hint()  # repaints #idbar with the new prefix + current legend
+        login = self._creds.login if self._creds else None
+        with contextlib.suppress(Exception):
+            self.query_one("#home", HomeView).set_login(login)
 
     # --- background runs ---------------------------------------------------
     #

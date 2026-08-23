@@ -27,7 +27,7 @@ def _summarize(run_dir: Path) -> dict | None:
         return None
     if not isinstance(cfg, dict):
         return None
-    wins, best_dev, best_held = 0, None, None
+    wins, best_dev, best_held, tokens = 0, None, None, 0
     mfile = run_dir / "metrics.jsonl"
     if mfile.exists():
         for line in mfile.read_text().splitlines():
@@ -37,6 +37,7 @@ def _summarize(run_dir: Path) -> dict | None:
                 continue
             if not isinstance(m, dict):
                 continue
+            tokens += int(m.get("tokens") or 0)  # operator tokens for this iteration
             if m.get("outcome") == "registered":
                 wins += 1
                 if m.get("dev_fitness") is not None:
@@ -55,6 +56,7 @@ def _summarize(run_dir: Path) -> dict | None:
         "wins": wins,
         "best_dev": best_dev,
         "best_held": best_held,
+        "tokens": tokens,
     }
 
 
@@ -70,6 +72,17 @@ def read_runs(runs_dir: Path) -> list[dict]:
             out.append(summary)
     out.sort(key=lambda r: r["created_at"], reverse=True)
     return out
+
+
+def run_totals(runs: list[dict]) -> dict:
+    """Aggregate the local evolve runs for the Home summary: how many runs,
+    total accepted wins, and total operator tokens spent across them all."""
+    return {
+        "runs": len(runs),
+        "wins": sum(int(r.get("wins", 0)) for r in runs),
+        "iterations": sum(int(r.get("iterations", 0)) for r in runs),
+        "tokens": sum(int(r.get("tokens", 0)) for r in runs),
+    }
 
 
 class RunsView(VerticalScroll):

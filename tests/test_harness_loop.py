@@ -98,9 +98,49 @@ def test_loop_registers_an_improvement(tmp_path):
         hub=hub, image="img:dev", token="dev-token", owner="dev", iterations=1,
 validation_n=3,
         now_fn=lambda: "2026-08-10T00:00:00Z",
-        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work")
+        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
+        publish=lambda wt: {"repo": "github.com/dev/nethacker", "commit": "a" * 40})
     assert results[0].registered is True
     assert len(hub.registered) == 1
+
+
+def test_loop_win_without_publisher_is_a_local_elite(tmp_path):
+    # No `publish` hook -> the win is accepted as a local elite only, never
+    # registered against the hub (no synthetic, unfetchable reference).
+    hub = _FakeHub()
+    results = run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+        hub=hub, image="img:dev", token="dev-token", owner="dev", iterations=1,
+        validation_n=3, now_fn=lambda: "2026-08-10T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work")
+    assert results[0].registered is True   # still a new (local) elite
+    assert hub.registered == []            # but nothing went to the hub
+
+
+class _FailingHub:
+    """register always fails (hub down / a 400). A validation-confirmed win must
+    still be kept as a local elite -- never discarded over a hub-side failure."""
+    def register(self, *, token, reference, manifest, evidence):
+        raise RuntimeError("hub 400")
+
+
+def test_loop_keeps_win_local_when_register_fails(tmp_path):
+    # iter1 (v1=0.40) beats the seed (v0=0.20) -> a validated win, but the hub
+    # register raises. The win must be KEPT as the local elite (registered=True,
+    # not recorded as an error), and the elite must ADVANCE to 0.40 -- proven by
+    # iter2 (v2=0.30) being rejected as no-dev-gain against it, not counted a win.
+    results = run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+        hub=_FailingHub(), image="img:dev", token="dev-token", owner="dev", iterations=2,
+        validation_n=3, now_fn=lambda: "2026-08-10T00:00:00Z",
+        runner=_fitness_runner(lambda v: [0.20, 0.40, 0.30][v]), workdir=tmp_path / "work",
+        publish=lambda wt: {"repo": "github.com/dev/nethacker", "commit": "a" * 40})
+    assert results[0].registered is True         # win kept despite the register 400
+    assert results[0].reason == "registered"     # not "error:hub 400"
+    assert results[1].registered is False         # elite advanced to 0.40...
+    assert results[1].reason == "no-dev-gain"     # ...so iter2's 0.30 is rejected
 
 
 def test_loop_records_faithful_usage(tmp_path):
@@ -233,11 +273,12 @@ def test_loop_reports_progress(tmp_path):
         hub=_FakeHub(), image="img:dev", token="dev-token", owner="dev", iterations=1,
 validation_n=3,
         now_fn=lambda: "2026-08-10T00:00:00Z", report=events.append,
-        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work")
+        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
+        publish=lambda wt: {"repo": "github.com/dev/nethacker", "commit": "a" * 40})
     text = "\n".join(events)
     assert "cold-start" in text      # cold-start scoring announced
     assert "mutating" in text        # per-iteration phases announced
-    assert "REGISTERED" in text      # the win is announced live
+    assert "REGISTERED" in text      # the hub-registered win is announced live
 
 
 def test_loop_emits_state_transitions(tmp_path):
@@ -403,6 +444,7 @@ def test_loop_registers_a_slice_per_identity_for_a_set_objective(tmp_path):
         validation_n=3, migrate=False,
         now_fn=lambda: "2026-08-10T00:00:00Z",
         runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
+        publish=lambda wt: {"repo": "github.com/dev/nethacker", "commit": "a" * 40},
         on_state=states.append)
 
     assert len(hub.seed_sets) == 2

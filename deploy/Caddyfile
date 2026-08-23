@@ -1,0 +1,10 @@
+nethackers.dunnolab.ai {
+	encode zstd gzip
+	reverse_proxy hub:8000
+	header {
+		Referrer-Policy "strict-origin-when-cross-origin"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		-Server
+	}
+}

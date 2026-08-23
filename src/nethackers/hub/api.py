@@ -1,38 +1,37 @@
-"""Hub FastAPI app (M2a Task 12): the thin HTTP surface over the read views
-and the register write-path built in Tasks 5-11. See task-12-context.md,
-which governs this implementation. Nothing in this module runs candidate
-code, computes a score, or does anything ``store``/``auth``/the register
-ladder don't already do -- every handler just parses its request, delegates,
-and maps the result/exception to an HTTP response.
+"""Hub FastAPI app: the thin HTTP surface over the read views and the
+link-only register write-path. Nothing in this module runs candidate code,
+computes a score, or does anything ``store``/``auth``/the register ladder
+don't already do -- every handler just parses its request, delegates, and
+maps the result/exception to an HTTP response.
 
-``create_app(store, auth, *, catalog=CATALOG)`` builds a fresh ``FastAPI``
-app with every handler a closure over its own ``store``/``auth``/``catalog``
--- no module-level app singleton, so each caller (each test) gets an
-isolated instance. Reads hit the view/store functions directly.
-``POST /register`` extracts a Bearer token, wraps the request body's
-``manifest`` + ``evidence.solution_digest`` in a ``LocalStubGit`` (M2a's
-self-reported trust model -- see validate.py's module docstring: real
-subprocess-git verification is M2b-parked), and delegates to
-``validate.register``, mapping its exceptions to HTTP status codes.
+``create_app(store, auth, *, catalog=CATALOG, git_factory=...)`` builds a
+fresh ``FastAPI`` app with every handler a closure over its own
+``store``/``auth``/``catalog``/``git_factory`` -- no module-level app
+singleton, so each caller (each test) gets an isolated instance. Reads hit
+the view/store functions directly. ``POST /register`` extracts the caller's
+Bearer token, builds a commit-checker from it via ``git_factory`` (a real
+``GitHubRead`` by default; tests inject a fake), and delegates to
+``validate.register`` -- the clone-free identity+ownership+commit-exists
+ladder -- mapping its exceptions to HTTP status codes (``AuthError`` -> 401,
+``WrongOwner`` -> 403, ``RegisterError`` -> 400, ``GitHubReadError`` -> 502).
+``GET /healthz`` is an unauthenticated liveness probe. The hub holds no
+GitHub secret: every GitHub read uses the caller's own token.
 
-**Catalog-injection scope (M2a):** the injected ``catalog`` drives only this
+**Catalog-injection scope:** the injected ``catalog`` drives only this
 module's own listing/resolution endpoints -- ``GET /objectives``,
 ``GET /objectives/{name}/batch``, and the name->spec resolution
-``GET /board``'s ``?objective=`` branch needs. ``GET /elites`` and
-``POST /register`` delegate straight to ``views.elites.read_elites`` /
-``validate.register``, which both resolve against the *module*
-``nethackers.hub.objectives.CATALOG`` -- not whatever ``catalog`` this app
-was built with. In normal use (the default ``catalog=CATALOG``) every
-endpoint agrees, since both are the same dict object. Threading a genuinely
-*divergent* catalog all the way through to ``read_elites``/``register`` as
-well would mean changing their own signatures (Tasks 8/11) -- parked, out of
-this task's scope.
+``GET /board``'s ``?objective=`` branch needs. ``GET /elites`` delegates
+straight to ``views.elites.read_elites``, which resolves against the
+*module* ``nethackers.hub.objectives.CATALOG`` -- not whatever ``catalog``
+this app was built with. In normal use (the default ``catalog=CATALOG``)
+every endpoint agrees, since both are the same dict object.
 """
 
 from __future__ import annotations
 
 import json
 import os
+from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import Any
@@ -42,10 +41,11 @@ from pydantic import BaseModel
 
 from nethackers.contracts.models import Evidence, ObjectiveSpec
 from nethackers.hub.auth import AuthError, AuthProvider, GitHubAppAuth, LocalStubAuth
+from nethackers.hub.github import GitHubRead, GitHubReadError
 from nethackers.hub.objectives import CATALOG
 from nethackers.hub.store import Store
 from nethackers.hub.validate import (
-    LocalStubGit,
+    CommitChecker,
     RegisterError,
     SolutionReference,
     WrongOwner,
@@ -65,12 +65,12 @@ _SEARCH_COLUMNS: tuple[str, ...] = (
 
 
 class RegisterRequest(BaseModel):
-    """The ``POST /register`` envelope. ``reference``/``manifest``/
-    ``evidence`` are kept as raw dicts -- the handler parses them by hand
-    (``SolutionReference(**...)``, ``Evidence.from_dict(...)``) rather than
-    mirroring their shape as nested Pydantic models, since the dataclasses
-    in ``validate.py``/``contracts.models`` are already the source of truth
-    for it."""
+    """The ``POST /register`` envelope: a ``repo@commit`` link. ``reference``
+    is kept as a raw ``{repo, commit}`` dict -- the handler parses it by hand
+    (``SolutionReference(**...)``) rather than mirroring its shape as a nested
+    Pydantic model, since the ``SolutionReference`` dataclass in ``validate.py``
+    is already the source of truth for it. ``root`` is the optional
+    subdirectory the solution lives under (default: the repo root)."""
 
     reference: dict[str, str]
     manifest: dict[str, Any]
@@ -89,13 +89,23 @@ def _bearer_token(authorization: str | None) -> str:
 
 
 def create_app(
-    store: Store, auth: AuthProvider, *, catalog: dict[str, ObjectiveSpec] = CATALOG
+    store: Store,
+    auth: AuthProvider,
+    *,
+    catalog: dict[str, ObjectiveSpec] = CATALOG,
+    git_factory: Callable[[str], CommitChecker] = lambda token: GitHubRead(token),
 ) -> FastAPI:
     """Build a hub API app over ``store``/``auth``. Every route is a closure
-    over ``store``/``auth``/``catalog`` -- see module docstring for the
-    catalog-injection scope. Reads delegate straight to the view/store
-    functions; nothing here executes candidate code."""
+    over ``store``/``auth``/``catalog``/``git_factory`` -- see module
+    docstring for the catalog-injection scope. ``git_factory`` maps the
+    caller's Bearer token to a commit-checker (default: a real ``GitHubRead``;
+    tests inject a fake). Reads delegate straight to the view/store functions;
+    nothing here executes candidate code."""
     app = FastAPI()
+
+    @app.get("/healthz")
+    def healthz() -> dict[str, str]:
+        return {"status": "ok"}
 
     @app.get("/objectives")
     def list_objectives() -> list[dict[str, Any]]:
@@ -178,16 +188,19 @@ def create_app(
         body: RegisterRequest, authorization: str | None = Header(default=None)
     ) -> dict[str, Any]:
         token = _bearer_token(authorization)
-        evidence = Evidence.from_dict(body.evidence)
+        git = git_factory(token)
         reference = SolutionReference(**body.reference)
-        # M2a trust: the git seam is a stub built straight from the
-        # request's own manifest + claimed digest, so commit_exists/
-        # fetch_manifest/content_digest all pass -- see module docstring.
-        git = LocalStubGit(manifest=body.manifest, digest=evidence.solution_digest, exists=True)
-        now = datetime.now(UTC).isoformat()
+        evidence = Evidence.from_dict(body.evidence)
         try:
             result = register(
-                store, auth, token=token, reference=reference, evidence=evidence, git=git, now=now
+                store,
+                auth,
+                token=token,
+                reference=reference,
+                manifest=body.manifest,
+                evidence=evidence,
+                git=git,
+                now=datetime.now(UTC).isoformat(),
             )
         except AuthError as e:
             raise HTTPException(status_code=401, detail=f"{type(e).__name__}: {e}") from e
@@ -195,6 +208,8 @@ def create_app(
             raise HTTPException(status_code=403, detail=f"{type(e).__name__}: {e}") from e
         except RegisterError as e:
             raise HTTPException(status_code=400, detail=f"{type(e).__name__}: {e}") from e
+        except GitHubReadError as e:
+            raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}") from e
         return asdict(result)
 
     return app

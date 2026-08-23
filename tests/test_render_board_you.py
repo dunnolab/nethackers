@@ -12,9 +12,9 @@ ENTRIES = [
 ]
 
 def _plain(r, width: int = 120):
-    c = Console(width=width, file=io.StringIO())
-    c.print(r)
-    return c.file.getvalue()
+    buf = io.StringIO()
+    Console(width=width, file=buf).print(r)
+    return buf.getvalue()
 
 def test_you_row_is_emphasized():
     # With you="castiel": castiel's row should have the ◀ you marker, vale's should not

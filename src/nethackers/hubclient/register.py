@@ -25,12 +25,13 @@ import httpx
 
 GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code"
 GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
-# Public GitHub App client id; a placeholder until the real NetHackers App is
-# registered (M2a stands up no live GitHub App -- see hub/auth.py's
-# GitHubAppAuth, which resolves whatever token this flow produces).
-# Overridable via NETHACKERS_CLIENT_ID so a real id can be swapped in later
-# without a code change.
-DEFAULT_CLIENT_ID = os.environ.get("NETHACKERS_CLIENT_ID", "Iv1.nethackers-dev")
+# Public GitHub App client id -- a public value, not a secret, so it lives in
+# source. This is the "NetHackers Hub" App (a personal dev App today; swap for
+# the dunnolab-org App at launch). The hub resolves whatever token this flow
+# produces (hub/auth.py's GitHubAppAuth). Overridable via NETHACKERS_CLIENT_ID
+# to point at a throwaway/dev App without a code change.
+NETHACKERS_APP_CLIENT_ID = "Iv23liWooDi2WlkrDAOw"
+DEFAULT_CLIENT_ID = os.environ.get("NETHACKERS_CLIENT_ID", NETHACKERS_APP_CLIENT_ID)
 
 
 class DeviceFlowError(Exception):
@@ -38,14 +39,32 @@ class DeviceFlowError(Exception):
     ``expired_token``) that polling can never resolve."""
 
 
+def _token_set(resp: dict[str, Any]) -> dict[str, Any]:
+    """Normalise a GitHub token response into the three keys callers rely on:
+    ``access_token`` (str), ``refresh_token`` (str or ``None``), and
+    ``expires_in`` (int seconds or ``None``). Absent/empty optional fields
+    collapse to ``None`` so consumers never guess at their presence."""
+    return {
+        "access_token": str(resp["access_token"]),
+        "refresh_token": (str(resp["refresh_token"]) if resp.get("refresh_token") else None),
+        "expires_in": (int(resp["expires_in"]) if resp.get("expires_in") is not None else None),
+    }
+
+
+def _announce(verification_uri: str, user_code: str) -> None:
+    """Default device-flow prompt -- two plain lines, no rich dependency at the
+    library layer. The CLI passes a styled panel instead (``cli._login_prompt``)."""
+    print(f"To authorize, open {verification_uri}\nand enter code: {user_code}")
+
+
 def device_login(
     *,
     client_id: str = DEFAULT_CLIENT_ID,
     http=httpx,
-    prompt=print,
+    prompt=_announce,
     sleep=time.sleep,
-) -> str:
-    """Run the GitHub device flow and return the resulting user access token.
+) -> dict[str, Any]:
+    """Run the GitHub device flow and return the resulting user token set.
 
     Requests a device code, ``prompt``s the user with the verification URL
     and the code to enter there, then polls the token endpoint every
@@ -53,6 +72,10 @@ def device_login(
     ``authorization_pending``/``slow_down``. Any other error
     (``access_denied``, ``expired_token``, ...) is terminal and raises
     ``DeviceFlowError``.
+
+    Returns the ``_token_set`` dict -- ``{"access_token", "refresh_token" |
+    None, "expires_in" | None}`` -- so callers can persist a refreshable
+    credential rather than just a bare access token.
     """
 
     def _post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -61,9 +84,7 @@ def device_login(
         return response.json()
 
     device = _post(GITHUB_DEVICE_CODE_URL, {"client_id": client_id, "scope": ""})
-    prompt(
-        f"To authorize, open {device['verification_uri']} and enter code: {device['user_code']}"
-    )
+    prompt(device["verification_uri"], device["user_code"])
     interval = int(device.get("interval", 5))
 
     while True:
@@ -76,31 +97,37 @@ def device_login(
             },
         )
         if "access_token" in token_response:
-            return str(token_response["access_token"])
+            return _token_set(token_response)
         if token_response.get("error") in ("authorization_pending", "slow_down"):
             sleep(interval)
             continue
         raise DeviceFlowError(token_response.get("error") or "device flow failed")
 
 
-def register_solution(
+def refresh_access_token(
+    refresh_token,
     *,
-    hub,
-    reference: dict[str, Any],
-    manifest: dict[str, Any],
-    evidence: dict[str, Any],
     client_id: str = DEFAULT_CLIENT_ID,
     http=httpx,
-    prompt=print,
-    sleep=time.sleep,
-) -> Any:
-    """Run the GitHub device flow to get a user token, then call
-    ``hub.register(token=..., reference=reference, manifest=manifest,
-    evidence=evidence)`` and return its result.
+) -> dict[str, Any]:
+    """Exchange a GitHub refresh token for a fresh user token set.
 
-    The device flow itself (request a device code, prompt the user, poll for
-    the token, raise ``DeviceFlowError`` on a terminal error) lives in
-    ``device_login`` -- this just supplies the token to ``hub.register``.
+    POSTs ``grant_type=refresh_token`` to the token endpoint and returns the
+    same ``_token_set`` shape as ``device_login``. A response without an
+    ``access_token`` (e.g. ``bad_refresh_token``) is terminal and raises
+    ``DeviceFlowError`` -- the caller must fall back to a full ``device_login``.
     """
-    token = device_login(client_id=client_id, http=http, prompt=prompt, sleep=sleep)
-    return hub.register(token=token, reference=reference, manifest=manifest, evidence=evidence)
+    response = http.post(
+        GITHUB_TOKEN_URL,
+        data={
+            "client_id": client_id,
+            "grant_type": "refresh_token",
+            "refresh_token": refresh_token,
+        },
+        headers={"Accept": "application/json"},
+    )
+    response.raise_for_status()
+    token_response = response.json()
+    if "access_token" not in token_response:
+        raise DeviceFlowError(token_response.get("error") or "refresh failed")
+    return _token_set(token_response)

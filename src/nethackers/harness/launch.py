@@ -81,6 +81,32 @@ class EvolvePlan:
     rid: str
 
 
+def _publisher_for(
+    owner: str, repo_name: str = "nethacker"
+) -> Callable[[Path], dict[str, str] | None] | None:
+    """A ``publish`` hook for ``run_loop``: push a winning worktree to the
+    owner's public ``<owner>/<repo_name>`` repo via ``gh`` and return its
+    ``{repo, commit}`` -- so the win is fetchable and passes the hub's
+    commit-exists check. Returns ``None`` (loop keeps the win as a local elite,
+    unpublished) when publishing can't work: no real owner (dev/test), or ``gh``
+    unavailable / not authed (a ``PublishError`` at push time)."""
+    if not owner or owner == "dev":
+        return None
+    from nethackers.hubclient.publish import PublishError, ensure_repo, publish_solution
+
+    slug = f"{owner}/{repo_name}"
+
+    def publish(worktree: Path) -> dict[str, str] | None:
+        try:
+            ensure_repo(slug)
+            sha = publish_solution(worktree, slug, message="nethackers evolve win")
+        except PublishError:
+            return None
+        return {"repo": f"github.com/{slug}", "commit": sha}
+
+    return publish
+
+
 def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
                    tree_store: LocalTreeStore | None = None) -> EvolvePlan:
     started = datetime.datetime.now(datetime.UTC)
@@ -139,6 +165,7 @@ def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
             on_state=callbacks["on_state"], on_log=_on_log, workdir=run_dir / "work",
             on_iteration=lambda it, res: runlog.append_metric(
                 run_dir, runlog.metric_record(it, res)),
+            publish=_publisher_for(params.owner),
         ) or []
 
     return EvolvePlan(cfg=cfg, run=run, run_dir=run_dir, rid=rid)

@@ -71,6 +71,7 @@ def run_loop(
     on_iteration: Callable[[int, IterationResult], None] = lambda _i, _r: None,
     runner=subprocess.run,
     workdir: Path,
+    publish: Callable[[Path], dict[str, str] | None] | None = None,
 ) -> list[IterationResult]:
     dev = dev_spec(objective)
     resolved = resolve(objective)
@@ -284,13 +285,32 @@ def run_loop(
 
             digest = tree_store.save(worktree)
             manifest = json.loads((worktree / "nethackers.solution.json").read_text())
-            if identities:
-                register_win_slices(hub, token=token, owner=owner, child_manifest=manifest,
-                                    evidence=dev_ev, identities=identities,
-                                    parent_digest=elite.digest)
-            else:
-                register_win(hub, token=token, owner=owner, child_manifest=manifest,
-                             evidence=dev_ev, parent_digest=elite.digest)
+            # Publish + register are BEST-EFFORT. A validation-confirmed win
+            # ALWAYS becomes the local elite below, even if the hub is
+            # unreachable or rejects the registration -- real, validated progress
+            # is never discarded over a hub-side failure (the next win just
+            # re-publishes from the advanced elite). Publish to a real repo@commit
+            # (fetchable, passes the hub's commit-exists check) then register the
+            # self-reported evidence; no publisher (or any failure) -> local elite
+            # only, never a synthetic, unfetchable hub reference.
+            hub_ok = True
+            try:
+                reference = publish(worktree) if publish is not None else None
+                if reference is None:
+                    hub_ok = False
+                    report(f"{tag} · ✓ new local elite (not published to the hub)")
+                elif identities:
+                    register_win_slices(hub, token=token, child_manifest=manifest,
+                                        evidence=dev_ev, identities=identities,
+                                        parent_digest=elite.digest, reference=reference)
+                else:
+                    register_win(hub, token=token, child_manifest=manifest,
+                                 evidence=dev_ev, parent_digest=elite.digest,
+                                 reference=reference)
+            except Exception as e:
+                hub_ok = False
+                report(f"{tag} · ⚠ win kept as a local elite; hub publish/register "
+                       f"failed: {e}")
             # A rising union mean can still hide a per-identity drop on a set
             # objective -- diff the OLD parent (elite, not yet reassigned)
             # against the winning child so a regression is surfaced, not
@@ -302,7 +322,8 @@ def run_loop(
             elite = EliteState(digest, tree_store.path(digest), dev_fit, val_fit, dev_ev)
             wins += 1
             _emit("registered", k + 1, tokens=op.total, detail=(f"⚠{len(regs)}" if regs else ""))
-            report(f"{tag} · ✓ REGISTERED dev={dev_fit:.3f} validation={val_fit:.3f}")
+            if hub_ok:
+                report(f"{tag} · ✓ REGISTERED dev={dev_fit:.3f} validation={val_fit:.3f}")
             _record(k + 1, IterationResult(True, "registered", dev_fitness=dev_fit,
                                            validation_fitness=val_fit, tokens=op.total,
                                            usage=op.usage, digest=digest,

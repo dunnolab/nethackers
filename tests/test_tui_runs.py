@@ -6,7 +6,7 @@ from textual.widgets import Button
 
 from nethackers.tui.app import NetHackersApp
 from nethackers.tui.screens.monitor import RunMonitor
-from nethackers.tui.screens.runs import RunsView, read_runs
+from nethackers.tui.screens.runs import RunsView, _summarize, read_runs, run_totals
 from nethackers.tui.status import EvolveConfig
 
 
@@ -145,6 +145,97 @@ def test_read_runs_sorts_newest_first(tmp_path):
     assert len(runs) == 2
     assert runs[0]["run_id"] == "r-2"  # newest first
     assert runs[1]["run_id"] == "r-1"
+
+
+# --- _summarize / run_totals: operator-token accounting --------------------
+
+
+def test_summarize_sums_tokens_across_metrics_lines(tmp_path):
+    _mk(
+        tmp_path / "r-1",
+        {
+            "run_id": "r-1",
+            "objective": "wiz-elf-cha-mal",
+            "operator": "claude",
+            "iterations": 3,
+            "created_at": "2026-08-15T00:00:00",
+        },
+        [
+            {"iteration": 0, "outcome": "baseline", "tokens": 1000},
+            {"iteration": 1, "outcome": "rejected"},  # no tokens -> contributes 0
+            {
+                "iteration": 2,
+                "outcome": "registered",
+                "tokens": 4000,
+                "dev_fitness": 0.44,
+                "validation_fitness": 0.41,
+            },
+        ],
+    )
+    summary = _summarize(tmp_path / "r-1")
+    assert summary is not None
+    assert summary["tokens"] == 5000  # 1000 + 0 (missing) + 4000
+    assert summary["wins"] == 1
+
+
+def test_run_totals_aggregates_and_tolerates_missing_fields():
+    runs = [
+        {"run_id": "r-1", "wins": 1, "iterations": 3, "tokens": 5000},
+        {"run_id": "r-2", "wins": 2, "iterations": 4, "tokens": 1500},
+        {"run_id": "r-3"},  # a partial summary -> contributes zeros, no KeyError
+    ]
+    assert run_totals(runs) == {"runs": 3, "wins": 3, "iterations": 7, "tokens": 6500}
+
+
+def test_run_totals_empty_is_all_zeros():
+    assert run_totals([]) == {"runs": 0, "wins": 0, "iterations": 0, "tokens": 0}
+
+
+def test_run_totals_over_read_runs_sums_tokens(tmp_path):
+    _mk(
+        tmp_path / "r-1",
+        {
+            "run_id": "r-1",
+            "objective": "wiz-elf-cha-mal",
+            "operator": "claude",
+            "iterations": 2,
+            "created_at": "2026-08-15T00:00:00",
+        },
+        [
+            {"iteration": 0, "outcome": "baseline", "tokens": 1000},
+            {
+                "iteration": 1,
+                "outcome": "registered",
+                "tokens": 3000,
+                "dev_fitness": 0.44,
+                "validation_fitness": 0.41,
+            },
+        ],
+    )
+    _mk(
+        tmp_path / "r-2",
+        {
+            "run_id": "r-2",
+            "objective": "val-dwa-law-fem",
+            "operator": "claude",
+            "iterations": 1,
+            "created_at": "2026-08-15T01:00:00",
+        },
+        [
+            {
+                "iteration": 0,
+                "outcome": "registered",
+                "tokens": 500,
+                "dev_fitness": 0.50,
+                "validation_fitness": 0.49,
+            },
+        ],
+    )
+    totals = run_totals(read_runs(tmp_path))
+    assert totals["runs"] == 2
+    assert totals["tokens"] == 4500  # 1000 + 3000 + 500, summed across both runs
+    assert totals["wins"] == 2
+    assert totals["iterations"] == 3
 
 
 class _Plan:

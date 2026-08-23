@@ -16,16 +16,15 @@ this wiring with both monkeypatched, so no real Docker or git process is
 ever invoked by the test suite.
 
 The hub-facing subcommands are thin wrappers the same way, but over
-``nethackers.hubclient.client.HubClient`` (reads + register) and
-``nethackers.hubclient.register.register_solution`` (the GitHub device
-flow) instead -- every one of them builds a ``HubClient(args.hub)`` and
-dispatches straight to one client method, then hands the raw response to
+``nethackers.hubclient.client.HubClient`` (reads + register) instead --
+every one of them builds a ``HubClient(args.hub)`` and dispatches straight
+to one client method, then hands the raw response to
 ``nethackers.hubclient.output.emit`` (CLI-UX pass: rich renderers + ``-o``)
 alongside two renderers: a ``rich`` one (``hubclient.render``, imported
 here as ``rich_*``) and the baseline pure-Python one (``hubclient.client``,
 imported here as ``plain_*``) -- ``emit`` itself picks which (if either)
 actually runs, and falls back to raw ``json.dumps`` otherwise. ``--hub``
-(default ``http://localhost:8000``, overridable via ``$NETHACKERS_HUB``)
+(default ``https://nethackers.dunnolab.ai``, overridable via ``$NETHACKERS_HUB``)
 and ``-o``/``--output`` (default ``"auto"``, overridable via
 ``$NETHACKERS_OUTPUT``; replaces the old boolean ``--json``) both live on a
 shared parent parser (``_common_parser``) carried by every subcommand, so
@@ -34,11 +33,12 @@ e.g. both ``nethackers --hub URL board --objective random`` and
 ``nethackers board --objective random --hub URL`` work; argparse only
 re-applies a parent's default when the attribute isn't already set on the
 namespace, so whichever position actually supplies the flag wins.
-tests/test_cli_m2a.py exercises this wiring with
-``HubClient``/``register_solution`` monkeypatched, so no real HTTP/network
-call is ever made by the test suite either.
+tests/test_cli_m2a.py exercises this wiring with ``HubClient``
+monkeypatched, so no real HTTP/network call is ever made by the test suite
+either; ``login``/``register``'s credential handling is covered by
+tests/test_cli_login.py.
 
-All human chrome that isn't a data render -- the ``register`` device
+All human chrome that isn't a data render -- the ``login`` device
 flow's "visit this URL" prompt, the ``eval``/unknown-objective error --
 goes to ``hubclient.output.err`` (a ``stderr``-bound ``rich`` ``Console``),
 never stdout, so stdout stays machine-clean (in particular, exactly the
@@ -58,9 +58,11 @@ from typing import Any
 
 import httpx
 from rich.live import Live
+from rich.panel import Panel
 from rich.text import Text
 from rich_argparse import RichHelpFormatter
 
+from nethackers import clipboard
 from nethackers.eval.runner import eval_batch
 from nethackers.harness.discovery import ModelInfo, list_models, preflight_model
 from nethackers.harness.launch import EvolveParams, _now, prepare_evolve
@@ -85,8 +87,9 @@ from nethackers.hubclient.credentials import Credentials, whoami_from_token
 from nethackers.hubclient.frontier import champion, champion_scores, overall_mean, universe_scores
 from nethackers.hubclient.live import EpisodeStream
 from nethackers.hubclient.output import emit, err
+from nethackers.hubclient.publish import PublishError, ensure_repo, gh_login, publish_solution
 from nethackers.hubclient.pull import pull
-from nethackers.hubclient.register import device_login, register_solution
+from nethackers.hubclient.register import device_login, refresh_access_token
 from nethackers.hubclient.render import (
     render_board as rich_board,
     render_elites as rich_elites,
@@ -96,13 +99,62 @@ from nethackers.hubclient.render import (
 )
 from nethackers.tui.app import NetHackersApp
 
+# Time seam: tests monkeypatch ``cli._time_now`` to make credential
+# expiry/refresh deterministic (avoids a wall-clock ``time.time()`` read).
+_time_now = time.time
+
 
 def _default_hub() -> str:
-    return os.environ.get("NETHACKERS_HUB", "http://localhost:8000")
+    return os.environ.get("NETHACKERS_HUB", "https://nethackers.dunnolab.ai")
+
+
+def _login_prompt(verification_uri: str, user_code: str) -> None:
+    """Styled device-flow prompt: the URL and the code on their own lines in a
+    bordered panel, printed to stderr so ``-o json`` / pipes stay clean. The
+    code is copied to the clipboard (best effort) so it can be pasted, not
+    retyped."""
+    copied = clipboard.copy(user_code)
+    body = Text()
+    body.append("1  Open this URL in your browser\n", style="dim")
+    body.append(f"     {verification_uri}\n\n", style="bold cyan")
+    body.append("2  Enter this code", style="dim")
+    if copied:
+        body.append("   (copied to clipboard)", style="green")
+    body.append("\n     ", style="dim")
+    body.append(user_code, style="bold yellow")
+    err.print(Panel(body, title="[b green]Authorize NetHackers[/]",
+                    border_style="green", expand=False, padding=(1, 2)))
 
 
 def _load_creds() -> Credentials | None:
     return _cred.load()
+
+
+def _authed_token() -> str | None:
+    """Return a usable access token from the stored credential, refreshing it
+    silently when it has expired and a refresh token is on hand.
+
+    Returns ``None`` when there is no stored credential at all (the caller
+    prints the "run ``nethackers login``" hint). Otherwise: if the credential
+    is expired and carries a ``refresh_token``, exchange it for a fresh token
+    set via ``refresh_access_token``, persist the rebuilt credential (with a
+    recomputed ``expires_at``), and return the new access token; if it is
+    still valid (or no refresh token is available), return the stored access
+    token as-is."""
+    creds = _cred.load()
+    if creds is None:
+        return None
+    if creds.is_expired(_time_now()) and creds.refresh_token:
+        tok = refresh_access_token(creds.refresh_token)
+        creds = Credentials(
+            creds.login,
+            tok["access_token"],
+            tok["refresh_token"],
+            (_time_now() + tok["expires_in"]) if tok["expires_in"] else None,
+        )
+        _cred.save(creds)
+        return creds.access_token
+    return creds.access_token
 
 
 def _models_table(operator: str, rows: list[dict[str, Any]]):
@@ -346,31 +398,37 @@ def _build_parser() -> argparse.ArgumentParser:
 
     r = sub.add_parser(
         "register", parents=[common], formatter_class=RichHelpFormatter,
-        help="Register a solution with the hub via the GitHub device flow.",
+        help="Register a repo@commit solution link with the hub (uses your stored login).",
     )
     r.add_argument("--repo", required=True, help="e.g. github.com/owner/name")
     r.add_argument("--commit", required=True, help="40-hex commit sha")
-    manifest_source = r.add_mutually_exclusive_group(required=True)
-    manifest_source.add_argument(
-        "--solution", default=None, help="Solution dir containing nethackers.solution.json."
+    r.add_argument("--evidence", required=True,
+                   help="Path to an evidence JSON (from `nethackers eval`).")
+    r.add_argument("--root", default=".",
+                   help="Solution root within the repo (default: the repo root).")
+    r.add_argument("--entrypoint", default="bot.py",
+                   help="Solution entrypoint file (default: %(default)s).")
+
+    sm = sub.add_parser(
+        "submit", parents=[common], formatter_class=RichHelpFormatter,
+        help="Publish a solution to your public <you>/nethacker repo (via gh) and register it.",
     )
-    manifest_source.add_argument(
-        "--manifest", default=None, help="Path to a manifest JSON file directly."
+    sm.add_argument("solution_dir", help="Path to the solution directory to publish.")
+    sm.add_argument(
+        "--repo-name", default="nethacker",
+        help="Repo under your account to publish into (default: nethacker).",
     )
-    r.add_argument("--evidence", required=True, help="Path to a prior `eval` JSON output file.")
+    sm.add_argument(
+        "--message", default="nethackers submit",
+        help="Commit message for the published solution.",
+    )
+    sm.add_argument("--objective", required=True,
+                    help="A catalog objective name to evaluate on (self-reported score).")
+    sm.add_argument("--image", default="nethackers/arena:dev", help="Arena image to run.")
+    sm.add_argument("--max-parallel-evals", type=int, default=8,
+                    help="Cap on concurrent episodes (default: %(default)s).")
 
     return parser
-
-
-def _load_manifest(args: argparse.Namespace) -> dict[str, Any]:
-    """``--manifest <file>`` read directly, or ``--solution <dir>``'s
-    ``nethackers.solution.json`` -- ``register``'s argparse mutually
-    exclusive group guarantees exactly one of the two is set."""
-    if args.manifest:
-        path = Path(args.manifest)
-    else:
-        path = Path(args.solution) / "nethackers.solution.json"
-    return json.loads(path.read_text())
 
 
 def _unknown_objective(name: str) -> str:
@@ -403,9 +461,14 @@ def _run(argv: list[str] | None) -> int:
         return 0
 
     if args.cmd == "login":
-        token = device_login()
-        login = whoami_from_token(token)
-        _cred.save(Credentials(login=login, token=token))
+        tok = device_login(prompt=_login_prompt)
+        login = whoami_from_token(tok["access_token"])
+        _cred.save(Credentials(
+            login=login,
+            access_token=tok["access_token"],
+            refresh_token=tok["refresh_token"],
+            expires_at=(_time_now() + tok["expires_in"]) if tok["expires_in"] else None,
+        ))
         err.print(f"logged in as [b]@{login}[/]")
         return 0
 
@@ -495,7 +558,7 @@ def _run(argv: list[str] | None) -> int:
             iterations=args.iterations, validation_n=args.validation_n,
             migrate=not args.no_migrate, max_parallel_evals=args.max_parallel_evals,
             image=args.image, hub=args.hub, workdir=args.workdir, run_name=args.run_name,
-            token=args.token or (_creds.token if _creds else "dev-token"),
+            token=args.token or (_creds.access_token if _creds else "dev-token"),
             owner=args.owner or (_creds.login if _creds else "dev"),
             from_seed=args.from_seed, select_k=args.select_k, select_temp=args.select_temp,
             model=args.model, effort=args.effort, mutator_image=args.mutator_image,
@@ -605,15 +668,69 @@ def _run(argv: list[str] | None) -> int:
         return 0
 
     if args.cmd == "register":
-        client = HubClient(args.hub)
-        reference = {"repo": args.repo, "commit": args.commit}
-        manifest = _load_manifest(args)
+        token = _authed_token()
+        if token is None:
+            err.print("[yellow]not logged in[/] — run `nethackers login`")
+            return 1
         evidence = json.loads(Path(args.evidence).read_text())
-        result = register_solution(
-            hub=client, reference=reference, manifest=manifest, evidence=evidence,
-            prompt=err.print,
+        manifest = {"root": args.root, "entrypoint": args.entrypoint,
+                    "parents": [], "influences": []}
+        result = HubClient(args.hub).register(
+            token=token, reference={"repo": args.repo, "commit": args.commit},
+            manifest=manifest, evidence=evidence,
         )
-        print(json.dumps(result, indent=2))
+        emit(
+            result, args.output,
+            table=lambda r: Text(f"registered {r['solution_id']}", style="green"),
+            plain=lambda r: f"registered {r['solution_id']}",
+        )
+        return 0
+
+    if args.cmd == "submit":
+        creds = _load_creds()
+        if creds is None:
+            err.print("[yellow]not logged in[/] — run `nethackers login`")
+            return 1
+        gh = gh_login()
+        if gh is None:
+            err.print("[yellow]gh unavailable[/] — install the GitHub CLI and run `gh auth login`")
+            return 1
+        if gh != creds.login:
+            err.print(f"gh is authed as [b]@{gh}[/] but you're logged in as "
+                      f"[b]@{creds.login}[/] — sign in to the same account")
+            return 1
+        token = _authed_token()
+        if token is None:  # unreachable (creds is set) -- narrows for the type checker
+            err.print("[yellow]not logged in[/] — run `nethackers login`")
+            return 1
+        spec = CATALOG.get(args.objective)
+        if spec is None:
+            err.print(_unknown_objective(args.objective))
+            return 2
+        # self-reported score: evaluate the local solution on the objective's batch
+        evidence = eval_batch(
+            Path(args.solution_dir), spec, args.image, now=_now(),
+            max_parallel_evals=args.max_parallel_evals,
+        )
+        slug = f"{creds.login}/{args.repo_name}"
+        try:
+            ensure_repo(slug)
+            sha = publish_solution(args.solution_dir, slug, message=args.message)
+        except PublishError as e:
+            err.print(f"[red]publish failed[/] — {e}")
+            return 1
+        mpath = Path(args.solution_dir) / "nethackers.solution.json"
+        manifest = (json.loads(mpath.read_text()) if mpath.is_file()
+                    else {"root": ".", "entrypoint": "bot.py", "parents": [], "influences": []})
+        result = HubClient(args.hub).register(
+            token=token, reference={"repo": f"github.com/{slug}", "commit": sha},
+            manifest=manifest, evidence=evidence.to_dict(),
+        )
+        emit(
+            result, args.output,
+            table=lambda r: Text(f"submitted {r['solution_id']}", style="green"),
+            plain=lambda r: f"submitted {r['solution_id']}",
+        )
         return 0
 
     return 1

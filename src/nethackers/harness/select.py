@@ -84,11 +84,16 @@ def _sample(entries: list[dict], k: int, temperature: float,
 
 def _resolve(entry: dict, store: LocalTreeStore,
              fetch: Callable[[dict, Path], Path | None]) -> tuple[Path, str] | None:
-    """Serve an elite entry's bytes through the local content cache: a hit
-    resolves immediately (always true for your own wins); a miss pulls, then
-    ``store.save`` recomputes the digest and the result is used ONLY if it
-    equals the hub's claimed digest (content-addressed integrity). ``None`` on
-    a miss + fetch-failure, or a digest mismatch."""
+    """Serve an elite entry's bytes through the local cache: a hit resolves
+    immediately (always true for your own wins); a miss pulls and caches.
+
+    Integrity depends on the digest namespace. A **content** digest
+    (``"sha256:<hex>"``) is verified content-addressed: ``store.save``
+    recomputes it and the pulled bytes are used ONLY if they match. An **atom**
+    identity (``"<repo>@<commit>"``, no colon) is verified by git -- the pull
+    checked out exactly that commit -- so the bytes are cached under the atom
+    key and trusted (a content-hash equality can't apply to a commit pointer).
+    ``None`` on a miss + fetch-failure, or a content-digest mismatch."""
     digest = entry["solution_digest"]
     if store.has(digest):
         return store.path(digest), digest
@@ -96,9 +101,12 @@ def _resolve(entry: dict, store: LocalTreeStore,
         pulled = fetch(entry, Path(td))
         if pulled is None:
             return None
-        got = store.save(pulled)
-    if got != digest or not store.has(digest):
-        return None
+        if ":" in digest:
+            got = store.save(pulled)
+            if got != digest or not store.has(digest):
+                return None
+        else:
+            store.save_as(digest, pulled)   # atom identity: trust the pulled commit
     return store.path(digest), digest
 
 

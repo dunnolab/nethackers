@@ -123,7 +123,7 @@ async def test_c_copies_the_selected_iteration_log_to_the_clipboard():
     captured: dict[str, str] = {}
     async with host.run_test() as pilot:
         await pilot.pause()
-        host.copy_to_clipboard = lambda t: captured.__setitem__("t", t)  # type: ignore[method-assign]
+        host.copy_to_clipboard = lambda t: captured.__setitem__("t", t)
         await pilot.press("c")
         await pilot.pause()
         assert captured["t"] == "line one\nline two"

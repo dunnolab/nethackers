@@ -1,0 +1,55 @@
+name: Hub image
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+jobs:
+  build-push:
+    name: build + push hub image (GHCR)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Derive image tags and labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/dunnolab/nethackers-hub
+          flavor: |
+            latest=false
+          tags: |
+            type=sha
+            type=semver,pattern={{version}}
+
+      - name: Build and push hub image
+        id: build
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: hub/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+      - name: Report pushed digest
+        run: |
+          echo "Pushed image digest: ${{ steps.build.outputs.digest }}"
+          echo "Tags applied:"
+          echo "${{ steps.meta.outputs.tags }}"

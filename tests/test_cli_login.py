@@ -28,22 +28,33 @@ def _seed(tmp_path):
 
 def test_login_saves_resolved_identity(monkeypatch, capsys):
     saved = {}
-    monkeypatch.setattr(cli, "device_login", lambda **_k: "gho_x")
+    monkeypatch.setattr(
+        cli, "device_login",
+        lambda **_k: {"access_token": "gho_x", "refresh_token": "ghr_x", "expires_in": 28800},
+    )
     monkeypatch.setattr(cli, "whoami_from_token", lambda tok, **_k: "castiel")
-    monkeypatch.setattr(cred, "save", lambda c: saved.update(login=c.login, token=c.token))
+    monkeypatch.setattr(
+        cred, "save", lambda c: saved.update(login=c.login, access_token=c.access_token)
+    )
 
     assert cli.main(["login"]) == 0
 
-    # the resolved (login, token) pair actually gets persisted -- not just "save was called"
-    assert saved == {"login": "castiel", "token": "gho_x"}
+    # the resolved (login, access_token) pair actually gets persisted -- not just "save was called"
+    assert saved == {"login": "castiel", "access_token": "gho_x"}
     assert "castiel" in capsys.readouterr().err
 
 
 def test_login_passes_device_login_token_through_to_whoami_and_save(monkeypatch):
-    # Strengthens the above: prove the *specific* token device_login() returns is what
-    # whoami_from_token() gets asked about, and what ends up saved -- not a stale/hardcoded one.
+    # Strengthens the above: prove the *specific* access token device_login() returns is what
+    # whoami_from_token() gets asked about, and (with the refresh token) what ends up saved --
+    # not a stale/hardcoded one.
     seen = {}
-    monkeypatch.setattr(cli, "device_login", lambda **_k: "tok-xyz-987")
+    monkeypatch.setattr(
+        cli, "device_login",
+        lambda **_k: {
+            "access_token": "tok-xyz-987", "refresh_token": "ghr-xyz", "expires_in": 28800,
+        },
+    )
 
     def fake_whoami(tok, **_k):
         seen["token_seen_by_whoami"] = tok
@@ -51,11 +62,51 @@ def test_login_passes_device_login_token_through_to_whoami_and_save(monkeypatch)
 
     monkeypatch.setattr(cli, "whoami_from_token", fake_whoami)
     saved = {}
-    monkeypatch.setattr(cred, "save", lambda c: saved.update(login=c.login, token=c.token))
+    monkeypatch.setattr(
+        cred, "save",
+        lambda c: saved.update(
+            login=c.login, access_token=c.access_token, refresh_token=c.refresh_token
+        ),
+    )
 
     assert cli.main(["login"]) == 0
     assert seen["token_seen_by_whoami"] == "tok-xyz-987"
-    assert saved == {"login": "someone-else", "token": "tok-xyz-987"}
+    assert saved == {
+        "login": "someone-else", "access_token": "tok-xyz-987", "refresh_token": "ghr-xyz",
+    }
+
+
+def test_login_saves_full_credential(monkeypatch, tmp_path):
+    from nethackers import cli
+    from nethackers.hubclient import credentials as c
+    monkeypatch.setattr(c, "path", lambda: tmp_path / "credentials.json")
+    monkeypatch.setattr(
+        cli, "device_login",
+        lambda **_k: {"access_token": "ghu_x", "refresh_token": "ghr_y", "expires_in": 28800},
+    )
+    monkeypatch.setattr(cli, "whoami_from_token", lambda tok: "sam")
+    monkeypatch.setattr(cli, "_time_now", lambda: 1000.0)
+    assert cli.main(["login"]) == 0
+    creds = c.load()
+    assert (
+        creds.login == "sam"
+        and creds.access_token == "ghu_x"
+        and creds.expires_at == 1000.0 + 28800
+    )
+
+
+def test_authed_token_refreshes_when_expired(monkeypatch, tmp_path):
+    from nethackers import cli
+    from nethackers.hubclient import credentials as c
+    monkeypatch.setattr(c, "path", lambda: tmp_path / "credentials.json")
+    c.save(c.Credentials("sam", "ghu_old", "ghr_y", expires_at=500.0))
+    monkeypatch.setattr(cli, "_time_now", lambda: 1000.0)
+    monkeypatch.setattr(
+        cli, "refresh_access_token",
+        lambda rt, **k: {"access_token": "ghu_new", "refresh_token": "ghr_z", "expires_in": 28800},
+    )
+    assert cli._authed_token() == "ghu_new"
+    assert c.load().access_token == "ghu_new"
 
 
 # --- whoami --------------------------------------------------------------

@@ -53,7 +53,10 @@ class _Plan:
 
     rid = "run-x"
     cfg = "CFG"
-    run = staticmethod(lambda cb=None: [])
+
+    @staticmethod
+    def run(cb=None):
+        return []
 
 
 @pytest.fixture(autouse=True)

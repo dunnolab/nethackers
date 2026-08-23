@@ -32,7 +32,12 @@ def pull(repo_at_commit: str, dest: str | Path, *, runner=subprocess.run) -> Pat
     ref, sep, sha = repo_at_commit.rpartition("@")
     if not sep or not sha:
         raise ValueError("expected 'repo@commit'")
-    url = ref if ref.startswith("http") else f"https://github.com/{ref}.git"
+    # The hub stores repos host-qualified ("github.com/owner/name"); accept that,
+    # a bare "owner/name", or a full URL -- and never double-prefix the host.
+    if ref.startswith(("http://", "https://")):
+        url = ref if ref.endswith(".git") else ref + ".git"
+    else:
+        url = f"https://github.com/{ref.removeprefix('github.com/')}.git"
     dest = Path(dest)
     runner(["git", "clone", "--quiet", url, str(dest)], check=True)
     runner(["git", "-C", str(dest), "checkout", "--quiet", sha], check=True)
