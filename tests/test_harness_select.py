@@ -82,6 +82,37 @@ def test_cache_miss_digest_mismatch_falls_back(tmp_path):
     assert chosen is None and got == seed         # pulled bytes != claimed digest
 
 
+def test_resolve_atom_identity_trusts_pulled_commit(tmp_path):
+    # Hub entries are keyed by repo@commit (no colon): the commit sha IS the
+    # content identity (git-verified by the checkout on pull), so pulled bytes
+    # are cached under it and adopted -- NOT rejected by a content-hash equality
+    # that can't apply (regression: this path raised IndexError in the store).
+    store = LocalTreeStore(tmp_path / "store")
+    atom = "github.com/o/r@" + "a" * 40
+    def fetch(entry, dest):
+        (Path(dest) / "bot.py").write_text("pulled-code")
+        return Path(dest)
+    hub = _Hub([{"solution_digest": atom, "score": 0.5, "owner": "me",
+                 "tier": "self-reported", "repo": "github.com/o/r", "commit_sha": "a" * 40}])
+    got, chosen = select_parent(hub, "obj", store, _tree(tmp_path, "seed"),
+                                owner="me", fetch=fetch)
+    assert chosen == atom and got == store.path(atom) and store.has(atom)
+
+
+def test_top_trusted_elite_adopts_atom_identity(tmp_path):
+    # migration must adopt a trusted repo@commit elite (the common atom case),
+    # not crash on it -- the bug that stalled every evolve iteration.
+    store = LocalTreeStore(tmp_path / "store")
+    atom = "github.com/o/r@" + "b" * 40
+    def fetch(entry, dest):
+        (Path(dest) / "bot.py").write_text("x")
+        return Path(dest)
+    hub = _Hub([{"solution_digest": atom, "score": 0.7, "owner": "me",
+                 "tier": "self-reported", "repo": "github.com/o/r", "commit_sha": "b" * 40}])
+    entry, path = top_trusted_elite(hub, "obj", store, "me", fetch=fetch)
+    assert entry["solution_digest"] == atom and path == store.path(atom)
+
+
 def test_topk_sampling_stays_in_topk_and_is_seeded(tmp_path):
     store = LocalTreeStore(tmp_path / "store")
     ds = [store.save(_tree(tmp_path, f"t{i}", f"code{i}")) for i in range(3)]

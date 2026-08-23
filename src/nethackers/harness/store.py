@@ -6,10 +6,25 @@ single-contributor local loop keeps its own trees here, keyed by the same
 """
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 
 from nethackers.eval.runner import _solution_digest
+
+
+def _key(digest: str) -> str:
+    """One filesystem-safe directory segment for a solution digest.
+
+    Two digest namespaces flow through the store: local **content** digests
+    ``"sha256:<hex>"`` (from ``_solution_digest``) and atom **hub identities**
+    ``"<host>/<owner>/<repo>@<commit>"`` (no colon). For a content digest the
+    hex suffix is the historical, already-safe name; an atom identity is
+    flattened (``/``, ``@`` -> ``_``) so it never nests directories or crashes
+    ``split(":")[1]``.
+    """
+    body = digest.split(":", 1)[1] if ":" in digest else digest
+    return re.sub(r"[^A-Za-z0-9._-]", "_", body)
 
 
 class LocalTreeStore:
@@ -18,7 +33,7 @@ class LocalTreeStore:
         self._root.mkdir(parents=True, exist_ok=True)
 
     def path(self, digest: str) -> Path:
-        return self._root / digest.split(":", 1)[1]
+        return self._root / _key(digest)
 
     def has(self, digest: str) -> bool:
         return self.path(digest).is_dir()
@@ -30,3 +45,12 @@ class LocalTreeStore:
         if not dest.is_dir():
             shutil.copytree(src, dest)
         return digest
+
+    def save_as(self, digest: str, src: str | Path) -> None:
+        """Cache ``src`` under an explicit ``digest`` key -- used for atom
+        ``repo@commit`` identities, whose key is the git commit (not the tree's
+        content hash), so ``save`` (which recomputes the content hash) can't
+        produce it. Idempotent: a present tree is left as-is."""
+        dest = self.path(digest)
+        if not dest.is_dir():
+            shutil.copytree(Path(src), dest)
