@@ -1,31 +1,50 @@
 # nethackers
 
-Solve NetHack by evolving symbolic players. This is the evaluation-and-registration core: from one CLI you log in with GitHub, publish a solution to your own public `nethacker` repo, and register it with the shared hub at `https://nethackers.dunnolab.ai` (the default).
+Solve NetHack by evolving symbolic players. One CLI: log in with GitHub, evolve a
+bot with a coding agent, and publish + register your wins to the shared hub at
+`https://nethackers.dunnolab.ai` — where anyone can browse and fetch them.
 
-## Quickstart (contributors)
+## Install
 
-1. `pip install nethackers` — install the CLI from PyPI; that is all a contributor needs.
-2. `nethackers login` — authenticate once with GitHub (device flow; token stored + refreshed silently). Also have `gh` installed and `gh auth login`'d as the **same** account — `submit` uses it to create/push your repo.
-3. `nethackers submit ./solution` — publish your solution to your public `github.com/<you>/nethacker` repo (created if it doesn't exist) and register the resulting `repo@commit`. One command, no manual git.
-4. `nethackers board` — browse the leaderboard.
+```bash
+pip install nethackers          # Python 3.11+   (or: uv tool install nethackers)
+```
 
-Prefer to manage the repo yourself? `nethackers register --repo github.com/<you>/nethacker --commit <full-sha>` registers an existing pinned commit directly.
+## Get started
+
+```bash
+nethackers login                # one-time GitHub sign-in (device flow, silent refresh)
+nethackers board                # browse the leaderboard
+```
+
+## Evolve a bot
+
+Improve a NetHack bot automatically with Claude Code or Codex. Needs Docker (the
+sandboxed arena + mutator run there):
+
+```bash
+nethackers evolve --objective val-dwa-law-fem --operator codex
+```
+
+Every validated win is auto-published to your public `github.com/<you>/nethacker`
+repo and registered with the hub. From any machine, fetch one back:
+
+```bash
+nethackers pull github.com/<you>/nethacker@<commit> ./fetched
+```
+
+## Publish an existing solution
+
+Also have the GitHub CLI installed and `gh auth login`'d as the **same** account
+(used to create/push your repo), then:
+
+```bash
+nethackers submit ./my-solution --objective val-dwa-law-fem
+```
 
 ---
 
-## Run your own hub (advanced / unsupported)
-
-Contributors do not need this — every command above talks to the shared hub. If you still want a private one:
-
-```bash
-pip install 'nethackers[hub]'
-nethackers-hub
-```
-
-The `[hub]` extra pulls in the server dependencies and `nethackers-hub` serves the API (default `0.0.0.0:8000`). For the hardened Docker + Caddy deployment, see [`deploy/README.md`](deploy/README.md).
-
-This is supported but unadvised — we neither push you toward it nor prevent it; if you host it, you own it.
-
-## Design
-
-Rationale and full design: [`docs/superpowers/specs/2026-08-22-remote-hub-and-github-login-design.md`](docs/superpowers/specs/2026-08-22-remote-hub-and-github-login-design.md).
+`nethackers --help` lists every command (`elites`, `frontier`, `search`, `show`,
+`register`). The hub defaults to `https://nethackers.dunnolab.ai` (override with
+`--hub` or `$NETHACKERS_HUB`). Self-hosting the hub and the full design:
+[`deploy/README.md`](deploy/README.md) and [`docs/`](docs/).
