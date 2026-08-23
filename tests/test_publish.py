@@ -15,9 +15,11 @@ class FakeRun:
     call. `gh repo clone` materialises an (empty, or stale-seeded) repo dir so
     the real `_sync_tree` runs against a real filesystem."""
 
-    def __init__(self, *, repo_exists=True, commit_rc=0, sha="a" * 40, seed_old=True):
+    def __init__(self, *, repo_exists=True, visibility="public", commit_rc=0,
+                 sha="a" * 40, seed_old=True):
         self.calls: list[list[str]] = []
         self.repo_exists = repo_exists
+        self.visibility = visibility
         self.commit_rc = commit_rc
         self.sha = sha
         self.seed_old = seed_old
@@ -29,9 +31,12 @@ class FakeRun:
             return _cp(cmd, 0, stdout="sam\n")
         if head == ["gh", "repo", "view"]:
             if self.repo_exists:
-                return _cp(cmd, 0)
+                import json
+                return _cp(cmd, 0, stdout=json.dumps({"visibility": self.visibility}))
             raise subprocess.CalledProcessError(1, cmd, stderr="Not Found")
         if head == ["gh", "repo", "create"]:
+            return _cp(cmd, 0)
+        if head == ["gh", "repo", "edit"]:
             return _cp(cmd, 0)
         if head == ["gh", "repo", "clone"]:
             dest = Path(cmd[4])  # gh repo clone <slug> <dest>
@@ -82,10 +87,22 @@ def test_ensure_repo_creates_when_absent():
     assert ["gh", "repo", "create", "sam/nethacker", "--public"] in fake.calls
 
 
-def test_ensure_repo_noop_when_present():
-    fake = FakeRun(repo_exists=True)
+def test_ensure_repo_noop_when_present_and_public():
+    fake = FakeRun(repo_exists=True, visibility="public")
     P.ensure_repo("sam/nethacker", run=fake)
     assert not any(c[:3] == ["gh", "repo", "create"] for c in fake.calls)
+    assert not any(c[:3] == ["gh", "repo", "edit"] for c in fake.calls)  # already public
+
+
+def test_ensure_repo_makes_private_public():
+    # Solutions must be publicly fetchable: the hub validates commit-existence
+    # with an identity-scoped token that 404s on a private repo (-> MissingCommit,
+    # a 400 that silently drops every win). A pre-existing private repo must be
+    # flipped public, not left as-is.
+    fake = FakeRun(repo_exists=True, visibility="private")
+    P.ensure_repo("sam/nethacker", run=fake)
+    assert ["gh", "repo", "edit", "sam/nethacker", "--visibility", "public",
+            "--accept-visibility-change-consequences"] in fake.calls
 
 
 def test_publish_solution_syncs_commits_and_returns_sha(tmp_path):

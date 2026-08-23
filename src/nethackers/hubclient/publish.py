@@ -14,6 +14,7 @@ it verbatim).
 """
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 import tempfile
@@ -54,17 +55,29 @@ def gh_login(run: Run = subprocess.run) -> str | None:
 
 
 def ensure_repo(slug: str, *, run: Run = subprocess.run) -> None:
-    """Ensure the public repo ``slug`` (``owner/name``) exists, creating it if
-    absent. ``gh repo view`` probes; a non-zero exit means "absent", so create
-    it public. A genuine create failure raises ``PublishError``."""
+    """Ensure the repo ``slug`` (``owner/name``) exists AND is public: create it
+    public if absent, and flip it public if a pre-existing repo is private.
+
+    Solutions must be publicly fetchable -- the hub validates commit-existence
+    with an identity-scoped token that 404s on a private repo, which surfaces as
+    ``MissingCommit`` (a 400 that silently drops every win). ``gh repo view
+    --json visibility`` probes; a non-zero exit means "absent". A create/edit
+    failure raises ``PublishError``."""
     try:
-        run(["gh", "repo", "view", slug], check=True, capture_output=True, text=True)
-        return
+        proc = run(["gh", "repo", "view", slug, "--json", "visibility"],
+                   check=True, capture_output=True, text=True)
     except FileNotFoundError as e:
         raise PublishError("gh is not installed") from e
     except subprocess.CalledProcessError:
-        pass  # absent (or unreadable) -> create
-    _run(run, ["gh", "repo", "create", slug, "--public"])
+        _run(run, ["gh", "repo", "create", slug, "--public"])  # absent -> create public
+        return
+    try:
+        visibility = str(json.loads(proc.stdout or "{}").get("visibility", "")).lower()
+    except (ValueError, TypeError):
+        visibility = ""
+    if visibility != "public":  # pre-existing private/internal repo -> make it fetchable
+        _run(run, ["gh", "repo", "edit", slug, "--visibility", "public",
+                   "--accept-visibility-change-consequences"])
 
 
 def _sync_tree(src: Path, repo: Path) -> None:
