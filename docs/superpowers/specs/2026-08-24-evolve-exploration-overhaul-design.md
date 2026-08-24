@@ -56,11 +56,15 @@ makes the design simple.
   hill-climb. Gone when the run ends.
 
 They touch at exactly two points:
-1. **Hub → islands (read):** islands are seeded — initially and on every reset —
-   from the influence pool (§5). The hub's global diversity feeds the local
-   search.
+1. **Hub → islands (read):** the influence pool (§5) seeds the *initial* islands
+   with diverse specialists, and may *occasionally* inject one cross-run
+   specialist at a reset. It is **not** the per-reset reseed source — resets
+   reseed from diverse *local* survivors (§4), so the hub read feeds cross-run
+   diversity in without homogenizing the run onto the single global best.
 2. **Islands → hub (write):** any island win that beats the objective's
-   registered elite publishes + registers, exactly as today.
+   registered elite publishes + registers, exactly as today. This updates the
+   global registry; it does **not** feed back into the run's other islands
+   except through the secondary, diverse read above.
 
 The loop of loops: *hub seeds a run → islands explore diversely & locally → a
 win registers → the hub's pool improves → the next run seeds from a better hub.*
@@ -92,17 +96,34 @@ just the frame and what the number means.
   dominant death cause — overall, and per-build for a set (the per-build line
   today shows only the score).
 
-**A3. Failure feedback across attempts.** The loop already asks the mutator to
-leave a `# hypothesis: …` comment at each edit. On a rejected iteration, extract
-that hypothesis and pair it with the rejection reason. `build_brief` gains a
-`recent_attempts: list[(hypothesis, reason)] | None` and renders a short
-"already tried, don't repeat" list, e.g. *"raised HP threshold → rejected (dev
-regressed); cached BFS paths → rejected (validation dropped, overfit)."* This is
-per-lineage memory the fresh-agent mutator otherwise lacks.
+**A3. Failure feedback across attempts — data, never a directive.** The loop
+already asks the mutator to leave a `# hypothesis: …` comment at each edit. On a
+rejected iteration, record `(hypothesis, measured-result, what-changed)`.
+`build_brief` gains `recent_attempts` and renders them **neutrally** — no "avoid
+this" — so the mutator (a capable coding agent) judges for itself whether a
+failed hypothesis was a *wrong direction* or a *right direction implemented
+badly*, and can re-implement it better, generalize it, or drop it. Because each
+mutation starts fresh from the island champion (not from the rejected attempt),
+re-attempting a good idea is natural.
 
-Interface: `build_brief(..., recent_attempts=None)`; the NetHack preamble is a
-module constant reused by both branches; A2 helpers may live in
-`aggregate.py` (pure functions over `Evidence.results`).
+Each recent attempt carries:
+- the **hypothesis** (the mutator's own words),
+- the **measured result** — dev/validation deltas — with the **overfit case
+  (dev↑, validation↓) called out explicitly** as the sharpest signal ("helped
+  training, didn't generalize");
+- a **bounded diff of what it changed** for the last 1–2 attempts (older ones:
+  hypothesis + result only). The diff is what lets the model tell a buggy
+  implementation from a bad idea from the outside; it is size-capped to avoid
+  prompt bloat.
+
+Rationale for *no ban-list*: a rejected hypothesis may be a good direction whose
+implementation was poor; a "don't repeat X" list would suppress it. Reporting
+the attempt + its result, and trusting the mutator, preserves that.
+
+Interface: `build_brief(..., recent_attempts=None)` where an attempt is
+`(hypothesis: str, result: str, diff: str | None)`; the NetHack preamble is a
+module constant reused by both branches; A2 helpers may live in `aggregate.py`
+(pure functions over `Evidence.results`).
 
 ## 4. Component B — Islands (local diversity)
 
@@ -123,12 +144,25 @@ If the child beats *that island's* champion it replaces it; otherwise append the
 (hypothesis, reason) to that island's history. Islands are otherwise **isolated**
 — a win in one never touches another. Isolation is the diversity.
 
-**Reset (the plateau-breaker).** Every **T** iterations: rank islands by champion
-fitness, kill the bottom half, and reseed each killed island from a survivor —
-sampled top-k / temperature (§5), or from the influence pool — then clear its
-`recent_attempts`. Defunds stuck lineages and relaunches exploration from
-winners without collapsing into one lineage. This **subsumes today's mid-run
-`migrate`**: reset-from-influence-pool *is* adopting a better hub elite.
+**Reset (the plateau-breaker) — reseed from *diverse local survivors*, never
+"the single best".** Every **T** iterations: rank islands by champion fitness,
+**kill only the bottom half**; leave the **survivors untouched** (they keep
+their distinct champions — that is where diversity is preserved). Reseed each
+killed island from a **top-k-sampled *surviving island*** (temperature > 0, so
+not always #1), clear its `recent_attempts`, and let it re-diverge by
+independent mutation. This defunds stuck lineages and spreads winners *without*
+collapsing the population onto one lineage — the pull toward winners
+(exploitation) is balanced by reseed-from-diverse-survivors + re-divergence
+(exploration).
+
+The **hub influence pool is a *secondary* seed source, not the reset default**:
+it seeds the *initial* islands (see Seeding) and may *occasionally* inject one
+cross-run specialist at reset (e.g. one killed slot per reset), so a run can
+adopt another run's/user's win without homogenizing. This is what **subsumes
+today's mid-run `migrate`** — but as an occasional diversity injection, not an
+every-cycle "adopt the single global best". (Note: for a single-identity run the
+hub pool is thin early on, so local survivor diversity carries exploration;
+that is precisely why islands exist on top of the hub.)
 
 **Registration.** Unchanged: any island win that beats the objective's
 registered elite publishes + registers (per-identity slices for a set). The
