@@ -1,9 +1,9 @@
 # Evolve Exploration Overhaul — Design
 
 **Goal:** make the evolve loop actually keep improving past its early plateau, by
-fixing three interlocking weaknesses in one unit: an impoverished mutator brief,
-a single-lineage search with no diversity, and a parent selector that discards
-specialists.
+fixing three interlocking weaknesses in one unit: the mutator is briefed nearly
+blind, the search is a single lineage with no diversity, and the parent selector
+discards specialists.
 
 **Status:** design (brainstormed). Next step after review: implementation plan.
 
@@ -22,14 +22,12 @@ Two live runs converged on the same failure mode:
     branch of `build_brief` opens *"a set of 6 builds … raise average
     progression across these character builds"*, with one passing "NLE". The
     single-identity branch at least says *"NetHack bot … BALROG-style milestone
-    metric"* and includes an **outcome tally** (`died×N, starved×N…`); the set
-    branch **drops both**.
+    metric"* and includes an **outcome tally**; the set branch **drops both**.
   - It propagates **one aggregate number per build** and nothing else. The
     eval's rich per-episode signal (how the game ended, dungeon depth, milestone
     reached, death cause) is thrown away.
   - There is **zero memory across attempts**: every mutation is a fresh agent
-    that never hears what the last N tries changed or why they were rejected, so
-    it re-treads the same ground.
+    that never sees what prior tries changed or how they scored.
 
 There is also a known selection gap (issue #12): the parent selector is
 **coverage-gated** — a program can only parent an objective `S` if it has
@@ -37,9 +35,14 @@ results for *all* of `S`. Correct for the leaderboard, wrong for *influence*: a
 run over a role whose specialists each cover one build gets an empty pool and
 cold-starts from the seed, discarding every specialist.
 
-**Root reads:** the mutator is briefed nearly blind, the search has no
-diversity to escape a local optimum, and good partial-coverage parents are
-thrown away. This unit addresses all three.
+**The key reframe:** the mutator is a *coding agent* — its core skill is reading
+and analyzing code. The fix for "briefed blind" is therefore **not a richer text
+brief** (distilling code for a model that reads code is lossy and is machinery we
+would have to build). It is to **provision the sandbox with the actual solution
+folders + a compact manifest and let the agent analyze them** — keeping in text
+only the task framing it cannot infer from code. That reframes Component A
+(below); islands (B) and coverage-aware selection (C) then decide *which* folders
+get provisioned.
 
 ## 2. The two-level model (the key framing)
 
@@ -73,83 +76,93 @@ Non-goal (explicitly out): moving the population onto the hub (a shared,
 novelty-ranked per-identity *population* instead of a single elite). More
 powerful, much bigger hub change; deferred.
 
-## 3. Component A — Brief overhaul (build first)
+## 3. Component A — Sandbox provisioning + task framing (build first)
 
-Highest leverage and cheapest: the current brief is actively starving the
-mutator. `src/nethackers/harness/brief.py`.
+Highest leverage and, done this way, *less* code than the current brief. Rather
+than distill the parent, its results, and prior attempts into text, **provision
+the sandbox with the real folders + a small manifest and let the agent analyze
+them.** Only the framing it can't infer from code stays text.
 
-**A1. A shared NetHack preamble, in *both* branches.** One short block anchoring
-the task: this is NetHack (played via NLE); the metric is a BALROG-style
-progression score that starts near 0 and rises as the bot gets deeper/further
-into the game (the exact milestone definition is the evaluator's — the preamble
-sources its wording from there rather than asserting a fixed ceiling); the goal
-is to descend, survive, and progress. Stated once, plainly, in both the single
-and set branches. No strategy spoilers (the mutator is a capable coding agent) —
-just the frame and what the number means.
+**A1. Task framing (short text preamble, both branches).** The one distillation
+the monk run proved missing — the agent needs the *what/why*, not a summary of
+code it can read. One short block: this is NetHack (played via NLE); the metric
+is a BALROG-style progression score that starts near 0 and rises as the bot gets
+deeper/further (exact milestone definition sourced from the evaluator, not
+asserted); the goal is to descend, survive, progress. For a *set* objective, name
+the builds and which are weakest. No strategy spoilers.
 
-**A2. Propagate what the eval saw, not just a scalar.** From
-`parent_evidence.results` (which already carries per-episode `end_status`,
-`max_depth`, `milestone`, `progress`), render for the parent:
-- the **outcome tally** (`died×N, starved×N, …`) — in *both* branches (the set
-  branch currently omits it);
-- **where it stalls**: the typical deepest milestone / depth reached, and the
-  dominant death cause — overall, and per-build for a set (the per-build line
-  today shows only the score).
+**A2. Provision the folders (replaces text-distilled feedback).** Per mutation,
+lay out a read-only reference tree beside the editable base:
 
-**A3. Failure feedback across attempts — data, never a directive.** The loop
-already asks the mutator to leave a `# hypothesis: …` comment at each edit. On a
-rejected iteration, record `(hypothesis, measured-result, what-changed)`.
-`build_brief` gains `recent_attempts` and renders them **neutrally** — no "avoid
-this" — so the mutator (a capable coding agent) judges for itself whether a
-failed hypothesis was a *wrong direction* or a *right direction implemented
-badly*, and can re-implement it better, generalize it, or drop it. Because each
-mutation starts fresh from the island champion (not from the rejected attempt),
-re-attempting a good idea is natural.
+```
+/workspace/               base to edit = the island's champion (seeded from §5, then evolved)
+/refs/influences/<id>/    ≤2 more selector-chosen influences (crossover material)
+/refs/attempts/<id>/      ≤3 rejected attempts since the current best
+/refs/parent-eval.json    the base's raw per-episode eval output
+/refs/CONTEXT.md          one table: each folder → score / outcome / hypothesis
+```
 
-Each recent attempt carries:
-- the **hypothesis** (the mutator's own words),
-- the **measured result** — dev/validation deltas — with the **overfit case
-  (dev↑, validation↓) called out explicitly** as the sharpest signal ("helped
-  training, didn't generalize");
-- a **bounded diff of what it changed** for the last 1–2 attempts (older ones:
-  hypothesis + result only). The diff is what lets the model tell a buggy
-  implementation from a bad idea from the outside; it is size-capped to avoid
-  prompt bloat.
+- **Base (`/workspace`)** — the island's champion. It **self-documents its
+  accepted lineage** via the `# hypothesis:` comment every accepted edit leaves,
+  so the path-to-best needs no separate folders.
+- **Influences (`/refs/influences/`)** — the *parents*, chosen by the selector
+  (§5), **not** the iteration log: other strong solutions (hub specialists /
+  elites) to analyze and borrow/combine. Crossover-by-reference falls out for
+  free. Degrades gracefully — a thin hub pool just means fewer influence folders.
+- **Recent rejected attempts (`/refs/attempts/`)** — only the last ≤3 *since the
+  current best* (the ones not already folded into the base). The agent reads the
+  actual rejected code + its score and judges *idea vs implementation* itself —
+  which is why these are folders, not a "don't repeat" list: a good direction
+  that failed on a bad implementation is visible and re-attemptable.
+- **Raw eval** — the base's per-episode results (end_status/depth/milestone) as a
+  file; the agent can also run its own evals (`arena.run` is already in the
+  sandbox) on the base or any reference.
+- **`CONTEXT.md`** — the only thing we *write*: a small manifest mapping each
+  folder → score / outcome / (for attempts) hypothesis, so the agent knows which
+  is which. A specialist's known-strong identity goes here too ("strong at
+  `mon-hum-cha-mal`").
 
-Rationale for *no ban-list*: a rejected hypothesis may be a good direction whose
-implementation was poor; a "don't repeat X" list would suppress it. Reporting
-the attempt + its result, and trusting the mutator, preserves that.
+The text brief shrinks to: **A1 framing + "the current bot is `/workspace`;
+strong references and recent attempts are under `/refs/` (see `CONTEXT.md`);
+analyze them and make one focused, `# hypothesis:`-commented change."**
 
-Interface: `build_brief(..., recent_attempts=None)` where an attempt is
-`(hypothesis: str, result: str, diff: str | None)`; the NetHack preamble is a
-module constant reused by both branches; A2 helpers may live in `aggregate.py`
-(pure functions over `Evidence.results`).
+**Why this over a richer text brief:** less lossy (real code + real eval output,
+not our summary); it leverages the agent's actual strength; and it is *less*
+machinery for us — copy bounded folders + write one manifest, no tally /
+where-it-stalls / diff-formatter.
+
+**Mechanics.** `loop.py` assembles `/refs/` per iteration (copy the influence +
+attempt folders, write `CONTEXT.md`); `container_operator.py` mounts `/refs/`
+**read-only** into the mutator sandbox (all folders are solution code — no
+info-diet-wall concern); `brief.py` shrinks to the framing + the `/refs/`
+pointer. Reference sets are bounded (§6).
 
 ## 4. Component B — Islands (local diversity)
 
 `src/nethackers/harness/loop.py`. Replace the single `elite` with **K islands**.
 
 **State.** `islands: list[EliteState]` of length K (each: its own champion tree +
-dev/validation fitness + dev evidence), plus a round-robin cursor and, per
-island, a short `recent_attempts` history for Component A3.
+dev/validation fitness + dev evidence), a round-robin cursor, and per island the
+handful of **rejected attempts since its current best** (their folders + scores +
+hypotheses) that feed `/refs/attempts/` (§3).
 
 **Seeding.** Initialize each island from the influence pool (§5) if the hub has
 trusted entries for `S`, else from the cold-start seed. Distinct seeds where the
 pool allows; the seed otherwise.
 
-**Iteration (round-robin).** Iteration *i* works island `i mod K`: take that
-island's champion as the parent, build its brief (with that island's
-`recent_attempts`), mutate, run the existing gates (smoke → dev → validation).
-If the child beats *that island's* champion it replaces it; otherwise append the
-(hypothesis, reason) to that island's history. Islands are otherwise **isolated**
-— a win in one never touches another. Isolation is the diversity.
+**Iteration (round-robin).** Iteration *i* works island `i mod K`: **provision
+its sandbox (§3)** — base = its champion, `/refs/` = selector-chosen influences
+(§5) + that island's recent rejects — mutate, run the existing gates (smoke → dev
+→ validation). If the child beats *that island's* champion it becomes the new
+champion (and its recent-reject list clears); otherwise the attempt's folder +
+result join that island's recent-reject list.
 
 **Reset (the plateau-breaker) — reseed from *diverse local survivors*, never
 "the single best".** Every **T** iterations: rank islands by champion fitness,
 **kill only the bottom half**; leave the **survivors untouched** (they keep
 their distinct champions — that is where diversity is preserved). Reseed each
 killed island from a **top-k-sampled *surviving island*** (temperature > 0, so
-not always #1), clear its `recent_attempts`, and let it re-diverge by
+not always #1), clear its recent-reject list, and let it re-diverge by
 independent mutation. This defunds stuck lineages and spreads winners *without*
 collapsing the population onto one lineage — the pull toward winners
 (exploitation) is balanced by reseed-from-diverse-survivors + re-divergence
@@ -157,20 +170,21 @@ collapsing the population onto one lineage — the pull toward winners
 
 The **hub influence pool is a *secondary* seed source, not the reset default**:
 it seeds the *initial* islands (see Seeding) and may *occasionally* inject one
-cross-run specialist at reset (e.g. one killed slot per reset), so a run can
-adopt another run's/user's win without homogenizing. This is what **subsumes
-today's mid-run `migrate`** — but as an occasional diversity injection, not an
-every-cycle "adopt the single global best". (Note: for a single-identity run the
-hub pool is thin early on, so local survivor diversity carries exploration;
-that is precisely why islands exist on top of the hub.)
+cross-run specialist at reset (e.g. one killed slot), so a run can adopt another
+run's/user's win without homogenizing. This **subsumes today's mid-run
+`migrate`** — as an occasional diversity injection, not an every-cycle "adopt the
+single global best". (For a single-identity run the hub pool is thin early on, so
+local survivor diversity carries exploration — precisely why islands exist on top
+of the hub.)
 
 **Registration.** Unchanged: any island win that beats the objective's
 registered elite publishes + registers (per-identity slices for a set). The
 board stays "best across everything."
 
-**Isolation, deliberately.** No cross-island references in v1 (pure FunSearch
-isolation is simplest and proven). "Crossover-by-reference" — showing the
-mutator a champion from another island — is a noted extension, not in scope.
+**Isolation is of *state*, not information.** A win in island A never overwrites
+island B's champion — that state isolation is the diversity. The reference
+folders in `/refs/` are read-only *analysis* material chosen by selection (§5),
+not shared island state; provisioning them does not couple the lineages.
 
 ## 5. Component C — Coverage-aware influence pool (issue #12)
 
@@ -188,13 +202,11 @@ Coverage-weighting is emergent — no imputation, no magic weight.
 
 **Sampling.** Reuse the existing `_sample` (trusted → top-k → temperature) over
 the union pool. New entry point `influence_pool(hub, identities, owner, *,
-fetch)` and a `sample_seeds(..., n)` that resolves *n* island seeds (via the
-existing `_resolve`/cache/pull), falling back to the cold-start seed on hub
-error / empty pool / unresolvable bytes.
-
-**Brief hook (A2 tie-in).** A sampled specialist knows *which* identity it
-excels at, so the brief can say "this parent is strong at `mon-hum-cha-mal` —
-generalize it," closing the loop between selection and the brief.
+fetch)` and a `sample_seeds(..., n)` that resolves *n* solutions (via the
+existing `_resolve`/cache/pull) — used both to **seed islands** (§4) and to
+choose the **influence references** provisioned into `/refs/` each iteration
+(§3). Falls back to the cold-start seed on hub error / empty pool / unresolvable
+bytes.
 
 The leaderboard read (coverage-gated `elites(S)`) is untouched. No hub
 schema/endpoint change — the union is computed client-side from the same
@@ -206,30 +218,36 @@ per-identity `hub.elites(ident)` queries the coverage-gated path already makes.
   minutes (real mutation + Docker eval), and round-robin means K× wall-clock per
   pass. 4 gives real diversity at tolerable cost. Configurable.
 - **T (reset period) = 4·K iterations** (≈ 4 mutations per island between
-  resets). Enough to diverge before culling; frequent enough to defund the
-  stuck. Configurable.
+  resets). Enough to diverge before culling; frequent enough to defund the stuck.
+  Configurable.
+- **Reference counts:** **≤2 influences + ≤3 recent attempts** per sandbox — the
+  read-only tree stays small; the base's lineage rides inside `/workspace`.
 - **top-k / temperature:** reuse `select.py`'s existing defaults.
 - **1 elite per island** (not a per-island sub-population). Minimal; per-island
   pools are a fast-follow.
 
 ## 7. Error handling
 
-- **Hub down / empty influence pool / unresolvable bytes:** seed/reseed from the
-  cold-start seed (the pool functions never raise — same contract as today's
-  `top_trusted_elite`).
+- **Hub down / empty influence pool / unresolvable bytes:** seed from the
+  cold-start seed and provision no influence folders (the pool functions never
+  raise — same contract as today's `top_trusted_elite`). Provisioning degrades
+  to base + attempts only.
 - **Operator error on an island iteration:** the existing circuit-breaker
   applies; that island simply gets no new champion this turn (no cross-island
   effect).
-- **Missing per-episode fields (older evidence):** A2 renders only what is
-  present (tally always available; depth/milestone/death-cause best-effort).
+- **Missing per-episode fields (older evidence):** `parent-eval.json` /
+  `CONTEXT.md` render only what is present (score always available; depth /
+  milestone / death-cause best-effort).
 
 ## 8. Testing approach
 
 All units stay pure/injectable (hub, rng, fetch, eval `runner` already injected).
+Provisioning is filesystem-only and asserted directly; no LLM involved.
 
-- **Brief:** golden-ish assertions that both branches contain the NetHack frame
-  + outcome tally; that `recent_attempts` renders the "don't repeat" list; that
-  a set brief includes per-build stall detail. No LLM involved.
+- **Provisioning + framing:** given a base, chosen influences, and recent
+  rejects, assert `/refs/` is assembled with the right folders (base, ≤2
+  influences, ≤3 rejects), a `CONTEXT.md` manifest mapping folder→score, and that
+  the text preamble contains the NetHack frame in **both** branches.
 - **Islands:** with a fake improving operator + table-driven fitness `runner`
   (as in `test_harness_loop.py`): K islands advance independently; a reset kills
   the bottom half and reseeds from survivors; a win still registers.
@@ -239,25 +257,32 @@ All units stay pure/injectable (hub, rng, fetch, eval `runner` already injected)
 
 ## 9. Scope & build order
 
-**In:** the three components above, as one unit.
+**In:** the three components above, as one unit. Crossover-by-reference is
+**in** — via selector-chosen influence folders in `/refs/` (§3).
 **Out / deferred:** the held-out verifier; hub-holds-the-population; per-island
-sub-populations; cross-island crossover-by-reference; verifier-trust weighting
-in selection (#12 Direction 2 — needs the verifier).
+sub-populations; provisioning a *sibling island's* (unregistered) champion as a
+reference; verifier-trust weighting in selection (#12 Direction 2 — needs the
+verifier).
 
 **Recommended build order** (each independently shippable & testable):
-1. **Brief overhaul** (Component A) — cheapest, highest immediate value; the
-   current brief is the most acute problem.
+1. **Provisioning + framing** (Component A) — cheapest, highest immediate value;
+   the current blind brief is the most acute problem, and this works even before
+   islands (base = today's single elite, refs = recent rejects).
 2. **Islands** (Component B) — the structural plateau-breaker.
-3. **Coverage-aware influence** (Component C) — makes seeding/reset draw on
-   specialists; most valuable once generalist (role/glob) runs are common.
+3. **Coverage-aware influence** (Component C) — fills `/refs/influences/` and
+   island seeds with specialists; most valuable once generalist runs are common.
 
 ## 10. Files
 
-- `src/nethackers/harness/brief.py` — A1/A2/A3.
-- `src/nethackers/harness/aggregate.py` — pure A2 helpers over `Evidence.results`.
+- `src/nethackers/harness/brief.py` — shrink to A1 framing + the `/refs/` pointer
+  (both branches).
 - `src/nethackers/harness/loop.py` — islands (list of elites, round-robin,
-  reset), per-island `recent_attempts`, seed/reset from the influence pool
-  (subsumes `migrate`).
+  reset), per-island recent-reject tracking, seed/reset from the influence pool
+  (subsumes `migrate`), and per-iteration `/refs/` assembly + `CONTEXT.md`.
+- `src/nethackers/harness/container_operator.py` — mount `/refs/` read-only into
+  the mutator sandbox.
 - `src/nethackers/harness/select.py` — `influence_pool` + `sample_seeds`
   (coverage-gated path untouched).
+- `src/nethackers/harness/aggregate.py` — small pure helpers for the `CONTEXT.md`
+  score/outcome rollup over `Evidence.results`.
 - Tests alongside each.
