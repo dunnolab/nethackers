@@ -21,6 +21,21 @@ def _seed_tree(root: Path) -> Path:
     return root
 
 
+def test_hypothesis_extracted_from_worktree(tmp_path):
+    # loop.py._track_rejected_attempt currently labels aggregate.outcome_summary(...)
+    # (end-status counts) as the attempt's note, which refs.assemble renders under a
+    # "hypothesis" column in CONTEXT.md -- so a revisiting island sees
+    # "hypothesis: 1x11, -1x3", never the actual idea the mutator tried. This pure
+    # helper greps the worktree's Python for the mutator's real `# hypothesis:` line.
+    from nethackers.harness.loop import _hypothesis_of
+    (tmp_path / "bot.py").write_text("x = 1\n")
+    (tmp_path / "autoascend").mkdir()
+    (tmp_path / "autoascend" / "logic.py").write_text(
+        "def f():\n    return 1  # hypothesis: heal earlier at <1/2 HP\n")
+    assert _hypothesis_of(tmp_path) == "heal earlier at <1/2 HP"
+    assert _hypothesis_of(tmp_path / "autoascend") is not None  # dir walk
+
+
 class _FakeHub:
     def __init__(self): self.registered = []
     def register(self, *, token, reference, manifest, evidence):

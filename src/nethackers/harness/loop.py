@@ -1,6 +1,7 @@
 """The MAP-Elites loop: select -> mutate -> evaluate -> insert (MVP)."""
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import random
@@ -63,6 +64,22 @@ def _causes(results) -> dict[str, int]:
     """Count genuine causes of death across an evaluation's episodes (mirrors
     brief.py's end_status tally, but over the verbatim death string)."""
     return dict(Counter(r.cause_of_death for r in results if r.cause_of_death))
+
+
+_HYP = re.compile(r"#\s*hypothesis:\s*(.+)", re.IGNORECASE)
+
+
+def _hypothesis_of(worktree: Path) -> str | None:
+    """The mutator's own `# hypothesis: …` comment (brief.py asks for one at
+    the edit) -- the first match across the worktree's Python files, in
+    sorted path order. Best-effort: an unreadable file (encoding issue, race)
+    is skipped, not fatal; no match anywhere yields None."""
+    for p in sorted(Path(worktree).rglob("*.py")):
+        with contextlib.suppress(OSError, UnicodeDecodeError):
+            m = _HYP.search(p.read_text())
+            if m:
+                return m.group(1).strip()
+    return None
 
 
 def select_reseed(survivors: list[EliteState], rng: random.Random,
@@ -305,7 +322,14 @@ def run_loop(
         # constructs a fresh EliteState that doesn't carry `recent_attempts`
         # forward.
         active = island_states[idx]
-        active.recent_attempts.append((f"iter-{k + 1}", worktree, note))
+        # Prepend the mutator's REAL hypothesis (its `# hypothesis: …` comment
+        # in the worktree) when one is present -- `note` itself stays exactly
+        # as callers build it (score/outcome summary), so a revisiting island
+        # sees both the actual idea tried and the outcome, not just the latter
+        # mislabeled as the former.
+        hyp = _hypothesis_of(worktree)
+        full_note = f"hypothesis: {hyp}; {note}" if hyp else note
+        active.recent_attempts.append((f"iter-{k + 1}", worktree, full_note))
         del active.recent_attempts[:-3]   # bounded <=3 -- drop oldest first
 
     def _hub_reseed_candidate(held: set[str]) -> EliteState | None:
