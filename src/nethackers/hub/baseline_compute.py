@@ -35,6 +35,10 @@ def compute_baseline(store: Store, specs: Iterable[ObjectiveSpec], *, image: str
                  for atom in evidence_to_atoms(evidence, owner=AUTOASCEND_ID, spec=spec,
                                                solution_id=AUTOASCEND_ID)]
         # Idempotent recompute: drop this objective's prior baseline rows first.
+        # This DELETE opens the transaction that insert_baseline_atoms' own
+        # `with self._conn:` block commits -- DELETE and inserts land together
+        # (or roll back together). Keep the insert unconditional so that pairing
+        # holds even for an empty batch (which commits just the DELETE).
         store.conn.execute("DELETE FROM baseline_atoms WHERE objective_digest = ?",
                            (spec.digest(),))
         total += store.insert_baseline_atoms(atoms)
