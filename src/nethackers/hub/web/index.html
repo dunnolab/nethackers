@@ -897,11 +897,12 @@ function renderFrontier(regime){
     return `<table class="fr"><caption><span class="ref" data-k="role-${role}">${ROLE_NAMES[role]}</span><span class="m">${rmean}</span></caption>${rows}</table>`;
   }).join("");
   const overall=filled?(sum/filled).toFixed(3):"-";
-  const baseLine=` &middot; baseline &mdash; <b>AutoAscend 0.089</b> (val-dwa-law-fem)`;
+  const bv=(BASELINE&&BASELINE.overall!=null)?BASELINE.overall.toFixed(3):null;
+  const baseLine=bv?` &middot; baseline &mdash; <b>AutoAscend ${bv}</b> (val-dwa-law-fem)`:` &middot; baseline &mdash; AutoAscend not computed yet`;
   note.innerHTML=(verified
     ? `<b>verified</b> tier &mdash; no verified results yet (M2b isn't live), so every cell is blank`
     : (regime==="program"
-      ? `champion <b>nethacker@${CHAMPION.digest}</b> (<b>@${CHAMPION.owner}</b>) &mdash; overall <b>${overall}</b> over <b>${filled}</b> explored`
+      ? `champion <b>nethacker@${esc(CHAMPION.digest)}</b> (<b>@${esc(CHAMPION.owner)}</b>) &mdash; overall <b>${overall}</b> over <b>${filled}</b> explored`
       : `each cell = the <b>best</b> program's mean &middot; overall <b>${overall}</b> over <b>${filled}/${total}</b> explored`))+baseLine;
   if(window.__refs) window.__refs();
 }
@@ -924,7 +925,7 @@ function renderChart(mk){
   $("#chart").innerHTML=rows.join("\n")+"\n"+`<span class="lbl3">${axis}</span>`;
   $("#chartcap").textContent=verified
     ? m.label+" -- verified tier: only the AutoAscend baseline so far (M2b isn't live)"
-    : m.label+" -- best-so-far -- self-reported (AutoAscend baseline + 3 registrations, 2026-08-23)";
+    : m.label+" -- best-so-far -- self-reported (from the AutoAscend baseline)";
 }
 function padr(s,n){ s=String(s); return s.length>=n?s.slice(0,n):s+" ".repeat(n-s.length); }
 document.querySelectorAll("[data-metric]").forEach(b=>b.addEventListener("click",()=>{
@@ -1071,7 +1072,7 @@ async function loadObjective(obj){
   BOARD_BY_OBJ[obj] = PROGRAMS;
   PEOPLE = buildPeople(rows);
   let series=[];
-  try{ const pr = await jget(`/progress?tier=${encodeURIComponent(curTier)}`); series = (pr && pr.series) || []; }
+  try{ const pr = await jget(`/progress?objective=val-dwa-law-fem&tier=${encodeURIComponent(curTier)}`); series = (pr && pr.series) || []; }
   catch(e){ series=[]; }
   PROGRESS = [
     {t:"autoascend", frontier: (BASELINE && BASELINE.overall!=null) ? BASELINE.overall : 0, ascensions:0, coverage:0 /*GAP: baseline cell-count not exposed*/, base:true},
