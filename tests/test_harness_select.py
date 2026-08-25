@@ -2,7 +2,12 @@
 import random
 from pathlib import Path
 
-from nethackers.harness.select import influence_pool, select_parent, top_trusted_elite
+from nethackers.harness.select import (
+    influence_pool,
+    sample_seeds,
+    select_parent,
+    top_trusted_elite,
+)
 from nethackers.harness.store import LocalTreeStore
 
 
@@ -295,3 +300,70 @@ def test_influence_pool_keeps_one_entry_per_column_for_a_generalist(tmp_path):
     assert len(entries) == 2                              # once per column, not deduped
     by_identity = {e["identity"]: e["score"] for e in entries}
     assert by_identity == {"wiz-elf-cha-mal": 0.6, "wiz-orc-cha-mal": 0.8}
+
+
+# -- sample_seeds: draw + resolve up to n distinct pool solutions (Task C2) -
+# Pool entries here are ATOM identities (solution_digest = "<repo>@<commit>",
+# matching repo/commit_sha) so _resolve's trust-the-pulled-commit path
+# applies, same as test_resolve_atom_identity_trusts_pulled_commit.
+
+def _atom_entry(repo_suffix: str, commit_char: str, score: float,
+                 owner: str = "dev", tier: str = "verified") -> dict:
+    repo = f"github.com/o/r{repo_suffix}"
+    commit = commit_char * 40
+    return {"solution_digest": f"{repo}@{commit}", "score": score, "owner": owner,
+            "tier": tier, "repo": repo, "commit_sha": commit}
+
+
+def _atom_fetch(entry, dest):
+    (Path(dest) / "bot.py").write_text("pulled-code")
+    return Path(dest)
+
+
+def test_sample_seeds_resolves_distinct_entries_when_pool_has_enough(tmp_path):
+    store = LocalTreeStore(tmp_path / "store")
+    seed = _tree(tmp_path, "seed")
+    hub = _HubByIdentity({
+        "wiz-elf-cha-mal": [_atom_entry("1", "a", 0.9), _atom_entry("2", "b", 0.6)],
+        "wiz-orc-cha-mal": [_atom_entry("3", "c", 0.7)],
+    })
+    result = sample_seeds(hub, ("wiz-elf-cha-mal", "wiz-orc-cha-mal"), store, seed,
+                          owner="dev", n=3, fetch=_atom_fetch, rng=random.Random(0))
+    assert len(result) == 3
+    digests = [entry["solution_digest"] for _, entry in result if entry is not None]
+    assert len(digests) == 3 and len(set(digests)) == 3   # all resolved, all distinct
+    for path, entry in result:
+        assert entry is not None
+        assert "identity" in entry and "score" in entry
+        assert store.has(entry["solution_digest"])
+        assert path == store.path(entry["solution_digest"])
+
+
+def test_sample_seeds_pads_with_seed_when_pool_is_thin(tmp_path):
+    store = LocalTreeStore(tmp_path / "store")
+    seed = _tree(tmp_path, "seed")
+    hub = _HubByIdentity({                                # only 2 distinct solutions total
+        "wiz-elf-cha-mal": [_atom_entry("1", "a", 0.9)],
+        "wiz-orc-cha-mal": [_atom_entry("2", "b", 0.6)],
+    })
+    result = sample_seeds(hub, ("wiz-elf-cha-mal", "wiz-orc-cha-mal"), store, seed,
+                          owner="dev", n=3, fetch=_atom_fetch, rng=random.Random(0))
+    assert len(result) == 3
+    resolved = [(p, e) for p, e in result if e is not None]
+    padded = [(p, e) for p, e in result if e is None]
+    assert len(resolved) == 2 and len(padded) == 1        # pool had only 2 -> 1 pad
+    for path, entry in resolved:
+        assert store.has(entry["solution_digest"])
+        assert path == store.path(entry["solution_digest"])
+        assert "identity" in entry and "score" in entry
+    assert padded == [(seed, None)]
+
+
+def test_sample_seeds_hub_error_returns_all_seed_pads(tmp_path):
+    class _Boom:
+        def elites(self, o): raise RuntimeError("down")
+    store = LocalTreeStore(tmp_path / "store")
+    seed = _tree(tmp_path, "seed")
+    result = sample_seeds(_Boom(), ("wiz-elf-cha-mal", "wiz-orc-cha-mal"), store, seed,
+                          owner="dev", n=3)
+    assert result == [(seed, None), (seed, None), (seed, None)]

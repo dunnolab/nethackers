@@ -213,3 +213,57 @@ def top_trusted_elite(
     top = max(trusted, key=lambda e: e["score"])
     resolved = _resolve(top, store, fetch)
     return (top, resolved[0]) if resolved is not None else None
+
+
+def sample_seeds(
+    hub, identities: tuple[str, ...], store: LocalTreeStore, seed_tree: Path, *,
+    owner: str, n: int, k: int = 1, temperature: float = 1.0,
+    rng: random.Random | None = None,
+    fetch: Callable[[dict, Path], Path | None] = pull_fetch,
+) -> list[tuple[Path, dict | None]]:
+    """Sample up to ``n`` DISTINCT solutions from the identity set's
+    ``influence_pool`` and resolve each to a tree on disk -- seeding
+    islands / building ``/refs/influences/`` (a later brief).
+
+    Repeatedly draws with the existing top-``k``/temperature machinery
+    (``_sample``, same as ``select_parent``), removing every entry with the
+    drawn ``solution_digest`` from the candidate pool after each draw --
+    this is what makes the draws DISTINCT even though ``influence_pool`` can
+    carry the same digest more than once (a generalist appears once per
+    identity-column it's elite in). Each draw is resolved through the local
+    cache (``_resolve``, same cache/pull/integrity semantics as
+    ``select_parent``): success appends ``(tree_path, entry)`` where
+    ``entry`` is the original ``influence_pool`` dict (``solution_digest``,
+    ``score``, ``identity``); a resolve failure just drops that digest
+    (never retried) and drawing continues among the remaining distinct
+    digests.
+
+    Always returns exactly ``n`` pairs: once the pool of undrawn distinct
+    digests is exhausted (a thin/empty pool, every remaining candidate
+    failed to resolve, or a hub error -- ``influence_pool`` already
+    swallows a per-member ``hub.elites`` exception), the rest are padded
+    with ``(seed_tree, None)``, the same cold-start marker ``select_parent``
+    returns. Never raises.
+    """
+    rng = rng or random.Random()
+    try:
+        pool = influence_pool(hub, identities, owner)
+    except Exception:
+        pool = []
+    remaining = list(pool)
+    picked_digests: set[str] = set()
+    out: list[tuple[Path, dict | None]] = []
+    while len(out) < n and remaining:
+        candidates = [e for e in remaining if e["solution_digest"] not in picked_digests]
+        if not candidates:
+            break
+        chosen = _sample(candidates, k, temperature, rng)
+        digest = chosen["solution_digest"]
+        picked_digests.add(digest)
+        remaining = [e for e in remaining if e["solution_digest"] != digest]
+        resolved = _resolve(chosen, store, fetch)
+        if resolved is not None:
+            out.append((resolved[0], chosen))
+    while len(out) < n:
+        out.append((seed_tree, None))
+    return out
