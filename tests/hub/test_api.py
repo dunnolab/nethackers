@@ -311,3 +311,13 @@ def test_search_lists_and_owner_filter(tmp_path: Any) -> None:
     someone_elses = client.get("/search", params={"owner": "not-an-owner"})
     assert someone_elses.status_code == 200
     assert someone_elses.json() == []
+
+
+def test_root_serves_the_dungeon_viz(tmp_path: Any) -> None:
+    client, _store = _app(tmp_path)
+    body = client.get("/").text
+    assert 'id="dictviz"' in body
+    assert 'id="dictbar"' in body
+    assert "/dictionary.mp3" in body
+    # the dev-only window hook must be gone from the shipped page
+    assert "__dictviz" not in body and "__dictSynth" not in body

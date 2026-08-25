@@ -59,7 +59,7 @@ img{ max-width:100%; }
 
 /* the document window ------------------------------------------------------ */
 .page{
-  max-width:1000px; margin:16px auto; background:var(--paper);
+  max-width:1000px; margin:74px auto 104px; background:var(--paper); position:relative; z-index:1;
   border:1px solid var(--silver-lo); box-shadow:4px 4px 0 rgba(60,58,50,.35);
 }
 .pad{ padding:0 18px; }
@@ -326,8 +326,25 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
   .sidebar{ border-right:0; border-bottom:1px solid var(--rule-soft); }
   .callouts,.cards,.footgrid{ grid-template-columns:1fr; }
 }
+  /* --- The Nethack Dictionary: audio-reactive dungeon wall around the page frame --- */
+  #dictviz{ position:fixed; inset:0; width:100%; height:100%; z-index:0; pointer-events:none; display:block; }
+  #dictbar{ position:fixed; left:0; right:0; bottom:0; z-index:40; background:var(--screen); color:var(--screen-ink);
+    border-top:2px solid #000; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace;
+    font-size:.84rem; display:flex; align-items:center; justify-content:center; gap:14px; padding:7px 14px; flex-wrap:wrap; }
+  #dictbar .dplay{ cursor:pointer; min-width:40px; font:inherit; padding:2px 9px; }
+  #dictbar .dnote{ color:var(--screen-dim); white-space:nowrap; letter-spacing:.02em; animation:dsurface 5.5s ease-in-out infinite; }
+  #dictbar .dnote .demph{ color:var(--gold); }
+  @keyframes dsurface{ 0%,100%{ opacity:.45; } 50%{ opacity:.95; } }
+  #dictbar .dmeter{ color:var(--gold); cursor:pointer; letter-spacing:2px; user-select:none; touch-action:none;
+    font-size:.98rem; outline:none; }
+  #dictbar .dmeter .doff{ color:var(--screen-dim); }
+  #dictbar .dmeter:focus-visible{ outline:2px dotted var(--gold); outline-offset:2px; }
+  #dictbar .dpct{ color:var(--screen-dim); min-width:36px; }
+  @media (max-width:640px){ #dictbar .dnote{ display:none; } }
+  @media (prefers-reduced-motion:reduce){ #dictbar .dnote{ animation:none; } }
 </style>
 
+<canvas id="dictviz" aria-hidden="true"></canvas>
 <div class="page">
 
   <!-- ===================== MASTHEAD ===================== -->
@@ -638,6 +655,12 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
   </div>
 </div>
 
+<div id="dictbar" role="group" aria-label="music volume">
+  <button class="dplay bevel" aria-label="play or pause">&#9654;</button>
+  <span class="dnote"><span class="demph">something</span> is climbing up out of the dark &#9835;</span>
+  <span class="dmeter" role="slider" tabindex="0" aria-label="volume" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"></span>
+  <span class="dpct">0%</span>
+</div>
 <script>
 /* ===================== live hub data (fetched in boot(), below) =====================
    These start empty and are populated from the hub's JSON endpoints on load.
@@ -1114,4 +1137,161 @@ async function boot(){
   setCap(); renderBoard(curView); renderFrontier(curRegime); renderChart(curMetric);
 }
 boot();
+/* ===== The Nethack Dictionary: audio-reactive dungeon wall around the .page frame ===== */
+(function(){
+  const page=document.querySelector(".page"), cv=document.getElementById("dictviz"), bar=document.getElementById("dictbar");
+  if(!page||!cv||!bar) return;
+  const g=cv.getContext("2d"); if(!g) return;
+  const audioEl=new Audio(); audioEl.src="/dictionary.mp3"; audioEl.loop=true; audioEl.preload="auto";
+  let actx=null,analyser=null,gain=null,srcNode=null,ready=false, volume=0,playing=false;
+  // dev preview: ?vizpreview=0..1 drives a synthetic spectrum so the offline harness
+  // can screenshot the reactive look; absent in normal use (a silent, opt-in page).
+  const PREVIEW=(()=>{ const q=new URLSearchParams(location.search).get("vizpreview");
+    return q==null?0:Math.max(0,Math.min(1,parseFloat(q)||0)); })();
+  const freq=new Uint8Array(1024);
+
+  function cssv(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
+  function hexRGB(h){ h=(h||"").replace("#",""); if(h.length===3) h=h.split("").map(c=>c+c).join("");
+    return [parseInt(h.slice(0,2),16)||0,parseInt(h.slice(2,4),16)||0,parseInt(h.slice(4,6),16)||0]; }
+  let INDIGO,RED,GOLD,GROUND,PAL;
+  // NetHack-flavoured colour per glyph, so the descent is colourful (deeper = more monsters, more colour)
+  const PAL_LIGHT={gray:[92,92,104],red:[196,22,22],green:[26,120,26],brown:[140,88,16],blue:[40,40,190],
+    magenta:[156,28,156],cyan:[18,126,134],orange:[208,104,0],yellow:[170,122,0],white:[56,56,66]};
+  const PAL_DARK={gray:[158,158,180],red:[255,92,92],green:[86,210,86],brown:[196,140,60],blue:[110,110,255],
+    magenta:[226,98,226],cyan:[64,202,210],orange:[255,156,50],yellow:[255,218,76],white:[234,234,246]};
+  const COLORKEY=["gray","green","gray","blue","green","brown","brown","green","cyan","gray",
+    "brown","orange","blue","brown","gray","cyan","yellow","yellow","green","cyan",
+    "white","brown","magenta","gray","white","brown","yellow","blue","orange","orange",
+    "green","magenta","red","magenta","orange","green","brown","magenta","red",
+    "gray","cyan","red","magenta","yellow","white","yellow"];
+  function readTheme(){ INDIGO=hexRGB(cssv("--indigo")||"#2f3677"); RED=hexRGB(cssv("--red")||"#cc0000");
+    GOLD=cssv("--gold")||"#e9c15a"; GROUND=cssv("--ground")||"#d8d6cc";
+    const gb=hexRGB(GROUND), lum=(gb[0]*0.3+gb[1]*0.59+gb[2]*0.11)/255; PAL=lum<0.42?PAL_DARK:PAL_LIGHT; }
+
+  function ensureAudio(){ if(actx) return;
+    try{ actx=new (window.AudioContext||window.webkitAudioContext)();
+      srcNode=actx.createMediaElementSource(audioEl); analyser=actx.createAnalyser();
+      analyser.fftSize=2048; analyser.smoothingTimeConstant=.8; gain=actx.createGain(); gain.gain.value=volume;
+      srcNode.connect(analyser); analyser.connect(gain); gain.connect(actx.destination); ready=true;
+    }catch(e){}
+  }
+  async function play(){ ensureAudio(); if(actx&&actx.state==="suspended"){ try{ await actx.resume(); }catch(e){} }
+    try{ await audioEl.play(); playing=true; }catch(e){ playing=false; } sync(); }
+  function pause(){ audioEl.pause(); playing=false; sync(); }
+
+  let synthT=0;
+  function sampleSpectrum(){
+    const scale = PREVIEW>0 ? Math.max(.25,PREVIEW) : 0;
+    if(scale>0){ const n=analyser?analyser.frequencyBinCount:512; synthT+=0.05;
+      for(let i=0;i<n&&i<freq.length;i++){ const f=i/n;
+        let v=(Math.sin(synthT*1.7+f*9)*0.5+0.5)*Math.exp(-f*2.0);
+        v+=0.3*Math.abs(Math.sin(synthT*3.1+i*0.35))*Math.exp(-f*4);
+        v+=(i%9===0?0.35:0)*Math.max(0,Math.sin(synthT*2.0+i*0.8));
+        freq[i]=Math.max(0,Math.min(255, v*255*scale)); }
+      return; }
+    if(ready&&playing&&analyser) analyser.getByteFrequencyData(freq); else freq.fill(0);
+  }
+
+  const meter=bar.querySelector(".dmeter"), pctEl=bar.querySelector(".dpct"), pb=bar.querySelector(".dplay"), BLK=12;
+  function setVol(v,u){ volume=Math.max(0,Math.min(1,v)); if(gain) gain.gain.setTargetAtTime(volume,actx.currentTime,.05);
+    if(u&&volume>0&&!playing) play(); sync(); }
+  function sync(){ let out=""; const f=Math.round(volume*BLK); for(let i=0;i<BLK;i++) out+= i<f?"█":'<span class="doff">░</span>';
+    meter.innerHTML="["+out+"]"; const p=Math.round(volume*100); if(pctEl)pctEl.textContent=p+"%"; meter.setAttribute("aria-valuenow",p);
+    pb.innerHTML=playing?"❙❙":"▶"; }
+  function fromEv(e){ const r=meter.getBoundingClientRect(); const x=(e.touches?e.touches[0].clientX:e.clientX)-r.left; setVol(x/r.width,true); }
+  let drag=false;
+  meter.addEventListener("pointerdown",e=>{ drag=true; meter.setPointerCapture(e.pointerId); fromEv(e); });
+  meter.addEventListener("pointermove",e=>{ if(drag) fromEv(e); });
+  meter.addEventListener("pointerup",()=>drag=false);
+  meter.addEventListener("keydown",e=>{ if(e.key==="ArrowUp"||e.key==="ArrowRight"){ setVol(volume+.08,true); e.preventDefault(); }
+    if(e.key==="ArrowDown"||e.key==="ArrowLeft"){ setVol(volume-.08,true); e.preventDefault(); } });
+  pb.addEventListener("click",()=>{ if(playing) pause(); else { if(volume===0) setVol(.5,false); play(); } });
+  sync();
+
+  // depth ladder: Dlvl 1 surface -> Mines -> mid -> deep -> Amulet -> Astral -> ascend
+  const DESC=[".",",","`","x",":","r","d","F","j","f","k","o","G","g","h","*","$","c","S",";",
+              "@","u","n","Z","M","q","y","e","N","R","T","W","&","V","H","P","U","L","D",
+              "_","+","&","@",'"',"*","<"];
+  let W=0,H=0,DPR=1,cw=11,ch=16,MAXEXT=48;
+  let sm=new Float32Array(0),pk=new Float32Array(0),lastN=0;
+  const reduce=matchMedia("(prefers-reduced-motion:reduce)").matches;
+  function resize(){ DPR=Math.min(2,window.devicePixelRatio||1); W=cv.clientWidth=innerWidth; H=cv.clientHeight=innerHeight;
+    cv.width=W*DPR; cv.height=H*DPR; g.setTransform(DPR,0,0,DPR,0,0);
+    ch=innerWidth<640?13:16; cw=Math.round(ch*0.62); MAXEXT=innerWidth<640?26:48;
+    g.textAlign="center"; g.textBaseline="middle"; }
+  addEventListener("resize",resize); resize(); readTheme();
+
+  function buildPer(){
+    const r=page.getBoundingClientRect(), gap=Math.round(ch*0.55);
+    const L=r.left-gap, T=r.top-gap, R=r.right+gap, B=r.bottom+gap, per=[];
+    const nx=Math.max(2,Math.round((R-L)/cw)), ny=Math.max(2,Math.round((B-T)/ch));
+    for(let i=0;i<nx;i++){ const x=L+(i/(nx-1))*(R-L); per.push([x,T,0,-1, i===0?"┌":(i===nx-1?"┐":"─")]); }
+    for(let i=1;i<ny-1;i++) per.push([R, T+(i/(ny-1))*(B-T), 1,0, "│"]);
+    for(let i=nx-1;i>=0;i--){ const x=L+(i/(nx-1))*(R-L); per.push([x,B,0,1, i===nx-1?"┘":(i===0?"└":"─")]); }
+    for(let i=ny-2;i>=1;i--) per.push([L, T+(i/(ny-1))*(B-T), -1,0, "│"]);
+    return per;   // stable cell count -> scrolling shifts positions, never resets the smoothing
+  }
+  function hash(a,b){ const s=Math.sin(a*127.1+b*311.7)*43758.5453; return s-Math.floor(s); }
+
+  let t=0, activity=0, atK=0, atVel=0, atRide=0;
+  function draw(){
+    // EVERYTHING scales with volume: silence => a calm static frame you can read past.
+    const target=(playing?1:0)*Math.min(1,volume);
+    activity += (target-activity)*0.06;
+    t += 0.0012 + activity*0.03;                 // motion clock, near-frozen when silent
+    sampleSpectrum();
+    g.clearRect(0,0,W,H);
+    const pr=page.getBoundingClientRect();
+    MAXEXT=Math.max(12,Math.min(60,Math.floor((Math.min(pr.left,W-pr.right)-8)/cw)));  // fill the margin, no waste off-screen
+    const per=buildPer(), N=per.length; if(!N) return;
+    if(N!==lastN){ sm=new Float32Array(N); pk=new Float32Array(N); lastN=N; }
+    const bins=analyser?analyser.frequencyBinCount:512, shuffle=Math.floor(t*2.4);
+    const vis=[]; g.font=ch+'px "Courier New","Cousine",monospace';
+    for(let k=0;k<N;k++){
+      const x=per[k][0],y=per[k][1],dx=per[k][2],dy=per[k][3],base=per[k][4],pf=k/N;
+      let m=0.015;                                // faint static outline at rest
+      if(activity>0.002){ const bin=Math.floor(Math.pow(pf<.5?pf*2:(1-pf)*2, 1.2)*(bins*0.48));
+        const resp=0.26+0.74*hash(k,7);           // some columns spike hard, others barely -> jagged / gap-toothed
+        let am=Math.min(1, Math.pow(freq[bin]/255, 0.85)*1.7)*activity*resp;
+        m=Math.max(m, am<0.05?0:am); }
+      sm[k]+=(m-sm[k])*(m>sm[k]?0.5:0.14); pk[k]=Math.max(sm[k], pk[k]-0.012);
+      if(y<-ch||y>H+ch) continue;
+      vis.push(k);
+      const mag=sm[k];
+      g.fillStyle="rgba("+INDIGO[0]+","+INDIGO[1]+","+INDIGO[2]+","+(0.24+mag*0.5).toFixed(3)+")";
+      g.fillText(base,x,y);
+      const ext=Math.round(mag*MAXEXT);
+      for(let e=1;e<=ext;e++){ const ex=x+dx*cw*e, ey=y+dy*ch*e;
+        if(ex<-cw||ex>W+cw||ey<-ch||ey>H+ch) break;
+        const depth=e/MAXEXT;
+        // glyph varies within a small band by cell + time -> a living descent, not a fixed ladder
+        let di=Math.floor(depth*(DESC.length-1)) + Math.round((hash(k*3+e, shuffle)-0.5)*2.6);
+        di=di<0?0:(di>DESC.length-1?DESC.length-1:di);
+        const c=PAL[COLORKEY[di]]||PAL.gray, a=(0.30+depth*0.52)*(0.4+activity*0.6);
+        g.fillStyle="rgba("+c[0]+","+c[1]+","+c[2]+","+a.toFixed(3)+")";
+        g.fillText(DESC[di], ex, ey); }
+      if(pk[k]>0.9){ const e=Math.round(pk[k]*MAXEXT)+1, sx=x+dx*cw*e, sy=y+dy*ch*e;
+        if(sx>=-cw&&sx<=W+cw&&sy>=-ch&&sy<=H+ch){
+          g.fillStyle="rgba("+RED[0]+","+RED[1]+","+RED[2]+","+(0.6+0.4*activity).toFixed(2)+")";
+          g.fillText("★", sx, sy); } }
+    }
+    // @ hero (gold): sporadic darts, speed scales with volume (frozen when silent), rides the spike
+    if(vis.length){
+      if(Math.random() < 0.05*activity) atVel += (Math.random()-0.5)*2.6*activity;   // random impulses
+      atVel *= 0.86;                                                                 // friction -> pauses between darts
+      atK += atVel;
+      const ai=vis[((Math.floor(atK)%vis.length)+vis.length)%vis.length], a0=per[ai];
+      if(a0){ const ride=Math.min(MAXEXT*0.45,(sm[ai]||0)*MAXEXT*0.45); atRide+=(ride-atRide)*0.2;
+        let ax=a0[0]+a0[2]*cw*atRide, ay=a0[1]+a0[3]*ch*atRide;
+        ax=Math.max(ch,Math.min(W-ch,ax)); ay=Math.max(ch,Math.min(H-ch,ay));
+        g.font="700 "+Math.round(ch*1.08)+'px "Courier New","Cousine",monospace';
+        g.lineJoin="round"; g.lineWidth=Math.max(3,ch*0.3); g.strokeStyle=GROUND; g.strokeText("@",ax,ay);
+        g.fillStyle=GOLD; g.fillText("@",ax,ay); }
+    }
+  }
+  function loop(){ draw(); requestAnimationFrame(loop); }
+  for(let i=0;i<8;i++) draw();
+  if(PREVIEW>0){ playing=true; volume=PREVIEW; sync(); }
+  requestAnimationFrame(loop);
+})();
 </script>
