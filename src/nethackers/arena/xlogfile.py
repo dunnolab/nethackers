@@ -41,6 +41,6 @@ def read_death_cause(
         return None
     try:
         text = Path(vardir, "xlogfile").read_text()
-    except OSError:
+    except (OSError, UnicodeDecodeError):
         return None
     return parse_death_cause(text, is_ascended=is_ascended)

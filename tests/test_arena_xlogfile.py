@@ -48,3 +48,9 @@ def test_read_death_cause_reads_file(tmp_path: Path):
 def test_read_death_cause_degrades_to_none(tmp_path: Path):
     assert read_death_cause(None, is_ascended=False) is None
     assert read_death_cause(tmp_path, is_ascended=False) is None  # no xlogfile present
+
+
+def test_read_death_cause_survives_invalid_utf8(tmp_path):
+    # A non-UTF-8 byte must degrade to None, never raise (the "never raise" invariant).
+    (tmp_path / "xlogfile").write_bytes(b"death=killed by a n\xffewt\tturns=5\n")
+    assert read_death_cause(tmp_path, is_ascended=False) is None
