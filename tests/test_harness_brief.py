@@ -48,6 +48,17 @@ def test_training_seeds_render_when_given():
     b = build_brief("o", "c", _evidence(1, 1, {}), training_seeds=[3, 17, 42])
     assert "3, 17, 42" in b
 
+def test_brief_pins_the_judges_eval_config():
+    ev = Evidence(solution_digest="sha256:x", objective=Objective(character=None),
+                  evaluator_image="img", tier="self-reported", results=(),
+                  episodes=0, mean_progress=0.0, ascensions=0, created_at="t")
+    b = build_brief("mon-hum-cha-fem", "mon-hum-cha-fem", ev, training_seeds=[0, 1, 2])
+    # The mutator must reproduce the JUDGE's games, not invent an evaluation-id.
+    assert "python -m nethackers.arena.run" in b
+    assert "--evaluation-id" in b and "do not" in b.lower()
+    assert "local" in b   # names the judge's default namespace
+
+
 # --- generalist (set) brief -----------------------------------------------
 
 def test_set_brief_lists_builds_and_weakest_first():
