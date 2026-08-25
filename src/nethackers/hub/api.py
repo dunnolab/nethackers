@@ -52,6 +52,7 @@ from nethackers.hub.validate import (
     register,
 )
 from nethackers.hub.views.attainment import read_attainment
+from nethackers.hub.views.baseline import read_baseline
 from nethackers.hub.views.boards import board, coverage_board, firsts_board
 from nethackers.hub.views.elites import read_elites
 from nethackers.hub.views.progress import read_progress
@@ -112,6 +113,10 @@ def create_app(
     @app.get("/stats")
     def stats() -> dict[str, Any]:
         return read_stats(store)
+
+    @app.get("/baseline")
+    def baseline() -> dict[str, Any]:
+        return read_baseline(store)
 
     @app.get("/progress")
     def progress(objective: str | None = None, tier: str = "self-reported") -> dict[str, Any]:
