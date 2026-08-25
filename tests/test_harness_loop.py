@@ -1,9 +1,11 @@
 # tests/test_harness_loop.py
 import json
+import random
 from pathlib import Path
 
+from nethackers.contracts.models import Evidence, Objective
 from nethackers.harness import loop as loop_mod
-from nethackers.harness.loop import IterationResult, run_loop
+from nethackers.harness.loop import EliteState, IterationResult, run_loop, select_reseed
 from nethackers.harness.metering import TokenUsage
 from nethackers.harness.store import LocalTreeStore
 
@@ -653,3 +655,46 @@ def test_reset_is_a_noop_with_a_single_island(tmp_path):
         now_fn=lambda: "2026-08-25T00:00:00Z",
         runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work")
     assert op.seen == [0, 1, 2, 3]
+
+
+def _elite(fitness: float) -> EliteState:
+    """A minimal EliteState for unit-testing select_reseed directly. Only
+    `dev_fitness` (what select_reseed weighs on) needs to vary between
+    calls; `dev_evidence` is a placeholder select_reseed never reads."""
+    evidence = Evidence(
+        solution_digest=f"sha256:{fitness}", objective=Objective(character=None),
+        evaluator_image="img:dev", tier="self-reported", results=(),
+        episodes=0, mean_progress=0.0, ascensions=0,
+        created_at="2026-08-25T00:00:00Z")
+    return EliteState(f"digest-{fitness}", Path(f"/tree-{fitness}"), fitness, fitness, evidence)
+
+
+def test_select_reseed_samples_by_weighted_fitness_not_argmax():
+    """select_reseed must be a temperature-weighted SAMPLE over survivors,
+    never a deterministic argmax. The reset tests above can't catch a
+    regression to `max(survivors, key=lambda s: s.dev_fitness)` -- both
+    ever leave exactly ONE survivor after the kill, where select_reseed's
+    own `len(survivors) == 1` fast path returns that survivor outright,
+    making a correct weighted sampler and a broken argmax indistinguishable.
+    This test passes >=2 survivors directly, which is the only way to
+    actually exercise `rng.choices` over `exp(fitness / temperature)`."""
+    low, mid, top = _elite(0.1), _elite(0.5), _elite(0.9)
+    survivors = [low, mid, top]
+
+    # (a) at least one seed in a small sweep picks a NON-top survivor -- an
+    # argmax implementation would return `top` for every single seed here,
+    # unconditionally, since argmax never consults the rng at all.
+    picks = {select_reseed(survivors, random.Random(seed)).dev_fitness
+             for seed in range(20)}
+    assert picks - {top.dev_fitness}, f"never sampled a non-top survivor: {picks}"
+
+    # (b) over many draws: every pick stays within the survivor set, AND
+    # higher fitness is favored (not just "any of the three, uniformly") --
+    # the weighting genuinely tracks fitness rather than being arbitrary.
+    rng = random.Random(12345)
+    counts = {low.dev_fitness: 0, mid.dev_fitness: 0, top.dev_fitness: 0}
+    for _ in range(2000):
+        picked = select_reseed(survivors, rng)
+        assert picked in survivors
+        counts[picked.dev_fitness] += 1
+    assert counts[top.dev_fitness] > counts[mid.dev_fitness] > counts[low.dev_fitness]
