@@ -122,7 +122,16 @@ def run_loop(
         raise ValueError(f"reset_period must be >= 1 when set, got {reset_period}")
     dev = dev_spec(objective)
     resolved = resolve(objective)
-    identities = sorted(resolved.identities) if resolved.kind == "set" else []
+    # A single full identity IS a set of size one -- resolve() already carries
+    # it in resolved.identities -- so the pool machinery (island seeding, /refs
+    # influences, reset injection) and the per-identity brief/monitor treat it
+    # uniformly with a multi-identity set; only "random"/"all" have no fixed
+    # identity to pool over. `is_set` stays SEPARATE for the registration split:
+    # a true set records a per-identity slice per member, a single records one
+    # ordinary win (unchanged hub semantics) -- that distinction is genuinely
+    # kind-based, unlike the pool, which just needs the identities.
+    identities = sorted(resolved.identities) if resolved.kind in ("single", "set") else []
+    is_set = resolved.kind == "set"
     validation = validation_spec(objective, n=validation_n, start=1000)
     # A set's smoke check uses ONE member (cheap 1-ep contract check), not
     # |S| episodes -- the full union dev eval below is what actually catches
@@ -221,7 +230,8 @@ def run_loop(
         # slot with `(seed_tree, None)` in that case, so `samples` below is
         # all-pads and the `any(...)` guard skips straight past.
         # Carve-outs: at K=1 the single island stays `seed_tree` -- in
-        # production that is launch's coverage-gated parent, so pool-seeding
+        # production that is launch's SELECT parent (coverage-gated for a set,
+        # the identity's top elite for a single), so pool-seeding
         # would only trade the balanced parent for a lone union-argmax
         # specialist AND pay a redundant 2nd eval to re-score it; --from-seed
         # skips the hub entirely for a deliberate cold start. Both cases still
@@ -324,10 +334,10 @@ def run_loop(
         #
         # Cross-run injection: the FIRST killed slot is instead reseeded from a
         # fresh hub-pool elite when one is available -- at most ONE slot per
-        # reset (the rest reseed locally), only for set objectives (where the
-        # pool applies) and never under --from-seed, so a run periodically
-        # imports outside progress without collapsing its islands onto one
-        # shared hub-best.
+        # reset (the rest reseed locally), only for objectives with a fixed
+        # identity (single or set, where the pool applies) and never under
+        # --from-seed, so a run periodically imports outside progress without
+        # collapsing its islands onto one shared hub-best.
         ranked = sorted(range(len(island_states)), key=lambda i: island_states[i].dev_fitness)
         n_kill = len(island_states) // 2
         dead, alive = ranked[:n_kill], ranked[n_kill:]
@@ -350,10 +360,10 @@ def run_loop(
         # C3: up to 2 cross-elite influences for THIS iteration's `/refs/`,
         # drawn from the same coverage-aware pool the islands are seeded
         # from -- NEVER the active island's own champion (that's the base
-        # being mutated, not an outside influence). A non-set objective, a
-        # --from-seed cold start, or a pool with nothing else to offer yields
-        # [] -- refs.assemble already degrades gracefully to no `influences/`
-        # folder at all.
+        # being mutated, not an outside influence). An objective with no fixed
+        # identity (random/all), a --from-seed cold start, or a pool with
+        # nothing else to offer yields [] -- refs.assemble already degrades
+        # gracefully to no `influences/` folder at all.
         if not identities or from_seed:
             return []
         candidates = select.sample_seeds(hub, tuple(identities), tree_store, seed_tree,
@@ -530,7 +540,7 @@ def run_loop(
                 if reference is None:
                     hub_ok = False
                     report(f"{tag} · ✓ new local elite (not published to the hub)")
-                elif identities:
+                elif is_set:
                     register_win_slices(hub, token=token, child_manifest=manifest,
                                         evidence=dev_ev, identities=identities,
                                         parent_digest=active.digest, reference=reference)

@@ -908,6 +908,50 @@ def test_reset_injects_a_fresh_hub_pool_elite_into_a_killed_island(tmp_path):
     assert op.seen_bot_py[2] == "VERSION = 300\n"   # island0 reseeded from C (hub pool)
 
 
+def test_single_identity_is_treated_as_a_size_one_set_for_the_pool(tmp_path):
+    """A single identity is just a set of size one: with a populated hub pool
+    and islands>1 it must seed its islands from that identity's own elite board
+    (and carry /refs influences), exactly like a multi-identity set -- not fall
+    back to all-copies-of-the-seed. This is the asymmetry the old `kind ==
+    "set"` gate caused (single -> identities=[] -> pool machinery skipped)."""
+    ident = "wiz-elf-cha-mal"
+    entry_a, entry_b = _atom_entry("a", "a", 0.9), _atom_entry("b", "b", 0.7)
+    hub = _HubByIdentity({ident: [entry_a, entry_b]})   # the identity's own board
+    versions = {entry_a["solution_digest"]: 100, entry_b["solution_digest"]: 200}
+    op = _RecordingOperator()
+    run_loop(
+        objective=ident, seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=op, hub=hub,
+        image="img:dev", token="t", owner="dev", islands=2, iterations=2,
+        validation_n=3, fetch=_specialist_fetch(versions),
+        now_fn=lambda: "2026-08-25T00:00:00Z",
+        runner=_fitness_runner(lambda v: {0: 0.2, 100: 0.9, 200: 0.7}.get(v, 0.01)),
+        workdir=tmp_path / "work")
+
+    assert op.seen_bot_py[0] == "VERSION = 100\n"   # island0 <- top elite, not the seed
+    assert op.seen_bot_py[1] == "VERSION = 200\n"   # island1 <- 2nd elite
+    assert (op.seen_refs[0] / "influences").is_dir()   # influences provisioned too
+
+
+def test_single_identity_win_uses_register_win_not_slices(tmp_path, monkeypatch):
+    """The register split stays kind-based even though the POOL now treats a
+    single identity as a size-1 set: a single records ONE ordinary win
+    (register_win), a true set records a per-identity slice per member
+    (register_win_slices). Registration semantics must not change."""
+    calls: list[str] = []
+    monkeypatch.setattr(loop_mod, "register_win", lambda *a, **k: calls.append("win"))
+    monkeypatch.setattr(loop_mod, "register_win_slices", lambda *a, **k: calls.append("slices"))
+    run_loop(
+        objective="wiz-elf-cha-mal", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+        hub=_FakeHub(), image="img:dev", token="t", owner="o",
+        iterations=1, validation_n=3,
+        now_fn=lambda: "2026-08-25T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
+        publish=lambda wt: {"repo": "github.com/o/nethacker", "commit": "a" * 40})
+    assert calls == ["win"]   # register_win, never slices, for a single identity
+
+
 def test_islands_below_one_raises(tmp_path):
     with pytest.raises(ValueError, match="islands must be >= 1"):
         run_loop(
