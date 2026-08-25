@@ -132,7 +132,7 @@ def create_app(
     @app.get("/dictionary.mp3")
     def dictionary_audio() -> FileResponse:
         path = _dict_audio_path()
-        if not path.exists():
+        if not path.is_file():
             raise HTTPException(status_code=404, detail="no background track")
         return FileResponse(path, media_type="audio/mpeg")
 

@@ -52,7 +52,7 @@ run the preview harness:
 node scripts/dict_viz_preview.mjs --out <output-directory>
 ```
 
-- `--out <output-directory>` (required): directory where PNG screenshots will be saved.
+- `--out <output-directory>`: directory where PNG screenshots will be saved.
   If not specified, defaults to `./viz-shots`.
 
 The harness will load `http://127.0.0.1:8000/?vizpreview=<volume>` at volumes:

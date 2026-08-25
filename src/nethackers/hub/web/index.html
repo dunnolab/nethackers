@@ -1142,7 +1142,7 @@ boot();
   const page=document.querySelector(".page"), cv=document.getElementById("dictviz"), bar=document.getElementById("dictbar");
   if(!page||!cv||!bar) return;
   const g=cv.getContext("2d"); if(!g) return;
-  const audioEl=new Audio(); audioEl.src="/dictionary.mp3"; audioEl.loop=true; audioEl.preload="auto";
+  const audioEl=new Audio(); audioEl.src="/dictionary.mp3"; audioEl.loop=true; audioEl.preload="none";
   let actx=null,analyser=null,gain=null,srcNode=null,ready=false, volume=0,playing=false;
   // dev preview: ?vizpreview=0..1 drives a synthetic spectrum so the offline harness
   // can screenshot the reactive look; absent in normal use (a silent, opt-in page).
