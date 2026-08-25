@@ -334,7 +334,10 @@ def _build_parser() -> argparse.ArgumentParser:
         "mutator always runs sandboxed in this image; a working container "
         "runtime and the selected --operator's host login are required.",
     )
-    evolve.add_argument("--iterations", type=int, default=1)
+    evolve.add_argument(
+        "--iterations", type=int, default=1,
+        help="Improvement rounds PER ISLAND; total rounds run = iterations × "
+             "islands (default: %(default)s).")
     evolve.add_argument("--validation-n", type=int, default=15)
     evolve.add_argument(
         "--max-parallel-evals", type=int, default=8,
@@ -608,9 +611,11 @@ def _run(argv: list[str] | None) -> int:
 
         # Headless: run to completion + print the summary.
         t0 = time.monotonic()
+        _total_iters = args.iterations * args.islands
+        _iters = (f"{_total_iters} iter" if args.islands == 1
+                  else f"{_total_iters} iter ({args.iterations}/island × {args.islands})")
         err.print(
-            f"evolving [b]{args.objective}[/] · operator={args.operator} · "
-            f"{args.iterations} iter"
+            f"evolving [b]{args.objective}[/] · operator={args.operator} · {_iters}"
         )
         with Live(console=err, auto_refresh=False, transient=False) as live:
             stream = EpisodeStream(live)

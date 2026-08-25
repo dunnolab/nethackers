@@ -161,6 +161,17 @@ async def test_invalid_islands_shows_error_no_start(monkeypatch):
         assert "islands" in err_text
 
 
+async def test_every_field_has_a_plain_language_tooltip():
+    """Each field carries a tip so a layman can read what it does on hover."""
+    app = _Host(None)
+    async with app.run_test(size=(100, 50)) as pilot:
+        await pilot.pause()
+        form = app.query_one(ef.EvolveForm)
+        for sel in ("#f_obj_grid", "#f_op", "#f_model", "#f_effort",
+                    "#f_iters", "#f_islands", "#f_reset_period"):
+            assert form.query_one(sel).tooltip, f"{sel} has no tooltip"
+
+
 async def test_form_scroll_pane_is_not_a_nav_target():
     # regression: a subwindow VerticalScroll must scroll without itself being a
     # focusable nav stop that shadows its fields (the operator select became

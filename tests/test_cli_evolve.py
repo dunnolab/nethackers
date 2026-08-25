@@ -222,6 +222,29 @@ def test_evolve_islands_and_reset_period_threaded(tmp_path, monkeypatch):
     assert cfg["islands"] == 4 and cfg["reset_period"] == 6
 
 
+def test_evolve_iterations_are_per_island(tmp_path, monkeypatch):
+    """--iterations is PER ISLAND: the loop's total round count (and run.json)
+    is iterations × islands, while iterations_per_island records the input."""
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    (seed / "nethackers.solution.json").write_text(
+        '{"root":".","entrypoint":"bot.py","parents":[],"influences":[]}'
+    )
+    (seed / "bot.py").write_text("x=1\n")
+    captured = {}
+    monkeypatch.setattr(launch, "run_loop",
+                        lambda **k: captured.update(k) or [], raising=False)
+
+    rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed), "--from-seed",
+                   "--islands", "3", "--iterations", "4",
+                   "--workdir", str(tmp_path / "w")])
+    assert rc == 0
+    assert captured["iterations"] == 12   # 4 per island × 3 islands
+    run_dir = next(p for p in (tmp_path / "w" / "runs").iterdir() if p.name != "latest")
+    cfg = json.loads((run_dir / "run.json").read_text())
+    assert cfg["iterations"] == 12 and cfg["iterations_per_island"] == 4
+
+
 def test_evolve_islands_defaults_to_one(tmp_path, monkeypatch):
     seed = tmp_path / "seed"
     seed.mkdir()

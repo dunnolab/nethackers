@@ -151,7 +151,7 @@ class EvolveForm(Vertical):
                 yield Label("Reasoning effort")
                 yield Select([("Harness default", ""), *((e, e) for e in EFFORTS)],
                              value="", allow_blank=False, id="f_effort")
-                yield Label("Iterations")
+                yield Label("Iterations (per island)")
                 yield Input(value="1", id="f_iters")
                 # Islands / reset period: the diversity knobs. Defaults (1 /
                 # blank) reproduce single-lineage behavior, so leaving them
@@ -184,6 +184,28 @@ class EvolveForm(Vertical):
         # here would double-dispatch list_models -- two real Keychain+HTTP
         # round-trips per form mount (see
         # test_model_picker_dispatches_exactly_once_on_mount).
+
+        # Plain-language tips on every field (hover to read) so the form is
+        # legible without knowing the evolve internals.
+        tips = {
+            "#f_obj_grid": "The NetHack character(s) to evolve a bot for. Pick one "
+                           "identity, a whole role, or several — the bot is scored on "
+                           "every one you select.",
+            "#f_op": "The coding agent that rewrites the bot each round (Claude or Codex).",
+            "#f_model": "Which model that agent uses. 'Harness default' lets it choose.",
+            "#f_model_custom": "Type an exact model id the picker doesn't list.",
+            "#f_effort": "How hard the model thinks per change: higher = smarter but "
+                         "slower and costlier.",
+            "#f_iters": "Improvement rounds PER ISLAND. Total rounds run = this × islands "
+                        "(e.g. 10 × 4 islands = 40 rounds).",
+            "#f_islands": "Separate bot lineages kept for diversity. They take turns "
+                          "round-robin (not simultaneously), so more islands means "
+                          "proportionally more total rounds and time.",
+            "#f_reset_period": "Every N rounds, drop the weakest islands and reseed them "
+                               "from the strong ones. Blank = 4 × islands.",
+        }
+        for sel, tip in tips.items():
+            self.query_one(sel).tooltip = tip
 
     def action_leave_field(self) -> None:
         """Hand control back to the modal keyboard nav so the global keys
