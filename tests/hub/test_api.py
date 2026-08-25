@@ -91,6 +91,15 @@ def test_healthz(tmp_path: Any) -> None:
     assert client.get("/healthz").json() == {"status": "ok"}
 
 
+def test_root_serves_the_page(tmp_path: Any) -> None:
+    client, _store = _app(tmp_path)
+    resp = client.get("/")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert "NetHackers" in resp.text
+    assert 'id="scBody"' in resp.text
+
+
 def test_stats_reads_empty(tmp_path: Any) -> None:
     # The sidebar counters are reachable over HTTP and zero on a fresh store.
     client, _store = _app(tmp_path)

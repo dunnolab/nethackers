@@ -34,9 +34,11 @@ import os
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
 from nethackers.contracts.models import Evidence, ObjectiveSpec
@@ -58,6 +60,9 @@ from nethackers.hub.views.elites import read_elites
 from nethackers.hub.views.progress import read_progress
 from nethackers.hub.views.solution import read_solution_frontier
 from nethackers.hub.views.stats import read_stats
+
+# The index.html file shipped in the wheel package data.
+_INDEX = Path(__file__).parent / "web" / "index.html"
 
 # GET /search's column list, local to this module -- the context calls for
 # keeping this one small SELECT in api.py rather than adding a store.py
@@ -109,6 +114,10 @@ def create_app(
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/", response_class=HTMLResponse)
+    def index() -> str:
+        return _INDEX.read_text(encoding="utf-8")
 
     @app.get("/stats")
     def stats() -> dict[str, Any]:
