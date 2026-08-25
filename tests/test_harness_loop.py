@@ -62,9 +62,25 @@ class _RefCapturingOperator:
     def run(self, worktree, brief, *, refs=None, on_line=None, stop=None):
         from nethackers.harness.operator import OperatorResult
         self.seen.append(refs)
-        # first call regress (rejected), second call improve
-        v = 1 if len(self.seen) == 1 else 5
+        # call 1: regresses (rejected) -> call 2: improves enough for a
+        # validated dev+validation win -> call 3: anything -- only used to
+        # observe the refs dir handed to the NEXT call after the win.
+        v = {1: 1, 2: 5}.get(len(self.seen), 9)
         (Path(worktree)/"bot.py").write_text(f"VERSION = {v}\n")
+        return OperatorResult(backend="fake", usage=TokenUsage(1, 2, 3, 4),
+                              stopped_reason="completed")
+
+
+class _AlwaysRejectingOperator:
+    """Every call mutates to a distinct, never-seen-before VERSION but never
+    beats the seed's baseline fitness -- every iteration is rejected as
+    no-dev-gain, so `elite.recent_attempts` keeps accumulating across the
+    whole run (proving the <=3 bound actually trims, not just never fills)."""
+    def __init__(self): self.seen = []
+    def run(self, worktree, brief, *, refs=None, on_line=None, stop=None):
+        from nethackers.harness.operator import OperatorResult
+        self.seen.append(refs)
+        (Path(worktree)/"bot.py").write_text(f"VERSION = {len(self.seen)}\n")
         return OperatorResult(backend="fake", usage=TokenUsage(1, 2, 3, 4),
                               stopped_reason="completed")
 
@@ -184,14 +200,37 @@ def test_loop_provisions_refs_with_recent_rejects(tmp_path):
     op = _RefCapturingOperator()
     run_loop(objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path/"seed"),
              tree_store=LocalTreeStore(tmp_path/"store"), operator=op, hub=_FakeHub(),
-             image="img:dev", token="t", owner="dev", iterations=2, validation_n=3,
+             image="img:dev", token="t", owner="dev", iterations=3, validation_n=3,
              now_fn=lambda: "2026-08-25T00:00:00Z",
-             runner=_fitness_runner(lambda v: [0.2, 0.1, 0.4][v]), workdir=tmp_path/"work")
+             runner=_fitness_runner(lambda v: {0: 0.2, 1: 0.1, 5: 0.9, 9: 0.5}[v]),
+             workdir=tmp_path/"work")
     # iter 1 (v1=0.1) is rejected → iter 2's refs dir contains it under attempts/
     refs2 = op.seen[1]
     assert refs2 is not None
     assert any(p.name.startswith("iter") for p in (refs2/"attempts").iterdir())
     assert (refs2/"CONTEXT.md").exists()
+    # iter 2 (v5=0.9) beats the seed's 0.2 on both dev and validation -> a
+    # REAL registered win, which clears recent_attempts -- iter 3's refs dir
+    # (assembled from the post-win elite) must carry no attempts/ at all.
+    refs3 = op.seen[2]
+    assert refs3 is not None
+    assert not (refs3/"attempts").exists()
+
+
+def test_loop_bounds_recent_attempts_to_three_dropping_oldest(tmp_path):
+    op = _AlwaysRejectingOperator()
+    run_loop(objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path/"seed"),
+             tree_store=LocalTreeStore(tmp_path/"store"), operator=op, hub=_FakeHub(),
+             image="img:dev", token="t", owner="dev", iterations=5, validation_n=3,
+             now_fn=lambda: "2026-08-25T00:00:00Z",
+             runner=_fitness_runner(lambda v: 0.2 if v == 0 else 0.1),  # every mutant regresses
+             workdir=tmp_path/"work")
+    # 4 straight no-dev-gain rejects (iter-1..iter-4) precede the 5th call ->
+    # the list is trimmed to the last 3, dropping the oldest (iter-1).
+    refs5 = op.seen[4]
+    assert refs5 is not None
+    labels = {p.name for p in (refs5/"attempts").iterdir()}
+    assert labels == {"iter-2", "iter-3", "iter-4"}
 
 
 def test_loop_discards_an_iteration_that_raises(tmp_path):
