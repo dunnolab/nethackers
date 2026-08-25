@@ -34,9 +34,11 @@ import os
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
 from nethackers.contracts.models import Evidence, ObjectiveSpec
@@ -52,9 +54,25 @@ from nethackers.hub.validate import (
     register,
 )
 from nethackers.hub.views.attainment import read_attainment
+from nethackers.hub.views.baseline import read_baseline
 from nethackers.hub.views.boards import board, coverage_board, firsts_board
 from nethackers.hub.views.elites import read_elites
+from nethackers.hub.views.progress import read_progress
 from nethackers.hub.views.solution import read_solution_frontier
+from nethackers.hub.views.stats import read_stats
+
+# The index.html file shipped in the wheel package data.
+_INDEX = Path(__file__).parent / "web" / "index.html"
+
+
+def _dict_audio_path() -> Path:
+    """The optional background track path, read from NETHACKERS_DICT_AUDIO env
+    (default: the package web/dictionary.mp3). Read at request time so tests can
+    monkeypatch without module reload."""
+    return Path(os.environ.get(
+        "NETHACKERS_DICT_AUDIO",
+        str(Path(__file__).parent / "web" / "dictionary.mp3"),
+    ))
 
 # GET /search's column list, local to this module -- the context calls for
 # keeping this one small SELECT in api.py rather than adding a store.py
@@ -106,6 +124,29 @@ def create_app(
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/", response_class=HTMLResponse)
+    def index() -> str:
+        return _INDEX.read_text(encoding="utf-8")
+
+    @app.get("/dictionary.mp3")
+    def dictionary_audio() -> FileResponse:
+        path = _dict_audio_path()
+        if not path.is_file():
+            raise HTTPException(status_code=404, detail="no background track")
+        return FileResponse(path, media_type="audio/mpeg")
+
+    @app.get("/stats")
+    def stats() -> dict[str, Any]:
+        return read_stats(store)
+
+    @app.get("/baseline")
+    def baseline() -> dict[str, Any]:
+        return read_baseline(store)
+
+    @app.get("/progress")
+    def progress(objective: str | None = None, tier: str = "self-reported") -> dict[str, Any]:
+        return read_progress(store, objective=objective, tier=tier)
 
     @app.get("/objectives")
     def list_objectives() -> list[dict[str, Any]]:
