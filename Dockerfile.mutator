@@ -55,6 +55,16 @@ COPY src/nethackers/arena /opt/kit/nethackers/arena
 COPY src/nethackers/contracts /opt/kit/nethackers/contracts
 ENV PYTHONPATH=/opt/kit
 
+# The coding-agent CLIs (codex especially) run commands via `bash -lc` -- a
+# LOGIN shell, whose /etc/profile RESETS PATH to the system default, dropping
+# nle-base's `ENV PATH=/opt/nethackers/.venv/bin:$PATH`. Without this, `python`
+# in the agent's shell is the system interpreter with NO nle, so the mutator
+# can't roll candidates against live NLE (codex silently degrades to static-only
+# edits: "Runtime seed testing was unavailable because nle is not installed").
+# Re-prepend the venv in login shells via a profile.d drop-in -- /etc/profile
+# sources profile.d (run-parts) AFTER it sets the default PATH, so this wins.
+RUN printf 'export PATH=/opt/nethackers/.venv/bin:$PATH\n' > /etc/profile.d/10-nethackers-venv.sh
+
 # Non-root `agent` user -- Claude Code refuses --dangerously-skip-permissions as
 # root. UID/GID 1000 is only the baked default; docker-entrypoint.sh remaps both
 # at start to match /workspace's real owner. The home dir matches what
