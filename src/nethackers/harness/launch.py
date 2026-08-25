@@ -57,7 +57,8 @@ class EvolveParams:
     operator: str = "claude"
     iterations: int = 1
     validation_n: int = 15
-    migrate: bool = True
+    islands: int = 1
+    reset_period: int | None = None
     max_parallel_evals: int = 8
     image: str = "nethackers/arena:dev"
     hub: str = "http://localhost:8000"
@@ -136,7 +137,8 @@ def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
         "max_parallel_evals": params.max_parallel_evals, "image": params.image,
         "mutator_image": params.mutator_image,
         "parent": parent_digest or "seed", "select_k": params.select_k,
-        "select_temp": params.select_temp, "migrate": params.migrate,
+        "select_temp": params.select_temp,
+        "islands": params.islands, "reset_period": params.reset_period,
         "model": params.model, "effort": params.effort,
     })
     _point_latest(runs_dir, rid)
@@ -159,7 +161,9 @@ def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
             tree_store=store, operator=operator,
             hub=HubClient(params.hub), image=params.image, token=params.token,
             owner=params.owner, iterations=params.iterations,
-            validation_n=params.validation_n, migrate=params.migrate,
+            validation_n=params.validation_n,
+            islands=params.islands, reset_period=params.reset_period,
+            from_seed=params.from_seed,
             max_parallel_evals=params.max_parallel_evals, stop=callbacks.get("stop"),
             now_fn=_now, report=report, on_episode=callbacks["on_episode"],
             on_state=callbacks["on_state"], on_log=_on_log, workdir=run_dir / "work",

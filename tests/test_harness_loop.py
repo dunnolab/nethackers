@@ -3,6 +3,8 @@ import json
 import random
 from pathlib import Path
 
+import pytest
+
 from nethackers.contracts.models import Evidence, Objective
 from nethackers.harness import loop as loop_mod
 from nethackers.harness.loop import EliteState, IterationResult, run_loop, select_reseed
@@ -478,8 +480,9 @@ validation_n=3,
 class _SeedSetHub:
     """Records each registration's evidence['objective']['seed_set'] (not
     its solution_digest, unlike _FakeHub) -- so a set win's per-identity
-    slices are individually assertable. `migrate=False` in the set test
-    below keeps `.elites` out of scope; not implemented here."""
+    slices are individually assertable. Has no `.elites`, so the influence
+    pool degrades to empty (the per-member lookup is swallowed); these tests
+    exercise set REGISTRATION, not island seeding."""
     def __init__(self): self.seed_sets = []
     def register(self, *, token, reference, manifest, evidence):
         self.seed_sets.append(evidence["objective"]["seed_set"])
@@ -497,7 +500,7 @@ def test_loop_registers_a_slice_per_identity_for_a_set_objective(tmp_path):
         objective="wiz-elf-cha-mal,wiz-orc-cha-mal", seed_tree=_seed_tree(tmp_path / "seed"),
         tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
         hub=hub, image="img:dev", token="dev-token", owner="dev", iterations=1,
-        validation_n=3, migrate=False,
+        validation_n=3,
         now_fn=lambda: "2026-08-10T00:00:00Z",
         runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
         publish=lambda wt: {"repo": "github.com/dev/nethacker", "commit": "a" * 40},
@@ -529,7 +532,7 @@ def test_loop_registers_regressions_on_a_per_identity_drop(tmp_path):
         objective="wiz-elf-cha-mal,wiz-orc-cha-mal", seed_tree=_seed_tree(tmp_path / "seed"),
         tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
         hub=hub, image="img:dev", token="dev-token", owner="dev", iterations=1,
-        validation_n=3, migrate=False,
+        validation_n=3,
         now_fn=lambda: "2026-08-10T00:00:00Z",
         runner=_fitness_runner_by_character(progress), workdir=tmp_path / "work")
 
@@ -747,15 +750,151 @@ def test_islands_seed_from_pool_and_refs_carry_influences(tmp_path):
     labels0 = {p.name for p in (refs0 / "influences").iterdir()}
     labels1 = {p.name for p in (refs1 / "influences").iterdir()}
     assert 1 <= len(labels0) <= 2 and 1 <= len(labels1) <= 2
-    # digest[:12] for an atom identity ("host/owner/repo@sha") contains a
-    # "/" -- the label sanitizes it (same policy as LocalTreeStore._key) so
-    # it names one flat folder, not a nested path.
-    a_label = f"hub-{entry_a['solution_digest'][:12].replace('/', '_')}"
-    b_label = f"hub-{entry_b['solution_digest'][:12].replace('/', '_')}"
+    # Each label is "hub-<i>-<sanitized digest[:12]>": the positional index
+    # keeps two same-owner influences from colliding on one folder (atom
+    # digests share a long common prefix), and the "/" in digest[:12] is
+    # sanitized (same policy as LocalTreeStore._key) so it names one flat
+    # folder. Here each refs dir carries exactly one influence, so i is 0.
+    a_label = f"hub-0-{entry_a['solution_digest'][:12].replace('/', '_')}"
+    b_label = f"hub-0-{entry_b['solution_digest'][:12].replace('/', '_')}"
     assert labels0 == {b_label}
     assert labels1 == {a_label}
+
+    # CONTEXT.md carries the folder label + the human note (score + which
+    # identity the influence is strong at) so the mutator knows what each
+    # /refs/influences/ folder is.
     context0 = (refs0 / "CONTEXT.md").read_text()
     assert b_label in context0 and "strong at wiz-orc-cha-mal" in context0
+
+
+def _specialist_fetch(versions):
+    # A `fetch` that materializes a pulled elite's tree from its digest ->
+    # VERSION mapping (a valid solution tree so the store/gate accept it).
+    def fetch(entry, dest):
+        dest = Path(dest)
+        (dest / "bot.py").write_text(f"VERSION = {versions[entry['solution_digest']]}\n")
+        (dest / "nethackers.solution.json").write_text(json.dumps(
+            {"schema": "nethackers.solution/v1", "name": "specialist", "root": ".",
+             "parents": [], "influences": [], "entrypoint": "bot.py"}))
+        return dest
+    return fetch
+
+
+def test_same_owner_influences_get_distinct_labels(tmp_path):
+    """REGRESSION (C1): two elites from the SAME owner have atom digests that
+    share their first 12 chars ("github.com/<owner-initial>…"), so the old
+    label `hub-<digest[:12]>` collapsed both onto ONE `/refs/influences/`
+    folder -- refs.assemble's copytree then raised FileExistsError, which the
+    loop's outer except swallowed as an `error:` result, silently burning the
+    whole iteration budget on set objectives once the active champion is a
+    won (non-pool) digest. The positional index must keep the folders
+    distinct so the iteration reaches the operator and completes normally."""
+    id_a, id_b = "wiz-elf-cha-mal", "wiz-orc-cha-mal"
+    repo = "github.com/vkurenkov/nethacker"   # SAME owner+repo, different commit
+
+    def mk(sha, score):
+        return {"solution_digest": f"{repo}@{sha}", "score": score, "owner": "dev",
+                "tier": "verified", "repo": repo, "commit_sha": sha}
+    entry_a, entry_b = mk("1" * 40, 0.9), mk("2" * 40, 0.7)
+    d1, d2 = entry_a["solution_digest"], entry_b["solution_digest"]
+    assert d1[:12] == d2[:12]   # the exact collision the old label hit
+    hub = _HubByIdentity({id_a: [entry_a], id_b: [entry_b]})
+
+    op = _RefCapturingOperator()
+    results = run_loop(
+        objective=f"{id_a},{id_b}", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=op, hub=hub,
+        image="img:dev", token="t", owner="dev", islands=1, iterations=2,
+        validation_n=3, fetch=_specialist_fetch({d1: 100, d2: 200}),
+        now_fn=lambda: "2026-08-25T00:00:00Z",
+        runner=_fitness_runner(lambda v: {0: 0.2, 1: 0.9, 5: 0.5}.get(v, 0.01)),
+        workdir=tmp_path / "work")
+
+    # iter 1 (0-indexed results[1]) must have reached the operator -- a
+    # FileExistsError would have aborted refs.assemble BEFORE operator.run,
+    # leaving only one recorded call and an `error:` result.
+    assert len(op.seen) == 2
+    assert not results[1].reason.startswith("error:")
+    labels = {p.name for p in (op.seen[1] / "influences").iterdir()}
+    assert len(labels) == 2   # both same-owner influences, distinct folders
+
+
+def test_k1_set_objective_keeps_seed_tree_but_still_gets_influences(tmp_path):
+    """I1: at the default K=1 a set objective must NOT swap its single island
+    for the pool's union-argmax specialist -- island 0 stays `seed_tree` (in
+    production launch's coverage-gated parent), so the first parent the
+    operator sees is the seed's "VERSION = 0", never a pulled specialist. The
+    pool is still mined for /refs/influences, so K=1 gets the principled
+    parent AND cross-elite reference material."""
+    id_a, id_b = "wiz-elf-cha-mal", "wiz-orc-cha-mal"
+    entry_a, entry_b = _atom_entry("a", "a", 0.9), _atom_entry("b", "b", 0.7)
+    hub = _HubByIdentity({id_a: [entry_a], id_b: [entry_b]})
+    versions = {entry_a["solution_digest"]: 100, entry_b["solution_digest"]: 200}
+
+    op = _RecordingOperator()
+    run_loop(
+        objective=f"{id_a},{id_b}", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=op, hub=hub,
+        image="img:dev", token="t", owner="dev", islands=1, iterations=1,
+        validation_n=3, fetch=_specialist_fetch(versions),
+        now_fn=lambda: "2026-08-25T00:00:00Z",
+        runner=_fitness_runner(lambda v: {0: 0.2, 100: 0.9, 200: 0.7}.get(v, 0.01)),
+        workdir=tmp_path / "work")
+
+    assert op.seen_bot_py[0] == "VERSION = 0\n"   # island 0 = seed, not entry_a (v100)
+    # active champion is the seed digest (not in the pool), so NEITHER pool
+    # entry is filtered as "self" -> both appear as distinct influences.
+    labels0 = {p.name for p in (op.seen_refs[0] / "influences").iterdir()}
+    assert len(labels0) == 2
+
+
+def test_from_seed_ignores_hub_for_seeding_and_influences(tmp_path):
+    """I2: --from-seed is a deliberate, hub-independent cold start. Even for a
+    set objective with a populated pool, every island stays on `seed_tree` and
+    NO /refs/influences are provisioned -- the pool is the hub, and --from-seed
+    ignores the hub. A `fetch` that raises proves nothing is ever pulled."""
+    id_a, id_b = "wiz-elf-cha-mal", "wiz-orc-cha-mal"
+    entry_a, entry_b = _atom_entry("a", "a", 0.9), _atom_entry("b", "b", 0.7)
+    hub = _HubByIdentity({id_a: [entry_a], id_b: [entry_b]})
+
+    def _boom_fetch(entry, dest):
+        raise AssertionError("--from-seed must not fetch any hub solution")
+
+    op = _RecordingOperator()
+    run_loop(
+        objective=f"{id_a},{id_b}", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=op, hub=hub,
+        image="img:dev", token="t", owner="dev", islands=2, iterations=2,
+        validation_n=3, from_seed=True, fetch=_boom_fetch,
+        now_fn=lambda: "2026-08-25T00:00:00Z",
+        runner=_fitness_runner(lambda v: {0: 0.2}.get(v, 0.01)),
+        workdir=tmp_path / "work")
+
+    assert op.seen_bot_py == ["VERSION = 0\n", "VERSION = 0\n"]   # both islands = seed
+    for refs_dir in op.seen_refs:
+        assert not (refs_dir / "influences").exists()   # no hub influences
+
+
+def test_islands_below_one_raises(tmp_path):
+    with pytest.raises(ValueError, match="islands must be >= 1"):
+        run_loop(
+            objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+            tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+            hub=_FakeHub(), image="img:dev", token="t", owner="o",
+            iterations=1, islands=0, validation_n=3,
+            now_fn=lambda: "2026-08-25T00:00:00Z",
+            runner=_fitness_runner(lambda v: 0.2), workdir=tmp_path / "work")
+
+
+def test_reset_period_below_one_raises(tmp_path):
+    with pytest.raises(ValueError, match="reset_period must be >= 1"):
+        run_loop(
+            objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+            tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+            hub=_FakeHub(), image="img:dev", token="t", owner="o",
+            iterations=1, islands=1, reset_period=0, validation_n=3,
+            now_fn=lambda: "2026-08-25T00:00:00Z",
+            runner=_fitness_runner(lambda v: 0.2), workdir=tmp_path / "work")
 
 
 def test_set_objective_with_empty_pool_still_cold_starts_from_seed(tmp_path):

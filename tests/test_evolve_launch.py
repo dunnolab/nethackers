@@ -22,7 +22,8 @@ def test_prepare_evolve_writes_config_and_drives_run_loop(tmp_path, monkeypatch)
                         "on_episode": lambda label, ep: None, "on_log": lambda tag, line: None})
     assert results == ["res"]
     assert captured["objective"] == "wiz-elf-cha-mal"
-    assert captured["iterations"] == 2 and captured["migrate"] is True
+    assert captured["iterations"] == 2
+    assert captured["islands"] == 1 and captured["reset_period"] is None  # defaults
     assert captured["validation_n"] == 15  # default
     assert captured["owner"] == "castiel" and captured["token"] == "tok"
     assert (Path(tmp_path) / "runs" / "latest").resolve().name == plan.rid

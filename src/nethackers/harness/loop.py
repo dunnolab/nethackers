@@ -92,7 +92,8 @@ def run_loop(
     islands: int = 1,
     reset_period: int | None = None,
     max_parallel_evals: int = 8,
-    migrate: bool = True,  # accepted but unused -- see note above the (removed) migrate block
+    from_seed: bool = False,  # deliberate cold start: ignore the hub for island
+    #                           seeding AND /refs influences (a hub-independent run)
     fetch: Callable[[dict, Path], Path | None] = select.pull_fetch,
     max_consecutive_errors: int = 3,
     sleep: Callable[[float], None] = time.sleep,
@@ -107,6 +108,10 @@ def run_loop(
     workdir: Path,
     publish: Callable[[Path], dict[str, str] | None] | None = None,
 ) -> list[IterationResult]:
+    if islands < 1:
+        raise ValueError(f"islands must be >= 1, got {islands}")
+    if reset_period is not None and reset_period < 1:
+        raise ValueError(f"reset_period must be >= 1 when set, got {reset_period}")
     dev = dev_spec(objective)
     resolved = resolve(objective)
     identities = sorted(resolved.identities) if resolved.kind == "set" else []
@@ -199,14 +204,20 @@ def run_loop(
         for _ in range(islands)
     ]
     pool_rng = random.Random()
-    if identities:
-        # C3: seed the K islands from the coverage-aware influence pool
+    if identities and not from_seed and islands > 1:
+        # C3: seed the K>1 islands from the coverage-aware influence pool
         # instead of all-K-copies-of-the-seed -- but ONLY if the pool
         # actually has something real to offer. An empty pool (hub down, or
         # no trusted specialist yet for any member identity) leaves
         # `island_states` exactly as built above -- sample_seeds pads every
         # slot with `(seed_tree, None)` in that case, so `samples` below is
         # all-pads and the `any(...)` guard skips straight past.
+        # Carve-outs: at K=1 the single island stays `seed_tree` -- in
+        # production that is launch's coverage-gated parent, so pool-seeding
+        # would only trade the balanced parent for a lone union-argmax
+        # specialist AND pay a redundant 2nd eval to re-score it; --from-seed
+        # skips the hub entirely for a deliberate cold start. Both cases still
+        # get /refs influences via `_pick_influences` below (except --from-seed).
         samples = select.sample_seeds(hub, tuple(identities), tree_store, seed_tree,
                                       owner=owner, n=islands, fetch=fetch, rng=pool_rng)
         if any(entry is not None for _, entry in samples):
@@ -294,10 +305,11 @@ def run_loop(
         # C3: up to 2 cross-elite influences for THIS iteration's `/refs/`,
         # drawn from the same coverage-aware pool the islands are seeded
         # from -- NEVER the active island's own champion (that's the base
-        # being mutated, not an outside influence). A non-set objective or a
-        # pool with nothing else to offer yields [] -- refs.assemble already
-        # degrades gracefully to no `influences/` folder at all.
-        if not identities:
+        # being mutated, not an outside influence). A non-set objective, a
+        # --from-seed cold start, or a pool with nothing else to offer yields
+        # [] -- refs.assemble already degrades gracefully to no `influences/`
+        # folder at all.
+        if not identities or from_seed:
             return []
         candidates = select.sample_seeds(hub, tuple(identities), tree_store, seed_tree,
                                          owner=owner, n=2, fetch=fetch, rng=pool_rng)
@@ -308,13 +320,21 @@ def run_loop(
             digest = entry["solution_digest"]
             if digest == active_digest:
                 continue   # never influence a champion with itself
-            # An ATOM digest ("host/owner/repo@sha") routinely has a "/"
-            # within its first 12 chars -- sanitize (same policy as
-            # LocalTreeStore._key) so `refs._copy_refs`'s `dest / label`
-            # can't silently misparse the label as nested path components.
+            # The label names a `/refs/influences/<label>/` folder, so it MUST
+            # be unique per influence. Atom digests ("host/owner/repo@sha")
+            # share a long common prefix, so digest[:12] is IDENTICAL across a
+            # single owner's elites (e.g. "github.com/v") -- two influences
+            # would collide on the same folder and refs._copy_refs's copytree
+            # would raise FileExistsError, silently burning the iteration. A
+            # positional index makes the label collision-proof regardless of
+            # digest shape; the sanitized prefix (same policy as
+            # LocalTreeStore._key, so a "/" can't nest the folder) stays for
+            # legibility, and the full digest moves into the note so the
+            # mutator can still tell two same-owner influences apart.
             safe = re.sub(r"[^A-Za-z0-9._-]", "_", digest[:12])
-            picked.append((f"hub-{safe}", tree_path,
-                           f"score {entry['score']:.3f}; strong at {entry['identity']}"))
+            picked.append((f"hub-{len(picked)}-{safe}", tree_path,
+                           f"{digest}; score {entry['score']:.3f}; "
+                           f"strong at {entry['identity']}"))
         return picked[:2]
 
     for k in range(iterations):
@@ -324,15 +344,13 @@ def run_loop(
         idx = k % islands   # this iteration's active island
         try:
             # Mid-run migration (adopt another process's strictly-better elite
-            # from the hub before mutating) is INTENTIONALLY DISABLED: it
-            # operated on a single shared `elite` and cannot coexist with
-            # per-island champions (a hub-wide "best" would collapse every
-            # island onto one lineage, destroying the diversity islands exist
-            # for). The islands reset (kill-bottom-half + reseed from a
-            # diverse local survivor) plus the coverage-aware influence pool's
-            # occasional cross-run injection at reset subsume this per spec
-            # §4. `migrate` stays an accepted-but-unused parameter so existing
-            # callers (cli.py/launch.py) keep working unchanged.
+            # from the hub before mutating) was REMOVED: it operated on a
+            # single shared `elite` and cannot coexist with per-island
+            # champions (a hub-wide "best" would collapse every island onto
+            # one lineage, destroying the diversity islands exist for). The
+            # islands reset (kill-bottom-half + reseed from a diverse local
+            # survivor) plus the coverage-aware influence pool's occasional
+            # cross-run injection at reset subsume it per spec §4.
 
             worktree = workdir / f"iter-{k}"
             if worktree.exists():
