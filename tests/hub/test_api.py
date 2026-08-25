@@ -91,6 +91,20 @@ def test_healthz(tmp_path: Any) -> None:
     assert client.get("/healthz").json() == {"status": "ok"}
 
 
+def test_stats_reads_empty(tmp_path: Any) -> None:
+    # The sidebar counters are reachable over HTTP and zero on a fresh store.
+    client, _store = _app(tmp_path)
+    response = client.get("/stats")
+    assert response.status_code == 200
+    assert response.json() == {
+        "programs": 0,
+        "hackers": 0,
+        "ascensions": 0,
+        "identities_touched": 0,
+        "best": 0.0,
+    }
+
+
 def test_register_link_ok(tmp_path: Any) -> None:
     # A valid link from its owner -> 200; the repo@commit link is stored.
     client, store = _app(tmp_path)
