@@ -134,6 +134,7 @@ class EvolveForm(Vertical):
                 yield IdentityGrid(id="f_obj_grid", classes="panel")
                 yield Static("[dim]none selected[/]", id="f_obj_sel")
             # right subwindow: operator + model + effort + seed + iterations
+            # + islands + reset period
             with VerticalScroll(id="f_operator"):
                 yield Label("Operator")
                 yield Select(
@@ -154,6 +155,14 @@ class EvolveForm(Vertical):
                              allow_blank=False, id="f_seed")
                 yield Label("Iterations")
                 yield Input(value="1", id="f_iters")
+                # Islands / reset period: the diversity knobs. Defaults (1 /
+                # blank) reproduce single-lineage behavior, so leaving them
+                # untouched matches the pre-islands form exactly. Blank reset
+                # period -> run_loop's 4×islands default (a no-op at 1 island).
+                yield Label("Islands")
+                yield Input(value="1", id="f_islands")
+                yield Label("Reset period")
+                yield Input(placeholder="4×islands", id="f_reset_period")
         # full-width start bar below the two subwindows
         with Horizontal(id="f_startbar"):
             yield Button("Start", id="f_start", variant="success")
@@ -297,11 +306,30 @@ class EvolveForm(Vertical):
             iters = int(self.query_one("#f_iters", Input).value)
         except ValueError:
             raise ValueError("iterations must be an integer") from None
+        try:
+            islands = int(self.query_one("#f_islands", Input).value)
+        except ValueError:
+            raise ValueError("islands must be an integer") from None
+        if islands < 1:
+            raise ValueError("islands must be >= 1")
+        # Blank reset period -> None (run_loop then uses its 4×islands default);
+        # otherwise an int >= 1. Same rule as the CLI's --reset-period guard.
+        reset_raw = self.query_one("#f_reset_period", Input).value.strip()
+        reset_period: int | None = None
+        if reset_raw:
+            try:
+                reset_period = int(reset_raw)
+            except ValueError:
+                raise ValueError("reset period must be an integer (or blank)") from None
+            if reset_period < 1:
+                raise ValueError("reset period must be >= 1")
         return EvolveParams(
             objective=self._objective,
             seed=str(self.query_one("#f_seed", Select).value),
             operator=str(self.query_one("#f_op", Select).value),
             iterations=iters,
+            islands=islands,
+            reset_period=reset_period,
             model=self._model(),
             effort=self._effort(),
             hub=self._hub,
