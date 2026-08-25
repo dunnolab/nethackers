@@ -486,6 +486,7 @@ def run_loop(
                 base_eval=json.dumps([r.to_dict() for r in active.dev_evidence.results]),
                 influences=_pick_influences(active.digest),
                 attempts=active.recent_attempts,
+                parent=active.tree,
             )
             _emit("mutating", k + 1)
             report(f"{tag} · mutating…")
