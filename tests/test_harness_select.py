@@ -367,3 +367,86 @@ def test_sample_seeds_hub_error_returns_all_seed_pads(tmp_path):
     result = sample_seeds(_Boom(), ("wiz-elf-cha-mal", "wiz-orc-cha-mal"), store, seed,
                           owner="dev", n=3)
     assert result == [(seed, None), (seed, None), (seed, None)]
+
+
+# -- sample_seeds fix round 1: coverage gaps flagged by review --------------
+
+def test_sample_seeds_continues_past_resolve_failure_to_other_pool_entries(tmp_path):
+    # Regression guard: a resolve failure must DROP that digest and keep
+    # drawing from what remains, not treat the failure as terminal (e.g. an
+    # `else: break` after a failed _resolve) -- which would pass every other
+    # sample_seeds test (they all use an always-succeeding fetch) while
+    # silently degrading seed diversity down to all-padding.
+    store = LocalTreeStore(tmp_path / "store")
+    seed = _tree(tmp_path, "seed")
+    fail_entry = _atom_entry("1", "a", 0.9)      # higher score -> drawn FIRST (k=1 greedy)
+    ok_entry = _atom_entry("2", "b", 0.5)        # lower score -> drawn only if drawing continues
+    fail_digest = fail_entry["solution_digest"]
+    ok_digest = ok_entry["solution_digest"]
+    hub = _HubByIdentity({
+        "wiz-elf-cha-mal": [fail_entry],
+        "wiz-orc-cha-mal": [ok_entry],
+    })
+    def fetch(entry, dest):
+        if entry["solution_digest"] == fail_digest:
+            return None                          # simulate a fetch/integrity failure
+        (Path(dest) / "bot.py").write_text("pulled-code")
+        return Path(dest)
+    result = sample_seeds(hub, ("wiz-elf-cha-mal", "wiz-orc-cha-mal"), store, seed,
+                          owner="dev", n=2, fetch=fetch, rng=random.Random(0))
+    assert len(result) == 2                                    # still padded to n
+    resolved = [(p, e) for p, e in result if e is not None]
+    assert len(resolved) == 1
+    assert resolved[0][1]["solution_digest"] == ok_digest       # the OTHER entry DID resolve
+    assert store.has(ok_digest) and resolved[0][0] == store.path(ok_digest)
+    assert not store.has(fail_digest)                           # never cached -- fetch failed
+    digests_present = {e["solution_digest"] for _, e in result if e is not None}
+    assert fail_digest not in digests_present                   # failed digest ABSENT
+    assert [(p, e) for p, e in result if e is None] == [(seed, None)]
+
+
+def test_sample_seeds_stops_early_when_pool_exceeds_n(tmp_path):
+    # 4 distinct solutions, n=2: proves `while len(out) < n` stops drawing
+    # once n is reached, rather than resolving (and caching) the whole pool
+    # before truncating -- checked via the fetch call count, not just the
+    # output length (which is always n regardless of how much work happened).
+    store = LocalTreeStore(tmp_path / "store")
+    seed = _tree(tmp_path, "seed")
+    hub = _HubByIdentity({
+        "wiz-elf-cha-mal": [_atom_entry("1", "a", 0.9), _atom_entry("2", "b", 0.8)],
+        "wiz-orc-cha-mal": [_atom_entry("3", "c", 0.7), _atom_entry("4", "d", 0.6)],
+    })
+    fetched = []
+    def fetch(entry, dest):
+        fetched.append(entry["solution_digest"])
+        (Path(dest) / "bot.py").write_text("pulled-code")
+        return Path(dest)
+    result = sample_seeds(hub, ("wiz-elf-cha-mal", "wiz-orc-cha-mal"), store, seed,
+                          owner="dev", n=2, fetch=fetch, rng=random.Random(0))
+    assert len(result) == 2
+    digests = {e["solution_digest"] for _, e in result if e is not None}
+    assert len(digests) == 2                      # exactly n resolved, all distinct
+    assert all(e is not None for _, e in result)   # pool covers n -> no padding needed
+    assert len(fetched) == 2                       # stopped after n, didn't drain all 4
+
+
+def test_sample_seeds_generalist_in_two_columns_occupies_one_slot(tmp_path):
+    # Same program elite in both queried identities appears TWICE in
+    # influence_pool (once per column, C1's emergent coverage-weighting) --
+    # sample_seeds must still count it as ONE distinct solution, not let it
+    # consume two of the n slots.
+    store = LocalTreeStore(tmp_path / "store")
+    seed = _tree(tmp_path, "seed")
+    generalist_digest = _atom_entry("g", "e", 0.6)["solution_digest"]
+    hub = _HubByIdentity({
+        "wiz-elf-cha-mal": [_atom_entry("g", "e", 0.6)],
+        "wiz-orc-cha-mal": [_atom_entry("g", "e", 0.8)],   # same repo@commit -> same digest
+    })
+    result = sample_seeds(hub, ("wiz-elf-cha-mal", "wiz-orc-cha-mal"), store, seed,
+                          owner="dev", n=2, fetch=_atom_fetch, rng=random.Random(0))
+    assert len(result) == 2
+    resolved = [(p, e) for p, e in result if e is not None]
+    assert len(resolved) == 1                                    # ONE slot, not two
+    assert resolved[0][1]["solution_digest"] == generalist_digest
+    assert store.has(generalist_digest)
+    assert [(p, e) for p, e in result if e is None] == [(seed, None)]
