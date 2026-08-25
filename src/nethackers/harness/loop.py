@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import json
+import math
+import random
 import shutil
 import subprocess
 import threading
@@ -54,6 +56,26 @@ class IterationResult:
     regressions: list[tuple[str, float]] | None = None
 
 
+def select_reseed(survivors: list[EliteState], rng: random.Random,
+                  temperature: float = 1.0) -> EliteState:
+    """Choose a survivor to reseed a killed island's champion from (Task B2).
+
+    A temperature-weighted sample over the survivors -- P proportional to
+    ``exp(dev_fitness / temperature)`` -- reusing ``select._sample``'s
+    top-k-sampling formula. NEVER a deterministic argmax: a fitter survivor
+    is more likely to be picked but not guaranteed, because always
+    reseeding from "the single best" would collapse every killed island
+    onto one lineage at every reset and erase the per-island diversity
+    islands exist for (spec §4). The caller passes only the survivors
+    (already the top half after the kill), so every candidate here is
+    already eligible -- that surviving half IS the "top-k" pool.
+    """
+    if len(survivors) == 1:
+        return survivors[0]   # nothing to sample over
+    weights = [math.exp(s.dev_fitness / temperature) for s in survivors]
+    return rng.choices(survivors, weights=weights, k=1)[0]
+
+
 def run_loop(
     *,
     objective: str,
@@ -67,6 +89,7 @@ def run_loop(
     iterations: int,
     validation_n: int,
     islands: int = 1,
+    reset_period: int | None = None,
     max_parallel_evals: int = 8,
     migrate: bool = True,  # accepted but unused -- see note above the (removed) migrate block
     max_consecutive_errors: int = 3,
@@ -174,6 +197,9 @@ def run_loop(
         for _ in range(islands)
     ]
     idx = 0   # round-robin cursor: iteration k works island_states[k % islands]
+    if reset_period is None:
+        reset_period = 4 * islands
+    reset_rng = random.Random()
     _emit("cold-start", 0)
     on_iteration(0, IterationResult(False, "baseline",
                                     dev_fitness=seed_elite.dev_fitness,
@@ -195,6 +221,31 @@ def run_loop(
         active = island_states[idx]
         active.recent_attempts.append((f"iter-{k + 1}", worktree, note))
         del active.recent_attempts[:-3]   # bounded <=3 -- drop oldest first
+
+    def _reset_islands() -> None:
+        # Periodic reset (Task B2): rank by CHAMPION dev_fitness and kill
+        # the bottom half (floor(K/2) -- the call site below only invokes
+        # this when islands > 1, so there's always >=1 to kill). Each
+        # killed slot is reseeded from a top-k-sampled SURVIVOR
+        # (select_reseed) -- never deterministically "the best" -- and
+        # every survivor's slot (champion AND recent_attempts) is left
+        # completely untouched: that per-island state isolation across a
+        # reset is what preserves diversity (spec §4), not just at
+        # cold-start.
+        ranked = sorted(range(len(island_states)), key=lambda i: island_states[i].dev_fitness)
+        n_kill = len(island_states) // 2
+        dead, alive = ranked[:n_kill], ranked[n_kill:]
+        survivors = [island_states[i] for i in alive]
+        for i in dead:
+            champ = select_reseed(survivors, reset_rng)
+            # A FRESH EliteState -- never the survivor's own object -- so
+            # the reseeded slot's recent_attempts starts empty (the
+            # dataclass's default_factory) instead of aliasing the
+            # survivor's list (which would let a later reject on the
+            # reseeded island corrupt the survivor's own history).
+            island_states[i] = EliteState(
+                champ.digest, champ.tree, champ.dev_fitness,
+                champ.validation_fitness, champ.dev_evidence)
 
     for k in range(iterations):
         if stop is not None and stop.is_set():
@@ -383,5 +434,14 @@ def run_loop(
             report(f"{tag} · ✗ error: {e}")
             _record(k + 1, IterationResult(False, f"error:{e}"))
             continue
+        finally:
+            # `finally` (not a check placed after the try/except) so this
+            # fires after EVERY iteration outcome -- win, reject, gate
+            # failure, operator error -- since every one of those paths
+            # above reaches this point via a `continue` (or falls through
+            # after a win), and `continue` still runs an enclosing
+            # `finally` before it actually advances the loop.
+            if islands > 1 and (k + 1) % reset_period == 0:
+                _reset_islands()
     _emit("done", iterations)
     return results

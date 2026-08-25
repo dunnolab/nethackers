@@ -101,6 +101,30 @@ class _ParentVersionRecordingOperator:
                               stopped_reason="completed")
 
 
+class _ParentVersionRecordingCounterOperator:
+    """Like `_ParentVersionRecordingOperator` (records the parent VERSION it
+    reads before mutating, into `.seen`), but writes a GLOBALLY incrementing
+    call counter as the new VERSION instead of `version + 1`. That makes
+    each of N calls produce a distinct, call-indexed VERSION (1, 2, 3, ...)
+    regardless of which island/lineage it was handed -- so a fitness table
+    keyed on the call index can score each call independently of parentage,
+    which is what the B2 reset test below needs to prove reseeding actually
+    happened (rather than merely being consistent with either outcome)."""
+    def __init__(self):
+        self.seen: list[int] = []
+        self.n = 0
+
+    def run(self, worktree, brief, *, refs=None, on_line=None, stop=None):
+        from nethackers.harness.operator import OperatorResult
+        path = Path(worktree) / "bot.py"
+        version = int(path.read_text().split("=")[1])
+        self.seen.append(version)
+        self.n += 1
+        path.write_text(f"VERSION = {self.n}\n")
+        return OperatorResult(backend="fake", usage=TokenUsage(1, 2, 3, 4),
+                              stopped_reason="completed")
+
+
 def _fitness_runner(progress_by_version):
     """Fake Docker runner: reads the mounted bot's VERSION, scores by table."""
     def fake(cmd, check):
@@ -570,3 +594,62 @@ def test_two_islands_advance_independently(tmp_path):
         now_fn=lambda: "2026-08-25T00:00:00Z",
         runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work")
     assert op.seen == [0, 0, 1, 1]
+
+
+# -- periodic reset (Task B2): every `reset_period` iterations, the bottom
+# half of islands (ranked by champion dev_fitness) is killed and reseeded
+# from a top-k-sampled SURVIVING island -- never blindly "the single best"
+# -- leaving every survivor (champion + recent_attempts) untouched.
+
+def test_reset_reseeds_weak_island_from_survivor(tmp_path):
+    """islands=2, reset_period=2, iterations=4, seed dev/validation=0.5. A
+    call-indexed fitness table lets each of the operator's 4 calls score
+    independently of which lineage it came from, so the trace is:
+
+      iter0 island0: parent v0 (seed) -> writes v1 -> dev=0.9 WINS
+                     (champ becomes v1, dev=validation=0.9)
+      iter1 island1: parent v0 (seed) -> writes v2 -> dev=0.1 REJECTED
+                     (champ stays the seed, v0/0.5)
+      -- reset_period=2 reached: rank by champion dev_fitness -> island1
+         (0.5) is the bottom half, island0 (0.9) survives untouched.
+         island1 is reseeded from island0's champion (v1).
+      iter2 island0: parent v1 (its OWN champ, untouched by the reset)
+                     -> writes v3 -> dev=0.95 WINS
+      iter3 island1: parent v1 (the RESEED from island0 -- not the seed v0
+                     it would still be sitting on without a reset) ->
+                     writes v4 -> dev=0.2 REJECTED
+
+    Without the reset this would read [0, 0, 1, 0] (island1 still stuck on
+    the seed at iter3) -- so `seen[3] == 1` is what actually distinguishes
+    "island1 was reseeded from the survivor" from "islands stayed
+    isolated forever" (B1's behavior). `seen[2] == 1` is the same trace's
+    proof that island0 (the survivor) was left untouched by that reset.
+    """
+    op = _ParentVersionRecordingCounterOperator()
+    run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=op,
+        hub=_FakeHub(), image="img:dev", token="t", owner="o",
+        iterations=4, islands=2, reset_period=2, validation_n=3,
+        now_fn=lambda: "2026-08-25T00:00:00Z",
+        runner=_fitness_runner(lambda v: {0: 0.5, 1: 0.9, 2: 0.1, 3: 0.95, 4: 0.2}[v]),
+        workdir=tmp_path / "work")
+    assert op.seen == [0, 0, 1, 1]
+
+
+def test_reset_is_a_noop_with_a_single_island(tmp_path):
+    """islands=1 (the default) must never reset, even when `reset_period` is
+    small enough to be reached repeatedly within the run -- with only one
+    island there's no bottom half to kill and no survivor to reseed from,
+    so the single lineage just keeps advancing exactly like pre-B2
+    behavior (contrast `test_one_island_is_a_single_advancing_lineage`,
+    which proves the same thing without an explicit `reset_period`)."""
+    op = _ParentVersionRecordingOperator()
+    run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=op,
+        hub=_FakeHub(), image="img:dev", token="t", owner="o",
+        iterations=4, reset_period=2, validation_n=3,
+        now_fn=lambda: "2026-08-25T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work")
+    assert op.seen == [0, 1, 2, 3]
