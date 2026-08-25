@@ -20,12 +20,13 @@ NETHACK_PREAMBLE = (
     "Don't game it: no branching on seed fingerprints, no exploiting scorer/NLE quirks — "
     "such candidates fail on held-out seeds. Keep the `make_agent()` → `reset()`/`act()` "
     "contract and import cleanly.\n\n"
-    "**Measure like the judge.** Evaluate with `python -m nethackers.arena.run "
-    "--solution /workspace --batch '[[0,\"<build>\"], …]'` and **do not pass a custom "
-    "`--evaluation-id`** — its default (`local`) is the exact seed namespace the judge "
-    "scores on, so your numbers are directly comparable. Any other id plays different, "
-    "meaningless games. Put your edits in the strategy code (the `autoascend/` package), "
-    "not the `arena_adapter.py` glue."
+    "**Measure like the judge.** Evaluate exactly as the judge does: "
+    "`python -m nethackers.arena.run --solution /workspace "
+    "--batch '[[0,\"<build>\"], …]' --evaluation-id local --out /tmp/eval.json` "
+    "— pass `--evaluation-id local` (the judge's seed namespace; any other id plays "
+    "different, meaningless games) and read the per-episode results from the `/tmp/eval.json` "
+    "`--out` file. Put your edits in the strategy code (the `autoascend/` package), not the "
+    "`arena_adapter.py` glue."
 )
 
 
