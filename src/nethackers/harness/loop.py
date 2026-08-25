@@ -19,7 +19,6 @@ from nethackers.harness.gate import passes_gate
 from nethackers.harness.metering import TokenUsage
 from nethackers.harness.register import register_win, register_win_slices
 from nethackers.harness.seeds import dev_spec, validation_spec
-from nethackers.harness.select import top_trusted_elite
 from nethackers.harness.store import LocalTreeStore
 from nethackers.hub.selector import resolve
 
@@ -31,11 +30,14 @@ class EliteState:
     dev_fitness: float
     validation_fitness: float
     dev_evidence: Evidence  # cached: the brief reuses it instead of re-scoring the parent
-    # Rejected attempts since THIS elite became current (single-elite loop;
-    # islands come later) -- provisioned under the next iteration's
-    # `/refs/attempts/` so the mutator can see what already failed. Bounded
-    # <=3 (oldest dropped first); implicitly cleared on a win because the
+    # Rejected attempts since THIS island's champion became current --
+    # provisioned under the next iteration's `/refs/attempts/` so the
+    # mutator can see what already failed for THIS lineage. Bounded <=3
+    # (oldest dropped first); implicitly cleared on a win because the
     # winning branch below constructs a fresh EliteState without passing it.
+    # Each island holds its own list (never shared) -- that per-island
+    # isolation of state IS the diversity mechanism islands exist for
+    # (spec §4: "isolation is of state, not information").
     recent_attempts: list[refs.Ref] = field(default_factory=list)
 
 
@@ -64,8 +66,9 @@ def run_loop(
     owner: str,
     iterations: int,
     validation_n: int,
+    islands: int = 1,
     max_parallel_evals: int = 8,
-    migrate: bool = True,
+    migrate: bool = True,  # accepted but unused -- see note above the (removed) migrate block
     max_consecutive_errors: int = 3,
     sleep: Callable[[float], None] = time.sleep,
     stop: threading.Event | None = None,
@@ -112,23 +115,24 @@ def run_loop(
     def _emit(phase: str, iteration: int, *, tokens: int = 0, detail: str = "") -> None:
         if on_state is None:
             return
+        active = island_states[idx]
         payload = {
             "phase": phase, "iteration": iteration,
             "baseline_dev": base_dev, "baseline_held": base_validation,
-            "best_dev": elite.dev_fitness, "best_held": elite.validation_fitness,
+            "best_dev": active.dev_fitness, "best_held": active.validation_fitness,
             "wins": wins, "tokens": tokens, "detail": detail,
             # parent snapshot for the monitor's PARENT panel + lineage chain
             # (additive; the in-flight child's digest isn't known here).
             # generation = the iteration being worked (advances every attempt),
             # not wins -- so the monitor's `gen` visibly moves even before a win.
-            "parent_digest": elite.digest, "parent_dev": elite.dev_fitness,
-            "parent_held": elite.validation_fitness, "generation": iteration,
+            "parent_digest": active.digest, "parent_dev": active.dev_fitness,
+            "parent_held": active.validation_fitness, "generation": iteration,
         }
         if identities:
-            # Live from the CURRENT elite (a closure var reassigned on a win
-            # or migration) -- never memoized -- so the parent snapshot
-            # doesn't go stale after either event.
-            pm = aggregate.per_identity_means(elite.dev_evidence.results)
+            # Live from the ACTIVE island's champion (island_states[idx], a
+            # closure var whose slot is reassigned on a win) -- never
+            # memoized -- so the parent snapshot doesn't go stale after one.
+            pm = aggregate.per_identity_means(active.dev_evidence.results)
             payload.update({
                 "identities": identities,
                 "parent_means": pm,
@@ -139,8 +143,8 @@ def run_loop(
     def _score_elite(tree_path: Path, digest: str, *, dev_label: str,
                      val_label: str) -> EliteState:
         # Score a tree on this run's own dev+validation specs -> an EliteState.
-        # Shared by the cold-start (seed baseline) and mid-run migration, so an
-        # adopted elite's gate thresholds are established identically.
+        # Used once, at cold start, to establish the seed baseline that every
+        # island copies below (so all islands' gate thresholds start identical).
         dev_fit, dev_ev = evaluate(
             tree_path, dev, image, now=now_fn(), runner=runner,
             on_episode=_episode_cb(dev_label), max_parallel_evals=max_parallel_evals)
@@ -149,19 +153,31 @@ def run_loop(
             on_episode=_episode_cb(val_label), max_parallel_evals=max_parallel_evals)
         return EliteState(digest, tree_path, dev_fit, val_fit, dev_ev)
 
-    # Cold start: the seed (AutoAscend) is the first elite.
+    # Cold start: the seed (AutoAscend) is the first elite. Every island is
+    # seeded from this SAME scored tree (they diverge thereafter by
+    # independent mutation) -- a fresh EliteState per island so each gets its
+    # own `recent_attempts` list (never aliased across islands). B2's reset
+    # and C3's influence-pool seeding replace this per-island later; K=1
+    # (the default) makes this indistinguishable from the old single-elite
+    # cold start.
     report(f"cold-start · scoring seed: dev {len(dev.batch)}ep "
            f"+ validation {len(validation.batch)}ep…")
     seed_digest = tree_store.save(seed_tree)
-    elite = _score_elite(tree_store.path(seed_digest), seed_digest,
-                         dev_label="cold-start · dev", val_label="cold-start · validation")
-    base_dev, base_validation = elite.dev_fitness, elite.validation_fitness
-    report(f"cold-start · elite=seed dev={elite.dev_fitness:.3f} "
-           f"validation={elite.validation_fitness:.3f}")
+    seed_elite = _score_elite(tree_store.path(seed_digest), seed_digest,
+                              dev_label="cold-start · dev", val_label="cold-start · validation")
+    base_dev, base_validation = seed_elite.dev_fitness, seed_elite.validation_fitness
+    report(f"cold-start · elite=seed dev={seed_elite.dev_fitness:.3f} "
+           f"validation={seed_elite.validation_fitness:.3f}")
+    island_states: list[EliteState] = [
+        EliteState(seed_elite.digest, seed_elite.tree, seed_elite.dev_fitness,
+                   seed_elite.validation_fitness, seed_elite.dev_evidence)
+        for _ in range(islands)
+    ]
+    idx = 0   # round-robin cursor: iteration k works island_states[k % islands]
     _emit("cold-start", 0)
     on_iteration(0, IterationResult(False, "baseline",
-                                    dev_fitness=elite.dev_fitness,
-                                    validation_fitness=elite.validation_fitness))
+                                    dev_fitness=seed_elite.dev_fitness,
+                                    validation_fitness=seed_elite.validation_fitness))
 
     results: list[IterationResult] = []
     consecutive_errors = 0
@@ -171,52 +187,45 @@ def run_loop(
         on_iteration(iteration, result)
 
     def _track_rejected_attempt(worktree: Path, note: str) -> None:
-        # `elite` is the CURRENT elite (read via closure, like `_emit`) --
-        # appending here, before any reassignment, is what makes a win
-        # implicitly clear the list: the win branch below constructs a fresh
-        # EliteState that doesn't carry `recent_attempts` forward.
-        elite.recent_attempts.append((f"iter-{k + 1}", worktree, note))
-        del elite.recent_attempts[:-3]   # bounded <=3 -- drop oldest first
+        # island_states[idx] is the ACTIVE island's champion (read via
+        # closure, like `_emit`) -- appending here, before any reassignment,
+        # is what makes a win implicitly clear the list: the win branch below
+        # constructs a fresh EliteState that doesn't carry `recent_attempts`
+        # forward.
+        active = island_states[idx]
+        active.recent_attempts.append((f"iter-{k + 1}", worktree, note))
+        del active.recent_attempts[:-3]   # bounded <=3 -- drop oldest first
 
     for k in range(iterations):
         if stop is not None and stop.is_set():
             break  # manual hard-stop: don't start another iteration
         tag = f"iter {k + 1}/{iterations}"
+        idx = k % islands   # this iteration's active island
         try:
-            # Mid-run migration: adopt another process's strictly-better elite
-            # from the hub before mutating (greedy move-up; digest-differ + a
-            # strictly-higher score, which equals dev_fitness for identity
-            # objectives). Any failure -> keep the local elite.
-            if migrate:
-                picked = top_trusted_elite(hub, objective, tree_store, owner)
-                if picked is not None:
-                    entry, tree_path = picked
-                    if (entry["solution_digest"] != elite.digest
-                            and entry["score"] > elite.dev_fitness):
-                        detail = f"{entry['owner']}/{entry['solution_digest'][:12]}"
-                        report(f"{tag} · ↥ migrating → {detail} "
-                               f"(score {entry['score']:.3f} > {elite.dev_fitness:.3f})")
-                        if on_log is not None:
-                            on_log(tag, f"migrated ← {detail} score "
-                                        f"{entry['score']:.3f} > {elite.dev_fitness:.3f}\n")
-                        elite = _score_elite(
-                            tree_path, entry["solution_digest"],
-                            dev_label=f"{tag} · migrate-dev",
-                            val_label=f"{tag} · migrate-validation")
-                        _emit("migrated", k + 1, detail=detail)
+            # Mid-run migration (adopt another process's strictly-better elite
+            # from the hub before mutating) is INTENTIONALLY DISABLED: it
+            # operated on a single shared `elite` and cannot coexist with
+            # per-island champions (a hub-wide "best" would collapse every
+            # island onto one lineage, destroying the diversity islands exist
+            # for). The islands reset (kill-bottom-half + reseed from a
+            # diverse local survivor) plus the coverage-aware influence pool's
+            # occasional cross-run injection at reset subsume this per spec
+            # §4. `migrate` stays an accepted-but-unused parameter so existing
+            # callers (cli.py/launch.py) keep working unchanged.
 
             worktree = workdir / f"iter-{k}"
             if worktree.exists():
                 shutil.rmtree(worktree)
-            shutil.copytree(elite.tree, worktree)
+            active = island_states[idx]
+            shutil.copytree(active.tree, worktree)
 
             # Hand the TRAINING seeds in as data (spec §3.6): the mutator image
             # has no harness/seeds.py to derive them, so the brief is where it
             # learns which seeds to develop against -- never the held-out ones.
-            # parent_means: live from the CURRENT elite, same rule as _emit.
-            parent_means = (aggregate.per_identity_means(elite.dev_evidence.results)
+            # parent_means: live from the ACTIVE island's champion, same rule as _emit.
+            parent_means = (aggregate.per_identity_means(active.dev_evidence.results)
                             if identities else {})
-            brief = build_brief(objective, character, elite.dev_evidence,
+            brief = build_brief(objective, character, active.dev_evidence,
                                 training_seeds=sorted({s for s, _c in dev.batch}),
                                 identities=identities or None,
                                 per_identity=parent_means or None)
@@ -233,9 +242,9 @@ def run_loop(
             refs_dir = workdir / f"refs-{k}"
             refs.assemble(
                 refs_dir,
-                base_eval=json.dumps([r.to_dict() for r in elite.dev_evidence.results]),
+                base_eval=json.dumps([r.to_dict() for r in active.dev_evidence.results]),
                 influences=[],
-                attempts=elite.recent_attempts,
+                attempts=active.recent_attempts,
             )
             _emit("mutating", k + 1)
             report(f"{tag} · mutating…")
@@ -267,7 +276,7 @@ def run_loop(
             report(f"{tag} · operator: {op.total} tok ({op.stopped_reason}); gating…")
             _emit("gating", k + 1, tokens=op.total)
 
-            ok, reason = passes_gate(worktree, elite.digest, smoke_spec=smoke,
+            ok, reason = passes_gate(worktree, active.digest, smoke_spec=smoke,
                                      image=image, now=now_fn(), runner=runner,
                                      on_episode=_episode_cb(f"{tag} · smoke"))
             if not ok:
@@ -284,12 +293,12 @@ def run_loop(
                 worktree, dev, image, now=now_fn(), runner=runner,
                 on_episode=_episode_cb(f"{tag} · dev"), max_parallel_evals=max_parallel_evals,
             )
-            if dev_fit <= elite.dev_fitness:
+            if dev_fit <= active.dev_fitness:
                 _emit("rejected", k + 1, tokens=op.total, detail="no dev gain")
-                report(f"{tag} · ✗ no dev gain: {dev_fit:.3f} ≤ {elite.dev_fitness:.3f}")
+                report(f"{tag} · ✗ no dev gain: {dev_fit:.3f} ≤ {active.dev_fitness:.3f}")
                 _track_rejected_attempt(
                     worktree,
-                    f"score dev={dev_fit:.3f} (parent {elite.dev_fitness:.3f}); "
+                    f"score dev={dev_fit:.3f} (parent {active.dev_fitness:.3f}); "
                     f"hypothesis: {aggregate.outcome_summary(dev_ev.results)}")
                 _record(k + 1, IterationResult(False, "no-dev-gain", dev_fitness=dev_fit,
                                                tokens=op.total, usage=op.usage,
@@ -303,14 +312,14 @@ def run_loop(
                 on_episode=_episode_cb(f"{tag} · validation"),
                 max_parallel_evals=max_parallel_evals,
             )
-            if val_fit <= elite.validation_fitness:
+            if val_fit <= active.validation_fitness:
                 _emit("rejected", k + 1, tokens=op.total, detail="no validation gain")
                 report(f"{tag} · ✗ no validation gain: {val_fit:.3f} "
-                       f"≤ {elite.validation_fitness:.3f}")
+                       f"≤ {active.validation_fitness:.3f}")
                 _track_rejected_attempt(
                     worktree,
                     f"score dev={dev_fit:.3f} validation={val_fit:.3f} "
-                    f"(parent validation {elite.validation_fitness:.3f}); "
+                    f"(parent validation {active.validation_fitness:.3f}); "
                     f"hypothesis: {aggregate.outcome_summary(dev_ev.results)}")
                 _record(k + 1, IterationResult(False, "no-validation-gain",
                                                dev_fitness=dev_fit, validation_fitness=val_fit,
@@ -337,24 +346,29 @@ def run_loop(
                 elif identities:
                     register_win_slices(hub, token=token, child_manifest=manifest,
                                         evidence=dev_ev, identities=identities,
-                                        parent_digest=elite.digest, reference=reference)
+                                        parent_digest=active.digest, reference=reference)
                 else:
                     register_win(hub, token=token, child_manifest=manifest,
-                                 evidence=dev_ev, parent_digest=elite.digest,
+                                 evidence=dev_ev, parent_digest=active.digest,
                                  reference=reference)
             except Exception as e:
                 hub_ok = False
                 report(f"{tag} · ⚠ win kept as a local elite; hub publish/register "
                        f"failed: {e}")
             # A rising union mean can still hide a per-identity drop on a set
-            # objective -- diff the OLD parent (elite, not yet reassigned)
-            # against the winning child so a regression is surfaced, not
-            # silently absorbed into the aggregate win (spec decision C §5/§9).
+            # objective -- diff the OLD parent (active, this island's champion
+            # before the reassignment below) against the winning child so a
+            # regression is surfaced, not silently absorbed into the
+            # aggregate win (spec decision C §5/§9).
             regs = (aggregate.regressions(
-                        aggregate.per_identity_means(elite.dev_evidence.results),   # OLD parent
+                        aggregate.per_identity_means(active.dev_evidence.results),  # OLD parent
                         aggregate.per_identity_means(dev_ev.results))               # winning child
                     if identities else [])
-            elite = EliteState(digest, tree_store.path(digest), dev_fit, val_fit, dev_ev)
+            # Only THIS island's slot advances -- every other island's
+            # champion (and its own recent_attempts) is untouched, which is
+            # the state-isolation that makes islands a diversity mechanism.
+            island_states[idx] = EliteState(
+                digest, tree_store.path(digest), dev_fit, val_fit, dev_ev)
             wins += 1
             _emit("registered", k + 1, tokens=op.total, detail=(f"⚠{len(regs)}" if regs else ""))
             if hub_ok:
