@@ -55,6 +55,7 @@ from nethackers.hub.views.attainment import read_attainment
 from nethackers.hub.views.boards import board, coverage_board, firsts_board
 from nethackers.hub.views.elites import read_elites
 from nethackers.hub.views.solution import read_solution_frontier
+from nethackers.hub.views.stats import read_stats
 
 # GET /search's column list, local to this module -- the context calls for
 # keeping this one small SELECT in api.py rather than adding a store.py
@@ -106,6 +107,10 @@ def create_app(
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         return {"status": "ok"}
+
+    @app.get("/stats")
+    def stats() -> dict[str, Any]:
+        return read_stats(store)
 
     @app.get("/objectives")
     def list_objectives() -> list[dict[str, Any]]:
