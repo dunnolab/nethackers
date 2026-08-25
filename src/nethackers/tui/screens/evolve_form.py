@@ -11,9 +11,11 @@ variation. Space toggles the cursor cell (an identity, or a whole role via its
 header); ``a`` selects all 73, ``c`` clears all; ←/→ hop between roles. The
 grid resolves to ``EvolveParams.objective`` -- a single identity, a bare role,
 ``"*"`` (all), or a sorted comma-list -- every shape
-``nethackers.hub.selector.resolve`` accepts. Seed root is a dropdown of the
-solution roots discovered under ``roots/`` (dirs with a
-``nethackers.solution.json``).
+``nethackers.hub.selector.resolve`` accepts. The parent to evolve always
+comes from the hub's top trusted elite (SELECT); the local seed under
+``roots/`` is only the bootstrap fallback used before any elite exists, so it
+is not a form field -- the CLI's ``--seed``/``--from-seed`` cover the expert
+cold-start case.
 """
 from __future__ import annotations
 
@@ -71,8 +73,8 @@ def _version_line(backend: str, cli: CliInfo) -> str:
 
 
 class EvolveForm(Vertical):
-    """The ``⚔ Evolve`` tab: filter-and-pick an objective, choose a seed root
-    and operator, set iterations/token-budget, and **Start** -- which builds
+    """The ``⚔ Evolve`` tab: filter-and-pick an objective and operator, set
+    iterations / islands / reset period, and **Start** -- which builds
     an ``EvolveParams``, calls ``prepare_evolve``, and pushes the live
     ``EvolveScreen`` monitor over the dashboard.
 
@@ -133,7 +135,7 @@ class EvolveForm(Vertical):
                 # below since the subwindow already frames it.
                 yield IdentityGrid(id="f_obj_grid", classes="panel")
                 yield Static("[dim]none selected[/]", id="f_obj_sel")
-            # right subwindow: operator + model + effort + seed + iterations
+            # right subwindow: operator + model + effort + iterations
             # + islands + reset period
             with VerticalScroll(id="f_operator"):
                 yield Label("Operator")
@@ -149,10 +151,6 @@ class EvolveForm(Vertical):
                 yield Label("Reasoning effort")
                 yield Select([("Harness default", ""), *((e, e) for e in EFFORTS)],
                              value="", allow_blank=False, id="f_effort")
-                yield Label("Seed root")
-                roots = _seed_roots()
-                yield Select(((r, r) for r in roots), value=roots[0],
-                             allow_blank=False, id="f_seed")
                 yield Label("Iterations")
                 yield Input(value="1", id="f_iters")
                 # Islands / reset period: the diversity knobs. Defaults (1 /
@@ -325,7 +323,10 @@ class EvolveForm(Vertical):
                 raise ValueError("reset period must be >= 1")
         return EvolveParams(
             objective=self._objective,
-            seed=str(self.query_one("#f_seed", Select).value),
+            # Parent comes from the hub SELECT; the seed is only the cold-start
+            # fallback before any elite exists -- default to the discovered root
+            # (roots/autoascend) instead of a form field.
+            seed=_seed_roots()[0],
             operator=str(self.query_one("#f_op", Select).value),
             iterations=iters,
             islands=islands,
