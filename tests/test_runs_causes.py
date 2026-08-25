@@ -16,13 +16,16 @@ def test_summarize_sums_causes_across_iterations(tmp_path: Path):
         {"outcome": "rejected", "causes": {"killed by a jackal": 1}},
         {"outcome": "rejected", "causes": None},
     ])
-    assert _summarize(tmp_path / "r1")["causes"] == {
-        "killed by a jackal": 3, "starved to death": 1}
+    summary = _summarize(tmp_path / "r1")
+    assert summary is not None
+    assert summary["causes"] == {"killed by a jackal": 3, "starved to death": 1}
 
 
 def test_summarize_defaults_causes_for_legacy_lines(tmp_path: Path):
     _write_run(tmp_path / "r2", [{"outcome": "baseline", "dev_fitness": 0.1}])
-    assert _summarize(tmp_path / "r2")["causes"] == {}
+    summary = _summarize(tmp_path / "r2")
+    assert summary is not None
+    assert summary["causes"] == {}
 
 
 def test_run_causes_sums_across_runs():
