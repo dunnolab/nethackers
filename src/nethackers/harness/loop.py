@@ -540,7 +540,7 @@ def run_loop(
                 _track_rejected_attempt(
                     worktree,
                     f"score dev={dev_fit:.3f} (parent {active.dev_fitness:.3f}); "
-                    f"hypothesis: {aggregate.outcome_summary(dev_ev.results)}")
+                    f"outcome: {aggregate.outcome_summary(dev_ev.results)}")
                 _record(k + 1, IterationResult(False, "no-dev-gain", dev_fitness=dev_fit,
                                                tokens=op.total, usage=op.usage,
                                                stopped_reason=op.stopped_reason,
@@ -562,7 +562,7 @@ def run_loop(
                     worktree,
                     f"score dev={dev_fit:.3f} validation={val_fit:.3f} "
                     f"(parent validation {active.validation_fitness:.3f}); "
-                    f"hypothesis: {aggregate.outcome_summary(dev_ev.results)}")
+                    f"outcome: {aggregate.outcome_summary(dev_ev.results)}")
                 _record(k + 1, IterationResult(False, "no-validation-gain",
                                                dev_fitness=dev_fit, validation_fitness=val_fit,
                                                tokens=op.total, usage=op.usage,
