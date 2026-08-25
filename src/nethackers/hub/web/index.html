@@ -683,6 +683,16 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           </tbody>
         </table></div>
 
+        <div class="subh">Why AutoAscend?</div>
+        <p>Because it is a strong starting point, not a finished answer.
+          <span class="ref" data-k="autoascend">AutoAscend</span> won the 2021 challenge and already contains serious
+          symbolic machinery for exploration, combat, inventory, altars, and Sokoban. It also contains plenty of
+          strange, sometimes plainly dumb behavior: every role begins by farming dungeon level&nbsp;1 until experience
+          level&nbsp;8; Monks are hard-coded never to choose a melee weapon or body-armor suit; autopickup is replaced
+          by a brittle hand-written item-priority system; bag use is disabled; shopping is unimplemented; and the
+          post-Mines plan still turns into TODOs. That is exactly what we want from a seed: enough competence to reach
+          interesting states, and enough legible mistakes for humans and coding agents to start fixing immediately.</p>
+
         <div class="subh">Does one lucky run count?</div>
         <p>No. Programs are ranked across repeated seeded games, and verification uses
           <span class="ref" data-k="heldout">held-out seeds</span>. The target is a bot that generalizes, not a seed
@@ -955,6 +965,7 @@ const REFS={
   fishtest:{t:"Fishtest",d:"Stockfish's volunteer distributed-testing framework &mdash; the model for coordinating many machines around one trusted evaluation.",s:[["official-stockfish/fishtest","https://github.com/official-stockfish/fishtest"]]},
   aspire:{t:"ASPIRE",d:"A self-improving robotics system that diagnoses failed rollouts, rewrites code-as-policy programs, validates the repairs, and saves successful behaviors as reusable skills for new long-horizon tasks.",s:[["NVIDIA GEAR","https://research.nvidia.com/labs/gear/aspire/"]]},
   codepolicies:{t:"Code as Policies",d:"Robot policies expressed as executable programs: language models compose perception and control APIs, feedback loops, and recursively defined helper functions into embodied behavior.",s:[["Liang et al., 2022","https://code-as-policies.github.io/"]]},
+  autoascend:{t:"AutoAscend",d:"The hand-engineered symbolic winner of the NeurIPS 2021 NetHack Challenge. NetHackers uses it as the reference floor and cold-start seed, not as a solved agent.",s:[["AutoAscend source","https://github.com/maciej-sypetkowski/autoascend"],["Challenge report","https://nethackchallenge.com/report.html"]]},
   recursiveco:{t:"Recursive",d:"Richard Socher's frontier AI startup, launched in 2026 with a stated mission to build safe, open-ended, recursively self-improving AI for automated knowledge discovery.",s:[["Recursive","https://www.recursive.com/"]]},
   ricursive:{t:"Ricursive Intelligence",d:"A frontier AI lab building a self-improvement loop between AI chip design and the AI systems that design those chips.",s:[["Ricursive Intelligence","https://www.ricursive.com/"]]},
   discoveryloop:{t:"Discovery Loop",d:"A research startup automating complete experimental loops: propose, run, evaluate, and learn across thousands of parallel experiments, beginning with machine-learning research and its own technology stack.",s:[["Discovery Loop","https://www.discoveryloop.com/"]]},
