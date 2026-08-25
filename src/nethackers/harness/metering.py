@@ -24,6 +24,13 @@ class TokenUsage:
     def total(self) -> int:
         return self.input + self.output + self.cache_creation + self.cache_read
 
+    @property
+    def spend(self) -> int:
+        """The user-facing cost proxy: fresh input + output + cache writes.
+        EXCLUDES cache_read (billed ~10%), which otherwise dominates and
+        inflates the headline ~40x. `.total` (all tokens) is unchanged."""
+        return self.input + self.output + self.cache_creation
+
 
 def _usage_from_dict(usage: object) -> TokenUsage:
     if not isinstance(usage, dict):

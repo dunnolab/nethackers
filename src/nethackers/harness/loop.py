@@ -515,40 +515,40 @@ def run_loop(
                 continue
             consecutive_errors = 0   # a healthy operator run resets the breaker
 
-            report(f"{tag} · operator: {op.total} tok ({op.stopped_reason}); gating…")
-            _emit("gating", k + 1, tokens=op.total)
+            report(f"{tag} · operator: {op.spend} tok ({op.stopped_reason}); gating…")
+            _emit("gating", k + 1, tokens=op.spend)
 
             ok, reason = passes_gate(worktree, active.digest, smoke_spec=smoke,
                                      image=image, now=now_fn(), runner=runner,
                                      on_episode=_episode_cb(f"{tag} · smoke"))
             if not ok:
-                _emit("rejected", k + 1, tokens=op.total, detail=f"gate: {reason}")
+                _emit("rejected", k + 1, tokens=op.spend, detail=f"gate: {reason}")
                 report(f"{tag} · ✗ gate: {reason}")
-                _record(k + 1, IterationResult(False, f"gate:{reason}", tokens=op.total,
+                _record(k + 1, IterationResult(False, f"gate:{reason}", tokens=op.spend,
                                                usage=op.usage,
                                                stopped_reason=op.stopped_reason))
                 continue
 
-            _emit("evaluating-dev", k + 1, tokens=op.total)
+            _emit("evaluating-dev", k + 1, tokens=op.spend)
             report(f"{tag} · gate ok; dev eval ({len(dev.batch)}ep)…")
             dev_fit, dev_ev = evaluate(
                 worktree, dev, image, now=now_fn(), runner=runner,
                 on_episode=_episode_cb(f"{tag} · dev"), max_parallel_evals=max_parallel_evals,
             )
             if dev_fit <= active.dev_fitness:
-                _emit("rejected", k + 1, tokens=op.total, detail="no dev gain")
+                _emit("rejected", k + 1, tokens=op.spend, detail="no dev gain")
                 report(f"{tag} · ✗ no dev gain: {dev_fit:.3f} ≤ {active.dev_fitness:.3f}")
                 _track_rejected_attempt(
                     worktree,
                     f"score dev={dev_fit:.3f} (parent {active.dev_fitness:.3f}); "
                     f"outcome: {aggregate.outcome_summary(dev_ev.results)}")
                 _record(k + 1, IterationResult(False, "no-dev-gain", dev_fitness=dev_fit,
-                                               tokens=op.total, usage=op.usage,
+                                               tokens=op.spend, usage=op.usage,
                                                stopped_reason=op.stopped_reason,
                                                causes=_causes(dev_ev.results)))
                 continue
 
-            _emit("evaluating-held", k + 1, tokens=op.total)
+            _emit("evaluating-held", k + 1, tokens=op.spend)
             report(f"{tag} · dev win {dev_fit:.3f}; validation ({len(validation.batch)}ep)…")
             val_fit, _ = evaluate(
                 worktree, validation, image, now=now_fn(), runner=runner,
@@ -556,7 +556,7 @@ def run_loop(
                 max_parallel_evals=max_parallel_evals,
             )
             if val_fit <= active.validation_fitness:
-                _emit("rejected", k + 1, tokens=op.total, detail="no validation gain")
+                _emit("rejected", k + 1, tokens=op.spend, detail="no validation gain")
                 report(f"{tag} · ✗ no validation gain: {val_fit:.3f} "
                        f"≤ {active.validation_fitness:.3f}")
                 _track_rejected_attempt(
@@ -566,7 +566,7 @@ def run_loop(
                     f"outcome: {aggregate.outcome_summary(dev_ev.results)}")
                 _record(k + 1, IterationResult(False, "no-validation-gain",
                                                dev_fitness=dev_fit, validation_fitness=val_fit,
-                                               tokens=op.total, usage=op.usage,
+                                               tokens=op.spend, usage=op.usage,
                                                stopped_reason=op.stopped_reason,
                                                causes=_causes(dev_ev.results)))
                 continue
@@ -628,12 +628,12 @@ def run_loop(
             island_states[idx] = EliteState(
                 digest, tree_store.path(digest), dev_fit, val_fit, dev_ev)
             wins += 1
-            _emit("registered", k + 1, tokens=op.total,
+            _emit("registered", k + 1, tokens=op.spend,
                   detail=(f"⚠{len(regs)}" if regs else ""), hub_reason=hub_reason)
             if hub_ok:
                 report(f"{tag} · ✓ REGISTERED dev={dev_fit:.3f} validation={val_fit:.3f}")
             _record(k + 1, IterationResult(True, "registered", dev_fitness=dev_fit,
-                                           validation_fitness=val_fit, tokens=op.total,
+                                           validation_fitness=val_fit, tokens=op.spend,
                                            usage=op.usage, digest=digest,
                                            stopped_reason=op.stopped_reason,
                                            regressions=regs or None,

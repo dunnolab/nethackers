@@ -152,12 +152,13 @@ class Run:
 
     def live_tokens(self) -> int:
         meter = self.meters.get(self.running_tag())
-        return meter.usage.total if meter is not None else 0
+        return meter.usage.spend if meter is not None else 0
 
     def total_tokens(self) -> int:
-        """Cumulative faithful tokens across every iteration (for the Runs list;
-        ``live_tokens`` is just the current iteration's)."""
-        return sum(meter.usage.total for meter in self.meters.values())
+        """Cumulative real spend across every iteration (for the Runs list;
+        ``live_tokens`` is just the current iteration's). Excludes cheap cache
+        reads -- see ``TokenUsage.spend``."""
+        return sum(meter.usage.spend for meter in self.meters.values())
 
     def run_time(self) -> float:
         """Wall-clock seconds since the run started (frozen once finished)."""

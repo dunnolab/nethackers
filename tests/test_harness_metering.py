@@ -12,6 +12,12 @@ def test_tokenusage_add_and_total():
     assert u.total == 110
 
 
+def test_spend_excludes_cache_read_but_total_still_includes_it():
+    u = TokenUsage(input=47060, output=4112, cache_creation=0, cache_read=733184)
+    assert u.spend == 51172          # fresh input + output (+ cache writes), cheap reads excluded
+    assert u.total == 784356         # unchanged: all tokens processed
+
+
 def test_classify_claude_assistant_is_increment():
     kind, u = classify("claude", _A)
     assert kind == "inc" and u.total == 2 + 3 + 16016 + 5448
