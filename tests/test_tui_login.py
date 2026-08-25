@@ -111,6 +111,35 @@ async def test_login_modal_show_displays_code_and_copies_it(monkeypatch):
     assert copied["code"] == "WDJB-MJHT"             # the code was put on the clipboard
 
 
+async def test_login_modal_url_is_clickable_hyperlink(monkeypatch):
+    """The URL in the modal is an OSC 8 terminal hyperlink, not plain styled
+    text -- so it is clickable inside the full-screen app, where the terminal's
+    own URL auto-detection never fires."""
+    import io
+
+    from rich.console import Console
+
+    monkeypatch.setattr(login_mod.LoginModal, "_flow", lambda self: None)  # no auto-flow
+    monkeypatch.setattr(login_mod.clipboard, "copy", lambda _s: False)
+
+    url = "https://github.com/login/device"
+    host = _Host()
+    async with host.run_test() as pilot:
+        modal = LoginModal()
+        host.push_screen(modal)
+        await pilot.pause()
+        modal._show(url, "WDJB-MJHT")
+        await pilot.pause()
+        renderable = modal.query_one("#login_panel", Static).render()
+
+    buf = io.StringIO()
+    Console(file=buf, force_terminal=True, width=100).print(renderable)
+    out = buf.getvalue()
+
+    assert "\x1b]8;" in out              # an OSC 8 hyperlink is emitted at all
+    assert f";{url}\x1b\\" in out        # ...and its target is the verification URL
+
+
 # --- app wiring: login adopts the credential + repaints the idbar; logout clears
 
 

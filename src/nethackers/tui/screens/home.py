@@ -20,7 +20,7 @@ from textual.widgets import Button, Static
 
 from nethackers.hubclient.client import HubClient
 from nethackers.tui.art import NETHACKERS_BANNER, platform_status_line
-from nethackers.tui.screens.runs import read_runs, run_totals
+from nethackers.tui.screens.runs import read_runs, run_causes, run_totals
 from nethackers.tui.status import _compact
 
 if TYPE_CHECKING:
@@ -46,6 +46,19 @@ def recent_runs_panel(runs: list[dict[str, Any]]) -> Table:
             f"{r['wins']}/{r['iterations']}",
             f"{(r.get('best_dev') or 0):.2f}", f"{(r.get('best_held') or 0):.2f}",
         )
+    return t
+
+
+def causes_panel(causes: dict[str, int]) -> Table:
+    """The top ways this user's policies have died across their local runs:
+    a verbatim NetHack cause and how many times it happened, most-frequent
+    first, capped to 8 rows. The dungeon meme, quantified."""
+    t = Table(header_style="bold", pad_edge=False, box=box.SIMPLE_HEAVY,
+              title="☠ causes of death", title_style="bold #d2a24c")
+    t.add_column("cause")
+    t.add_column("×", justify="right")
+    for cause, n in sorted(causes.items(), key=lambda kv: kv[1], reverse=True)[:8]:
+        t.add_row(cause, str(n))
     return t
 
 
@@ -84,6 +97,7 @@ class HomeView(Vertical):
         width: 100%; text-align: center; margin-top: 1;
         background: #d2a24c; color: #0b0b0e; text-style: bold;
     }
+    HomeView #home_causes { width: 100%; margin-top: 1; }
     HomeView #home_authrow { width: 100%; height: auto; align-horizontal: center; margin-top: 1; }
     HomeView Button#home_auth {
         min-width: 26; background: #16161c; color: #d2a24c; border: heavy #d2a24c;
@@ -101,6 +115,7 @@ class HomeView(Vertical):
             yield Static(_TAGLINE, id="home_tagline")
             yield Static(id="home_identity")
             yield Static(id="home_status")
+            yield Static(id="home_causes")
             with Center(id="home_authrow"):
                 yield Button("", id="home_auth")
 
@@ -119,18 +134,27 @@ class HomeView(Vertical):
         self.query_one("#home_identity", Static).update(_identity_text(self._login))
         btn = self.query_one("#home_auth", Button)
         status = self.query_one("#home_status", Static)
+        causes_widget = self.query_one("#home_causes", Static)
         if not self._login:
             btn.label = "Log in with GitHub"
             status.display = False
+            causes_widget.display = False
             return
         btn.label = "Log out"
         status.display = True
         programs = _registered_count(HubClient(self._hub), self._login)
-        totals = run_totals(read_runs(_RUNS_DIR))
+        runs = read_runs(_RUNS_DIR)
+        totals = run_totals(runs)
         status.update(" " + platform_status_line(
             programs=programs, runs=totals["runs"], wins=totals["wins"],
             tokens_display=_compact(totals["tokens"]),
         ) + " ")
+        causes = run_causes(runs)
+        if causes:
+            causes_widget.display = True
+            causes_widget.update(causes_panel(causes))
+        else:
+            causes_widget.display = False
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id != "home_auth":

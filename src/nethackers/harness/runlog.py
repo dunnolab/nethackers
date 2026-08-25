@@ -72,4 +72,5 @@ def metric_record(iteration: int, result: IterationResult) -> dict:
         "usage": asdict(result.usage) if result.usage else None,
         "stopped_reason": result.stopped_reason,
         "child_digest": result.digest,
+        "causes": result.causes,
     }

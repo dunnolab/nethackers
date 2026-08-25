@@ -66,8 +66,12 @@ class LoginModal(ModalScreen[Credentials | None]):
 
     def _show(self, uri: str, code: str) -> None:
         note = "  [#00a000](copied to clipboard)[/]" if clipboard.copy(code) else ""
+        # [link='…'] emits an OSC 8 hyperlink so the URL is clickable inside the
+        # full-screen app (the terminal's own URL auto-detection never fires
+        # here). The quotes are required -- textual's markup parser rejects a
+        # bare [link=https://…] on the '://'.
         self._set_panel(
-            f"[dim]1  Open in your browser[/]\n   [b #00a0a0]{uri}[/]\n\n"
+            f"[dim]1  Open in your browser[/]\n   [b #00a0a0][link='{uri}']{uri}[/link][/]\n\n"
             f"[dim]2  Enter this code[/]{note}\n   [b #ffd54a]{code}[/]\n\n"
             "[dim]waiting for you to authorize…  (esc to cancel)[/]"
         )

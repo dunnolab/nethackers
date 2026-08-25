@@ -116,7 +116,12 @@ def _login_prompt(verification_uri: str, user_code: str) -> None:
     copied = clipboard.copy(user_code)
     body = Text()
     body.append("1  Open this URL in your browser\n", style="dim")
-    body.append(f"     {verification_uri}\n\n", style="bold cyan")
+    # An OSC 8 hyperlink (rich's ``link`` style) -> the terminal makes the URL
+    # itself clickable; a bare styled URL inside a panel is not reliably
+    # auto-detected. Only the URL text is linked, not the indent/newlines.
+    body.append("     ")
+    body.append(verification_uri, style=f"bold cyan link {verification_uri}")
+    body.append("\n\n")
     body.append("2  Enter this code", style="dim")
     if copied:
         body.append("   (copied to clipboard)", style="green")

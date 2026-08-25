@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+from collections import Counter
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -28,6 +29,7 @@ def _summarize(run_dir: Path) -> dict | None:
     if not isinstance(cfg, dict):
         return None
     wins, best_dev, best_held, tokens = 0, None, None, 0
+    causes: Counter[str] = Counter()
     mfile = run_dir / "metrics.jsonl"
     if mfile.exists():
         for line in mfile.read_text().splitlines():
@@ -38,6 +40,8 @@ def _summarize(run_dir: Path) -> dict | None:
             if not isinstance(m, dict):
                 continue
             tokens += int(m.get("tokens") or 0)  # operator tokens for this iteration
+            for cause, n in (m.get("causes") or {}).items():
+                causes[cause] += int(n)
             if m.get("outcome") == "registered":
                 wins += 1
                 if m.get("dev_fitness") is not None:
@@ -57,6 +61,7 @@ def _summarize(run_dir: Path) -> dict | None:
         "best_dev": best_dev,
         "best_held": best_held,
         "tokens": tokens,
+        "causes": dict(causes),
     }
 
 
@@ -83,6 +88,16 @@ def run_totals(runs: list[dict]) -> dict:
         "iterations": sum(int(r.get("iterations", 0)) for r in runs),
         "tokens": sum(int(r.get("tokens", 0)) for r in runs),
     }
+
+
+def run_causes(runs: list[dict]) -> dict[str, int]:
+    """Sum every local run's per-run cause counts into one cause -> count map
+    for the Home 'Causes of Death' panel."""
+    total: Counter[str] = Counter()
+    for r in runs:
+        for cause, n in (r.get("causes") or {}).items():
+            total[cause] += int(n)
+    return dict(total)
 
 
 class RunsView(VerticalScroll):

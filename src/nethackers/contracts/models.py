@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from statistics import mean
 from typing import Any, Literal
 
@@ -47,13 +47,20 @@ class TrajectoryResult:
     # them for real starting in Task 2.
     character: str = ""
     milestone: str | None = None
+    # Verbatim NetHack xlogfile `death=` string for a genuine death (else None:
+    # bot failure, ascension, quit/escaped). Defaulted -- same backward-compat
+    # pattern as character/milestone; populated by arena/trajectory.py._result.
+    cause_of_death: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
 
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> TrajectoryResult:
-        return cls(**value)
+        # Drop unknown keys so a newer client's extra evidence fields don't
+        # break an older consumer (forward/version-skew tolerance).
+        known = {f.name for f in fields(cls)}
+        return cls(**{k: v for k, v in value.items() if k in known})
 
 
 @dataclass(frozen=True)

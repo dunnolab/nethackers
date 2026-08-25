@@ -42,7 +42,7 @@ def test_metric_record_maps_outcome():
     assert metric_record(3, reg) == {
         "iteration": 3, "outcome": "registered", "reason": "registered",
         "dev_fitness": 0.2, "validation_fitness": 0.1, "tokens": 5, "usage": None,
-        "stopped_reason": "completed", "child_digest": "sha256:abc"}
+        "stopped_reason": "completed", "child_digest": "sha256:abc", "causes": None}
     base = IterationResult(False, "baseline", dev_fitness=0.05, validation_fitness=0.05)
     assert metric_record(0, base)["outcome"] == "baseline"
     assert metric_record(2, IterationResult(False, "no-dev-gain"))["outcome"] == "rejected"

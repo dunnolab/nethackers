@@ -47,6 +47,7 @@ def _result(
         wall_seconds=round(time.monotonic() - started, 6),
         character=character,
         milestone=None if bot_failure else metrics.milestone,
+        cause_of_death=None if bot_failure else metrics.cause_of_death,
     )
 
 
