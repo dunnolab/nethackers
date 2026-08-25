@@ -15,6 +15,7 @@ from nethackers.tui.status import EvolveConfig
 _INITIAL_STATE: dict = {
     "phase": "cold-start", "iteration": 0, "baseline_dev": 0.0, "baseline_held": 0.0,
     "best_dev": 0.0, "best_held": 0.0, "wins": 0, "tokens": 0, "detail": "",
+    "hub_reason": None,
     "parent_digest": "", "parent_dev": 0.0, "parent_held": 0.0, "generation": 0,
 }
 
@@ -79,7 +80,14 @@ class Run:
         if state.get("islands", 1) == 1 and pd and (not self.chain or self.chain[-1] != pd):
             self.chain.append(pd)  # seed -> elite1 -> elite2 ...
         if phase == "registered":
-            reason = "registered" + (f" {state['detail']}" if state.get("detail") else "")
+            # hub_reason (harness.loop's win-path) means the win never
+            # reached the hub -- show WHY instead of the plain "registered",
+            # which would otherwise silently overstate what happened. The
+            # regression-count marker (`detail`) still appends the same way
+            # either way, since it's an orthogonal signal (a set win can be
+            # both local-only AND carry a per-identity regression).
+            base = state.get("hub_reason") or "registered"
+            reason = base + (f" {state['detail']}" if state.get("detail") else "")
             self.ledger_rows.append((state["iteration"], True, reason))
         elif phase == "rejected":
             self.ledger_rows.append(
