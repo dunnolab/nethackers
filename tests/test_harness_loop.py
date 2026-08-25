@@ -29,7 +29,7 @@ class _FakeHub:
 class _ImprovingOperator:
     """Edits bot.py so the child differs; a counter drives rising fitness."""
     def __init__(self): self.n = 0
-    def run(self, worktree, brief, *, on_line=None, stop=None):
+    def run(self, worktree, brief, *, refs=None, on_line=None, stop=None):
         from nethackers.harness.operator import OperatorResult
         self.n += 1
         if on_line is not None:
@@ -43,7 +43,7 @@ class _ImprovingOperator:
 class _RaisingOperator:
     """Simulates a mutation step that blows up (e.g. the coding agent's CLI
     crashes) -- the loop must discard just this iteration, not abort."""
-    def run(self, worktree, brief, *, on_line=None, stop=None):
+    def run(self, worktree, brief, *, refs=None, on_line=None, stop=None):
         raise RuntimeError("boom")
 
 
@@ -52,9 +52,21 @@ class _KilledOperator:
     returns normally (run_operator does not raise on a kill), so it must NOT
     count toward the operator-error breaker -- it falls through to the normal
     gate path."""
-    def run(self, worktree, brief, *, on_line=None, stop=None):
+    def run(self, worktree, brief, *, refs=None, on_line=None, stop=None):
         from nethackers.harness.operator import OperatorResult
         return OperatorResult(backend="codex", usage=TokenUsage(), stopped_reason="killed")
+
+
+class _RefCapturingOperator:
+    def __init__(self): self.seen = []
+    def run(self, worktree, brief, *, refs=None, on_line=None, stop=None):
+        from nethackers.harness.operator import OperatorResult
+        self.seen.append(refs)
+        # first call regress (rejected), second call improve
+        v = 1 if len(self.seen) == 1 else 5
+        (Path(worktree)/"bot.py").write_text(f"VERSION = {v}\n")
+        return OperatorResult(backend="fake", usage=TokenUsage(1, 2, 3, 4),
+                              stopped_reason="completed")
 
 
 def _fitness_runner(progress_by_version):
@@ -166,6 +178,20 @@ validation_n=3,
         runner=_fitness_runner(lambda v: 0.5), workdir=tmp_path / "work")  # flat: no gain
     assert results[0].registered is False
     assert hub.registered == []
+
+
+def test_loop_provisions_refs_with_recent_rejects(tmp_path):
+    op = _RefCapturingOperator()
+    run_loop(objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path/"seed"),
+             tree_store=LocalTreeStore(tmp_path/"store"), operator=op, hub=_FakeHub(),
+             image="img:dev", token="t", owner="dev", iterations=2, validation_n=3,
+             now_fn=lambda: "2026-08-25T00:00:00Z",
+             runner=_fitness_runner(lambda v: [0.2, 0.1, 0.4][v]), workdir=tmp_path/"work")
+    # iter 1 (v1=0.1) is rejected → iter 2's refs dir contains it under attempts/
+    refs2 = op.seen[1]
+    assert refs2 is not None
+    assert any(p.name.startswith("iter") for p in (refs2/"attempts").iterdir())
+    assert (refs2/"CONTEXT.md").exists()
 
 
 def test_loop_discards_an_iteration_that_raises(tmp_path):

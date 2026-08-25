@@ -7,12 +7,12 @@ import subprocess
 import threading
 import time
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from nethackers.contracts.models import Evidence
-from nethackers.harness import aggregate
+from nethackers.harness import aggregate, refs
 from nethackers.harness.brief import build_brief
 from nethackers.harness.evaluate import evaluate
 from nethackers.harness.gate import passes_gate
@@ -31,6 +31,12 @@ class EliteState:
     dev_fitness: float
     validation_fitness: float
     dev_evidence: Evidence  # cached: the brief reuses it instead of re-scoring the parent
+    # Rejected attempts since THIS elite became current (single-elite loop;
+    # islands come later) -- provisioned under the next iteration's
+    # `/refs/attempts/` so the mutator can see what already failed. Bounded
+    # <=3 (oldest dropped first); implicitly cleared on a win because the
+    # winning branch below constructs a fresh EliteState without passing it.
+    recent_attempts: list[refs.Ref] = field(default_factory=list)
 
 
 @dataclass
@@ -164,6 +170,14 @@ def run_loop(
         results.append(result)
         on_iteration(iteration, result)
 
+    def _track_rejected_attempt(worktree: Path, note: str) -> None:
+        # `elite` is the CURRENT elite (read via closure, like `_emit`) --
+        # appending here, before any reassignment, is what makes a win
+        # implicitly clear the list: the win branch below constructs a fresh
+        # EliteState that doesn't carry `recent_attempts` forward.
+        elite.recent_attempts.append((f"iter-{k + 1}", worktree, note))
+        del elite.recent_attempts[:-3]   # bounded <=3 -- drop oldest first
+
     for k in range(iterations):
         if stop is not None and stop.is_set():
             break  # manual hard-stop: don't start another iteration
@@ -211,10 +225,22 @@ def run_loop(
             # rendered in the TUI's agent-log via prettify's brief event).
             if on_log is not None:
                 on_log(tag, json.dumps({"type": "nethackers_brief", "text": brief}))
+            # Assemble a FRESH `/refs/` dir every iteration (refs.assemble's
+            # shutil.copytree is dirs_exist_ok=False -- reusing one path
+            # across iterations would raise FileExistsError on the 2nd
+            # attempts/<label> that collides). `influences=[]` until Phase C
+            # wires the selector-chosen cross-elite pool in.
+            refs_dir = workdir / f"refs-{k}"
+            refs.assemble(
+                refs_dir,
+                base_eval=json.dumps([r.to_dict() for r in elite.dev_evidence.results]),
+                influences=[],
+                attempts=elite.recent_attempts,
+            )
             _emit("mutating", k + 1)
             report(f"{tag} · mutating…")
             try:
-                op = operator.run(worktree, brief, on_line=_log_cb(tag), stop=stop)
+                op = operator.run(worktree, brief, refs=refs_dir, on_line=_log_cb(tag), stop=stop)
             except Exception as e:
                 # run_operator RAISES on a non-zero backend exit / startup failure
                 # (missing or renamed binary, unavailable model, stale CLI, auth),
@@ -261,6 +287,10 @@ def run_loop(
             if dev_fit <= elite.dev_fitness:
                 _emit("rejected", k + 1, tokens=op.total, detail="no dev gain")
                 report(f"{tag} · ✗ no dev gain: {dev_fit:.3f} ≤ {elite.dev_fitness:.3f}")
+                _track_rejected_attempt(
+                    worktree,
+                    f"score dev={dev_fit:.3f} (parent {elite.dev_fitness:.3f}); "
+                    f"hypothesis: {aggregate.outcome_summary(dev_ev.results)}")
                 _record(k + 1, IterationResult(False, "no-dev-gain", dev_fitness=dev_fit,
                                                tokens=op.total, usage=op.usage,
                                                stopped_reason=op.stopped_reason))
@@ -277,6 +307,11 @@ def run_loop(
                 _emit("rejected", k + 1, tokens=op.total, detail="no validation gain")
                 report(f"{tag} · ✗ no validation gain: {val_fit:.3f} "
                        f"≤ {elite.validation_fitness:.3f}")
+                _track_rejected_attempt(
+                    worktree,
+                    f"score dev={dev_fit:.3f} validation={val_fit:.3f} "
+                    f"(parent validation {elite.validation_fitness:.3f}); "
+                    f"hypothesis: {aggregate.outcome_summary(dev_ev.results)}")
                 _record(k + 1, IterationResult(False, "no-validation-gain",
                                                dev_fitness=dev_fit, validation_fitness=val_fit,
                                                tokens=op.total, usage=op.usage,
