@@ -14,7 +14,9 @@ from nethackers.hub.store import Store
 def _app(tmp_path: Any) -> TestClient:
     store = Store(tmp_path / "h.db")
     store.init_schema()
-    return TestClient(create_app(store, LocalStubAuth({"t": "sam"}), git_factory=lambda tok: None))
+    # No git_factory: the /dictionary.mp3 route never uses it, so the default
+    # (real GitHubRead, never called here) keeps the type clean for `mypy tests`.
+    return TestClient(create_app(store, LocalStubAuth({"t": "sam"})))
 
 
 def test_dictionary_audio_404_when_absent(tmp_path: Any, monkeypatch) -> None:
