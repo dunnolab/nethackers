@@ -107,10 +107,7 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--secret", default="public")
     p.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS)
     p.add_argument("--no-progress-timeout", type=int, default=DEFAULT_NO_PROGRESS_TIMEOUT)
-    # Generous per-action wall-clock budget: only a genuinely hung bot times
-    # out; a slow-under-load action must NOT be cut (eval determinism). The
-    # timeout->0.0 rule (arena/trajectory.py) is unchanged.
-    p.add_argument("--action-timeout", type=float, default=30.0)
+    p.add_argument("--action-timeout", type=float, default=5.0)
     p.add_argument("--max-parallel-evals", type=int, default=8)
     p.add_argument("--out", required=True)
     return p

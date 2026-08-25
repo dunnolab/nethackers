@@ -77,11 +77,7 @@ class ArenaEnvAdapter:
 
 
 class AutoAscendDriver:
-    def __init__(self, action_timeout: float = 30.0) -> None:
-        # Generous per-action wall-clock budget: only a genuinely hung bot
-        # times out; a slow-under-load action must NOT be cut (eval
-        # determinism). The timeout->0.0 rule (arena/trajectory.py) is
-        # unchanged.
+    def __init__(self, action_timeout: float = 4.5) -> None:
         self._action_timeout = action_timeout
         self._env: ArenaEnvAdapter | None = None
         self._agent: autoascend_agent.Agent | None = None

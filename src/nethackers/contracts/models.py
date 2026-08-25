@@ -68,10 +68,7 @@ class Objective:
     character: str | None            # e.g. "val-dwa-law-fem"; None => NLE natural random draw
     max_steps: int = DEFAULT_MAX_STEPS
     no_progress_timeout: int = DEFAULT_NO_PROGRESS_TIMEOUT
-    # Generous per-action wall-clock budget: only a genuinely hung bot times
-    # out; a slow-under-load action must NOT be cut (eval determinism). The
-    # timeout->0.0 rule (arena/trajectory.py) is unchanged.
-    action_timeout_seconds: float = 30.0
+    action_timeout_seconds: float = 5.0
     seed_set: str = "public-8"
 
     def digest(self) -> str:
