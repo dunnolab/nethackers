@@ -128,6 +128,33 @@ def test_eval_batch_wraps_container_results_into_evidence(tmp_path):
     assert "--seeds" not in cmd
 
 
+def test_eval_batch_absolutizes_relative_solution_mount(tmp_path, monkeypatch):
+    """Docker rejects a relative bind-mount source (it reads ``roots/autoascend``
+    as an invalid named volume). eval_batch must absolutize the solution path
+    before the ``-v`` mount, so a caller may pass a repo-relative tree -- e.g.
+    the AutoAscend baseline compute passes ``roots/autoascend``. This docker
+    path is otherwise only exercised against a real daemon, so the bug slipped
+    past the fake-runner tests, which all pass tmp_path-absolute trees."""
+    sol = tmp_path / "roots" / "autoascend"
+    sol.mkdir(parents=True)
+    (sol / "bot.py").write_text("x")
+    monkeypatch.chdir(tmp_path)
+    calls: list = []
+
+    eval_batch(
+        Path("roots/autoascend"),  # relative, exactly as baseline_compute passes it
+        _SPEC,
+        "img:dev",
+        now="2026-08-09T00:00:00Z",
+        runner=_make_fake_docker_run(calls),
+        image_digest_resolver=lambda img: "img@sha256:deadbeef",
+    )
+
+    src = next(v.removesuffix(":/sol:ro") for v in calls[0] if v.endswith(":/sol:ro"))
+    assert Path(src).is_absolute(), f"mount source must be absolute, got {src!r}"
+    assert Path(src).resolve() == sol.resolve()
+
+
 def test_eval_batch_passes_max_parallel_evals(tmp_path):
     # Mirrors test_eval_batch_wraps_container_results_into_evidence's setup --
     # this only pins the new --max-parallel-evals docker argv, reusing the

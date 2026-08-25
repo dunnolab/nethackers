@@ -147,7 +147,12 @@ def eval_batch(
     it how the objective is later re-derived (register/store tooling does
     that from the published catalog via ``spec.digest()``).
     """
-    solution_path = Path(solution_path)
+    # Absolutize before the -v mount: docker rejects a relative bind-mount
+    # source (it reads it as an invalid named volume). Callers in the evolve
+    # loop pass absolute worktree paths, but the AutoAscend baseline passes a
+    # repo-relative tree. .absolute() only prefixes the cwd -- it never resolves
+    # symlinks, so the content digest below (relative-path based) is unchanged.
+    solution_path = Path(solution_path).absolute()
     with tempfile.TemporaryDirectory() as td:
         out = Path(td) / "results.json"
         cmd = [
