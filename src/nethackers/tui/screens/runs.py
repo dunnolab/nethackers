@@ -42,7 +42,10 @@ def _summarize(run_dir: Path) -> dict | None:
             tokens += int(m.get("tokens") or 0)  # operator tokens for this iteration
             for cause, n in (m.get("causes") or {}).items():
                 causes[cause] += int(n)
-            if m.get("outcome") == "registered":
+            # "local-only" (runlog.metric_record) is still a real, accepted
+            # local elite -- it only failed to reach the hub -- so it counts
+            # as a win here exactly like "registered" does.
+            if m.get("outcome") in ("registered", "local-only"):
                 wins += 1
                 if m.get("dev_fitness") is not None:
                     best_dev = m["dev_fitness"]
