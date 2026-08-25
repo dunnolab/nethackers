@@ -145,3 +145,20 @@ def test_identities_and_parent_means_default_empty_when_absent():
     r.apply_state(_state("mutating"))  # single/random objectives never set these keys
     assert r.identities() == []
     assert r.parent_means() == {}
+
+
+def test_islands_run_does_not_build_the_single_lineage_chain():
+    """islands>1: the round-robin parent flips between islands each iteration,
+    so the single-lineage chain must stay empty (the islands panel replaces
+    it). islands==1 still builds the chain with consecutive-parent dedup."""
+    r = Run("ri", CFG)
+    r.apply_state(_state("gating", parent_digest="isl0", islands=3))
+    r.apply_state(_state("gating", parent_digest="isl1", islands=3))
+    r.apply_state(_state("gating", parent_digest="isl2", islands=3))
+    assert r.chain == []   # no fake chain spliced from separate islands
+
+    r1 = Run("r1", CFG)
+    r1.apply_state(_state("gating", parent_digest="seed0", islands=1))
+    r1.apply_state(_state("gating", parent_digest="seed0", islands=1))   # same -> dedup
+    r1.apply_state(_state("gating", parent_digest="elite1", islands=1))
+    assert r1.chain == ["seed0", "elite1"]   # single-lineage chain intact

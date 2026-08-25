@@ -59,6 +59,7 @@ def build_docker_argv(
     caps: ContainerCaps,
     auth_args: list[str],
     brief: str,
+    refs: Path | None = None,
 ) -> list[str]:
     """Assemble ``docker run`` argv for one mutator iteration: fixed docker
     prefix (name + caps + security-opt + workspace mount), then ``auth_args``,
@@ -71,6 +72,12 @@ def build_docker_argv(
     loudly. Callers that only care about argv shape (this module's own tests)
     pass a fixed ``brief="B"``; the operator that wraps this function (a
     later task) passes the real per-iteration brief.
+
+    ``refs``, when given, is bind-mounted read-only at ``/refs`` -- the
+    reference folders ``refs.assemble`` (a separate task) builds for the
+    coding agent to read from inside the sandbox. ``None`` (the default)
+    keeps the argv byte-identical to before this mount existed, so callers
+    that don't yet have a refs dir (and all pre-existing tests) are unaffected.
     """
     argv = [
         "docker", "run", "--rm",
@@ -81,8 +88,10 @@ def build_docker_argv(
         "--cpus", caps.cpus,
         "--security-opt", "no-new-privileges",
         "-v", f"{worktree}:/workspace",
-        "-w", "/workspace",
     ]
+    if refs is not None:
+        argv += ["-v", f"{refs}:/refs:ro"]
+    argv += ["-w", "/workspace"]
     argv += auth_args
     argv += [image]
     argv += ["timeout", str(caps.timeout_s)]
@@ -165,6 +174,7 @@ class ContainerOperator:
         worktree: Path,
         brief: str,
         *,
+        refs: Path | None = None,
         on_line: Callable[[str], None] | None = None,
         stop: threading.Event | None = None,
     ) -> OperatorResult:
@@ -186,7 +196,7 @@ class ContainerOperator:
         argv = build_docker_argv(
             harness=self.harness, image=self.image, name=name, worktree=worktree,
             cli=self.cli, model=self.model, effort=self.effort, caps=self.caps,
-            auth_args=auth, brief=brief,
+            auth_args=auth, brief=brief, refs=refs,
         )
         done = threading.Event()
         watcher: threading.Thread | None = None

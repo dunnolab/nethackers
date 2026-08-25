@@ -116,6 +116,62 @@ async def test_start_pins_model_and_effort_from_the_pickers(monkeypatch):
         assert seen["params"].effort == "max"
 
 
+async def test_start_threads_islands_and_reset_period(monkeypatch):
+    seen: dict = {}
+    monkeypatch.setattr(ef, "prepare_evolve",
+                        lambda params, **_k: seen.update(params=params) or _Plan())
+    app = _Host(Credentials("castiel", "tok"))
+    async with app.run_test(size=(100, 50)) as pilot:
+        form = app.query_one(ef.EvolveForm)
+        form._objective = "wiz-elf-cha-mal"
+        form.query_one("#f_islands", Input).value = "4"
+        form.query_one("#f_reset_period", Input).value = "6"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        assert seen["params"].islands == 4
+        assert seen["params"].reset_period == 6
+
+
+async def test_islands_defaults_to_one_and_blank_reset_is_none(monkeypatch):
+    seen: dict = {}
+    monkeypatch.setattr(ef, "prepare_evolve",
+                        lambda params, **_k: seen.update(params=params) or _Plan())
+    app = _Host(Credentials("castiel", "tok"))
+    async with app.run_test(size=(100, 50)) as pilot:
+        app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()   # islands left "1", reset blank
+        await pilot.pause()
+        assert seen["params"].islands == 1
+        assert seen["params"].reset_period is None
+
+
+async def test_invalid_islands_shows_error_no_start(monkeypatch):
+    seen: dict = {}
+    monkeypatch.setattr(ef, "prepare_evolve", lambda *a, **k: seen.update(called=True))
+    app = _Host(Credentials("castiel", "tok"))
+    async with app.run_test(size=(100, 50)) as pilot:
+        form = app.query_one(ef.EvolveForm)
+        form._objective = "wiz-elf-cha-mal"
+        form.query_one("#f_islands", Input).value = "0"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        assert "called" not in seen        # prepare_evolve blocked by the guard
+        assert app.started is None
+        err_text = str(app.query_one("#f_err", Static).render()).lower()
+        assert "islands" in err_text
+
+
+async def test_every_field_has_a_plain_language_tooltip():
+    """Each field carries a tip so a layman can read what it does on hover."""
+    app = _Host(None)
+    async with app.run_test(size=(100, 50)) as pilot:
+        await pilot.pause()
+        form = app.query_one(ef.EvolveForm)
+        for sel in ("#f_obj_grid", "#f_op", "#f_model", "#f_effort",
+                    "#f_iters", "#f_islands", "#f_reset_period"):
+            assert form.query_one(sel).tooltip, f"{sel} has no tooltip"
+
+
 async def test_form_scroll_pane_is_not_a_nav_target():
     # regression: a subwindow VerticalScroll must scroll without itself being a
     # focusable nav stop that shadows its fields (the operator select became

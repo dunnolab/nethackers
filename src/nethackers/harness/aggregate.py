@@ -4,6 +4,7 @@ using evidence.mean_progress (== union_mean here); these add the per-identity
 view the brief and the monitor surface."""
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Sequence
 from statistics import mean
 from typing import Protocol
@@ -16,6 +17,22 @@ class _HasCharProgress(Protocol):
     def character(self) -> str: ...
     @property
     def progress(self) -> float: ...
+
+
+class _HasOutcome(Protocol):
+    # read-only properties, matching TrajectoryResult's shape (mypy invariance
+    # fix, same rationale as _HasCharProgress); end_status/milestone are
+    # Optional on the model itself (older evidence, non-"completed" statuses),
+    # so outcome_summary must tolerate None throughout -- best-effort, never
+    # a crash on missing fields (spec §7).
+    @property
+    def progress(self) -> float: ...
+    @property
+    def end_status(self) -> str | None: ...
+    @property
+    def max_depth(self) -> int: ...
+    @property
+    def milestone(self) -> str | None: ...
 
 
 def per_identity_means(results: Sequence[_HasCharProgress]) -> dict[str, float]:
@@ -52,3 +69,24 @@ def regressions(
         if ident in child and child[ident] < parent[ident] - eps
     ]
     return sorted(drops, key=lambda t: t[1])  # most-negative first
+
+
+def outcome_summary(results: Sequence[_HasOutcome]) -> str:
+    """Best-effort text rollup of an eval's outcomes for `/refs/CONTEXT.md` /
+    the brief, e.g. ``"died×4, starved×1; deepest milestone: <m>; mean
+    0.11"``. The end_status tally and progress mean are always computed; the
+    deepest-milestone clause is appended only when at least one episode
+    reports one. Never raises on missing/older-evidence fields (design §7) --
+    an empty `results`, or every `milestone`/`end_status` being None, still
+    renders, just without that clause."""
+    if not results:
+        return "no results"
+    tally = Counter(r.end_status for r in results if r.end_status is not None)
+    parts = [f"{status}×{count}" for status, count in tally.most_common()]
+    pieces = [", ".join(parts)] if parts else ["no outcome data"]
+    milestoned = [r for r in results if r.milestone]
+    if milestoned:
+        deepest = max(milestoned, key=lambda r: r.max_depth)
+        pieces.append(f"deepest milestone: {deepest.milestone}")
+    pieces.append(f"mean {mean(r.progress for r in results):.2f}")
+    return "; ".join(pieces)

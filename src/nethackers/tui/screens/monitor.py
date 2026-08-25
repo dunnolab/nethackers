@@ -100,6 +100,7 @@ class RunMonitor(Screen):
                          id="influences")
             yield Static(id="eval")
             yield Static(id="lineage")
+            yield Static(id="islands")
             yield Static(id="ledger")
         yield Static("↑↓←→ move · enter use · esc back · c copy log", id="navhint")
         with TabbedContent():
@@ -182,8 +183,19 @@ class RunMonitor(Screen):
                 elapsed_s=run.elapsed()))
         self.query_one("#eval", Static).update(
             S.eval_line(run.split(), run.eval_step, run.counts))
-        self.query_one("#lineage", Static).update(S.lineage_strip(
-            run.chain, best_dev=st["best_dev"], baseline_dev=st["baseline_dev"]))
+        # islands>1: show the per-island cockpit and blank the single-lineage
+        # strip (meaningless once the parent flips between islands each
+        # iteration). islands==1: the plain lineage strip, exactly as before.
+        champs = st.get("island_champions")
+        if champs:
+            self.query_one("#islands", Static).update(S.islands_panel(
+                champs, active=st.get("active_island", 0),
+                reset_period=st.get("reset_period")))
+            self.query_one("#lineage", Static).update("")
+        else:
+            self.query_one("#islands", Static).update("")
+            self.query_one("#lineage", Static).update(S.lineage_strip(
+                run.chain, best_dev=st["best_dev"], baseline_dev=st["baseline_dev"]))
         self.query_one("#ledger", Static).update(S.iterations_ledger(run.ledger_rows))
         # generalist (set) objectives only: the loop puts "identities" in
         # state, so this stays a no-op for single/random runs and their

@@ -2,7 +2,9 @@ from dataclasses import dataclass
 
 import pytest
 
+from nethackers.contracts.models import TrajectoryResult
 from nethackers.harness import aggregate as A
+from nethackers.harness.aggregate import outcome_summary
 
 
 @dataclass
@@ -44,3 +46,15 @@ def test_regressions_worst_first_only_drops():
 
 def test_regressions_eps_tolerance():
     assert A.regressions({"a": 0.50}, {"a": 0.49}, eps=0.02) == []
+
+
+def _r(progress, end="died", milestone=None, depth=1):
+    return TrajectoryResult(trajectory_id=0, status="completed", progress=progress,
+        ascended=False, steps=1, turns=1, max_depth=depth, end_status=end, error=None,
+        wall_seconds=0.1, character="c", milestone=milestone)
+
+
+def test_outcome_summary_tallies_and_is_best_effort():
+    s = outcome_summary([_r(0.1, "died"), _r(0.1, "died"), _r(0.2, "starved")])
+    # mean-ish present, no crash on missing milestone
+    assert "died×2" in s and "starved×1" in s and "0.1" in s

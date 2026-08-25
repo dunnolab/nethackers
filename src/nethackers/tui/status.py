@@ -51,8 +51,8 @@ def _bar(frac: float, width: int = 8) -> str:
 
 
 def parent_panel(state: dict) -> str:
-    d = str(state.get("parent_digest", ""))[:4]
-    who = f"#{d}" if d else "seed"
+    d = state.get("parent_digest", "")
+    who = f"#{_short(d)}" if d else "seed"   # _short: post-"sha256:" hex, not "sha2…"
     return (f"PARENT  {who} · gen {state['generation']} · "
             f"dev {state['parent_dev']:.2f}  held {state['parent_held']:.2f}")
 
@@ -79,6 +79,38 @@ def lineage_strip(chain: list[str], *, best_dev: float, baseline_dev: float) -> 
     nodes = " → ".join(n if n == "seed" else f"#{str(n)[:4]}" for n in chain)
     delta = best_dev - baseline_dev
     return f"lineage  {nodes} → ?     best dev {best_dev:.2f}  Δ{delta:+.2f}"
+
+
+def _short(digest: str) -> str:
+    """A short, DISTINGUISHING id for a champion: the hex after a content
+    digest's ``sha256:`` prefix (or the commit after an atom's ``@``), so
+    islands seeded from the same tree aren't all rendered identically."""
+    d = str(digest)
+    if ":" in d:
+        d = d.split(":", 1)[1]
+    elif "@" in d:
+        d = d.split("@", 1)[1]
+    return d[:6] or "seed"
+
+
+def islands_panel(champions: list[dict], *, active: int,
+                  reset_period: int | None) -> str:
+    """Per-island cockpit (islands>1): one row per island champion with its
+    short id + dev/held fitness -- the round-robin-active island marked ►, the
+    current best ★. Replaces the single-lineage strip when K>1 (that strip is
+    meaningless once the parent flips between islands each iteration)."""
+    if not champions:
+        return ""
+    best = max(range(len(champions)), key=lambda i: champions[i].get("dev", 0.0))
+    reset = f" · reset every {reset_period}" if reset_period else ""
+    lines = [f"ISLANDS {len(champions)}{reset}"]
+    for i, c in enumerate(champions):
+        mark = "►" if i == active else " "
+        star = " ★" if i == best else ""
+        lines.append(
+            f"{mark} {i}  {_short(c.get('digest', '')):>6}  "
+            f"dev {c.get('dev', 0.0):.2f}  held {c.get('held', 0.0):.2f}{star}")
+    return "\n".join(lines)
 
 
 def iterations_ledger(rows: list[tuple[int, bool, str]]) -> str:

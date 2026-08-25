@@ -22,8 +22,8 @@ def test_brief_targets_progression_not_proxies():
     assert "progression" in b.lower()
     assert "reach deeper" not in b and "survive longer" not in b   # old proxy line gone
     assert "objective 'ascend'" in b                               # objective_name is used
-    assert "12.3" in b                                             # mean progression shown
-    assert "starved" in b                                          # outcome tally shown
+    assert "CONTEXT.md" in b                                       # mean/tally now live in /refs/
+    assert "12.3" not in b and "starved" not in b                  # no baked-in parent numbers
 
 
 def test_brief_has_antigaming_and_generalization_and_gate():
@@ -36,7 +36,10 @@ def test_brief_has_antigaming_and_generalization_and_gate():
 
 
 def test_wiki_line_is_conditional():
-    assert "reference" not in build_brief("o", "c", _evidence(1, 1, {})).lower()
+    # NOTE: the shrunk brief's NetHack preamble always mentions "reference"
+    # solutions under /refs/ (Task A2), so conditionality is checked against
+    # the wiki *path* itself rather than the generic word "reference".
+    assert "/knowledge" not in build_brief("o", "c", _evidence(1, 1, {})).lower()
     b = build_brief("o", "c", _evidence(1, 1, {}), wiki_path="/knowledge/nethack")
     assert "/knowledge" in b.lower()
 
@@ -76,3 +79,18 @@ def test_single_identity_brief_unaffected_by_new_kwargs_when_absent():
     # identities=None (default) must still take the original, single-build path.
     b = build_brief("ascend", "val-wiz", _evidence(mean=1.0, episodes=4, tally={}))
     assert "a set of" not in b.lower()
+
+# --- shrunk brief: framing + /refs/ pointer (both branches) --------------
+
+def test_both_branches_frame_nethack_and_point_to_refs():
+    single = build_brief("val-dwa-law-fem", "val-dwa-law-fem",
+                         _evidence(mean=0.11, episodes=5, tally={"died": 5}))
+    a_set = build_brief("mon", "mon-hum-law-mal",
+                        _evidence(mean=0.10, episodes=5, tally={"died": 5}),
+                        identities=["mon-hum-law-mal", "mon-hum-neu-mal", "mon-hum-cha-mal"])
+    for b in (single, a_set):
+        assert "nethack" in b.lower()          # frames the game (was missing in the set branch)
+        assert "progression" in b.lower()      # what the metric is
+        assert "/refs/" in b                    # points at the provisioned folders
+        assert "/workspace" in b                # names the editable base
+        assert "hypothesis" in b.lower()        # still asks for the focused-change comment

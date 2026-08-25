@@ -2,25 +2,27 @@
 from __future__ import annotations
 
 import json
+import math
+import random
+import re
 import shutil
 import subprocess
 import threading
 import time
 from collections import Counter
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from nethackers.contracts.models import Evidence
-from nethackers.harness import aggregate
+from nethackers.harness import aggregate, refs, select
 from nethackers.harness.brief import build_brief
 from nethackers.harness.evaluate import evaluate
 from nethackers.harness.gate import passes_gate
 from nethackers.harness.metering import TokenUsage
 from nethackers.harness.register import register_win, register_win_slices
 from nethackers.harness.seeds import dev_spec, validation_spec
-from nethackers.harness.select import top_trusted_elite
 from nethackers.harness.store import LocalTreeStore
 from nethackers.hub.selector import resolve
 
@@ -32,6 +34,15 @@ class EliteState:
     dev_fitness: float
     validation_fitness: float
     dev_evidence: Evidence  # cached: the brief reuses it instead of re-scoring the parent
+    # Rejected attempts since THIS island's champion became current --
+    # provisioned under the next iteration's `/refs/attempts/` so the
+    # mutator can see what already failed for THIS lineage. Bounded <=3
+    # (oldest dropped first); implicitly cleared on a win because the
+    # winning branch below constructs a fresh EliteState without passing it.
+    # Each island holds its own list (never shared) -- that per-island
+    # isolation of state IS the diversity mechanism islands exist for
+    # (spec §4: "isolation is of state, not information").
+    recent_attempts: list[refs.Ref] = field(default_factory=list)
 
 
 @dataclass
@@ -54,6 +65,26 @@ def _causes(results) -> dict[str, int]:
     return dict(Counter(r.cause_of_death for r in results if r.cause_of_death))
 
 
+def select_reseed(survivors: list[EliteState], rng: random.Random,
+                  temperature: float = 1.0) -> EliteState:
+    """Choose a survivor to reseed a killed island's champion from (Task B2).
+
+    A temperature-weighted sample over the survivors -- P proportional to
+    ``exp(dev_fitness / temperature)`` -- reusing ``select._sample``'s
+    top-k-sampling formula. NEVER a deterministic argmax: a fitter survivor
+    is more likely to be picked but not guaranteed, because always
+    reseeding from "the single best" would collapse every killed island
+    onto one lineage at every reset and erase the per-island diversity
+    islands exist for (spec §4). The caller passes only the survivors
+    (already the top half after the kill), so every candidate here is
+    already eligible -- that surviving half IS the "top-k" pool.
+    """
+    if len(survivors) == 1:
+        return survivors[0]   # nothing to sample over
+    weights = [math.exp(s.dev_fitness / temperature) for s in survivors]
+    return rng.choices(survivors, weights=weights, k=1)[0]
+
+
 def run_loop(
     *,
     objective: str,
@@ -66,8 +97,12 @@ def run_loop(
     owner: str,
     iterations: int,
     validation_n: int,
+    islands: int = 1,
+    reset_period: int | None = None,
     max_parallel_evals: int = 8,
-    migrate: bool = True,
+    from_seed: bool = False,  # deliberate cold start: ignore the hub for island
+    #                           seeding AND /refs influences (a hub-independent run)
+    fetch: Callable[[dict, Path], Path | None] = select.pull_fetch,
     max_consecutive_errors: int = 3,
     sleep: Callable[[float], None] = time.sleep,
     stop: threading.Event | None = None,
@@ -81,9 +116,22 @@ def run_loop(
     workdir: Path,
     publish: Callable[[Path], dict[str, str] | None] | None = None,
 ) -> list[IterationResult]:
+    if islands < 1:
+        raise ValueError(f"islands must be >= 1, got {islands}")
+    if reset_period is not None and reset_period < 1:
+        raise ValueError(f"reset_period must be >= 1 when set, got {reset_period}")
     dev = dev_spec(objective)
     resolved = resolve(objective)
-    identities = sorted(resolved.identities) if resolved.kind == "set" else []
+    # A single full identity IS a set of size one -- resolve() already carries
+    # it in resolved.identities -- so the pool machinery (island seeding, /refs
+    # influences, reset injection) and the per-identity brief/monitor treat it
+    # uniformly with a multi-identity set; only "random"/"all" have no fixed
+    # identity to pool over. `is_set` stays SEPARATE for the registration split:
+    # a true set records a per-identity slice per member, a single records one
+    # ordinary win (unchanged hub semantics) -- that distinction is genuinely
+    # kind-based, unlike the pool, which just needs the identities.
+    identities = sorted(resolved.identities) if resolved.kind in ("single", "set") else []
+    is_set = resolved.kind == "set"
     validation = validation_spec(objective, n=validation_n, start=1000)
     # A set's smoke check uses ONE member (cheap 1-ep contract check), not
     # |S| episodes -- the full union dev eval below is what actually catches
@@ -114,23 +162,37 @@ def run_loop(
     def _emit(phase: str, iteration: int, *, tokens: int = 0, detail: str = "") -> None:
         if on_state is None:
             return
+        active = island_states[idx]
         payload = {
             "phase": phase, "iteration": iteration,
             "baseline_dev": base_dev, "baseline_held": base_validation,
-            "best_dev": elite.dev_fitness, "best_held": elite.validation_fitness,
+            "best_dev": active.dev_fitness, "best_held": active.validation_fitness,
             "wins": wins, "tokens": tokens, "detail": detail,
             # parent snapshot for the monitor's PARENT panel + lineage chain
             # (additive; the in-flight child's digest isn't known here).
             # generation = the iteration being worked (advances every attempt),
             # not wins -- so the monitor's `gen` visibly moves even before a win.
-            "parent_digest": elite.digest, "parent_dev": elite.dev_fitness,
-            "parent_held": elite.validation_fitness, "generation": iteration,
+            "parent_digest": active.digest, "parent_dev": active.dev_fitness,
+            "parent_held": active.validation_fitness, "generation": iteration,
+            "islands": islands,
         }
+        if islands > 1:
+            # Per-island snapshot so the monitor can show all K champions, not
+            # just the round-robin-active one (which flips every iteration and
+            # made a multi-island run look like a single flat parent). Only
+            # emitted for islands>1; a single-island run keeps the plain
+            # single-lineage view unchanged.
+            payload["active_island"] = idx
+            payload["reset_period"] = reset_period
+            payload["island_champions"] = [
+                {"digest": s.digest, "dev": s.dev_fitness, "held": s.validation_fitness}
+                for s in island_states
+            ]
         if identities:
-            # Live from the CURRENT elite (a closure var reassigned on a win
-            # or migration) -- never memoized -- so the parent snapshot
-            # doesn't go stale after either event.
-            pm = aggregate.per_identity_means(elite.dev_evidence.results)
+            # Live from the ACTIVE island's champion (island_states[idx], a
+            # closure var whose slot is reassigned on a win) -- never
+            # memoized -- so the parent snapshot doesn't go stale after one.
+            pm = aggregate.per_identity_means(active.dev_evidence.results)
             payload.update({
                 "identities": identities,
                 "parent_means": pm,
@@ -141,8 +203,8 @@ def run_loop(
     def _score_elite(tree_path: Path, digest: str, *, dev_label: str,
                      val_label: str) -> EliteState:
         # Score a tree on this run's own dev+validation specs -> an EliteState.
-        # Shared by the cold-start (seed baseline) and mid-run migration, so an
-        # adopted elite's gate thresholds are established identically.
+        # Used once, at cold start, to establish the seed baseline that every
+        # island copies below (so all islands' gate thresholds start identical).
         dev_fit, dev_ev = evaluate(
             tree_path, dev, image, now=now_fn(), runner=runner,
             on_episode=_episode_cb(dev_label), max_parallel_evals=max_parallel_evals)
@@ -151,20 +213,83 @@ def run_loop(
             on_episode=_episode_cb(val_label), max_parallel_evals=max_parallel_evals)
         return EliteState(digest, tree_path, dev_fit, val_fit, dev_ev)
 
-    # Cold start: the seed (AutoAscend) is the first elite.
+    # Cold start: the seed (AutoAscend) is the first elite. Every island is
+    # seeded from this SAME scored tree (they diverge thereafter by
+    # independent mutation) -- a fresh EliteState per island so each gets its
+    # own `recent_attempts` list (never aliased across islands). B2's reset
+    # and C3's influence-pool seeding replace this per-island later; K=1
+    # (the default) makes this indistinguishable from the old single-elite
+    # cold start.
     report(f"cold-start · scoring seed: dev {len(dev.batch)}ep "
            f"+ validation {len(validation.batch)}ep…")
     seed_digest = tree_store.save(seed_tree)
-    elite = _score_elite(tree_store.path(seed_digest), seed_digest,
-                         dev_label="cold-start · dev", val_label="cold-start · validation")
-    base_dev, base_validation = elite.dev_fitness, elite.validation_fitness
-    report(f"cold-start · elite=seed dev={elite.dev_fitness:.3f} "
-           f"validation={elite.validation_fitness:.3f}")
+    seed_elite = _score_elite(tree_store.path(seed_digest), seed_digest,
+                              dev_label="cold-start · dev", val_label="cold-start · validation")
+    base_dev, base_validation = seed_elite.dev_fitness, seed_elite.validation_fitness
+    report(f"cold-start · elite=seed dev={seed_elite.dev_fitness:.3f} "
+           f"validation={seed_elite.validation_fitness:.3f}")
+    island_states: list[EliteState] = [
+        EliteState(seed_elite.digest, seed_elite.tree, seed_elite.dev_fitness,
+                   seed_elite.validation_fitness, seed_elite.dev_evidence)
+        for _ in range(islands)
+    ]
+    pool_rng = random.Random()
+    if identities and not from_seed and islands > 1:
+        # C3: seed the K>1 islands from the coverage-aware influence pool
+        # instead of all-K-copies-of-the-seed -- but ONLY if the pool
+        # actually has something real to offer. An empty pool (hub down, or
+        # no trusted specialist yet for any member identity) leaves
+        # `island_states` exactly as built above -- sample_seeds pads every
+        # slot with `(seed_tree, None)` in that case, so `samples` below is
+        # all-pads and the `any(...)` guard skips straight past.
+        # Carve-outs: at K=1 the single island stays `seed_tree` -- in
+        # production that is launch's SELECT parent (coverage-gated for a set,
+        # the identity's top elite for a single), so pool-seeding
+        # would only trade the balanced parent for a lone union-argmax
+        # specialist AND pay a redundant 2nd eval to re-score it; --from-seed
+        # skips the hub entirely for a deliberate cold start. Both cases still
+        # get /refs influences via `_pick_influences` below (except --from-seed).
+        samples = select.sample_seeds(hub, tuple(identities), tree_store, seed_tree,
+                                      owner=owner, n=islands, fetch=fetch, rng=pool_rng)
+        if any(entry is not None for _, entry in samples):
+            # Score each DISTINCT tree only once -- sample_seeds already
+            # guarantees distinct digests among its resolved (non-pad)
+            # entries, so the only repeat here is the pad case: pre-seeding
+            # the cache with the already-scored seed_elite means every
+            # `(seed_tree, None)` pad (a thin pool, once distinct entries
+            # run out) costs nothing extra, reusing seed_elite per C3's
+            # "else the seed digest" rule instead of re-scoring it.
+            scored: dict[str, EliteState] = {seed_elite.digest: seed_elite}
+            seeded_states: list[EliteState] = []
+            for tree_path, entry in samples:
+                if entry is None:
+                    es = seed_elite
+                else:
+                    digest = entry["solution_digest"]
+                    if digest not in scored:
+                        scored[digest] = _score_elite(
+                            tree_path, digest,
+                            dev_label=f"cold-start · dev [{digest[:8]}]",
+                            val_label=f"cold-start · validation [{digest[:8]}]")
+                    es = scored[digest]
+                # A FRESH EliteState per island (never the cached object
+                # itself) so each island's `recent_attempts` starts as its
+                # own empty list -- same aliasing concern as B2's reset.
+                seeded_states.append(EliteState(
+                    es.digest, es.tree, es.dev_fitness, es.validation_fitness, es.dev_evidence))
+            island_states = seeded_states
+            report(f"cold-start · seeded "
+                   f"{sum(1 for _, e in samples if e is not None)}/{islands} "
+                   f"island(s) from the hub's influence pool")
+    idx = 0   # round-robin cursor: iteration k works island_states[k % islands]
+    if reset_period is None:
+        reset_period = 4 * islands
+    reset_rng = random.Random()
     _emit("cold-start", 0)
     on_iteration(0, IterationResult(False, "baseline",
-                                    dev_fitness=elite.dev_fitness,
-                                    validation_fitness=elite.validation_fitness,
-                                    causes=_causes(elite.dev_evidence.results)))
+                                    dev_fitness=seed_elite.dev_fitness,
+                                    validation_fitness=seed_elite.validation_fitness,
+                                    causes=_causes(seed_elite.dev_evidence.results)))
 
     results: list[IterationResult] = []
     consecutive_errors = 0
@@ -173,45 +298,141 @@ def run_loop(
         results.append(result)
         on_iteration(iteration, result)
 
+    def _track_rejected_attempt(worktree: Path, note: str) -> None:
+        # island_states[idx] is the ACTIVE island's champion (read via
+        # closure, like `_emit`) -- appending here, before any reassignment,
+        # is what makes a win implicitly clear the list: the win branch below
+        # constructs a fresh EliteState that doesn't carry `recent_attempts`
+        # forward.
+        active = island_states[idx]
+        active.recent_attempts.append((f"iter-{k + 1}", worktree, note))
+        del active.recent_attempts[:-3]   # bounded <=3 -- drop oldest first
+
+    def _hub_reseed_candidate(held: set[str]) -> EliteState | None:
+        # Cross-run injection at reset: draw a batch from the same coverage-
+        # aware influence pool the islands seed from, and return the first
+        # elite NO current island already holds -- scored on THIS run's
+        # dev+validation specs so it slots in as an ordinary champion. This is
+        # the gentle replacement for the removed mid-run migration: instead of
+        # hot-swapping a running parent, a run periodically imports another
+        # run's registered progress into a slot it was already discarding.
+        # None when the pool offers nothing fresh (hub down, thin pool, or
+        # every draw is already held) -> caller reseeds that slot locally.
+        # Batch of 2*islands so there's headroom past the (<=islands) held
+        # digests; k=islands makes the draw a weighted sample, not the argmax,
+        # so successive resets don't keep importing the single same best.
+        draws = select.sample_seeds(hub, tuple(identities), tree_store, seed_tree,
+                                    owner=owner, n=2 * islands, k=islands,
+                                    fetch=fetch, rng=reset_rng)
+        for tree_path, entry in draws:
+            if entry is None:
+                continue   # a pad (thin pool) -- nothing to inject
+            digest = entry["solution_digest"]
+            if digest in held:
+                continue   # an island already has this -- keep looking for fresh
+            return _score_elite(tree_path, digest,
+                                dev_label=f"reset · dev [{digest[:8]}]",
+                                val_label=f"reset · validation [{digest[:8]}]")
+        return None
+
+    def _reset_islands() -> None:
+        # Periodic reset (Task B2): rank by CHAMPION dev_fitness and kill
+        # the bottom half (floor(K/2) -- the call site below only invokes
+        # this when islands > 1, so there's always >=1 to kill). Each killed
+        # slot is reseeded from a top-k-sampled SURVIVOR (select_reseed) --
+        # never deterministically "the best" -- and every survivor's slot
+        # (champion AND recent_attempts) is left completely untouched: that
+        # per-island state isolation across a reset is what preserves
+        # diversity (spec §4), not just at cold-start.
+        #
+        # Cross-run injection: the FIRST killed slot is instead reseeded from a
+        # fresh hub-pool elite when one is available -- at most ONE slot per
+        # reset (the rest reseed locally), only for objectives with a fixed
+        # identity (single or set, where the pool applies) and never under
+        # --from-seed, so a run periodically imports outside progress without
+        # collapsing its islands onto one shared hub-best.
+        ranked = sorted(range(len(island_states)), key=lambda i: island_states[i].dev_fitness)
+        n_kill = len(island_states) // 2
+        dead, alive = ranked[:n_kill], ranked[n_kill:]
+        survivors = [island_states[i] for i in alive]
+        held = {s.digest for s in island_states}
+        injected = (_hub_reseed_candidate(held)
+                    if (identities and not from_seed) else None)
+        for pos, i in enumerate(dead):
+            src = injected if (pos == 0 and injected is not None) \
+                else select_reseed(survivors, reset_rng)
+            # A FRESH EliteState -- never the survivor's/injected object -- so
+            # the reseeded slot's recent_attempts starts empty (the dataclass's
+            # default_factory) instead of aliasing another slot's list (which
+            # would let a later reject on the reseeded island corrupt it).
+            island_states[i] = EliteState(
+                src.digest, src.tree, src.dev_fitness,
+                src.validation_fitness, src.dev_evidence)
+
+    def _pick_influences(active_digest: str) -> list[refs.Ref]:
+        # C3: up to 2 cross-elite influences for THIS iteration's `/refs/`,
+        # drawn from the same coverage-aware pool the islands are seeded
+        # from -- NEVER the active island's own champion (that's the base
+        # being mutated, not an outside influence). An objective with no fixed
+        # identity (random/all), a --from-seed cold start, or a pool with
+        # nothing else to offer yields [] -- refs.assemble already degrades
+        # gracefully to no `influences/` folder at all.
+        if not identities or from_seed:
+            return []
+        candidates = select.sample_seeds(hub, tuple(identities), tree_store, seed_tree,
+                                         owner=owner, n=2, fetch=fetch, rng=pool_rng)
+        picked: list[refs.Ref] = []
+        for tree_path, entry in candidates:
+            if entry is None:
+                continue   # a pad (thin pool) -- not a real influence
+            digest = entry["solution_digest"]
+            if digest == active_digest:
+                continue   # never influence a champion with itself
+            # The label names a `/refs/influences/<label>/` folder, so it MUST
+            # be unique per influence. Atom digests ("host/owner/repo@sha")
+            # share a long common prefix, so digest[:12] is IDENTICAL across a
+            # single owner's elites (e.g. "github.com/v") -- two influences
+            # would collide on the same folder and refs._copy_refs's copytree
+            # would raise FileExistsError, silently burning the iteration. A
+            # positional index makes the label collision-proof regardless of
+            # digest shape; the sanitized prefix (same policy as
+            # LocalTreeStore._key, so a "/" can't nest the folder) stays for
+            # legibility, and the full digest moves into the note so the
+            # mutator can still tell two same-owner influences apart.
+            safe = re.sub(r"[^A-Za-z0-9._-]", "_", digest[:12])
+            picked.append((f"hub-{len(picked)}-{safe}", tree_path,
+                           f"{digest}; score {entry['score']:.3f}; "
+                           f"strong at {entry['identity']}"))
+        return picked[:2]
+
     for k in range(iterations):
         if stop is not None and stop.is_set():
             break  # manual hard-stop: don't start another iteration
         tag = f"iter {k + 1}/{iterations}"
+        idx = k % islands   # this iteration's active island
         try:
-            # Mid-run migration: adopt another process's strictly-better elite
-            # from the hub before mutating (greedy move-up; digest-differ + a
-            # strictly-higher score, which equals dev_fitness for identity
-            # objectives). Any failure -> keep the local elite.
-            if migrate:
-                picked = top_trusted_elite(hub, objective, tree_store, owner)
-                if picked is not None:
-                    entry, tree_path = picked
-                    if (entry["solution_digest"] != elite.digest
-                            and entry["score"] > elite.dev_fitness):
-                        detail = f"{entry['owner']}/{entry['solution_digest'][:12]}"
-                        report(f"{tag} · ↥ migrating → {detail} "
-                               f"(score {entry['score']:.3f} > {elite.dev_fitness:.3f})")
-                        if on_log is not None:
-                            on_log(tag, f"migrated ← {detail} score "
-                                        f"{entry['score']:.3f} > {elite.dev_fitness:.3f}\n")
-                        elite = _score_elite(
-                            tree_path, entry["solution_digest"],
-                            dev_label=f"{tag} · migrate-dev",
-                            val_label=f"{tag} · migrate-validation")
-                        _emit("migrated", k + 1, detail=detail)
+            # Mid-run migration (adopt another process's strictly-better elite
+            # from the hub before mutating) was REMOVED: it operated on a
+            # single shared `elite` and cannot coexist with per-island
+            # champions (a hub-wide "best" would collapse every island onto
+            # one lineage, destroying the diversity islands exist for). The
+            # islands reset (kill-bottom-half + reseed from a diverse local
+            # survivor) plus the coverage-aware influence pool's occasional
+            # cross-run injection at reset subsume it per spec §4.
 
             worktree = workdir / f"iter-{k}"
             if worktree.exists():
                 shutil.rmtree(worktree)
-            shutil.copytree(elite.tree, worktree)
+            active = island_states[idx]
+            shutil.copytree(active.tree, worktree)
 
             # Hand the TRAINING seeds in as data (spec §3.6): the mutator image
             # has no harness/seeds.py to derive them, so the brief is where it
             # learns which seeds to develop against -- never the held-out ones.
-            # parent_means: live from the CURRENT elite, same rule as _emit.
-            parent_means = (aggregate.per_identity_means(elite.dev_evidence.results)
+            # parent_means: live from the ACTIVE island's champion, same rule as _emit.
+            parent_means = (aggregate.per_identity_means(active.dev_evidence.results)
                             if identities else {})
-            brief = build_brief(objective, character, elite.dev_evidence,
+            brief = build_brief(objective, character, active.dev_evidence,
                                 training_seeds=sorted({s for s, _c in dev.batch}),
                                 identities=identities or None,
                                 per_identity=parent_means or None)
@@ -220,10 +441,23 @@ def run_loop(
             # rendered in the TUI's agent-log via prettify's brief event).
             if on_log is not None:
                 on_log(tag, json.dumps({"type": "nethackers_brief", "text": brief}))
+            # Assemble a FRESH `/refs/` dir every iteration (refs.assemble's
+            # shutil.copytree is dirs_exist_ok=False -- reusing one path
+            # across iterations would raise FileExistsError on the 2nd
+            # attempts/<label> that collides). influences: up to 2 OTHER
+            # cross-elite pool solutions (Task C3) -- [] for a non-set
+            # objective or a pool with nothing else to offer.
+            refs_dir = workdir / f"refs-{k}"
+            refs.assemble(
+                refs_dir,
+                base_eval=json.dumps([r.to_dict() for r in active.dev_evidence.results]),
+                influences=_pick_influences(active.digest),
+                attempts=active.recent_attempts,
+            )
             _emit("mutating", k + 1)
             report(f"{tag} · mutating…")
             try:
-                op = operator.run(worktree, brief, on_line=_log_cb(tag), stop=stop)
+                op = operator.run(worktree, brief, refs=refs_dir, on_line=_log_cb(tag), stop=stop)
             except Exception as e:
                 # run_operator RAISES on a non-zero backend exit / startup failure
                 # (missing or renamed binary, unavailable model, stale CLI, auth),
@@ -250,7 +484,7 @@ def run_loop(
             report(f"{tag} · operator: {op.total} tok ({op.stopped_reason}); gating…")
             _emit("gating", k + 1, tokens=op.total)
 
-            ok, reason = passes_gate(worktree, elite.digest, smoke_spec=smoke,
+            ok, reason = passes_gate(worktree, active.digest, smoke_spec=smoke,
                                      image=image, now=now_fn(), runner=runner,
                                      on_episode=_episode_cb(f"{tag} · smoke"))
             if not ok:
@@ -267,9 +501,13 @@ def run_loop(
                 worktree, dev, image, now=now_fn(), runner=runner,
                 on_episode=_episode_cb(f"{tag} · dev"), max_parallel_evals=max_parallel_evals,
             )
-            if dev_fit <= elite.dev_fitness:
+            if dev_fit <= active.dev_fitness:
                 _emit("rejected", k + 1, tokens=op.total, detail="no dev gain")
-                report(f"{tag} · ✗ no dev gain: {dev_fit:.3f} ≤ {elite.dev_fitness:.3f}")
+                report(f"{tag} · ✗ no dev gain: {dev_fit:.3f} ≤ {active.dev_fitness:.3f}")
+                _track_rejected_attempt(
+                    worktree,
+                    f"score dev={dev_fit:.3f} (parent {active.dev_fitness:.3f}); "
+                    f"hypothesis: {aggregate.outcome_summary(dev_ev.results)}")
                 _record(k + 1, IterationResult(False, "no-dev-gain", dev_fitness=dev_fit,
                                                tokens=op.total, usage=op.usage,
                                                stopped_reason=op.stopped_reason,
@@ -283,10 +521,15 @@ def run_loop(
                 on_episode=_episode_cb(f"{tag} · validation"),
                 max_parallel_evals=max_parallel_evals,
             )
-            if val_fit <= elite.validation_fitness:
+            if val_fit <= active.validation_fitness:
                 _emit("rejected", k + 1, tokens=op.total, detail="no validation gain")
                 report(f"{tag} · ✗ no validation gain: {val_fit:.3f} "
-                       f"≤ {elite.validation_fitness:.3f}")
+                       f"≤ {active.validation_fitness:.3f}")
+                _track_rejected_attempt(
+                    worktree,
+                    f"score dev={dev_fit:.3f} validation={val_fit:.3f} "
+                    f"(parent validation {active.validation_fitness:.3f}); "
+                    f"hypothesis: {aggregate.outcome_summary(dev_ev.results)}")
                 _record(k + 1, IterationResult(False, "no-validation-gain",
                                                dev_fitness=dev_fit, validation_fitness=val_fit,
                                                tokens=op.total, usage=op.usage,
@@ -310,27 +553,32 @@ def run_loop(
                 if reference is None:
                     hub_ok = False
                     report(f"{tag} · ✓ new local elite (not published to the hub)")
-                elif identities:
+                elif is_set:
                     register_win_slices(hub, token=token, child_manifest=manifest,
                                         evidence=dev_ev, identities=identities,
-                                        parent_digest=elite.digest, reference=reference)
+                                        parent_digest=active.digest, reference=reference)
                 else:
                     register_win(hub, token=token, child_manifest=manifest,
-                                 evidence=dev_ev, parent_digest=elite.digest,
+                                 evidence=dev_ev, parent_digest=active.digest,
                                  reference=reference)
             except Exception as e:
                 hub_ok = False
                 report(f"{tag} · ⚠ win kept as a local elite; hub publish/register "
                        f"failed: {e}")
             # A rising union mean can still hide a per-identity drop on a set
-            # objective -- diff the OLD parent (elite, not yet reassigned)
-            # against the winning child so a regression is surfaced, not
-            # silently absorbed into the aggregate win (spec decision C §5/§9).
+            # objective -- diff the OLD parent (active, this island's champion
+            # before the reassignment below) against the winning child so a
+            # regression is surfaced, not silently absorbed into the
+            # aggregate win (spec decision C §5/§9).
             regs = (aggregate.regressions(
-                        aggregate.per_identity_means(elite.dev_evidence.results),   # OLD parent
+                        aggregate.per_identity_means(active.dev_evidence.results),  # OLD parent
                         aggregate.per_identity_means(dev_ev.results))               # winning child
                     if identities else [])
-            elite = EliteState(digest, tree_store.path(digest), dev_fit, val_fit, dev_ev)
+            # Only THIS island's slot advances -- every other island's
+            # champion (and its own recent_attempts) is untouched, which is
+            # the state-isolation that makes islands a diversity mechanism.
+            island_states[idx] = EliteState(
+                digest, tree_store.path(digest), dev_fit, val_fit, dev_ev)
             wins += 1
             _emit("registered", k + 1, tokens=op.total, detail=(f"⚠{len(regs)}" if regs else ""))
             if hub_ok:
@@ -346,5 +594,14 @@ def run_loop(
             report(f"{tag} · ✗ error: {e}")
             _record(k + 1, IterationResult(False, f"error:{e}"))
             continue
+        finally:
+            # `finally` (not a check placed after the try/except) so this
+            # fires after EVERY iteration outcome -- win, reject, gate
+            # failure, operator error -- since every one of those paths
+            # above reaches this point via a `continue` (or falls through
+            # after a win), and `continue` still runs an enclosing
+            # `finally` before it actually advances the loop.
+            if islands > 1 and (k + 1) % reset_period == 0:
+                _reset_islands()
     _emit("done", iterations)
     return results

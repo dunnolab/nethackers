@@ -57,7 +57,8 @@ class EvolveParams:
     operator: str = "claude"
     iterations: int = 1
     validation_n: int = 15
-    migrate: bool = True
+    islands: int = 1
+    reset_period: int | None = None
     max_parallel_evals: int = 8
     image: str = "nethackers/arena:dev"
     hub: str = "http://localhost:8000"
@@ -128,15 +129,23 @@ def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
             owner=params.owner, k=params.select_k, temperature=params.select_temp,
             rng=random.Random(rid))
 
+    # `iterations` is PER ISLAND (the intuitive knob): each island gets this
+    # many round-robin mutation rounds, so the loop's total round count -- and
+    # everything that counts rounds (run_loop's cap, the "iter X/N" progress,
+    # the run list) -- is iterations x islands. islands=1 leaves it unchanged.
+    total_iterations = params.iterations * params.islands
+
     runlog.write_run_config(run_dir, {
         "run_id": rid, "created_at": started.isoformat(),
         "git_sha": git_sha if git_sha is not None else _git_sha(),
         "objective": params.objective, "seed": str(params.seed), "operator": params.operator,
-        "iterations": params.iterations, "validation_n": params.validation_n,
+        "iterations": total_iterations, "iterations_per_island": params.iterations,
+        "validation_n": params.validation_n,
         "max_parallel_evals": params.max_parallel_evals, "image": params.image,
         "mutator_image": params.mutator_image,
         "parent": parent_digest or "seed", "select_k": params.select_k,
-        "select_temp": params.select_temp, "migrate": params.migrate,
+        "select_temp": params.select_temp,
+        "islands": params.islands, "reset_period": params.reset_period,
         "model": params.model, "effort": params.effort,
     })
     _point_latest(runs_dir, rid)
@@ -147,7 +156,7 @@ def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
         harness=params.operator, image=params.mutator_image,
         model=params.model, effort=params.effort, run_id=rid)
     cfg = EvolveConfig(objective=params.objective, backend=params.operator,
-                       iterations=params.iterations, model=params.model,
+                       iterations=total_iterations, model=params.model,
                        effort=params.effort)
 
     def run(callbacks: dict, report: Callable[[str], None] = lambda _m: None) -> list:
@@ -158,8 +167,10 @@ def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
             objective=params.objective, seed_tree=parent_tree,
             tree_store=store, operator=operator,
             hub=HubClient(params.hub), image=params.image, token=params.token,
-            owner=params.owner, iterations=params.iterations,
-            validation_n=params.validation_n, migrate=params.migrate,
+            owner=params.owner, iterations=total_iterations,
+            validation_n=params.validation_n,
+            islands=params.islands, reset_period=params.reset_period,
+            from_seed=params.from_seed,
             max_parallel_evals=params.max_parallel_evals, stop=callbacks.get("stop"),
             now_fn=_now, report=report, on_episode=callbacks["on_episode"],
             on_state=callbacks["on_state"], on_log=_on_log, workdir=run_dir / "work",

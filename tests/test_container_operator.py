@@ -56,6 +56,12 @@ def test_unknown_harness_raises():
         _argv("pi")
 
 
+def test_build_docker_argv_mounts_refs_readonly(tmp_path):
+    refs = tmp_path / "refs"
+    a = _argv("codex", refs=refs)
+    assert "-v" in a and f"{refs}:/refs:ro" in a
+
+
 class FakePopen:
     def __init__(self, cmd, **kw):
         self.cmd = cmd

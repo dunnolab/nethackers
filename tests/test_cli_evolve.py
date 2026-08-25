@@ -199,28 +199,9 @@ def test_evolve_from_seed_bypasses_select_parent(tmp_path, monkeypatch):
     assert cfg["parent"] == "seed"
 
 
-def test_evolve_migrate_defaults_on_and_records_it(tmp_path, monkeypatch):
-    seed = tmp_path / "seed"
-    seed.mkdir()
-    (seed / "nethackers.solution.json").write_text(
-        '{"root":".","entrypoint":"bot.py","parents":[],"influences":[]}'
-    )
-    (seed / "bot.py").write_text("x=1\n")
-    captured = {}
-
-    def fake_run_loop(**kwargs):
-        captured.update(kwargs)
-        return []
-    monkeypatch.setattr(launch, "run_loop", fake_run_loop, raising=False)
-
-    rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed), "--from-seed",
-                   "--workdir", str(tmp_path / "w")])
-    assert rc == 0 and captured["migrate"] is True
-    run_dir = next(p for p in (tmp_path / "w" / "runs").iterdir() if p.name != "latest")
-    assert json.loads((run_dir / "run.json").read_text())["migrate"] is True
-
-
-def test_evolve_no_migrate_flag_disables(tmp_path, monkeypatch):
+def test_evolve_islands_and_reset_period_threaded(tmp_path, monkeypatch):
+    """--islands / --reset-period must reach run_loop AND be recorded in
+    run.json (the headline plateau-breaker is unreachable otherwise)."""
     seed = tmp_path / "seed"
     seed.mkdir()
     (seed / "nethackers.solution.json").write_text(
@@ -232,8 +213,84 @@ def test_evolve_no_migrate_flag_disables(tmp_path, monkeypatch):
                         lambda **k: captured.update(k) or [], raising=False)
 
     rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed), "--from-seed",
-                   "--no-migrate", "--workdir", str(tmp_path / "w")])
-    assert rc == 0 and captured["migrate"] is False
+                   "--islands", "4", "--reset-period", "6",
+                   "--workdir", str(tmp_path / "w")])
+    assert rc == 0
+    assert captured["islands"] == 4 and captured["reset_period"] == 6
+    run_dir = next(p for p in (tmp_path / "w" / "runs").iterdir() if p.name != "latest")
+    cfg = json.loads((run_dir / "run.json").read_text())
+    assert cfg["islands"] == 4 and cfg["reset_period"] == 6
+
+
+def test_evolve_iterations_are_per_island(tmp_path, monkeypatch):
+    """--iterations is PER ISLAND: the loop's total round count (and run.json)
+    is iterations × islands, while iterations_per_island records the input."""
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    (seed / "nethackers.solution.json").write_text(
+        '{"root":".","entrypoint":"bot.py","parents":[],"influences":[]}'
+    )
+    (seed / "bot.py").write_text("x=1\n")
+    captured = {}
+    monkeypatch.setattr(launch, "run_loop",
+                        lambda **k: captured.update(k) or [], raising=False)
+
+    rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed), "--from-seed",
+                   "--islands", "3", "--iterations", "4",
+                   "--workdir", str(tmp_path / "w")])
+    assert rc == 0
+    assert captured["iterations"] == 12   # 4 per island × 3 islands
+    run_dir = next(p for p in (tmp_path / "w" / "runs").iterdir() if p.name != "latest")
+    cfg = json.loads((run_dir / "run.json").read_text())
+    assert cfg["iterations"] == 12 and cfg["iterations_per_island"] == 4
+
+
+def test_evolve_islands_defaults_to_one(tmp_path, monkeypatch):
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    (seed / "nethackers.solution.json").write_text(
+        '{"root":".","entrypoint":"bot.py","parents":[],"influences":[]}'
+    )
+    (seed / "bot.py").write_text("x=1\n")
+    captured = {}
+    monkeypatch.setattr(launch, "run_loop",
+                        lambda **k: captured.update(k) or [], raising=False)
+    rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed), "--from-seed",
+                   "--workdir", str(tmp_path / "w")])
+    assert rc == 0
+    assert captured["islands"] == 1 and captured["reset_period"] is None
+
+
+def test_evolve_rejects_islands_below_one(tmp_path, monkeypatch):
+    """--islands 0 would ZeroDivisionError at `idx = k % islands`; reject it
+    up front (before the slow sandbox build) and never reach run_loop."""
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    (seed / "nethackers.solution.json").write_text(
+        '{"root":".","entrypoint":"bot.py","parents":[],"influences":[]}'
+    )
+    (seed / "bot.py").write_text("x=1\n")
+    reached = {"loop": False}
+    monkeypatch.setattr(launch, "run_loop",
+                        lambda **k: reached.__setitem__("loop", True) or [], raising=False)
+    rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed), "--from-seed",
+                   "--islands", "0", "--workdir", str(tmp_path / "w")])
+    assert rc == 2 and reached["loop"] is False
+
+
+def test_evolve_rejects_reset_period_below_one(tmp_path, monkeypatch):
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    (seed / "nethackers.solution.json").write_text(
+        '{"root":".","entrypoint":"bot.py","parents":[],"influences":[]}'
+    )
+    (seed / "bot.py").write_text("x=1\n")
+    reached = {"loop": False}
+    monkeypatch.setattr(launch, "run_loop",
+                        lambda **k: reached.__setitem__("loop", True) or [], raising=False)
+    rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed), "--from-seed",
+                   "--reset-period", "0", "--workdir", str(tmp_path / "w")])
+    assert rc == 2 and reached["loop"] is False
 
 
 def test_evolve_rejects_removed_budget_and_timeout_flags(tmp_path):
