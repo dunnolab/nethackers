@@ -4,6 +4,7 @@ from __future__ import annotations
 import json
 import math
 import random
+import re
 import shutil
 import subprocess
 import threading
@@ -14,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from nethackers.contracts.models import Evidence
-from nethackers.harness import aggregate, refs
+from nethackers.harness import aggregate, refs, select
 from nethackers.harness.brief import build_brief
 from nethackers.harness.evaluate import evaluate
 from nethackers.harness.gate import passes_gate
@@ -92,6 +93,7 @@ def run_loop(
     reset_period: int | None = None,
     max_parallel_evals: int = 8,
     migrate: bool = True,  # accepted but unused -- see note above the (removed) migrate block
+    fetch: Callable[[dict, Path], Path | None] = select.pull_fetch,
     max_consecutive_errors: int = 3,
     sleep: Callable[[float], None] = time.sleep,
     stop: threading.Event | None = None,
@@ -196,6 +198,47 @@ def run_loop(
                    seed_elite.validation_fitness, seed_elite.dev_evidence)
         for _ in range(islands)
     ]
+    pool_rng = random.Random()
+    if identities:
+        # C3: seed the K islands from the coverage-aware influence pool
+        # instead of all-K-copies-of-the-seed -- but ONLY if the pool
+        # actually has something real to offer. An empty pool (hub down, or
+        # no trusted specialist yet for any member identity) leaves
+        # `island_states` exactly as built above -- sample_seeds pads every
+        # slot with `(seed_tree, None)` in that case, so `samples` below is
+        # all-pads and the `any(...)` guard skips straight past.
+        samples = select.sample_seeds(hub, tuple(identities), tree_store, seed_tree,
+                                      owner=owner, n=islands, fetch=fetch, rng=pool_rng)
+        if any(entry is not None for _, entry in samples):
+            # Score each DISTINCT tree only once -- sample_seeds already
+            # guarantees distinct digests among its resolved (non-pad)
+            # entries, so the only repeat here is the pad case: pre-seeding
+            # the cache with the already-scored seed_elite means every
+            # `(seed_tree, None)` pad (a thin pool, once distinct entries
+            # run out) costs nothing extra, reusing seed_elite per C3's
+            # "else the seed digest" rule instead of re-scoring it.
+            scored: dict[str, EliteState] = {seed_elite.digest: seed_elite}
+            seeded_states: list[EliteState] = []
+            for tree_path, entry in samples:
+                if entry is None:
+                    es = seed_elite
+                else:
+                    digest = entry["solution_digest"]
+                    if digest not in scored:
+                        scored[digest] = _score_elite(
+                            tree_path, digest,
+                            dev_label=f"cold-start · dev [{digest[:8]}]",
+                            val_label=f"cold-start · validation [{digest[:8]}]")
+                    es = scored[digest]
+                # A FRESH EliteState per island (never the cached object
+                # itself) so each island's `recent_attempts` starts as its
+                # own empty list -- same aliasing concern as B2's reset.
+                seeded_states.append(EliteState(
+                    es.digest, es.tree, es.dev_fitness, es.validation_fitness, es.dev_evidence))
+            island_states = seeded_states
+            report(f"cold-start · seeded "
+                   f"{sum(1 for _, e in samples if e is not None)}/{islands} "
+                   f"island(s) from the hub's influence pool")
     idx = 0   # round-robin cursor: iteration k works island_states[k % islands]
     if reset_period is None:
         reset_period = 4 * islands
@@ -247,6 +290,33 @@ def run_loop(
                 champ.digest, champ.tree, champ.dev_fitness,
                 champ.validation_fitness, champ.dev_evidence)
 
+    def _pick_influences(active_digest: str) -> list[refs.Ref]:
+        # C3: up to 2 cross-elite influences for THIS iteration's `/refs/`,
+        # drawn from the same coverage-aware pool the islands are seeded
+        # from -- NEVER the active island's own champion (that's the base
+        # being mutated, not an outside influence). A non-set objective or a
+        # pool with nothing else to offer yields [] -- refs.assemble already
+        # degrades gracefully to no `influences/` folder at all.
+        if not identities:
+            return []
+        candidates = select.sample_seeds(hub, tuple(identities), tree_store, seed_tree,
+                                         owner=owner, n=2, fetch=fetch, rng=pool_rng)
+        picked: list[refs.Ref] = []
+        for tree_path, entry in candidates:
+            if entry is None:
+                continue   # a pad (thin pool) -- not a real influence
+            digest = entry["solution_digest"]
+            if digest == active_digest:
+                continue   # never influence a champion with itself
+            # An ATOM digest ("host/owner/repo@sha") routinely has a "/"
+            # within its first 12 chars -- sanitize (same policy as
+            # LocalTreeStore._key) so `refs._copy_refs`'s `dest / label`
+            # can't silently misparse the label as nested path components.
+            safe = re.sub(r"[^A-Za-z0-9._-]", "_", digest[:12])
+            picked.append((f"hub-{safe}", tree_path,
+                           f"score {entry['score']:.3f}; strong at {entry['identity']}"))
+        return picked[:2]
+
     for k in range(iterations):
         if stop is not None and stop.is_set():
             break  # manual hard-stop: don't start another iteration
@@ -288,13 +358,14 @@ def run_loop(
             # Assemble a FRESH `/refs/` dir every iteration (refs.assemble's
             # shutil.copytree is dirs_exist_ok=False -- reusing one path
             # across iterations would raise FileExistsError on the 2nd
-            # attempts/<label> that collides). `influences=[]` until Phase C
-            # wires the selector-chosen cross-elite pool in.
+            # attempts/<label> that collides). influences: up to 2 OTHER
+            # cross-elite pool solutions (Task C3) -- [] for a non-set
+            # objective or a pool with nothing else to offer.
             refs_dir = workdir / f"refs-{k}"
             refs.assemble(
                 refs_dir,
                 base_eval=json.dumps([r.to_dict() for r in active.dev_evidence.results]),
-                influences=[],
+                influences=_pick_influences(active.digest),
                 attempts=active.recent_attempts,
             )
             _emit("mutating", k + 1)

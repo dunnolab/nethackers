@@ -657,6 +657,127 @@ def test_reset_is_a_noop_with_a_single_island(tmp_path):
     assert op.seen == [0, 1, 2, 3]
 
 
+# -- C3: seed islands from the coverage-aware influence pool, and provision
+# up to 2 per-iteration `/refs/influences/` (excluding the active island's
+# own champion). "wiz-elf-cha-mal" / "wiz-orc-cha-mal" are real IDENTITIES,
+# same set used by the coverage-gated tests above and by
+# tests/test_harness_select.py.
+
+class _HubByIdentity:
+    """Per-identity elite pools (mirrors tests/test_harness_select.py) --
+    `.elites(x)` depends on x, unlike `_FakeHub`/`_SeedSetHub` above."""
+    def __init__(self, pools): self.pools = pools
+    def elites(self, objective): return list(self.pools.get(objective, []))
+
+
+def _atom_entry(repo_suffix: str, commit_char: str, score: float) -> dict:
+    # An ATOM identity (solution_digest == "<repo>@<commit>", no colon) so
+    # `select._resolve`'s trust-the-pulled-commit path applies (same as
+    # tests/test_harness_select.py's `_atom_entry`) -- a real hub entry, not
+    # a self-registered content digest. `repo_suffix` sits right after
+    # "github.com/" (not buried deeper in the path) so two entries' digests
+    # already differ within the first 12 chars -- what `label=f"hub-
+    # {digest[:12]}"` actually keys its folder name on.
+    repo = f"github.com/{repo_suffix}/repo"
+    commit = commit_char * 40
+    return {"solution_digest": f"{repo}@{commit}", "score": score, "owner": "dev",
+            "tier": "verified", "repo": repo, "commit_sha": commit}
+
+
+class _RecordingOperator:
+    """Records the parent bot.py content it is handed (read BEFORE mutating,
+    so it reflects which lineage/tree the island actually seeded from) and
+    the `refs` dir passed in, across every call. Always mutates to a fixed,
+    always-losing VERSION so no iteration ever wins -- this test is about
+    seeding + refs provisioning, not the win path."""
+    def __init__(self):
+        self.seen_bot_py: list[str] = []
+        self.seen_refs: list[Path] = []
+
+    def run(self, worktree, brief, *, refs=None, on_line=None, stop=None):
+        from nethackers.harness.operator import OperatorResult
+        path = Path(worktree) / "bot.py"
+        self.seen_bot_py.append(path.read_text())
+        self.seen_refs.append(refs)
+        path.write_text("VERSION = 999\n")
+        return OperatorResult(backend="fake", usage=TokenUsage(1, 2, 3, 4),
+                              stopped_reason="completed")
+
+
+def test_islands_seed_from_pool_and_refs_carry_influences(tmp_path):
+    """A SET objective with a populated influence pool must cold-start its K
+    islands from the pool's per-identity specialists (not all-K-copies of the
+    seed elite), and every iteration's `/refs/influences/` must carry up to 2
+    OTHER pool entries -- never the active island's own champion digest."""
+    id_a, id_b = "wiz-elf-cha-mal", "wiz-orc-cha-mal"
+    entry_a, entry_b = _atom_entry("a", "a", 0.9), _atom_entry("b", "b", 0.7)
+    hub = _HubByIdentity({id_a: [entry_a], id_b: [entry_b]})
+    versions = {entry_a["solution_digest"]: 100, entry_b["solution_digest"]: 200}
+
+    def fetch(entry, dest):
+        dest = Path(dest)
+        (dest / "bot.py").write_text(f"VERSION = {versions[entry['solution_digest']]}\n")
+        (dest / "nethackers.solution.json").write_text(json.dumps(
+            {"schema": "nethackers.solution/v1", "name": "specialist", "root": ".",
+             "parents": [], "influences": [], "entrypoint": "bot.py"}))
+        return dest
+
+    op = _RecordingOperator()
+    run_loop(
+        objective=f"{id_a},{id_b}", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=op, hub=hub,
+        image="img:dev", token="t", owner="dev", islands=2, iterations=2,
+        validation_n=3, fetch=fetch,
+        now_fn=lambda: "2026-08-25T00:00:00Z",
+        runner=_fitness_runner(lambda v: {0: 0.2, 100: 0.9, 200: 0.7}.get(v, 0.01)),
+        workdir=tmp_path / "work")
+
+    # -- island seeding: with the default k=1 (deterministic argmax), the
+    # higher-scored entry_a (0.9) is drawn before entry_b (0.7) -- island0's
+    # (iter0) and island1's (iter1) FIRST-seen parent content is a pulled
+    # specialist's, never the seed's "VERSION = 0".
+    assert op.seen_bot_py[0] == "VERSION = 100\n"
+    assert op.seen_bot_py[1] == "VERSION = 200\n"
+
+    # -- /refs/influences/: populated, <=2, and never the active island's own
+    # champion -- island0 (seeded from entry_a) is influenced by entry_b, and
+    # vice versa for island1.
+    refs0, refs1 = op.seen_refs[0], op.seen_refs[1]
+    assert (refs0 / "influences").is_dir() and (refs1 / "influences").is_dir()
+    labels0 = {p.name for p in (refs0 / "influences").iterdir()}
+    labels1 = {p.name for p in (refs1 / "influences").iterdir()}
+    assert 1 <= len(labels0) <= 2 and 1 <= len(labels1) <= 2
+    # digest[:12] for an atom identity ("host/owner/repo@sha") contains a
+    # "/" -- the label sanitizes it (same policy as LocalTreeStore._key) so
+    # it names one flat folder, not a nested path.
+    a_label = f"hub-{entry_a['solution_digest'][:12].replace('/', '_')}"
+    b_label = f"hub-{entry_b['solution_digest'][:12].replace('/', '_')}"
+    assert labels0 == {b_label}
+    assert labels1 == {a_label}
+    context0 = (refs0 / "CONTEXT.md").read_text()
+    assert b_label in context0 and "strong at wiz-orc-cha-mal" in context0
+
+
+def test_set_objective_with_empty_pool_still_cold_starts_from_seed(tmp_path):
+    """A set objective whose hub IS reachable (unlike `_SeedSetHub`, which has
+    no `.elites` at all) but returns no trusted entries for any member
+    identity must still cold-start every island from the seed elite, exactly
+    like today -- an empty pool must behave the same as no pool, and
+    `/refs/influences/` must stay absent (`refs.assemble` degrades to no
+    `influences/` folder when the list is empty)."""
+    class _EmptyPoolHub:
+        def elites(self, ident): return []
+    op = _RecordingOperator()
+    run_loop(
+        objective="wiz-elf-cha-mal,wiz-orc-cha-mal", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=op, hub=_EmptyPoolHub(),
+        image="img:dev", token="t", owner="dev", islands=2, iterations=1, validation_n=3,
+        now_fn=lambda: "2026-08-25T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work")
+    assert op.seen_bot_py[0] == "VERSION = 0\n"        # unchanged cold start: the seed
+    assert not (op.seen_refs[0] / "influences").exists()
+
+
 def _elite(fitness: float) -> EliteState:
     """A minimal EliteState for unit-testing select_reseed directly. Only
     `dev_fitness` (what select_reseed weighs on) needs to vary between
