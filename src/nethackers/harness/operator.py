@@ -39,6 +39,7 @@ def run_operator(
     backend: str,
     on_line: Callable[[str], None] | None = None,
     stop: threading.Event | None = None,
+    refs: Path | None = None,
     popen=subprocess.Popen,
 ) -> OperatorResult:
     """Stream the operator's stdout, metering faithfully; reap at EOF. No
@@ -47,7 +48,15 @@ def run_operator(
     children it spawned: if ``stop`` is set by the caller, the group is killed
     and ``stopped_reason`` is ``"killed"`` (else ``"completed"``). A crashing
     ``on_line`` never aborts the run. A non-zero backend exit is surfaced as an
-    error with the useful tail of its combined stdout/stderr."""
+    error with the useful tail of its combined stdout/stderr.
+
+    ``refs`` is accepted but unused: it exists only for interface parity with
+    ``ContainerOperator.run``, which bind-mounts it into the sandbox. This
+    (host) path is not the real path -- real runs go through
+    ``ContainerOperator`` -- so there is no host directory to mount it into;
+    a caller that treats both operator paths uniformly can still pass
+    ``refs=`` here without a branch.
+    """
     meter = Meter(backend)
     # Keep stderr in the same stream as the backend's JSONL output.  CLI parse
     # and startup failures are written only to stderr; discarding it used to
