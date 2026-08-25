@@ -499,9 +499,9 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
         <div class="more" id="scMore">[ --More-- ]</div>
         <div class="callouts">
           <div class="callout"><div class="lbl2">deepest coverage &middot; most cells held</div>
-            <div class="who"><span class="at">@</span>vkurenkov &mdash; <span class="num">32</span> cells lit</div></div>
+            <div class="who"><span class="num">&hellip;</span></div></div>
           <div class="callout"><div class="lbl2">first to light &middot; firsts</div>
-            <div class="who"><span class="at">@</span>vkurenkov &mdash; <span class="num">28</span> firsts</div></div>
+            <div class="who"><span class="num">&hellip;</span></div></div>
         </div>
       </section>
 
@@ -639,24 +639,21 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 </div>
 
 <script>
-/* ===================== illustrative data (NOT live) ===================== */
-/* ===== REAL DATA snapshot from the live hub (nethackers.dunnolab.ai, 2026-08-23) =====
-   3 solutions, all @vkurenkov (AutoAscend forks), on val-dwa-law-fem. 0 ascensions. */
-const PROGRAMS=[
- {rank:1,digest:"e11151f",owner:"vkurenkov",score:0.167,med:0.179,ep:15,asc:0,deepest:"Dlvl 19 / Home 1",fr:{"val-dwa-law-fem":0.167},nu:1},
- {rank:2,digest:"ebaa392",owner:"vkurenkov",score:0.135,med:0.075,ep:15,asc:0,deepest:"Dlvl 16",fr:{"val-dwa-law-fem":0.135}},
- {rank:3,digest:"be6ad2c",owner:"vkurenkov",score:0.124,med:0.075,ep:15,asc:0,deepest:"Dlvl 16",fr:{"val-dwa-law-fem":0.124}},
-];
-const BOARD_BY_OBJ={"val-dwa-law-fem":PROGRAMS,"random":[],"all":[]};
-const PEOPLE=[
- {rank:1,owner:"vkurenkov",best:0.167,progs:3,asc:0,deepest:"Dlvl 19 / Home 1"},
-];
-const COVERAGE={owner:"vkurenkov",digest:"e11151f",cells:32};
-const FIRSTS={owner:"vkurenkov",digest:"be6ad2c",firsts:28};
-/* AutoAscend baseline: mean progression 0.089 on val-dwa-law-fem (select-from-hub design
-   doc), mean Dlvl ~3 (variance doc). Where this effort started; shown at the bottom of
-   every table, in both tiers, as the yardstick for progress. */
-const AUTOASCEND={digest:"autoascend",owner:"autoascend",score:0.089,med:0.089,ep:15,asc:0,deepest:"Dlvl 3",fr:{"val-dwa-law-fem":0.089},base:true};
+/* ===================== live hub data (fetched in boot(), below) =====================
+   These start empty and are populated from the hub's JSON endpoints on load.
+   Where an endpoint does not carry a field the render wants, we render "—" /
+   omit it -- never a fabricated value (honest standings is the whole point). */
+let PROGRAMS=[];                     // current objective's board rows (progRow shape, + fulldigest)
+let BOARD_BY_OBJ={};                 // {objective: PROGRAMS}
+let PEOPLE=[];                       // {rank,owner,best,progs,asc,deepest}
+let COVERAGE=null;                   // /board?metric=coverage [0]
+let FIRSTS=null;                     // /board?metric=firsts   [0]
+let BASELINE={owner:"autoascend",per_identity:{},overall:null};  // raw /baseline
+let OBJ_EP={};                       // {objective: episodes} from /objectives (honest ep for tooltips)
+let SEARCH=[];                       // /search rows (all registered solutions) -- for PEOPLE grouping
+/* AutoAscend baseline row -- rebuilt from /baseline in rebuildAutoascend(). Safe default
+   (blank, 0.000) so an early render before boot resolves is honest, not fabricated. */
+let AUTOASCEND={digest:"autoascend",owner:"autoascend",score:0,med:0,ep:0,asc:0,deepest:"—",fr:{},base:true};
 const ROLE_NAMES={arc:"Archeologist",bar:"Barbarian",cav:"Caveman",hea:"Healer",kni:"Knight",mon:"Monk",
  pri:"Priest",ran:"Ranger",rog:"Rogue",sam:"Samurai",tou:"Tourist",val:"Valkyrie",wiz:"Wizard"};
 /* the real 73 starting identities, straight from GET /objectives */
@@ -674,16 +671,11 @@ const ROLE_VARS={
  tou:["hum-neu-fem","hum-neu-mal"],
  val:["dwa-law-fem","hum-law-fem","hum-neu-fem"],
  wiz:["elf-cha-fem","elf-cha-mal","gno-neu-fem","gno-neu-mal","hum-cha-fem","hum-cha-mal","hum-neu-fem","hum-neu-mal","orc-cha-fem","orc-cha-mal"]};
-const UNIVERSE={ "val-dwa-law-fem":{v:0.167,o:"vkurenkov",d:"e11151f",ep:15} };
-const CHAMPION={digest:"e11151f",owner:"vkurenkov",scores:{"val-dwa-law-fem":0.167}};
+let UNIVERSE={};                     // /elites?objective=all -> rank-1 per identity {id:{v,o,d,ep}}
+let CHAMPION={digest:"",owner:"",scores:{}};  // /board?objective=random [0] + its /frontier
 const ASC=0.8745866562925501;
-/* AutoAscend baseline first, then the 3 registrations (best-so-far), as they landed 2026-08-23 */
-const PROGRESS=[
- {t:"autoascend",frontier:0.089,ascensions:0,coverage:6,base:true},
- {t:"be6ad2c",frontier:0.124,ascensions:0,coverage:28},
- {t:"ebaa392",frontier:0.135,ascensions:0,coverage:28},
- {t:"e11151f",frontier:0.167,ascensions:0,coverage:32},
-];
+/* AutoAscend baseline bar first, then day-bucketed best-so-far from /progress */
+let PROGRESS=[];
 const METRICS={
  frontier:{label:"Best-so-far mean progression on val-dwa-law-fem (ascension sits at 0.875)",max:1.0,fmt:v=>v.toFixed(3)},
  ascensions:{label:"Ascensions -- still zero",max:1,fmt:v=>String(v)},
@@ -698,6 +690,7 @@ const MEMES=[
 /* ===================== helpers ===================== */
 const $=s=>document.querySelector(s);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const short=d=>String(d).replace(/^sha256:/,"").slice(0,7);   // digest -> ~7-char display id
 function tint(v){ if(v==null) return "#ffffff"; const a=(0.10+0.72*Math.min(1,v)); return `rgba(var(--tint) / ${a.toFixed(3)})`; }
 function tintText(v){ return v!=null && v>=0.5 ? "#ffffff" : "#111"; }
 
@@ -819,8 +812,8 @@ function odo(el,n,digits){ if(!el) return; el.innerHTML=String(n).padStart(digit
   try{ mine=(parseInt(localStorage.getItem("nh-visits")||"0",10)||0)+1; localStorage.setItem("nh-visits",String(mine)); }catch(e){ mine=1; }
   odo($("#odometer"), base+mine, 6);
   $("#odcap").textContent = mine>1 ? `you: visit #${mine}` : "welcome, traveler";
-  odo($("#odoProg"), 3, 5);   /* programs registered (live hub) */
-  odo($("#odoPlay"), 1, 5);   /* players registered  (live hub) */
+  odo($("#odoProg"), 0, 5);   /* programs -- set live from /stats in boot() */
+  odo($("#odoPlay"), 0, 5);   /* hackers  -- set live from /stats in boot() */
 })();
 
 /* ===================== leaderboard ===================== */
@@ -872,11 +865,12 @@ function renderBoard(view){
 document.querySelectorAll("[data-view]").forEach(b=>b.addEventListener("click",()=>{
   document.querySelectorAll("[data-view]").forEach(x=>x.setAttribute("aria-pressed","false"));
   b.setAttribute("aria-pressed","true"); curView=b.dataset.view; renderBoard(curView); }));
-document.querySelectorAll("[data-tier]").forEach(b=>b.addEventListener("click",()=>{
+document.querySelectorAll("[data-tier]").forEach(b=>b.addEventListener("click",async()=>{
   curTier=b.dataset.tier;
   document.querySelectorAll("[data-tier]").forEach(x=>x.setAttribute("aria-pressed", x.dataset.tier===curTier?"true":"false"));
+  await loadObjective(curObj);
   setCap(); renderBoard(curView); renderFrontier(curRegime); renderChart(curMetric); }));
-$("#objSelect").addEventListener("change",e=>{ curObj=e.target.value; setCap(); renderBoard(curView); });
+$("#objSelect").addEventListener("change",async e=>{ curObj=e.target.value; await loadObjective(curObj); setCap(); renderBoard(curView); renderChart(curMetric); });
 $("#scMore").addEventListener("click",function(){
   this.textContent=this.textContent.indexOf("More")>=0?"[ that is everyone so far. yet another short list. ]":"[ --More-- ]"; });
 
@@ -938,8 +932,14 @@ document.querySelectorAll("[data-metric]").forEach(b=>b.addEventListener("click"
   b.setAttribute("aria-pressed","true"); curMetric=b.dataset.metric; renderChart(curMetric); }));
 
 /* ===================== popup ===================== */
-function openProgram(d){
+async function openProgram(d){
   const p = d==="autoascend" ? AUTOASCEND : PROGRAMS.find(x=>x.digest===d); if(!p) return;
+  /* lazily load this program's per-identity frontier (mean progression per identity) */
+  if(!p.base && !p.fr && p.fulldigest){
+    try{ const fr = await jget("/solutions/"+encodeURIComponent(p.fulldigest)+"/frontier");
+      p.fr = Object.fromEntries(fr.map(r=>[r.identity, r.progression])); }
+    catch(e){ p.fr = {}; }
+  }
   $("#mTitle").textContent=p.base?"autoascend - the baseline":`nethacker@${d} - @${p.owner}`;
   const scores=p.fr||{};
   const cells=Object.keys(scores).length?Object.entries(scores).map(([id,v])=>{
@@ -963,6 +963,154 @@ $("#modal").addEventListener("click",e=>{ if(e.target.id==="modal") closeModal()
 document.addEventListener("keydown",e=>{ if(e.key==="Escape") closeModal(); });
 function closeModal(){ const mo=$("#modal"); mo.removeAttribute("open"); mo.setAttribute("aria-hidden","true"); }
 
-/* ===================== init ===================== */
-setCap(); renderBoard("programs"); renderFrontier("universe"); renderChart("frontier");
+/* ===================== live data: fetch + adapt hub JSON into the render state ===================== */
+const jget = async p => { const r = await fetch(p); if(!r.ok) throw new Error(p+" "+r.status); return r.json(); };
+
+/* AutoAscend baseline row, rebuilt from /baseline for the current objective. GAPs:
+   /baseline has no median (overall stands in) and no cell-count. deepest is the raw
+   milestone string (e.g. "Dlvl:3") or "—" when the endpoint has none -- never invented. */
+function rebuildAutoascend(){
+  const per = (BASELINE && BASELINE.per_identity) || {};
+  const c = per[curObj];
+  AUTOASCEND = {
+    digest:"autoascend", owner:"autoascend",
+    score: BASELINE && BASELINE.overall!=null ? BASELINE.overall : 0,
+    med:   BASELINE && BASELINE.overall!=null ? BASELINE.overall : 0,   // GAP: no median in /baseline
+    ep: c && c.episodes!=null ? c.episodes : 0,
+    asc: 0,
+    deepest: c && c.deepest ? c.deepest : "—",                          // milestone string or — (GAP)
+    fr: Object.fromEntries(Object.entries(per).map(([id,x])=>[id, x.progression])),
+    base: true,
+  };
+}
+
+/* PEOPLE: group /search solutions by owner (progs = their solution count); best/asc come
+   from that owner's rows on the CURRENT objective's board. deepest is "—" (GAP: no per-hacker
+   deepest endpoint). Ranked by best desc. */
+function buildPeople(boardRows){
+  const byOwner = {};
+  for(const s of SEARCH){ if(!byOwner[s.owner]) byOwner[s.owner]={owner:s.owner, progs:0}; byOwner[s.owner].progs++; }
+  const bstat = {};
+  for(const r of boardRows){
+    if(!bstat[r.owner]) bstat[r.owner]={best:0, asc:0};
+    if(r.mean_progression > bstat[r.owner].best) bstat[r.owner].best = r.mean_progression;
+    bstat[r.owner].asc += r.ascensions;
+  }
+  const people = Object.values(byOwner).map(p=>({
+    owner:p.owner, progs:p.progs,
+    best: bstat[p.owner] ? bstat[p.owner].best : 0,
+    asc:  bstat[p.owner] ? bstat[p.owner].asc  : 0,
+    deepest:"—",
+  }));
+  people.sort((a,b)=> (b.best-a.best) || a.owner.localeCompare(b.owner));
+  people.forEach((p,i)=>{ p.rank = i+1; });
+  return people;
+}
+
+/* Frontier "universe": each identity's rank-1 elite. /elites has no episodes, so ep comes
+   from /objectives (the honest per-identity batch size) -- falls back to the 15-episode
+   identity batch if /objectives was unavailable. */
+async function loadUniverse(){
+  try{
+    const el = await jget("/elites?objective=all");
+    const uni = {};
+    for(const r of el){ if(r.rank===1) uni[r.identity] = {v:r.score, o:r.owner, d:short(r.solution_digest), ep: OBJ_EP[r.identity]!=null ? OBJ_EP[r.identity] : 15}; }
+    UNIVERSE = uni;
+  }catch(e){ UNIVERSE = {}; }
+}
+
+/* Frontier "program" regime champion: the top solution on the "random" (generalist) board,
+   with its per-identity frontier. /board?objective=random is empty today -> CHAMPION stays
+   blank and the program regime honestly shows every cell "·". */
+async function loadChampion(){
+  try{
+    const rnd = await jget(`/board?objective=random&tier=${encodeURIComponent(curTier)}`);
+    if(rnd.length){
+      const top = rnd[0]; let scores = {};
+      try{ const fr = await jget("/solutions/"+encodeURIComponent(top.solution_digest)+"/frontier");
+        scores = Object.fromEntries(fr.map(r=>[r.identity, r.progression])); }catch(e){ scores = {}; }
+      CHAMPION = {digest:short(top.solution_digest), owner:top.owner, scores};
+    } else { CHAMPION = {digest:"", owner:"", scores:{}}; }
+  }catch(e){ CHAMPION = {digest:"", owner:"", scores:{}}; }
+}
+
+/* The two callouts (most cells held / most firsts) come from the objective-independent
+   coverage & firsts boards. Empty or unavailable -> an honest "—", never a stale number. */
+async function loadCallouts(){
+  const who = document.querySelectorAll(".callouts .callout .who");
+  if(who.length<2) return;
+  try{
+    const cov = await jget("/board?metric=coverage");
+    if(cov.length){ COVERAGE={owner:cov[0].owner, digest:short(cov[0].solution_digest), cells:cov[0].cells_held};
+      who[0].innerHTML = `<span class="at">@</span>${esc(COVERAGE.owner)} &mdash; <span class="num">${COVERAGE.cells}</span> cells lit`; }
+    else { COVERAGE=null; who[0].innerHTML = `<span class="num">&mdash;</span> none yet`; }
+  }catch(e){ COVERAGE=null; who[0].innerHTML = `<span class="num">&mdash;</span> none yet`; }
+  try{
+    const fst = await jget("/board?metric=firsts");
+    if(fst.length){ FIRSTS={owner:fst[0].owner, digest:short(fst[0].solution_digest), firsts:fst[0].firsts};
+      who[1].innerHTML = `<span class="at">@</span>${esc(FIRSTS.owner)} &mdash; <span class="num">${FIRSTS.firsts}</span> firsts`; }
+    else { FIRSTS=null; who[1].innerHTML = `<span class="num">&mdash;</span> none yet`; }
+  }catch(e){ FIRSTS=null; who[1].innerHTML = `<span class="num">&mdash;</span> none yet`; }
+}
+
+/* Per-objective + per-tier state: the board (its rows become PROGRAMS/BOARD_BY_OBJ),
+   PEOPLE, the baseline row, and the progress series. Called on load and on every
+   objective/tier change. Each fetch degrades to an honest empty state on failure. */
+async function loadObjective(obj){
+  rebuildAutoascend();                                  // baseline row reflects this objective
+  let rows=[];
+  try{ rows = await jget(`/board?objective=${encodeURIComponent(obj)}&tier=${encodeURIComponent(curTier)}`); }
+  catch(e){ rows=[]; }                                  // unknown obj (404) / offline -> "be the first" empty state
+  PROGRAMS = rows.map(r=>({
+    rank:r.rank, digest:short(r.solution_digest), fulldigest:r.solution_digest,
+    owner:r.owner, score:r.mean_progression, med:r.median_progression,
+    ep:r.episodes, asc:r.ascensions,
+    deepest:"—",                                        // GAP: /board carries no deepest -- do NOT fabricate
+    fr:null,                                            // loaded lazily in openProgram
+  }));
+  BOARD_BY_OBJ[obj] = PROGRAMS;
+  PEOPLE = buildPeople(rows);
+  let series=[];
+  try{ const pr = await jget(`/progress?tier=${encodeURIComponent(curTier)}`); series = (pr && pr.series) || []; }
+  catch(e){ series=[]; }
+  PROGRESS = [
+    {t:"autoascend", frontier: (BASELINE && BASELINE.overall!=null) ? BASELINE.overall : 0, ascensions:0, coverage:0 /*GAP: baseline cell-count not exposed*/, base:true},
+    ...series.map(p=>({t:p.t, frontier:p.frontier, ascensions:p.ascensions, coverage:p.coverage})),
+  ];
+}
+
+/* Bootstrap: fetch everything, adapt into the render state, then do the first render.
+   Every fetch is guarded -- any failure keeps the page's existing friendly empty/error
+   states; nothing ever throws to the console. */
+/* Every registered solution, following pagination so PEOPLE / progs can never
+   silently under-count: accumulate pages until one comes back short. PAGE is a
+   page size, not a cap on the total -- the loop keeps going until exhausted. */
+async function loadSearch(){
+  const PAGE = 100; let offset = 0, all = [];
+  try{
+    for(;;){
+      const page = await jget(`/search?limit=${PAGE}&offset=${offset}`);
+      all = all.concat(page);
+      if(page.length < PAGE) break;   // a short page is the last page
+      offset += PAGE;
+    }
+    SEARCH = all;
+  }catch(e){ SEARCH = all; }          // keep whatever paged in before a failure
+}
+
+async function boot(){
+  /* independent setup fetches run concurrently; the real dependencies are
+     awaited after (UNIVERSE needs OBJ_EP; the board/people/baseline need
+     BASELINE + SEARCH). Each is guarded, so any failure keeps a friendly state. */
+  const statsP = jget("/stats")
+    .then(s=>{ odo($("#odoProg"), s.programs, 5); odo($("#odoPlay"), s.hackers, 5); })
+    .catch(()=>{ odo($("#odoProg"),0,5); odo($("#odoPlay"),0,5); });
+  const baseP = jget("/baseline").then(b=>{ BASELINE = b; }).catch(()=>{ BASELINE = {owner:"autoascend", per_identity:{}, overall:null}; });
+  const objP  = jget("/objectives").then(o=>{ OBJ_EP = Object.fromEntries(o.map(x=>[x.name, x.episodes])); }).catch(()=>{ OBJ_EP = {}; });
+  await Promise.all([statsP, baseP, objP, loadSearch(), loadChampion(), loadCallouts()]);
+  await loadUniverse();                 // needs OBJ_EP (per-identity episode counts)
+  await loadObjective(curObj);          // needs BASELINE + SEARCH
+  setCap(); renderBoard(curView); renderFrontier(curRegime); renderChart(curMetric);
+}
+boot();
 </script>
