@@ -1,9 +1,26 @@
-"""Assemble the (lean) operator prompt from the objective + parent scorecard."""
+"""Assemble the operator prompt: NetHack framing + a pointer to `/refs/`.
+
+The brief no longer distills the parent's score/outcome history into text --
+that (and the influence/attempt reference folders) is provisioned as real
+files under `/refs/` (Task A2's `CONTEXT.md` + copied folders), which the
+agent reads and analyzes itself.
+"""
 from __future__ import annotations
 
-from collections import Counter
-
 from nethackers.contracts.models import Evidence
+
+NETHACK_PREAMBLE = (
+    "You are improving a program that plays **NetHack** (via NLE). It is scored by a "
+    "BALROG-style **progression** metric — starts near 0 and rises as the bot survives "
+    "and descends/advances (the evaluator defines the milestones). Maximize that.\n\n"
+    "**The current bot is at `/workspace`** — edit it. **Strong reference solutions and "
+    "recent rejected attempts are under `/refs/` — read `/refs/CONTEXT.md` first**, analyze "
+    "them (diff, read, or run `python -m nethackers.arena.run` yourself), then make ONE "
+    "focused change with a `# hypothesis: …` comment at the edit.\n\n"
+    "Don't game it: no branching on seed fingerprints, no exploiting scorer/NLE quirks — "
+    "such candidates fail on held-out seeds. Keep the `make_agent()` → `reset()`/`act()` "
+    "contract and import cleanly."
+)
 
 
 def _set_block(identities: list[str], per_identity: dict[str, float] | None) -> str:
@@ -34,9 +51,10 @@ def build_brief(
     identities: list[str] | None = None,
     per_identity: dict[str, float] | None = None,
 ) -> str:
-    ends = Counter(r.end_status or "unknown" for r in parent_evidence.results)
-    tally = ", ".join(f"{end}×{n}" for end, n in ends.most_common())
-    mean = parent_evidence.mean_progress
+    # parent_evidence is kept for caller/signature stability but is no longer
+    # distilled into text -- its score/outcome detail lives in
+    # /refs/CONTEXT.md (Task A2), which the agent reads directly.
+    del parent_evidence
 
     seeds_note = ""
     if training_seeds:
@@ -51,38 +69,15 @@ def build_brief(
         have = "**What you have.** Live Python + NLE; the current bot is your starting point."
 
     if identities and len(identities) > 1:
-        head = _set_block(identities, per_identity)
-        return (
-            head + "\n\n"
-            "**Don't game it:** no branching on seed fingerprints, no exploiting "
-            "scorer/NLE quirks — such candidates fail on held-out seeds.\n\n"
-            "**Make one focused change** per candidate; leave a `# hypothesis: …` "
-            "comment at the edit.\n\n"
-            f"**Seeds & the real test.** Develop against your training seeds"
-            f"{seeds_note}. Scored on held-out seeds you'll never see.\n\n"
-            f"{have}\n\n"
-            "**Before you finalize.** Must import cleanly, keep the `make_agent()` → "
-            "`reset()`/`act()` contract, and not crash across a handful of seeds.")
+        body = _set_block(identities, per_identity)
+    else:
+        body = f"You are improving it as **{character}** (objective '{objective_name}')."
 
-    return (
-        f"**Objective.** Improve this NetHack bot's **progression score** as {character} "
-        f"(objective '{objective_name}') — the BALROG-style milestone metric the evaluator "
-        "computes. Maximize *that*; depth/turn-count/survival matter only insofar as they "
-        "raise it. **Don't game it:** no branching on seed fingerprints (initial "
-        "glyphs/inventory) to replay a canned run, no exploiting scorer/NLE quirks — such "
-        "candidates fail on held-out seeds and are rejected.\n\n"
-        f"**Where it currently loses progression.** Mean {mean:.2f} over "
-        f"{parent_evidence.episodes} games; outcomes: {tally}.\n\n"
-        "**Make one focused change.** One well-reasoned, localized change per candidate; "
-        "**leave a short comment at the edit stating the hypothesis** "
-        "(`# hypothesis: …`) so the next iteration inherits your reasoning inline. Wide "
-        "enough to co-adapt, but a cosmetic/no-op diff wastes an eval.\n\n"
-        "**Seeds & the real test.** Develop against your training seeds "
-        f"(provided{seeds_note}). Scored on **held-out seeds you'll never see** — "
-        "generalize, don't memorize; testing on extra random seeds is a good "
-        "self-check.\n\n"
-        f"{have}\n\n"
-        "**Before you finalize.** Must import cleanly, keep the `make_agent()` → "
-        "`reset()`/`act()` contract, and not crash across a handful of seeds — else "
-        "it scores zero."
+    tail = (
+        "**Seeds & the real test.** Develop against your training seeds"
+        f"{seeds_note}. Scored on **held-out seeds you'll never see** — "
+        "generalize, don't memorize.\n\n"
+        f"{have}"
     )
+
+    return f"{NETHACK_PREAMBLE}\n\n{body}\n\n{tail}"
