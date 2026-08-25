@@ -26,6 +26,7 @@ from nethackers.harness.register import register_win, register_win_slices
 from nethackers.harness.seeds import dev_spec, validation_spec
 from nethackers.harness.store import LocalTreeStore
 from nethackers.hub.selector import resolve
+from nethackers.hubclient.auth import AuthError
 
 
 @dataclass
@@ -58,6 +59,13 @@ class IterationResult:
     stopped_reason: str | None = None
     regressions: list[tuple[str, float]] | None = None
     causes: dict[str, int] | None = None
+    # None means the win reached the hub; otherwise WHY it didn't (never
+    # published, auth failed, or some other hub-side error) -- `registered`
+    # alone only ever meant "the LOCAL win was accepted", so this is what
+    # distinguishes a hub-registered win from a local-only one instead of
+    # swallowing the difference into a report()-only line (runlog.metric_record
+    # + the monitor ledger both surface it).
+    hub_reason: str | None = None
 
 
 def _causes(results) -> dict[str, int]:
@@ -176,7 +184,8 @@ def run_loop(
         cb = on_log
         return lambda line: cb(tag, line)
 
-    def _emit(phase: str, iteration: int, *, tokens: int = 0, detail: str = "") -> None:
+    def _emit(phase: str, iteration: int, *, tokens: int = 0, detail: str = "",
+              hub_reason: str | None = None) -> None:
         if on_state is None:
             return
         active = island_states[idx]
@@ -184,7 +193,7 @@ def run_loop(
             "phase": phase, "iteration": iteration,
             "baseline_dev": base_dev, "baseline_held": base_validation,
             "best_dev": active.dev_fitness, "best_held": active.validation_fitness,
-            "wins": wins, "tokens": tokens, "detail": detail,
+            "wins": wins, "tokens": tokens, "detail": detail, "hub_reason": hub_reason,
             # parent snapshot for the monitor's PARENT panel + lineage chain
             # (additive; the in-flight child's digest isn't known here).
             # generation = the iteration being worked (advances every attempt),
@@ -570,12 +579,18 @@ def run_loop(
             # re-publishes from the advanced elite). Publish to a real repo@commit
             # (fetchable, passes the hub's commit-exists check) then register the
             # self-reported evidence; no publisher (or any failure) -> local elite
-            # only, never a synthetic, unfetchable hub reference.
+            # only, never a synthetic, unfetchable hub reference. `hub_reason`
+            # records WHY a local-only win never reached the hub -- never
+            # swallowed silently (runlog.metric_record + the monitor ledger both
+            # surface it) -- while `registered=True` keeps meaning "the local
+            # win was accepted" regardless.
             hub_ok = True
+            hub_reason: str | None = None
             try:
                 reference = publish(worktree) if publish is not None else None
                 if reference is None:
                     hub_ok = False
+                    hub_reason = "local-only: not published (no gh publisher / dev owner)"
                     report(f"{tag} · ✓ new local elite (not published to the hub)")
                 elif is_set:
                     register_win_slices(hub, token=token, child_manifest=manifest,
@@ -585,8 +600,16 @@ def run_loop(
                     register_win(hub, token=token, child_manifest=manifest,
                                  evidence=dev_ev, parent_digest=active.digest,
                                  reference=reference)
+            except AuthError as e:
+                # The adapter's own error is owner-agnostic (it never knows
+                # WHOSE run failed to auth) -- add that context here, once,
+                # rather than in every caller of HubClient.register.
+                hub_ok = False
+                hub_reason = f"local-only: auth failed for run owner '{owner}' — {e}"
+                report(f"{tag} · ⚠ win kept as a local elite; hub auth failed: {e}")
             except Exception as e:
                 hub_ok = False
+                hub_reason = f"local-only: hub error — {e}"
                 report(f"{tag} · ⚠ win kept as a local elite; hub publish/register "
                        f"failed: {e}")
             # A rising union mean can still hide a per-identity drop on a set
@@ -604,7 +627,8 @@ def run_loop(
             island_states[idx] = EliteState(
                 digest, tree_store.path(digest), dev_fit, val_fit, dev_ev)
             wins += 1
-            _emit("registered", k + 1, tokens=op.total, detail=(f"⚠{len(regs)}" if regs else ""))
+            _emit("registered", k + 1, tokens=op.total,
+                  detail=(f"⚠{len(regs)}" if regs else ""), hub_reason=hub_reason)
             if hub_ok:
                 report(f"{tag} · ✓ REGISTERED dev={dev_fit:.3f} validation={val_fit:.3f}")
             _record(k + 1, IterationResult(True, "registered", dev_fitness=dev_fit,
@@ -612,7 +636,8 @@ def run_loop(
                                            usage=op.usage, digest=digest,
                                            stopped_reason=op.stopped_reason,
                                            regressions=regs or None,
-                                           causes=_causes(dev_ev.results)))
+                                           causes=_causes(dev_ev.results),
+                                           hub_reason=hub_reason))
         except Exception as e:
             _emit("error", k + 1, detail=str(e))
             report(f"{tag} · ✗ error: {e}")
