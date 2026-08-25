@@ -162,6 +162,18 @@ def test_evaluation_id_defaults_to_local_when_omitted():
     assert args.evaluation_id == "local"   # matches the judge (eval/runner.py passes "local")
 
 
+def test_action_timeout_default_is_generous():
+    """Root cause ③: a wall-clock action budget cut under host contention
+    (multiple runs + codex hammering the box) diverges an otherwise-normal
+    trajectory. 30s is patient enough that load doesn't cut normal actions --
+    only a genuinely hung bot times out. The timeout->0.0 scoring RULE
+    (arena/trajectory.py) is unchanged; this only changes when it fires."""
+    from nethackers.arena.run import _parser
+    args = _parser().parse_args(
+        ["--solution", "/sol", "--batch", "[]", "--out", "/o.json"])
+    assert args.action_timeout == 30.0
+
+
 def test_main_passes_knob_and_writes_batch_order(tmp_path, monkeypatch):
     calls = {}
 

@@ -5,7 +5,20 @@ per-episode ``character``/``milestone`` -- defaulted so M1's existing
 positional/keyword construction sites and ``from_dict(old_dict)`` still work
 unchanged (Task 2 will populate the new fields for real)."""
 
-from nethackers.contracts.models import Atom, ObjectiveSpec, TrajectoryResult
+from nethackers.contracts.models import Atom, Objective, ObjectiveSpec, TrajectoryResult
+
+
+def test_objective_action_timeout_default_is_generous():
+    # Root cause ③: the per-trajectory wall-clock action budget defaults to
+    # 30s (was 5.0) so a normal action slowed by host contention isn't cut --
+    # only a genuinely hung bot times out. NOTE: this targets `Objective`
+    # (per-trajectory run config), not `ObjectiveSpec` (the published grading
+    # functional) -- `ObjectiveSpec.action_timeout_seconds` has no default
+    # (it precedes the required `aggregation` field, so it can't gain one
+    # without reordering every call site); `Objective.action_timeout_seconds`
+    # is the field models.py actually defaults, and every ObjectiveSpec call
+    # site already passes its own value explicitly.
+    assert Objective(character="val-dwa-law-fem").action_timeout_seconds == 30.0
 
 
 def test_objectivespec_digest_depends_on_batch_and_aggregation():
