@@ -285,30 +285,66 @@ def run_loop(
         active.recent_attempts.append((f"iter-{k + 1}", worktree, note))
         del active.recent_attempts[:-3]   # bounded <=3 -- drop oldest first
 
+    def _hub_reseed_candidate(held: set[str]) -> EliteState | None:
+        # Cross-run injection at reset: draw a batch from the same coverage-
+        # aware influence pool the islands seed from, and return the first
+        # elite NO current island already holds -- scored on THIS run's
+        # dev+validation specs so it slots in as an ordinary champion. This is
+        # the gentle replacement for the removed mid-run migration: instead of
+        # hot-swapping a running parent, a run periodically imports another
+        # run's registered progress into a slot it was already discarding.
+        # None when the pool offers nothing fresh (hub down, thin pool, or
+        # every draw is already held) -> caller reseeds that slot locally.
+        # Batch of 2*islands so there's headroom past the (<=islands) held
+        # digests; k=islands makes the draw a weighted sample, not the argmax,
+        # so successive resets don't keep importing the single same best.
+        draws = select.sample_seeds(hub, tuple(identities), tree_store, seed_tree,
+                                    owner=owner, n=2 * islands, k=islands,
+                                    fetch=fetch, rng=reset_rng)
+        for tree_path, entry in draws:
+            if entry is None:
+                continue   # a pad (thin pool) -- nothing to inject
+            digest = entry["solution_digest"]
+            if digest in held:
+                continue   # an island already has this -- keep looking for fresh
+            return _score_elite(tree_path, digest,
+                                dev_label=f"reset · dev [{digest[:8]}]",
+                                val_label=f"reset · validation [{digest[:8]}]")
+        return None
+
     def _reset_islands() -> None:
         # Periodic reset (Task B2): rank by CHAMPION dev_fitness and kill
         # the bottom half (floor(K/2) -- the call site below only invokes
-        # this when islands > 1, so there's always >=1 to kill). Each
-        # killed slot is reseeded from a top-k-sampled SURVIVOR
-        # (select_reseed) -- never deterministically "the best" -- and
-        # every survivor's slot (champion AND recent_attempts) is left
-        # completely untouched: that per-island state isolation across a
-        # reset is what preserves diversity (spec §4), not just at
-        # cold-start.
+        # this when islands > 1, so there's always >=1 to kill). Each killed
+        # slot is reseeded from a top-k-sampled SURVIVOR (select_reseed) --
+        # never deterministically "the best" -- and every survivor's slot
+        # (champion AND recent_attempts) is left completely untouched: that
+        # per-island state isolation across a reset is what preserves
+        # diversity (spec §4), not just at cold-start.
+        #
+        # Cross-run injection: the FIRST killed slot is instead reseeded from a
+        # fresh hub-pool elite when one is available -- at most ONE slot per
+        # reset (the rest reseed locally), only for set objectives (where the
+        # pool applies) and never under --from-seed, so a run periodically
+        # imports outside progress without collapsing its islands onto one
+        # shared hub-best.
         ranked = sorted(range(len(island_states)), key=lambda i: island_states[i].dev_fitness)
         n_kill = len(island_states) // 2
         dead, alive = ranked[:n_kill], ranked[n_kill:]
         survivors = [island_states[i] for i in alive]
-        for i in dead:
-            champ = select_reseed(survivors, reset_rng)
-            # A FRESH EliteState -- never the survivor's own object -- so
-            # the reseeded slot's recent_attempts starts empty (the
-            # dataclass's default_factory) instead of aliasing the
-            # survivor's list (which would let a later reject on the
-            # reseeded island corrupt the survivor's own history).
+        held = {s.digest for s in island_states}
+        injected = (_hub_reseed_candidate(held)
+                    if (identities and not from_seed) else None)
+        for pos, i in enumerate(dead):
+            src = injected if (pos == 0 and injected is not None) \
+                else select_reseed(survivors, reset_rng)
+            # A FRESH EliteState -- never the survivor's/injected object -- so
+            # the reseeded slot's recent_attempts starts empty (the dataclass's
+            # default_factory) instead of aliasing another slot's list (which
+            # would let a later reject on the reseeded island corrupt it).
             island_states[i] = EliteState(
-                champ.digest, champ.tree, champ.dev_fitness,
-                champ.validation_fitness, champ.dev_evidence)
+                src.digest, src.tree, src.dev_fitness,
+                src.validation_fitness, src.dev_evidence)
 
     def _pick_influences(active_digest: str) -> list[refs.Ref]:
         # C3: up to 2 cross-elite influences for THIS iteration's `/refs/`,
