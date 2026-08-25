@@ -23,8 +23,10 @@ calls this function directly.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
+import os
 import re
 import subprocess
 import tempfile
@@ -36,6 +38,16 @@ from nethackers.contracts.models import Evidence, Objective, ObjectiveSpec, Traj
 _ARENA_EPISODE = re.compile(
     r"episode (\d+)/(\d+) \((.*?)\): progress=([0-9.]+) (\S+) turns=(\d+) depth=(\d+)"
 )
+
+
+def _eval_lock_path() -> Path:
+    """Host lock path for serializing arena eval batches (root cause ③, the
+    trigger): concurrent docker eval batches perturb each other's timing even
+    with a generous per-action timeout. Read fresh on every call (not cached
+    at import time) so tests can override it per-run via NETHACKERS_EVAL_LOCK
+    without it being baked in before the env var is set."""
+    return Path(os.environ.get("NETHACKERS_EVAL_LOCK",
+                                os.path.expanduser("~/.nethackers/eval.lock")))
 
 
 def _stream_episodes(
@@ -173,10 +185,20 @@ def eval_batch(
             "--max-parallel-evals", str(max_parallel_evals),
             "--out", "/out/results.json",
         ]
-        if on_episode is None:
-            runner(cmd, check=True)
-        else:
-            _stream_episodes(cmd, spec, on_episode, popen)
+        # One arena eval batch per host at a time (root cause ③, the
+        # trigger): a sibling run's docker evals hammering the same host
+        # while this run's baseline validation ran caused a 21% score swing
+        # on identical code. The advisory flock serializes the docker
+        # invocation across processes/threads without changing anything
+        # about how a single batch is scored.
+        lock_path = _eval_lock_path()
+        lock_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(lock_path, "w") as lock_file:
+            fcntl.flock(lock_file, fcntl.LOCK_EX)
+            if on_episode is None:
+                runner(cmd, check=True)
+            else:
+                _stream_episodes(cmd, spec, on_episode, popen)
         results = [TrajectoryResult.from_dict(r) for r in json.loads(out.read_text())]
     objective = Objective(
         character=None,
