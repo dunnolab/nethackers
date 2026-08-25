@@ -47,6 +47,10 @@ class TrajectoryResult:
     # them for real starting in Task 2.
     character: str = ""
     milestone: str | None = None
+    # Verbatim NetHack xlogfile `death=` string for a genuine death (else None:
+    # bot failure, ascension, quit/escaped). Defaulted -- same backward-compat
+    # pattern as character/milestone; populated by arena/trajectory.py._result.
+    cause_of_death: str | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
