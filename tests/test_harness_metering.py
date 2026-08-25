@@ -64,6 +64,21 @@ def test_meter_claude_accumulates_then_result_replaces():
     assert m.usage.total == 11402730
 
 
+def test_codex_cached_input_is_counted_as_cache_not_fresh():
+    # codex's input_tokens is cache-inclusive; cached_input_tokens is a
+    # discount, not an addend. Folding the whole cache-inclusive number into
+    # `input` (the old behavior) overstated apparent spend ~40x (metrics.jsonl
+    # reported tokens: 14.5M when ~98% was cache reads). The fresh remainder
+    # belongs in `input`; the cached portion belongs in `cache_read`.
+    line = ('{"type":"turn.completed","usage":{"input_tokens":14415859,'
+            '"cached_input_tokens":14171904,"output_tokens":17754}}')
+    kind, usage = classify("codex", line)
+    assert kind == "total"
+    assert usage.cache_read == 14171904
+    assert usage.input == 14415859 - 14171904   # 243_955 fresh, not 14.4M
+    assert usage.output == 17754
+
+
 def test_meter_codex_zero_until_result():
     m = Meter("codex")
     m.observe('{"type":"item.completed","item":{"type":"agent_message","text":"x"}}')
