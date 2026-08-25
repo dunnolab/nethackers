@@ -97,6 +97,23 @@ def test_progress_filters_by_objective_identity(tmp_path):
     assert read_progress(store, objective="wiz-elf-cha-mal") == {"series": []}
 
 
+def test_progress_ignores_none_milestone_in_coverage(tmp_path):
+    # An episode with no milestone (e.g. a bot_error) still counts toward the
+    # program's mean, but contributes no coverage cell.
+    store = Store(str(tmp_path / "h.db"))
+    store.init_schema()
+    _seed_objective(store)
+    store.upsert_solution(digest="s1", repo="github.com/a/b", commit_sha="c1",
+                          owner="a", root=".", entrypoint="bot.py", registered_at="t")
+    store.insert_atoms([_atom("s1", seed=1, prog=0.10, milestone="Dlvl:5"),
+                        _atom("s1", seed=2, prog=0.20, milestone=None)])
+    _backdate(store, {1: "2026-08-23", 2: "2026-08-23"})
+    out = read_progress(store)
+    assert out["series"] == [
+        {"t": "2026-08-23", "frontier": 0.15, "ascensions": 0, "coverage": 1},
+    ]
+
+
 def test_progress_empty(tmp_path):
     store = Store(str(tmp_path / "h.db"))
     store.init_schema()
