@@ -31,5 +31,8 @@ docs/superpowers/research/data/
 # SDD scratch (ledger, briefs, reports, review packages)
 .superpowers/
 
+# Optional background track (The Nethack Dictionary) — shipped via deploy, never committed
+src/nethackers/hub/web/dictionary.mp3
+
 # OS
 .DS_Store

@@ -38,7 +38,7 @@ from pathlib import Path
 from typing import Any
 
 from fastapi import FastAPI, Header, HTTPException
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
 from nethackers.contracts.models import Evidence, ObjectiveSpec
@@ -63,6 +63,16 @@ from nethackers.hub.views.stats import read_stats
 
 # The index.html file shipped in the wheel package data.
 _INDEX = Path(__file__).parent / "web" / "index.html"
+
+
+def _dict_audio_path() -> Path:
+    """The optional background track path, read from NETHACKERS_DICT_AUDIO env
+    (default: the package web/dictionary.mp3). Read at request time so tests can
+    monkeypatch without module reload."""
+    return Path(os.environ.get(
+        "NETHACKERS_DICT_AUDIO",
+        str(Path(__file__).parent / "web" / "dictionary.mp3"),
+    ))
 
 # GET /search's column list, local to this module -- the context calls for
 # keeping this one small SELECT in api.py rather than adding a store.py
@@ -118,6 +128,13 @@ def create_app(
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
         return _INDEX.read_text(encoding="utf-8")
+
+    @app.get("/dictionary.mp3")
+    def dictionary_audio() -> FileResponse:
+        path = _dict_audio_path()
+        if not path.exists():
+            raise HTTPException(status_code=404, detail="no background track")
+        return FileResponse(path, media_type="audio/mpeg")
 
     @app.get("/stats")
     def stats() -> dict[str, Any]:
