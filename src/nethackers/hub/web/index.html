@@ -70,11 +70,19 @@ img{ max-width:100%; }
 .masthead pre{ margin:0; font-size:clamp(9px,2.1vw,15px); line-height:1.05; color:var(--gold);
   overflow-x:auto; white-space:pre; position:relative; z-index:1; }
 .masthead .sub{ margin-top:8px; font-size:.8rem; color:var(--screen-dim); position:relative; z-index:1; }
-/* ambient demo game: a faint dungeon behind the wordmark, a gold @ pacing a room */
-#demo{ position:absolute; top:10px; right:14px; margin:0; z-index:0; pointer-events:none;
+/* ambient demo game: a faint dungeon behind the wordmark, with a tiny chase in progress */
+#demo{ position:absolute; top:10px; right:15px; margin:0; z-index:0; pointer-events:none;
   font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:12px; line-height:1.12;
-  color:var(--screen-dim); opacity:.28; white-space:pre; }
-#demo .you{ color:var(--gold); }
+  color:var(--screen-dim); opacity:.34; white-space:pre; }
+#demo .you{ color:var(--gold); font-weight:700; }
+#demo .pet{ color:var(--green); font-weight:700; }
+#demo .gridbug{ color:var(--scr-red); font-weight:700; }
+#demo .corpse{ color:var(--scr-red); font-weight:700; }
+#demoMsg{ position:absolute; top:4px; right:18px; z-index:0; pointer-events:none; white-space:pre;
+  text-align:right; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace;
+  font-size:10px; line-height:1.18; }
+#demoMsg.run{ color:var(--screen-dim); opacity:.34; }
+#demoMsg.yasd{ color:var(--scr-red); opacity:.55; font-weight:700; }
 .masthead .sub b{ color:var(--screen-ink); font-weight:400; }
 .masthead .cursor{ display:inline-block; width:.6ch; height:1em; background:var(--gold);
   translate:0 .12em; animation:blink 1s steps(1) infinite; }
@@ -287,9 +295,9 @@ dl.ladder dd{ margin:0; color:#33333a; }
 /* FOOTER ------------------------------------------------------------------- */
 footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px 22px;
   background:#efefe9; }
-.footgrid{ display:grid; grid-template-columns:auto 1fr; gap:22px; align-items:center; }
+.footgrid{ display:grid; grid-template-columns:minmax(300px,.8fr) 1.4fr; gap:22px; align-items:center; }
 .tomb{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.64rem; line-height:1.12; color:#3a3a42;
-  margin:0; white-space:pre; overflow-x:auto; }
+  margin:0; white-space:pre; overflow-x:auto; justify-self:center; }
 .tomb .epi{ color:var(--red); }
 .footinfo{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.76rem; color:#55555c; }
 .footinfo a{ }
@@ -350,6 +358,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
   <!-- ===================== MASTHEAD ===================== -->
   <header class="masthead">
 <pre id="demo" aria-hidden="true"></pre>
+<div id="demoMsg" class="run" aria-hidden="true"></div>
 <pre>
  _  _     _   _  _         _
 | \| |___| |_| || |__ _ __| |_____ _ _ ___
@@ -368,12 +377,13 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
     <nav class="sidebar" aria-label="Site index">
       <h4>Contents</h4>
       <ol class="idx">
-        <li><span class="k">[1]</span> <a href="#about">What is this?</a></li>
+        <li><span class="k">[1]</span> <a href="#about">What it is?</a></li>
         <li><span class="k">[2]</span> <a href="#why">Why care</a></li>
         <li><span class="k">[3]</span> <a href="#scores">Leaderboard</a></li>
         <li><span class="k">[4]</span> <a href="#frontier">The Frontier</a></li>
         <li><span class="k">[5]</span> <a href="#progress">Progress</a></li>
         <li><span class="k">[6]</span> <a href="#contribute">Contribute</a></li>
+        <li><span class="k">[7]</span> <a href="#faq">FAQ</a></li>
       </ol>
 
       <h4>Registered</h4>
@@ -399,20 +409,29 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 
       <!-- ABOUT -->
       <section id="about" class="about">
-        <h2 class="sec"><span class="glyph">@</span> What is this?</h2>
-        <p class="lead"><b>NetHack</b> (1987) is among the oldest <b>unsolved</b> challenges in games.
+        <h2 class="sec"><span class="glyph">@</span> What it is?</h2>
+        <p class="lead"><b>NetHackers is an open contest to build the first program that can
+          reliably win NetHack&nbsp;3.6.6.</b> Write the bot by hand, evolve it with coding agents, improve the thing
+          that improves it, or recurse until something interesting happens. Whatever path you take, the contest
+          evaluates the same result: the symbolic bot that comes out of the loop.</p>
+        <p>The ultimate goal is an <span class="ref" data-k="ascension"><b>ascension</b></span>; until then, the
+          board measures how far each bot gets.</p>
+
+        <div class="subh">The challenge</div>
+        <p><b>NetHack</b> (1987) is among the oldest <b>unsolved</b> challenges in games.
           Winning &mdash; an <span class="ref" data-k="ascension"><i>ascension</i></span> &mdash; means descending some fifty procedurally
           generated levels, seizing the <span class="ref" data-k="amulet">Amulet of Yendor</span>, and escaping through five final planes: tens of
           thousands of turns under <span class="ref" data-k="permadeath">permadeath</span>, randomized item identity, and a knowledge burden its own developers
           say takes years to master.</p>
-        <p>Humans win rarely but <b>reliably</b> &mdash; 0.4% of 8.6&nbsp;million public games ascend, yet
-          the record streak is <b>61 wins in a row</b> and top players hold 70&ndash;90% lifetime. Machines
-          are another story. The <b>entire</b> history of autonomous wins is three games, in 2015, by one
+        <p>Humans win rarely overall, but expert play is <b>repeatable</b>: only 0.4% of 8.6&nbsp;million public
+          games ascend, yet the record streak is <b>61 wins in a row</b> and the strongest players ascend in
+          70&ndash;90% of their recorded games. Autonomous play remains far behind. The <b>entire</b> history of
+          autonomous wins is three games, in 2015, by one
           hand-coded bot, on a version whose winning exploit was patched out that same year. On modern
           NetHack, <b>no program has ever won.</b></p>
 
         <table class="dtable">
-          <caption>THE STATE OF THE DUNGEON &mdash; every line of attack, ascensions on modern NetHack (3.6+)</caption>
+          <caption>THE STATE OF THE DUNGEON &mdash; every line of attack, ascensions on NLE's NetHack 3.6.6</caption>
           <thead><tr><th>Line of attack</th><th>Best known result</th><th style="text-align:center">Asc.</th></tr></thead>
           <tbody>
             <tr><td>Humans, all logged games</td><td>median score 836 ("Beginner"); ascension is death-cause #15</td><td class="a">0.4%</td></tr>
@@ -423,7 +442,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
             <tr><td>LLM direct play (2026)</td><td>6.8% progression while saturating every other game in <span class="ref" data-k="balrog">BALROG</span></td><td class="a z">0</td></tr>
           </tbody>
         </table>
-        <p class="dfn">Every machine line: <b>zero ascensions on NetHack&nbsp;3.6+</b>, the modern research
+        <p class="dfn">Every machine line: <b>zero ascensions on NetHack&nbsp;3.6.6</b>, the NLE research
           standard. *BotHack's three wins were on the older 3.4.3, via an exploit the developers then removed.</p>
 
         <div class="subh">Why now</div>
@@ -433,9 +452,10 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           human winners of <span class="ref" data-k="satlution">SAT-solver competitions</span>, and turn up
           <span class="ref" data-k="alphaevolve">new, provably-correct algorithms</span>. The pattern is consistent:
           <b>a model that cannot reliably do the task itself can write a program that does.</b></p>
-        <p>NetHack is where that pattern has never held. Its own creators put it forward as
+        <p>NetHack is where that pattern has never held. The researchers behind the
+          <span class="ref" data-k="nle">NetHack Learning Environment</span> put it forward as
           <span class="ref" data-k="grandchallenge">a grand challenge for AI</span>, and it is still unsolved years
-          later; one of them <span class="ref" data-k="rockt">marks the anniversary</span> each year with "AI still
+          later; NLE co-author <span class="ref" data-k="rockt">Tim Rockt&auml;schel marks the anniversary</span> each year with "AI still
           can't learn to play NetHack." It is the hardest game in the <span class="ref" data-k="balrog">BALROG</span>
           suite, the one frontier models fail while saturating the rest. Whether the approach cracking everything
           else can crack this one, <b>nobody knows</b>.</p>
@@ -457,15 +477,30 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
       <!-- WHY IT'S HARD -->
       <section id="why">
         <h2 class="sec"><span class="glyph">!</span> Why you should care</h2>
-        <p class="lead">Two kinds of people get pulled into this.</p>
+        <p class="lead">There are at least three ways to fall into this dungeon.</p>
+
+        <div class="subh">If you cannot leave a loop alone</div>
+        <p>If <span class="ref" data-k="recursiveco">Recursive</span>,
+          <span class="ref" data-k="ricursive">Ricursive</span>,
+          <span class="ref" data-k="discoveryloop">Discovery Loop</span>,
+          <span class="ref" data-k="aide2">AIDE&sup2;</span>, and the
+          <span class="ref" data-k="dgm">Darwin G&ouml;del Machine</span> all appeared in your timeline before
+          breakfast; if every benchmark bump is <i>&ldquo;it&rsquo;s happening&rdquo;</i> and every plateau means
+          <i>&ldquo;add another outer loop&rdquo;</i>; if your honest answer to &ldquo;what improves the
+          improver?&rdquo; is &ldquo;another improver&rdquo; &mdash; welcome. Build the seed, mutate the harness,
+          fork the fork. The intelligence explosion can start with not dying to a grid bug.</p>
 
         <div class="subh">If you do AI research</div>
-        <p>NetHack is a live, unsolved benchmark for the question the whole field is on: can an agent turn knowledge
-          it already has into working code? The <span class="ref" data-k="balrog">knowing&ndash;doing gap</span> is
-          clean and measurable, the output is a <b>symbolic program you can read</b> rather than one more opaque score,
-          and the evaluation is cheap, <span class="ref" data-k="heldout">seeded, and renewable</span> &mdash; a
-          benchmark you cannot memorize or cheaply saturate. It gives agentic operators, program search and evolution,
-          and neuro-symbolic policies a hard, honest target, and every result lands in a shared, permanent archive.
+        <p>Winning NetHack is the headline; the research problem is <b>generalization</b>. A bot must turn wiki
+          knowledge into action, decompose a tens-of-thousands-of-steps objective, discover and compose reusable
+          skills, and recover when unfamiliar seeds or stochastic events break its plan.
+          <span class="ref" data-k="heldout">Held-out evaluation</span> tests whether those skills transfer rather
+          than whether one trajectory was memorized &mdash; and the result is a symbolic program you can inspect.</p>
+        <p>These are not game-only problems. <span class="ref" data-k="aspire">ASPIRE</span> applies a similar loop
+          to robotics, repairing code-as-policy programs after failed rollouts and saving skills for new tasks;
+          <span class="ref" data-k="codepolicies">Code as Policies</span> composes perception, control, and tools into
+          executable robot behavior. NetHack is a cheap, fast arena for studying long-horizon planning, skill
+          composition, tool creation, and generalization to unfamiliar seeds &mdash; without a robot lab.
           <a href="#">&raquo; the paper &amp; hub API</a></p>
 
         <div class="subh">If you just think it's cool</div>
@@ -482,7 +517,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
       <section id="scores">
         <h2 class="sec"><span class="glyph">$</span> Leaderboard</h2>
         <p class="lead">Every registered <b>program</b>, ranked by mean progression on this objective &mdash; how far
-          each delve got, and how deep it reached. Each was produced by a
+          each run got, and how deep it reached. Each was produced by a
           <b>hacker</b> (that's you, if you join in) through the shared evolution, their own <span class="ref" data-k="harness">harness</span>,
           or any other means. The platform scores the program and never asks how it was made. <span class="ref" data-k="challenge"><b>AutoAscend</b></span> sits at
           the bottom of every table, where this effort started, as the yardstick for how far past it we've gotten.</p>
@@ -616,26 +651,73 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           exploring, so seal your operator from <b>its own past</b>, not only from the evaluator.</p>
       </section>
 
+      <hr class="rule">
+
+      <!-- FAQ -->
+      <section id="faq">
+        <h2 class="sec"><span class="glyph">%</span> FAQ</h2>
+
+        <div class="subh">How is this different from the other NetHack competitions?</div>
+        <p>Same dungeon, three different jobs.</p>
+        <div class="tablewrap"><table class="dtable">
+          <caption>THREE NETHACK CONTESTS &mdash; WHAT EACH ONE ACTUALLY BUILDS</caption>
+          <thead><tr><th>Competition</th><th>Your job</th><th>Evaluation</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><a href="https://nethackchallenge.com/">NeurIPS NetHack Challenge&nbsp;2021</a></td>
+              <td>Build an agent to play the full game through NLE&nbsp;3.6.6.</td>
+              <td>A fixed 2021 event: ascensions first, then median in-game score over random characters.</td>
+            </tr>
+            <tr>
+              <td><a href="https://mazesofmenace.ai/">Mazes of Menace</a></td>
+              <td>Port NetHack&nbsp;5.0 from C and Lua to readable ES6 JavaScript.</td>
+              <td>Bit-exact screen and PRNG parity on public and held-out sessions, followed by a generalization phase.</td>
+            </tr>
+            <tr>
+              <td><b>NetHackers</b></td>
+              <td>Build an autonomous symbolic bot that plays NLE's NetHack&nbsp;3.6.6.</td>
+              <td>An ongoing, open leaderboard for progression and ascension across fixed identities, with every bot
+                available as a starting point for the next improvement.</td>
+            </tr>
+          </tbody>
+        </table></div>
+
+        <div class="subh">Why AutoAscend?</div>
+        <p>Because it is a strong starting point, not a finished answer.
+          <span class="ref" data-k="autoascend">AutoAscend</span> won the 2021 challenge and already contains serious
+          symbolic machinery for exploration, combat, inventory, altars, and Sokoban. It also contains plenty of
+          strange, sometimes plainly dumb behavior: every role begins by farming dungeon level&nbsp;1 until experience
+          level&nbsp;8; Monks are hard-coded never to choose a melee weapon or body-armor suit; autopickup is replaced
+          by a brittle hand-written item-priority system; bag use is disabled; shopping is unimplemented; and the
+          post-Mines plan still turns into TODOs. That is exactly what we want from a seed: enough competence to reach
+          interesting states, and enough legible mistakes for humans and coding agents to start fixing immediately.</p>
+
+        <div class="subh">Does one lucky run count?</div>
+        <p>No. Programs are ranked across repeated seeded games, and verification uses
+          <span class="ref" data-k="heldout">held-out seeds</span>. The target is a bot that generalizes, not a seed
+          that happens to be friendly.</p>
+      </section>
+
     </main>
   </div>
 
   <!-- ===================== FOOTER ===================== -->
   <footer><div class="footgrid">
-    <pre class="tomb" aria-label="Here lies the state of the art">        ----------
-       /          \
-      /    REST    \
-     /      IN      \
-     /     PEACE     \
-     /                \
-     |  no program    |
-     |  has ascended  |
-     |  <span class="epi">NetHack 3.6+</span>  |
-     |     yet.       |
-     |                |
-     |  will yours be |
-     |  the  first?   |
-   * |    *  *   *    | *
- ___)/\__//(\/(/\)/\//\/|_)____</pre>
+    <pre class="tomb" aria-label="Here lies the state of the art">       _____________
+      /             \
+     /     REST      \
+    /       IN        \
+   /      PEACE        \
+  /                     \
+  |     no program      |
+  |    has ascended     |
+  |    <span class="epi">NetHack 3.6.6</span>    |
+  |        yet.         |
+  |                     |
+  |   will yours be     |
+  |     the first?      |
+* |   *    *    *       | *
+__)/\_//(\/(/\)/\//\/\|_)__</pre>
     <div class="footinfo">
       <div class="row"><a href="#">GitHub</a> &middot;
         <a href="mailto:hello@dunnolab.ai">Contact</a> &middot; <a href="#">The design doc</a></div>
@@ -722,33 +804,144 @@ function tintText(v){ return v!=null && v>=0.5 ? "#ffffff" : "#111"; }
 const _half = MEMES.map(m=>`<b>${esc(m)}</b>`).join('<span class="sep">|||</span>') + '<span class="sep">|||</span>';
 $("#mq").innerHTML = _half + _half;
 
-/* ===================== ambient demo game (a @ delving, behind the wordmark) ===================== */
+/* ===================== ambient demo game (@ + dog fleeing a grid-bug swarm) ===================== */
 (function(){
-  const el=$("#demo"); if(!el) return;
+  const el=$("#demo"), msg=$("#demoMsg"); if(!el || !msg) return;
   const MAP=[
-"  -------------          --------------------  ",
-"  |...........|          |..................|  ",
-"  |....$......|##########+.......d..........|  ",
-"  |...........|         #|..................|  ",
-"  |...........|         #|.........<........|  ",
-"  -------------         #--------------------  ",
-"           ############                        ",
+"  -------------                                   ",
+"  |...........|                                   ",
+"  |....$......+####         --------------------  ",
+"  |...........|   #######   |..................|  ",
+"  ------+------         ####+..................|  ",
+"        #        ######     |..................|  ",
+"        ##########    ######+..........<.......|  ",
+"                            --------------------  ",
   ];
-  const RX0=3,RX1=13,RY0=1,RY1=4;   // left-room interior perimeter (all floor)
-  const PATH=[];
-  for(let x=RX0;x<=RX1;x++) PATH.push([x,RY0]);
-  for(let y=RY0+1;y<=RY1;y++) PATH.push([RX1,y]);
-  for(let x=RX1-1;x>=RX0;x--) PATH.push([x,RY1]);
-  for(let y=RY1-1;y>=RY0+1;y--) PATH.push([RX0,y]);
-  let i=0;
+  const key=([x,y])=>`${x},${y}`;
+  const floor=([x,y])=>MAP[y]?.[x]!==undefined && ".#$+<".includes(MAP[y][x]);
+  const routeMemo=new Map();
+  function route(from,to,diagonal){
+    const memoKey=`${diagonal?1:0}:${key(from)}>${key(to)}`;
+    if(routeMemo.has(memoKey)) return routeMemo.get(memoKey);
+    const steps=diagonal
+      ? [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]
+      : [[1,0],[-1,0],[0,1],[0,-1]]; // grid bugs cannot move diagonally
+    const queue=[from], seen=new Map([[key(from),null]]);
+    for(let n=0;n<queue.length;n++){
+      const here=queue[n];
+      if(key(here)===key(to)) break;
+      for(const [dx,dy] of steps){
+        const next=[here[0]+dx,here[1]+dy], k=key(next);
+        if(floor(next) && !seen.has(k)){ seen.set(k,here); queue.push(next); }
+      }
+    }
+    if(!seen.has(key(to))){ const miss=[from]; routeMemo.set(memoKey,miss); return miss; }
+    const path=[];
+    for(let at=to;at;at=seen.get(key(at))) path.push(at);
+    path.reverse(); routeMemo.set(memoKey,path); return path;
+  }
+  const WAYPOINTS=[
+    [3,1],[7,2],[14,2],[18,2],[18,3],[24,3],[24,4],[28,4],
+    [39,6],[28,6],[22,6],[22,5],[17,5],[17,6],[8,6],[8,4],[3,3],[3,1],
+  ];
+  const HERO_PATH=WAYPOINTS.reduce((all,target,index,points)=>{
+    if(index===0) return [target];
+    return all.concat(route(points[index-1],target,true).slice(1));
+  },[]);
+  HERO_PATH.pop(); // the next modulo frame is the shared start tile: no duplicate, no jump
+  const LOOT_STEP=HERO_PATH.findIndex(([x,y])=>x===7 && y===2);
+  const STAIR_STEP=HERO_PATH.findIndex(([x,y])=>x===39 && y===6);
+  const DEATH_HOLD=10; // 2.6 seconds at the 260 ms animation cadence
+  const DEATHS=[
+    ["killed by a grid bug","while optimizing the harness"],
+    ["killed by a newt","while evolving the evolver"],
+    ["touched a cockatrice","while mutating the mutator"],
+    ["killed by a shopkeeper","while replacing its parent"],
+    ["eaten by a purple worm","while the harness ate itself"],
+    ["slain by a soldier ant","breeding better breeders"],
+    ["zapped by own wand","while scoring its own scorer"],
+    ["crushed by a boulder","while improving the improver"],
+    ["drowned in a moat","one recursion level too deep"],
+    ["starved to death","waiting for next generation"],
+    ["zapped by an angry god","while mutating the objective"],
+    ["burned by a red dragon","while evolving its fitness"],
+    ["poisoned by a dart","while selecting its selector"],
+    ["killed by a mumak","escaping a local optimum"],
+    ["killed by a minotaur","while searching over search"],
+    ["killed by Death","while judging its own judge"],
+    ["fell into lava","promoting its offspring"],
+    ["choked on a ration","while pruning its ancestors"],
+    ["killed by a pony","while harnessing the harness"],
+    ["hit by a falling rock","while bootstrapping itself"],
+    ["killed by a trapper","while rewriting its own loop"],
+    ["killed by a giant eel","while tuning the tuner"],
+    ["killed by a leocrotta","while editing the editor"],
+    ["killed by an owlbear","optimizing optimization"],
+    ["killed by a jackal","while forking its own parent"],
+    ["killed by a gnome","selection selected itself"],
+    ["killed by an elf","recursively self-improving"],
+    ["zapped by a vortex","the loop closed over itself"],
+  ];
+  let heroStep=0, dog=HERO_PATH.at(-3), bugs=[[3,3],[7,3],[11,3]];
+  let hunting=false, huntTicks=0, deathTicks=0, run=42, deathIndex=0;
   function draw(){
-    const [px,py]=PATH[i%PATH.length];
-    el.innerHTML=MAP.map((row,y)=> y!==py
-      ? esc(row)
-      : esc(row.slice(0,px))+'<span class="you">@</span>'+esc(row.slice(px+1))).join("\n");
+    const occupied=new Map();
+    for(const pos of bugs) occupied.set(key(pos),{glyph:"x",cls:"gridbug"});
+    occupied.set(key(dog),{glyph:"d",cls:"pet"});
+    occupied.set(key(HERO_PATH[heroStep]),deathTicks
+      ? {glyph:"%",cls:"corpse"}
+      : {glyph:"@",cls:"you"});
+    if(deathTicks){
+      const [cause,context]=DEATHS[deathIndex];
+      msg.className="yasd";
+      msg.textContent=`YASD #${String(run).padStart(4,"0")}: ${cause}\n${context}`;
+    }else{
+      msg.className="run";
+      msg.textContent=`run #${String(run).padStart(4,"0")}`;
+    }
+    el.innerHTML=MAP.map((row,y)=>[...row].map((ch,x)=>{
+      const actor=occupied.get(`${x},${y}`);
+      return actor ? `<span class="${actor.cls}">${actor.glyph}</span>` : esc(ch);
+    }).join("")).join("\n");
+  }
+  function moveChasers(hero){
+    const blocked=new Set([key(hero)]);
+    const dogNext=route(dog,hero,true)[1];
+    if(dogNext && !blocked.has(key(dogNext))) dog=dogNext;
+    blocked.add(key(dog));
+    bugs=bugs.map(bug=>{
+      const next=route(bug,hero,false)[1];
+      if(next && !blocked.has(key(next))){ blocked.add(key(next)); return next; }
+      blocked.add(key(bug)); return bug;
+    });
+  }
+  function advance(){
+    if(deathTicks){
+      deathTicks--;
+      if(!deathTicks){
+        run++; deathIndex=(deathIndex+11)%DEATHS.length;
+        heroStep=STAIR_STEP; hunting=false; huntTicks=0;
+      }
+    }else if(!hunting){
+      heroStep=(heroStep+1)%HERO_PATH.length;
+      if(heroStep===LOOT_STEP){ hunting=true; huntTicks=0; }
+    }
+    const hero=HERO_PATH[heroStep];
+    moveChasers(hero);
+    if(hunting && !deathTicks){
+      huntTicks++;
+      let caught=bugs.some(([x,y])=>Math.abs(x-hero[0])+Math.abs(y-hero[1])===1);
+      if(!caught && huntTicks>=10){
+        const chase=route(bugs[0],hero,false);
+        bugs[0]=chase[Math.max(0,chase.length-2)];
+        caught=true;
+      }
+      if(caught) deathTicks=DEATH_HOLD;
+    }
+    draw();
   }
   draw();
-  if(!matchMedia("(prefers-reduced-motion: reduce)").matches) setInterval(()=>{ i++; draw(); }, 260);
+  if(!matchMedia("(prefers-reduced-motion: reduce)").matches) setInterval(advance,260);
 })();
 
 /* ===================== references / glossary ===================== */
@@ -766,9 +959,17 @@ const REFS={
   alphaevolve:{t:"AlphaEvolve",d:"A coding agent that discovers algorithmic and scientific constructions by evolving programs &mdash; including novel, provably-correct algorithms that beat the state of the art.",s:[["Novikov et al., 2025",ARX+"2506.13131"]]},
   arcagi:{t:"ARC-AGI",d:"Abstract-reasoning puzzles built to resist memorization; LLMs stalled on them for years. The 2025 jump came from agent harnesses and program-synthesis &quot;refinement&quot; loops &mdash; the same evolve-a-program idea.",s:[["ARC Prize 2025 results","https://arcprize.org/blog/arc-prize-2025-results-analysis"]]},
   rockt:{t:"Tim Rocktaschel (@_rockt)",d:"Co-author of the NetHack Learning Environment. He marks the anniversary each year: &quot;AI still can't learn to play NetHack&quot; &mdash; &quot;despite tremendous progress in AI... this challenge is still very far from being solved.&quot;",s:[["the tweet","https://x.com/_rockt/status/1805245137250816408"]]},
-  grandchallenge:{t:"A grand challenge for AI",d:"NetHack's own researchers proposed it as &quot;the most accessible grand challenge&quot; for AI: &quot;it won't solve AI, but it will unlock pathways towards better AI.&quot; Years on, no method has come close.",s:[["Grefenstette et al., via TechCrunch","https://techcrunch.com/2021/06/09/decades-old-ascii-adventure-nethack-may-hint-at-the-future-of-ai/"],["The NetHack Learning Environment",ARX+"2006.13760"]]},
+  grandchallenge:{t:"A grand challenge for AI",d:"The researchers behind NLE proposed NetHack as &quot;the most accessible grand challenge&quot; for AI: &quot;it won't solve AI, but it will unlock pathways towards better AI.&quot; Years on, no method has come close.",s:[["Grefenstette et al., via TechCrunch","https://techcrunch.com/2021/06/09/decades-old-ascii-adventure-nethack-may-hint-at-the-future-of-ai/"],["The NetHack Learning Environment",ARX+"2006.13760"]]},
   imagenet:{t:"ImageNet / ILSVRC",d:"The annual benchmark whose ratchet drove image-recognition error from <b>28% to ~2%</b> &mdash; a standing challenge, not a one-shot contest.",s:[["Russakovsky et al., 2015",ARX+"1409.0575"]]},
   fishtest:{t:"Fishtest",d:"Stockfish's volunteer distributed-testing framework &mdash; the model for coordinating many machines around one trusted evaluation.",s:[["official-stockfish/fishtest","https://github.com/official-stockfish/fishtest"]]},
+  aspire:{t:"ASPIRE",d:"A self-improving robotics system that diagnoses failed rollouts, rewrites code-as-policy programs, validates the repairs, and saves successful behaviors as reusable skills for new long-horizon tasks.",s:[["NVIDIA GEAR","https://research.nvidia.com/labs/gear/aspire/"]]},
+  codepolicies:{t:"Code as Policies",d:"Robot policies expressed as executable programs: language models compose perception and control APIs, feedback loops, and recursively defined helper functions into embodied behavior.",s:[["Liang et al., 2022","https://code-as-policies.github.io/"]]},
+  autoascend:{t:"AutoAscend",d:"The hand-engineered symbolic winner of the NeurIPS 2021 NetHack Challenge. NetHackers uses it as the reference floor and cold-start seed, not as a solved agent.",s:[["AutoAscend source","https://github.com/maciej-sypetkowski/autoascend"],["Challenge report","https://nethackchallenge.com/report.html"]]},
+  recursiveco:{t:"Recursive",d:"Richard Socher's frontier AI startup, launched in 2026 with a stated mission to build safe, open-ended, recursively self-improving AI for automated knowledge discovery.",s:[["Recursive","https://www.recursive.com/"]]},
+  ricursive:{t:"Ricursive Intelligence",d:"A frontier AI lab building a self-improvement loop between AI chip design and the AI systems that design those chips.",s:[["Ricursive Intelligence","https://www.ricursive.com/"]]},
+  discoveryloop:{t:"Discovery Loop",d:"A research startup automating complete experimental loops: propose, run, evaluate, and learn across thousands of parallel experiments, beginning with machine-learning research and its own technology stack.",s:[["Discovery Loop","https://www.discoveryloop.com/"]]},
+  aide2:{t:"AIDE²",d:"Weco AI's experiment in nested improvement: an outer loop rewrote the research-agent harness that ran the inner problem-solving loop.",s:[["Weco AI","https://www.weco.ai/blog/first-evidence-of-recursive-self-improvement"]]},
+  dgm:{t:"Darwin Gödel Machine",d:"Sakana AI's open-ended system maintains a growing lineage of coding agents that modify their own code and are selected by empirical performance.",s:[["Sakana AI","https://sakana.ai/dgm/"]]},
   /* --- NetHack jargon --- */
   ascension:{t:"Ascension",d:"Winning NetHack: carry the Amulet of Yendor up and offer it on the high altar of the Astral Plane. Progression = 1.0.",s:[["NetHack Wiki",WIKI+"Ascension"]]},
   amulet:{t:"Amulet of Yendor",d:"The artifact you descend ~50 levels to retrieve, then carry back up and out to win.",s:[["NetHack Wiki",WIKI+"Amulet_of_Yendor"]]},
