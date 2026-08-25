@@ -54,6 +54,22 @@ CREATE TABLE IF NOT EXISTS atoms (
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(solution_digest, objective_digest, seed)
 );
+CREATE TABLE IF NOT EXISTS baseline_atoms (
+    solution_digest TEXT NOT NULL,
+    objective_digest TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    tier TEXT NOT NULL,
+    identity TEXT NOT NULL,
+    seed INTEGER NOT NULL,
+    progression REAL NOT NULL,
+    milestone TEXT,
+    ascended INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    turns INTEGER NOT NULL,
+    steps INTEGER NOT NULL,
+    evaluator_image TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 CREATE TABLE IF NOT EXISTS lineage (
     child_digest TEXT NOT NULL REFERENCES solutions(digest),
     parent_digest TEXT NOT NULL,         -- may be an external/base solution: NO FK
@@ -254,6 +270,41 @@ class Store:
             raise ValueError(f"unknown iter_atoms filter key(s): {unknown}")
 
         sql = f"SELECT {_SELECT_ATOM_COLUMNS_SQL} FROM atoms"
+        params = list(filters.values())
+        if filters:
+            sql += " WHERE " + " AND ".join(f"{column} = ?" for column in filters)
+
+        rows = self._conn.execute(sql, params).fetchall()
+        atoms = []
+        for row in rows:
+            values = dict(zip(_ATOM_COLUMNS, row, strict=True))
+            values["ascended"] = bool(values["ascended"])
+            atoms.append(Atom.from_dict(values))
+        return atoms
+
+    def insert_baseline_atoms(self, atoms: list[Atom]) -> int:
+        """Insert AutoAscend's computed baseline atoms into the isolated
+        ``baseline_atoms`` table (no dedup, no FKs -- AutoAscend owns no
+        ``solutions`` row). Returns the number of rows inserted."""
+        cols = ", ".join(_ATOM_COLUMNS)
+        placeholders = ", ".join("?" for _ in _ATOM_COLUMNS)
+        with self._conn:
+            for atom in atoms:
+                values = atom.to_dict()
+                self._conn.execute(
+                    f"INSERT INTO baseline_atoms ({cols}) VALUES ({placeholders})",
+                    tuple(values[column] for column in _ATOM_COLUMNS),
+                )
+        return len(atoms)
+
+    def iter_baseline_atoms(self, **filters: Any) -> list[Atom]:
+        """Return baseline atoms matching every ``column=value`` filter
+        (AND'ed). Same filter whitelist as ``iter_atoms``."""
+        unknown = sorted(set(filters) - _ITER_ATOMS_FILTER_KEYS)
+        if unknown:
+            raise ValueError(f"unknown iter_baseline_atoms filter key(s): {unknown}")
+
+        sql = f"SELECT {_SELECT_ATOM_COLUMNS_SQL} FROM baseline_atoms"
         params = list(filters.values())
         if filters:
             sql += " WHERE " + " AND ".join(f"{column} = ?" for column in filters)
