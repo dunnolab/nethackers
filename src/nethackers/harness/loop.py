@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import threading
 import time
+from collections import Counter
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -44,6 +45,13 @@ class IterationResult:
     digest: str | None = None
     stopped_reason: str | None = None
     regressions: list[tuple[str, float]] | None = None
+    causes: dict[str, int] | None = None
+
+
+def _causes(results) -> dict[str, int]:
+    """Count genuine causes of death across an evaluation's episodes (mirrors
+    brief.py's end_status tally, but over the verbatim death string)."""
+    return dict(Counter(r.cause_of_death for r in results if r.cause_of_death))
 
 
 def run_loop(
@@ -155,7 +163,8 @@ def run_loop(
     _emit("cold-start", 0)
     on_iteration(0, IterationResult(False, "baseline",
                                     dev_fitness=elite.dev_fitness,
-                                    validation_fitness=elite.validation_fitness))
+                                    validation_fitness=elite.validation_fitness,
+                                    causes=_causes(elite.dev_evidence.results)))
 
     results: list[IterationResult] = []
     consecutive_errors = 0
@@ -263,7 +272,8 @@ def run_loop(
                 report(f"{tag} · ✗ no dev gain: {dev_fit:.3f} ≤ {elite.dev_fitness:.3f}")
                 _record(k + 1, IterationResult(False, "no-dev-gain", dev_fitness=dev_fit,
                                                tokens=op.total, usage=op.usage,
-                                               stopped_reason=op.stopped_reason))
+                                               stopped_reason=op.stopped_reason,
+                                               causes=_causes(dev_ev.results)))
                 continue
 
             _emit("evaluating-held", k + 1, tokens=op.total)
@@ -280,7 +290,8 @@ def run_loop(
                 _record(k + 1, IterationResult(False, "no-validation-gain",
                                                dev_fitness=dev_fit, validation_fitness=val_fit,
                                                tokens=op.total, usage=op.usage,
-                                               stopped_reason=op.stopped_reason))
+                                               stopped_reason=op.stopped_reason,
+                                               causes=_causes(dev_ev.results)))
                 continue
 
             digest = tree_store.save(worktree)
@@ -328,7 +339,8 @@ def run_loop(
                                            validation_fitness=val_fit, tokens=op.total,
                                            usage=op.usage, digest=digest,
                                            stopped_reason=op.stopped_reason,
-                                           regressions=regs or None))
+                                           regressions=regs or None,
+                                           causes=_causes(dev_ev.results)))
         except Exception as e:
             _emit("error", k + 1, detail=str(e))
             report(f"{tag} · ✗ error: {e}")
