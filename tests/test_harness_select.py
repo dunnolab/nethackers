@@ -278,3 +278,20 @@ def test_influence_pool_unions_specialists(tmp_path):
     pool = influence_pool(hub, ("wiz-elf-cha-mal", "wiz-orc-cha-mal"), "dev")
     digests = {e["solution_digest"] for e in pool}
     assert digests == {"sha256:A", "sha256:B"}   # UNION (coverage-gated would be empty)
+
+
+def test_influence_pool_keeps_one_entry_per_column_for_a_generalist(tmp_path):
+    # A program that is a trusted elite in BOTH queried identities appears
+    # TWICE -- once per identity-column, each carrying that column's own
+    # score -- NOT deduped to one entry (unlike _coverage_gated_entries's
+    # intersection collapse). This is the emergent coverage-weighting the
+    # brief calls for: a full-S generalist shows up in many columns, which
+    # a future "dedupe cleanup" (natural-looking since the sibling function
+    # dedupes) must not silently break.
+    hub = _HubByIdentity({"wiz-elf-cha-mal": [_entry("sha256:G", 0.6)],
+                          "wiz-orc-cha-mal": [_entry("sha256:G", 0.8)]})
+    pool = influence_pool(hub, ("wiz-elf-cha-mal", "wiz-orc-cha-mal"), "dev")
+    entries = [e for e in pool if e["solution_digest"] == "sha256:G"]
+    assert len(entries) == 2                              # once per column, not deduped
+    by_identity = {e["identity"]: e["score"] for e in entries}
+    assert by_identity == {"wiz-elf-cha-mal": 0.6, "wiz-orc-cha-mal": 0.8}
