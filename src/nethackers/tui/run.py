@@ -71,8 +71,12 @@ class Run:
             self.sel_tag = tag
         elif phase in ("evaluating-dev", "evaluating-held") and prev != phase:
             self.eval_step = None
+        # The single-lineage chain is only meaningful at islands==1; with K>1
+        # the round-robin parent flips between islands each iteration, so
+        # appending would splice unrelated lineages into one fake chain. The
+        # islands panel replaces the lineage strip there.
         pd = state.get("parent_digest")
-        if pd and (not self.chain or self.chain[-1] != pd):
+        if state.get("islands", 1) == 1 and pd and (not self.chain or self.chain[-1] != pd):
             self.chain.append(pd)  # seed -> elite1 -> elite2 ...
         if phase == "registered":
             reason = "registered" + (f" {state['detail']}" if state.get("detail") else "")

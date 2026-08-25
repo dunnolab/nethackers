@@ -952,6 +952,44 @@ def test_single_identity_win_uses_register_win_not_slices(tmp_path, monkeypatch)
     assert calls == ["win"]   # register_win, never slices, for a single identity
 
 
+def test_emit_carries_per_island_champions_when_islands_gt_1(tmp_path):
+    """islands>1: the on_state payload carries a per-island champion snapshot
+    (K entries + the active index + islands count) so the monitor can show all
+    islands, not just the round-robin-active one."""
+    states: list[dict] = []
+    run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_RecordingOperator(),
+        hub=_FakeHub(), image="img:dev", token="t", owner="o",
+        islands=3, iterations=3, validation_n=3,
+        now_fn=lambda: "2026-08-25T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.2), workdir=tmp_path / "work",
+        on_state=states.append)
+    carrying = [s for s in states if s.get("island_champions")]
+    assert carrying, "no island_champions in any on_state payload"
+    champs = carrying[-1]["island_champions"]
+    assert len(champs) == 3
+    assert all({"digest", "dev", "held"} <= set(c) for c in champs)
+    assert carrying[-1]["islands"] == 3
+    assert 0 <= carrying[-1]["active_island"] < 3
+
+
+def test_emit_omits_per_island_champions_at_one_island(tmp_path):
+    """islands==1 (default): no per-island snapshot -> the monitor keeps its
+    plain single-lineage view unchanged."""
+    states: list[dict] = []
+    run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_RecordingOperator(),
+        hub=_FakeHub(), image="img:dev", token="t", owner="o",
+        iterations=2, validation_n=3,
+        now_fn=lambda: "2026-08-25T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.2), workdir=tmp_path / "work",
+        on_state=states.append)
+    assert states and all("island_champions" not in s for s in states)
+    assert all(s.get("islands") == 1 for s in states)
+
+
 def test_islands_below_one_raises(tmp_path):
     with pytest.raises(ValueError, match="islands must be >= 1"):
         run_loop(

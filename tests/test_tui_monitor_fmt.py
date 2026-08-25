@@ -10,6 +10,7 @@ from nethackers.tui.status import (
     _bar,
     candidate_line,
     eval_line,
+    islands_panel,
     iterations_ledger,
     lineage_strip,
     parent_panel,
@@ -46,7 +47,7 @@ def test_bar_clamps_out_of_range_fractions():
 
 def test_parent_panel():
     s = parent_panel(_state())
-    assert s == "PARENT  #7a3f · gen 1 · dev 0.30  held 0.28"
+    assert s == "PARENT  #7a3f11 · gen 1 · dev 0.30  held 0.28"
     assert "#7a3f" in s and "gen 1" in s and "dev 0.30" in s and "held 0.28" in s
 
 
@@ -162,3 +163,23 @@ def test_scorecard_empty_candidate_means_no_crash_no_delta():
     text = scorecard({"a": 0.5, "b": 0.3}, {}, ["a", "b"])
     assert isinstance(text, str)
     assert "Δ" not in text  # no Delta
+
+
+def test_islands_panel_lists_each_champion_marks_active_and_best():
+    champs = [
+        {"digest": "sha256:aaaa1111", "dev": 0.12, "held": 0.14},
+        {"digest": "sha256:bbbb2222", "dev": 0.20, "held": 0.18},   # best (dev 0.20)
+        {"digest": "sha256:cccc3333", "dev": 0.10, "held": 0.11},
+    ]
+    lines = islands_panel(champs, active=0, reset_period=8).splitlines()
+    assert lines[0] == "ISLANDS 3 · reset every 8"
+    assert lines[1].startswith("► 0") and "aaaa11" in lines[1]   # active + distinguishing id
+    assert not lines[1].rstrip().endswith("★")                    # island0 isn't best
+    assert lines[2].startswith("  1") and lines[2].rstrip().endswith("★")  # island1 is best
+    assert lines[3].startswith("  2")
+
+
+def test_islands_panel_empty_and_no_reset_clause():
+    assert islands_panel([], active=0, reset_period=None) == ""
+    champs = [{"digest": "sha256:aa", "dev": 0.1, "held": 0.1}]
+    assert "reset every" not in islands_panel(champs, active=0, reset_period=None)

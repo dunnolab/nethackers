@@ -174,7 +174,20 @@ def run_loop(
             # not wins -- so the monitor's `gen` visibly moves even before a win.
             "parent_digest": active.digest, "parent_dev": active.dev_fitness,
             "parent_held": active.validation_fitness, "generation": iteration,
+            "islands": islands,
         }
+        if islands > 1:
+            # Per-island snapshot so the monitor can show all K champions, not
+            # just the round-robin-active one (which flips every iteration and
+            # made a multi-island run look like a single flat parent). Only
+            # emitted for islands>1; a single-island run keeps the plain
+            # single-lineage view unchanged.
+            payload["active_island"] = idx
+            payload["reset_period"] = reset_period
+            payload["island_champions"] = [
+                {"digest": s.digest, "dev": s.dev_fitness, "held": s.validation_fitness}
+                for s in island_states
+            ]
         if identities:
             # Live from the ACTIVE island's champion (island_states[idx], a
             # closure var whose slot is reassigned on a win) -- never
