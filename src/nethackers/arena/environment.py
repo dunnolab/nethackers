@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from nethackers.arena.progress import NetHackProgress
+from nethackers.arena.xlogfile import read_death_cause
 from nethackers.contracts.models import TrajectorySpec
 
 PUBLIC_OBSERVATION_KEYS = (
@@ -40,6 +41,7 @@ class EnvironmentMetrics:
     ascended: bool
     end_status: str | None
     milestone: str | None
+    cause_of_death: str | None = None
 
 
 class NLEEnvironment:
@@ -116,6 +118,16 @@ class NLEEnvironment:
 
     def _update_metrics(self, observation: Mapping[str, Any], info: Mapping[str, Any]) -> None:
         blstats = observation["blstats"]
+        ascended = self._metrics.ascended or bool(info.get("is_ascended", False))
+        # The xlogfile `death=` line is written by NetHack during the terminal
+        # step, so read it once, only when end_status leaves RUNNING (0), and
+        # carry it forward on any later call. _vardir is a private NLE attr; the
+        # read degrades to None if it (or the file) is unavailable.
+        cause = self._metrics.cause_of_death
+        end_status = info.get("end_status")
+        if cause is None and end_status is not None and int(end_status) != 0:
+            vardir = getattr(getattr(self._env, "nethack", None), "_vardir", None)
+            cause = read_death_cause(vardir, is_ascended=ascended)
         self._metrics = EnvironmentMetrics(
             progress=self._progress.update(observation, info),
             turns=max(self._metrics.turns, int(blstats[self._nethack.NLE_BL_TIME])),
@@ -123,12 +135,13 @@ class NLEEnvironment:
                 self._metrics.max_depth,
                 int(blstats[self._nethack.NLE_BL_DLEVEL]),
             ),
-            ascended=self._metrics.ascended or bool(info.get("is_ascended", False)),
+            ascended=ascended,
             end_status=str(info["end_status"]) if info.get("end_status") is not None else None,
             # self._progress.update(...) above (bound to `progress=`) records the
             # achievement as a side effect before this line runs -- kwargs are
             # evaluated left-to-right -- so highest_achievement is already current.
             milestone=self._progress.highest_achievement,
+            cause_of_death=cause,
         )
 
     def metrics(self) -> EnvironmentMetrics:
