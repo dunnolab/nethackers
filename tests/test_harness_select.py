@@ -2,7 +2,7 @@
 import random
 from pathlib import Path
 
-from nethackers.harness.select import select_parent, top_trusted_elite
+from nethackers.harness.select import influence_pool, select_parent, top_trusted_elite
 from nethackers.harness.store import LocalTreeStore
 
 
@@ -268,3 +268,13 @@ def test_top_trusted_elite_set_empty_intersection_returns_none(tmp_path):
     store = LocalTreeStore(tmp_path / "store")
     assert top_trusted_elite(hub, "wiz-elf-cha-mal,wiz-orc-cha-mal", store, "dev") is None
     assert hub.calls == ["wiz-elf-cha-mal", "wiz-orc-cha-mal"]
+
+
+# -- influence_pool: union (not intersection) over identities (Task C1) -----
+
+def test_influence_pool_unions_specialists(tmp_path):
+    hub = _HubByIdentity({"wiz-elf-cha-mal": [_entry("sha256:A", 0.6)],
+                          "wiz-orc-cha-mal": [_entry("sha256:B", 0.4)]})
+    pool = influence_pool(hub, ("wiz-elf-cha-mal", "wiz-orc-cha-mal"), "dev")
+    digests = {e["solution_digest"] for e in pool}
+    assert digests == {"sha256:A", "sha256:B"}   # UNION (coverage-gated would be empty)

@@ -73,6 +73,30 @@ def _coverage_gated_entries(hub, identities: tuple[str, ...], owner: str) -> lis
     return out
 
 
+def influence_pool(hub, identities: tuple[str, ...], owner: str) -> list[dict]:
+    """Trusted elites from the UNION of every member identity's elite pool --
+    the counterpart to ``_coverage_gated_entries``'s intersection, feeding
+    coverage-aware influence sampling (a later brief) rather than the elites
+    leaderboard. A program appears once per identity-column where it is a
+    trusted elite, carrying that column's score; each entry is tagged with
+    its source ``identity`` (so a later brief can say "strong at X").
+    Coverage-weighting is emergent: a full-S generalist shows up in every
+    column, a specialist in just its own. Any hub error on a member -> that
+    member contributes nothing (mirrors ``_coverage_gated_entries``); never
+    raises."""
+    out: list[dict] = []
+    for ident in sorted(identities):
+        try:
+            entries = [e for e in hub.elites(ident) if _trusted(e, owner)]
+        except Exception:
+            entries = []
+        for e in entries:
+            tagged = dict(e)
+            tagged["identity"] = ident
+            out.append(tagged)
+    return out
+
+
 def _sample(entries: list[dict], k: int, temperature: float,
             rng: random.Random) -> dict:
     top = sorted(entries, key=lambda e: e["score"], reverse=True)[:max(1, k)]
