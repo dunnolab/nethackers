@@ -24,8 +24,9 @@ def test_prepare_evolve_writes_config_and_drives_run_loop(tmp_path, monkeypatch)
     assert results == ["res"]
     assert captured["objective"] == "wiz-elf-cha-mal"
     assert captured["iterations"] == 2
-    assert captured["islands"] == 1 and captured["reset_period"] is None  # defaults
-    assert captured["validation_n"] == 15  # default
+    # islands/reset_period/validation_n are retired -- run_loop is never handed
+    # any of them now (MAP-Elites has no island search or validation gate).
+    assert "islands" not in captured and "validation_n" not in captured
     assert captured["owner"] == "castiel" and captured["token"] == "tok"
     assert (Path(tmp_path) / "runs" / "latest").resolve().name == plan.rid
 
@@ -80,19 +81,14 @@ def test_prepare_evolve_no_token_source_without_stored_creds(tmp_path, monkeypat
     assert captured["token"] == "dev-token"
 
 
-def test_prepare_evolve_shares_one_hub_client_between_select_and_run_loop(tmp_path, monkeypatch):
-    # SELECT and registration should go through the SAME client -- not two
-    # independently-constructed HubClients -- so there's exactly one place
-    # auth (or lack of it) is decided for the whole run.
+def test_prepare_evolve_builds_one_authed_hub_client_for_the_run(tmp_path, monkeypatch):
+    # There's a single HubClient for the whole run (registration + the loop's
+    # own cell-seeding reads go through it), built once via _authed_hub. The
+    # pre-loop SELECT is gone, so the loop seeds cells from this same hub.
+    from nethackers.hubclient.client import HubClient
     monkeypatch.setattr(launch._credentials, "load", lambda: None)
     seed = tmp_path / "seed"
     seed.mkdir()
-    seen = {}
-
-    def fake_select_parent(hub, objective, store, seed_tree, *, owner, k, temperature, rng):
-        seen["select_hub"] = hub
-        return seed_tree, "sha256:elite"
-    monkeypatch.setattr(launch, "select_parent", fake_select_parent, raising=False)
     captured = {}
     monkeypatch.setattr(launch, "run_loop", lambda **kw: captured.update(kw) or [])
     monkeypatch.setattr(launch, "_now", lambda: "2026-08-26T00:00:00+00:00")
@@ -101,13 +97,13 @@ def test_prepare_evolve_shares_one_hub_client_between_select_and_run_loop(tmp_pa
 
     prepare_evolve(p, git_sha="x").run(_run_kwargs())
 
-    assert seen["select_hub"] is captured["hub"]
+    assert isinstance(captured["hub"], HubClient)
 
 
-def test_prepare_evolve_iterations_are_per_island(tmp_path, monkeypatch):
-    """iterations is per-island: run_loop's total cap, EvolveConfig, and
-    run.json all carry iterations × islands; iterations_per_island keeps the
-    input value."""
+def test_prepare_evolve_iterations_pass_through_unchanged(tmp_path, monkeypatch):
+    """islands is retired: iterations is the literal round count run_loop gets,
+    EvolveConfig carries, and run.json records -- no ×islands multiplication and
+    no iterations_per_island key."""
     captured = {}
     monkeypatch.setattr(launch, "run_loop", lambda **kw: captured.update(kw) or [])
     monkeypatch.setattr(launch, "_now", lambda: "2026-08-25T00:00:00+00:00")
@@ -115,12 +111,12 @@ def test_prepare_evolve_iterations_are_per_island(tmp_path, monkeypatch):
                      iterations=5, islands=3, from_seed=True,
                      workdir=str(tmp_path), hub="http://h", token="t", owner="o")
     plan = prepare_evolve(p, git_sha="x")
-    assert plan.cfg.iterations == 15   # 5 per island × 3 islands
+    assert plan.cfg.iterations == 5   # not 15 -- islands (still an accepted field) is ignored
     plan.run({"on_state": lambda s: None,
               "on_episode": lambda label, ep: None, "on_log": lambda tag, line: None})
-    assert captured["iterations"] == 15 and captured["islands"] == 3
+    assert captured["iterations"] == 5 and "islands" not in captured
     cfg = json.loads((plan.run_dir / "run.json").read_text())
-    assert cfg["iterations"] == 15 and cfg["iterations_per_island"] == 5
+    assert cfg["iterations"] == 5 and "iterations_per_island" not in cfg
 
 
 def test_harness_version_is_v1():

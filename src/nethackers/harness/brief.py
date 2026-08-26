@@ -48,15 +48,31 @@ def _set_block(identities: list[str], per_identity: dict[str, float] | None) -> 
     return "\n\n".join(lines)
 
 
+def _attempts_block(attempts: list[str] | None) -> str:
+    """A run-global anti-repeat list: one line per earlier attempt this run
+    (its id + the change it made + its outcome). Surfaced verbatim so the
+    mutator can avoid re-deriving a mutation that already failed. Empty/absent
+    -> no block at all (the first iteration has no history)."""
+    if not attempts:
+        return ""
+    lines = "\n".join(f"- {a}" for a in attempts)
+    return (
+        "**Earlier attempts this run — don't just repeat these.** These changes "
+        "were already tried this run; build on them or go elsewhere, don't rediscover "
+        f"a dead end:\n{lines}"
+    )
+
+
 def build_brief(
     objective_name: str,
     character: str,
-    parent_evidence: Evidence,
+    parent_evidence: Evidence | None,
     *,
     training_seeds: list[int] | None = None,
     wiki_path: str | None = None,
     identities: list[str] | None = None,
     per_identity: dict[str, float] | None = None,
+    attempts: list[str] | None = None,
 ) -> str:
     # parent_evidence is kept for caller/signature stability but is no longer
     # distilled into text -- its score/outcome detail lives in
@@ -87,4 +103,9 @@ def build_brief(
         f"{have}"
     )
 
-    return f"{NETHACK_PREAMBLE}\n\n{body}\n\n{tail}"
+    attempts_block = _attempts_block(attempts)
+    parts = [NETHACK_PREAMBLE, body]
+    if attempts_block:
+        parts.append(attempts_block)
+    parts.append(tail)
+    return "\n\n".join(parts)

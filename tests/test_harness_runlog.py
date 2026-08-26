@@ -37,16 +37,16 @@ def test_write_run_config_and_append_metric(tmp_path):
 
 
 def test_metric_record_maps_outcome():
-    reg = IterationResult(True, "registered", dev_fitness=0.2, validation_fitness=0.1,
+    reg = IterationResult(True, "registered", dev_fitness=0.2, improved=["wiz-elf-cha-mal"],
                           tokens=5, digest="sha256:abc", stopped_reason="completed")
     assert metric_record(3, reg) == {
         "iteration": 3, "outcome": "registered", "reason": "registered",
-        "dev_fitness": 0.2, "validation_fitness": 0.1, "tokens": 5, "usage": None,
+        "dev_fitness": 0.2, "improved": ["wiz-elf-cha-mal"], "tokens": 5, "usage": None,
         "stopped_reason": "completed", "child_digest": "sha256:abc", "causes": None,
         "hub_reason": None}
-    base = IterationResult(False, "baseline", dev_fitness=0.05, validation_fitness=0.05)
+    base = IterationResult(False, "baseline", dev_fitness=0.05)
     assert metric_record(0, base)["outcome"] == "baseline"
-    assert metric_record(2, IterationResult(False, "no-dev-gain"))["outcome"] == "rejected"
+    assert metric_record(2, IterationResult(False, "no-cell-improved"))["outcome"] == "rejected"
     assert metric_record(4, IterationResult(False, "error: boom"))["outcome"] == "error"
     assert metric_record(1, IterationResult(False, "operator-error:1"))["outcome"] == "error"
 
@@ -55,7 +55,7 @@ def test_metric_record_marks_local_only_outcome_when_hub_reason_set():
     # A win that never reached the hub (auth failure, publish failure, hub
     # error) must be visibly distinct from an ordinary hub-registered win in
     # metrics.jsonl -- "registered" would silently overstate what happened.
-    r = IterationResult(True, "registered", dev_fitness=0.5, validation_fitness=0.4,
+    r = IterationResult(True, "registered", dev_fitness=0.5, improved=["val-dwa-law-fem"],
                         digest="sha256:abc",
                         hub_reason="local-only: not published (no gh publisher / dev owner)")
     rec = metric_record(5, r)

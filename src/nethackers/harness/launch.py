@@ -16,7 +16,6 @@ from typing import Any
 from nethackers.harness import runlog
 from nethackers.harness.container_operator import ContainerOperator
 from nethackers.harness.loop import run_loop
-from nethackers.harness.select import select_parent
 from nethackers.harness.store import LocalTreeStore
 from nethackers.harness.version import HARNESS_VERSION
 from nethackers.hubclient import credentials as _credentials
@@ -56,9 +55,14 @@ def _default_workdir() -> str:
 @dataclass
 class EvolveParams:
     objective: str
-    seed: str  # resolved parent tree (CLI SELECTs it; the TUI form passes a seed root)
+    seed: str  # cold-start seed root (the MAP-Elites loop seeds cells from the hub itself)
     operator: str = "claude"
     iterations: int = 1
+    # islands/reset_period/validation_n/select_k/select_temp are retained as
+    # accepted-but-ignored fields so the existing CLI flags + in-app form keep
+    # constructing EvolveParams unchanged; the MAP-Elites loop no longer uses
+    # any of them (island search, the validation gate, and the pre-loop SELECT
+    # are all gone). The TUI form cleanup that drops the fields is a later task.
     validation_n: int = 15
     islands: int = 1
     reset_period: int | None = None
@@ -145,35 +149,21 @@ def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
     # `_authed_hub`.
     hub = _authed_hub(params.hub)
 
-    # SELECT the parent: the objective's top *trusted* hub elite (so evolution
-    # compounds), unless from_seed forces a deliberate cold start. rng is
-    # seeded from the run id so a select_k>1 parent choice is reproducible.
-    if params.from_seed:
-        parent_tree, parent_digest = Path(params.seed), None
-    else:
-        parent_tree, parent_digest = select_parent(
-            hub, params.objective, store, Path(params.seed),
-            owner=params.owner, k=params.select_k, temperature=params.select_temp,
-            rng=random.Random(rid))
-
-    # `iterations` is PER ISLAND (the intuitive knob): each island gets this
-    # many round-robin mutation rounds, so the loop's total round count -- and
-    # everything that counts rounds (run_loop's cap, the "iter X/N" progress,
-    # the run list) -- is iterations x islands. islands=1 leaves it unchanged.
-    total_iterations = params.iterations * params.islands
+    # No pre-loop SELECT: the MAP-Elites loop seeds every cell from the hub's
+    # per-identity elites itself (harness.loop cold start), so launch just
+    # hands the cold-start seed straight through. --from-seed additionally
+    # tells the loop to ignore the hub for that cell seeding.
+    parent_tree = Path(params.seed)
 
     runlog.write_run_config(run_dir, {
         "run_id": rid, "created_at": started.isoformat(),
         "harness_version": HARNESS_VERSION,
         "git_sha": git_sha if git_sha is not None else _git_sha(),
         "objective": params.objective, "seed": str(params.seed), "operator": params.operator,
-        "iterations": total_iterations, "iterations_per_island": params.iterations,
-        "validation_n": params.validation_n,
+        "iterations": params.iterations,
         "max_parallel_evals": params.max_parallel_evals, "image": params.image,
         "mutator_image": params.mutator_image,
-        "parent": parent_digest or "seed", "select_k": params.select_k,
-        "select_temp": params.select_temp,
-        "islands": params.islands, "reset_period": params.reset_period,
+        "parent": "seed",
         "model": params.model, "effort": params.effort,
     })
     _point_latest(runs_dir, rid)
@@ -184,7 +174,7 @@ def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
         harness=params.operator, image=params.mutator_image,
         model=params.model, effort=params.effort, run_id=rid)
     cfg = EvolveConfig(objective=params.objective, backend=params.operator,
-                       iterations=total_iterations, model=params.model,
+                       iterations=params.iterations, model=params.model,
                        effort=params.effort)
 
     def run(callbacks: dict, report: Callable[[str], None] = lambda _m: None) -> list:
@@ -195,10 +185,8 @@ def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
             objective=params.objective, seed_tree=parent_tree,
             tree_store=store, operator=operator,
             hub=hub, image=params.image, token=params.token,
-            owner=params.owner, iterations=total_iterations,
-            validation_n=params.validation_n,
-            islands=params.islands, reset_period=params.reset_period,
-            from_seed=params.from_seed,
+            owner=params.owner, iterations=params.iterations,
+            from_seed=params.from_seed, rng=random.Random(rid),
             max_parallel_evals=params.max_parallel_evals, stop=callbacks.get("stop"),
             now_fn=_now, report=report, on_episode=callbacks["on_episode"],
             on_state=callbacks["on_state"], on_log=_on_log, workdir=run_dir / "work",

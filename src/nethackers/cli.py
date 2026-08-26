@@ -299,16 +299,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     evolve.add_argument(
         "--from-seed", action="store_true",
-        help="Ignore the hub; cold-start from --seed.",
+        help="Ignore the hub; cold-start every cell from --seed.",
     )
-    evolve.add_argument(
-        "--islands", type=int, default=1,
-        help="Parallel local populations to evolve; each keeps its own champion "
-             "and rejected-attempt history for diversity (default: %(default)s).")
-    evolve.add_argument(
-        "--reset-period", type=int, default=None,
-        help="Every N iterations, kill the bottom-half islands and reseed them from "
-             "surviving champions (default: 4×islands; ignored when --islands 1).")
     evolve.add_argument("--operator", choices=["codex", "claude"], default="claude")
     evolve.add_argument(
         "--model", default=None,
@@ -328,8 +320,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     evolve.add_argument(
         "--iterations", type=int, default=1,
-        help="Improvement rounds PER ISLAND; total rounds run = iterations × "
-             "islands (default: %(default)s).")
+        help="Improvement rounds to run: each picks a random cell and mutates "
+             "its elite (default: %(default)s).")
     evolve.add_argument("--validation-n", type=int, default=15)
     evolve.add_argument(
         "--max-parallel-evals", type=int, default=8,
@@ -530,16 +522,6 @@ def _run(argv: list[str] | None) -> int:
             err.print(_unknown_objective(args.objective))   # "unknown objective 'X'. Use <forms>"
             return 2
 
-        # Validate island knobs before any hub SELECT / run-dir / slow sandbox
-        # build -- these become ZeroDivisionError (idx = k % islands) or a broken
-        # reset cadence deep in run_loop otherwise.
-        if args.islands < 1:
-            err.print("[red]--islands must be >= 1[/red]")
-            return 2
-        if args.reset_period is not None and args.reset_period < 1:
-            err.print("[red]--reset-period must be >= 1[/red]")
-            return 2
-
         # The mutator ALWAYS runs sandboxed -- there is no host-execution path.
         # Fail fast, before any hub SELECT call / run-dir creation, rather than a
         # mid-loop crash. The same preflight backs the in-app form (evolve_form).
@@ -560,12 +542,12 @@ def _run(argv: list[str] | None) -> int:
             err.print("[green]✓ sandbox ready[/]")
 
         _creds = _load_creds()
-        # SELECT (compounding from the hub's top trusted elite) + run.json +
-        # run wiring all live in prepare_evolve, shared with the in-app form.
+        # run.json + run wiring live in prepare_evolve, shared with the in-app
+        # form. The MAP-Elites loop seeds its cells from the hub itself, so
+        # there's no pre-loop SELECT here anymore.
         params = EvolveParams(
             objective=args.objective, seed=str(args.seed), operator=args.operator,
             iterations=args.iterations, validation_n=args.validation_n,
-            islands=args.islands, reset_period=args.reset_period,
             max_parallel_evals=args.max_parallel_evals,
             image=args.image, hub=args.hub, workdir=args.workdir, run_name=args.run_name,
             token=args.token or (_creds.access_token if _creds else "dev-token"),
@@ -598,11 +580,9 @@ def _run(argv: list[str] | None) -> int:
 
         # Headless: run to completion + print the summary.
         t0 = time.monotonic()
-        _total_iters = args.iterations * args.islands
-        _iters = (f"{_total_iters} iter" if args.islands == 1
-                  else f"{_total_iters} iter ({args.iterations}/island × {args.islands})")
         err.print(
-            f"evolving [b]{args.objective}[/] · operator={args.operator} · {_iters}"
+            f"evolving [b]{args.objective}[/] · operator={args.operator} · "
+            f"{args.iterations} iter"
         )
         with Live(console=err, auto_refresh=False, transient=False) as live:
             stream = EpisodeStream(live)
