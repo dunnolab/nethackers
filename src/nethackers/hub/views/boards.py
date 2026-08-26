@@ -6,19 +6,12 @@ OTHER objectives (different published seeds) on the same identity, so two
 solutions could be ranked on different atom-sets -- breaking the spec Sec2
 comparability guarantee ("everyone evaluates on the same atoms"). Instead:
 
-- A **concrete** objective (``objective.batch`` non-empty -- ``"random"`` or
-  an identity) is scored only on atoms produced under exactly that
+- Every objective is scored only on atoms produced under exactly its own
   objective: ``store.iter_atoms(objective_digest=objective.digest(),
-  tier=tier)``. Same batch => fair, same-atom-set ranking.
-- The **functional** ``"all"`` (``objective.batch == ()``) has no batch of
-  its own -- it's a breadth rollup over every atom at a tier, regardless of
-  which objective produced it: ``store.iter_atoms(tier=tier)``. This is
-  *not* a same-batch comparison: a solution evaluated broadly (many
-  objectives) naturally accumulates more episodes than one evaluated
-  narrowly, so ``"all"`` rewards breadth, not a per-identity apples-to-apples
-  score. Restricting it to one canonical episode per identity is a parked
-  future refinement (mirrors elites.py's parked cross-objective-mean
-  caveat), not solved here.
+  tier=tier)``. Same batch => fair, same-atom-set ranking. (The prior
+  functional ``"all"`` breadth rollup -- every atom at a tier, regardless of
+  which objective produced it -- was retired alongside ``random``/``all``:
+  see ``selector.py``'s module docstring.)
 
 Aggregation happens in Python, not SQL: sqlite has no ``MEDIAN()``, and
 ``asc_median_mean`` needs one, so atoms are pulled via ``iter_atoms`` and
@@ -106,11 +99,9 @@ def board(
     """Rank solutions on ``objective`` at ``tier``, purely on read.
 
     Filtering (task-9-context.md's RESOLUTION -- by digest, not character):
-    a concrete objective (``objective.batch`` non-empty) is scored only on
-    atoms produced under exactly ``objective.digest()``; the functional
-    ``"all"`` (``batch == ()``) rolls up every atom at ``tier`` regardless of
-    objective (a breadth rollup, not a same-batch comparison -- see module
-    docstring).
+    scored only on atoms produced under exactly ``objective.digest()`` (the
+    prior functional ``"all"`` breadth-rollup branch was retired alongside
+    ``random``/``all`` -- see module docstring).
 
     Atoms are grouped by ``solution_digest`` and aggregated in Python:
     ``owner`` (constant per solution -- any atom's), ``episodes`` (atom
@@ -127,10 +118,7 @@ def board(
     if sort_key is None:
         raise ValueError(f"unknown board aggregation: {objective.aggregation!r}")
 
-    if objective.batch:
-        atoms = store.iter_atoms(objective_digest=objective.digest(), tier=tier)
-    else:
-        atoms = store.iter_atoms(tier=tier)
+    atoms = store.iter_atoms(objective_digest=objective.digest(), tier=tier)
 
     grouped: dict[str, list[Atom]] = {}
     for atom in atoms:

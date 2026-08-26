@@ -72,7 +72,7 @@ def test_universe_scores_empty_elites_returns_empty_map():
     assert universe_scores(client) == {}
 
 
-# --- champion: board("random")[0] -------------------------------------------
+# --- champion: board("generalist")[0] ----------------------------------------
 
 
 def test_champion_returns_digest_and_owner_from_top_board_row():
@@ -91,6 +91,20 @@ def test_champion_returns_none_for_empty_board():
     client = _FakeClient(board=[])
 
     assert champion(client) is None
+
+
+def test_champion_reads_the_generalist_board_not_random():
+    seen = []
+
+    class _Spy:
+        def board(self, objective):
+            seen.append(objective)
+            return [{"rank": 1, "solution_digest": "sha256:top", "owner": "sam"}]
+
+    result = champion(_Spy())
+
+    assert result == ("sha256:top", "sam")
+    assert seen == ["generalist"]
 
 
 # --- champion_scores: one solution's per-identity frontier ------------------

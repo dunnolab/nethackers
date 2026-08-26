@@ -168,36 +168,10 @@ def test_objective_digest_isolation_a_different_objectives_atoms_do_not_leak_in(
     assert "sha256:under-b" not in [e["solution_digest"] for e in entries]
 
 
-def test_all_rollup_aggregates_across_every_objectives_atoms(tmp_path):
-    # Property 4: the functional "all" (batch == ()) is a breadth rollup --
-    # a solution's atoms from TWO DIFFERENT concrete objectives (on two
-    # different identities) both count toward its one aggregated entry, not
-    # filtered to a single objective/batch.
-    store = _new_store(tmp_path)
-    spec_x = _spec(name="objective-x", batch=((0, IDENTITY),))
-    spec_y = _spec(name="objective-y", batch=((0, OTHER_IDENTITY),))
-    atoms = [
-        _atom(
-            spec_x, solution_digest="sha256:multi", identity=IDENTITY, seed=0,
-            progression=0.6, ascended=False,
-        ),
-        _atom(
-            spec_y, solution_digest="sha256:multi", identity=OTHER_IDENTITY, seed=0,
-            progression=0.8, ascended=True,
-        ),
-        _atom(
-            spec_x, solution_digest="sha256:single", identity=IDENTITY, seed=1,
-            progression=0.5, ascended=False,
-        ),
-    ]
-    _seed(store, atoms, [spec_x, spec_y])
-
-    entries = board(store, CATALOG["all"])
-
-    by_digest = {e["solution_digest"]: e for e in entries}
-    assert by_digest["sha256:multi"]["episodes"] == 2  # crosses objective boundaries
-    assert by_digest["sha256:multi"]["ascensions"] == 1
-    assert [e["solution_digest"] for e in entries] == ["sha256:multi", "sha256:single"]
+# NOTE: test_all_rollup_aggregates_across_every_objectives_atoms was removed
+# with random/all's retirement (Task A1) -- board() no longer has a
+# functional breadth-rollup branch; every objective now scores only its own
+# atoms (`store.iter_atoms(objective_digest=objective.digest(), tier=tier)`).
 
 
 def test_coverage_board_counts_cells_held_per_solution(tmp_path):

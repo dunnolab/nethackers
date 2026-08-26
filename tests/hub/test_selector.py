@@ -13,14 +13,16 @@ def test_single_identity_passthrough():
     assert r == ResolvedObjective("wiz-elf-cha-mal", ("wiz-elf-cha-mal",), "single")
 
 
-def test_random_passthrough():
-    assert resolve("random") == ResolvedObjective("random", (), "random")
+# NOTE: test_random_passthrough/test_all_is_all_kind_with_every_identity were
+# removed with random/all's retirement (Task A1) -- resolve() now raises for
+# both tokens instead of returning a ResolvedObjective; see the test below.
 
 
-def test_all_is_all_kind_with_every_identity():
-    r = resolve("all")
-    assert r.kind == "all"
-    assert r.identities == tuple(IDENTITIES)
+def test_resolve_rejects_retired_random_and_all():
+    with pytest.raises(ValueError):
+        resolve("random")
+    with pytest.raises(ValueError):
+        resolve("all")
 
 
 def test_bare_role_expands_to_its_identities():

@@ -195,9 +195,10 @@ def create_app(
                 status_code=400, detail="specify exactly one of ?objective= or ?metric="
             )
         if objective is not None:
-            # identity (and legacy random/all) stay same-seeds via the catalog;
-            # generalist / role become a macro-average over their identity set.
-            if objective in catalog:
+            # only identities are single-objective boards; random/all are
+            # retired (Task A1) and generalist/role are always a
+            # macro-average over their identity set.
+            if objective in catalog and catalog[objective].kind == "identity":
                 return board(store, catalog[objective], tier=tier)
             try:
                 _kind, ids = resolve_scope(objective)
