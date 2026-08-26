@@ -18,6 +18,7 @@ from nethackers.harness.container_operator import ContainerOperator
 from nethackers.harness.loop import run_loop
 from nethackers.harness.select import select_parent
 from nethackers.harness.store import LocalTreeStore
+from nethackers.harness.version import HARNESS_VERSION
 from nethackers.hubclient import credentials as _credentials
 from nethackers.hubclient.auth import TokenSource
 from nethackers.hubclient.client import HubClient
@@ -159,6 +160,7 @@ def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
 
     runlog.write_run_config(run_dir, {
         "run_id": rid, "created_at": started.isoformat(),
+        "harness_version": HARNESS_VERSION,
         "git_sha": git_sha if git_sha is not None else _git_sha(),
         "objective": params.objective, "seed": str(params.seed), "operator": params.operator,
         "iterations": total_iterations, "iterations_per_island": params.iterations,
