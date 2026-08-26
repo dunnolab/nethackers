@@ -83,7 +83,7 @@ def test_evolve_creates_run_dir_with_config_and_latest_symlink(tmp_path, monkeyp
         recorded["workdir"] = str(kwargs["workdir"])
         return []
     monkeypatch.setattr(launch, "run_loop", fake_run_loop, raising=False)
-    rc = cli._run(["evolve", "random", "--seed", str(seed), "--from-seed",
+    rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed), "--from-seed",
                    "--workdir", str(tmp_path / "w")])
     assert rc == 0
 
@@ -92,7 +92,7 @@ def test_evolve_creates_run_dir_with_config_and_latest_symlink(tmp_path, monkeyp
     run_dir = next(p for p in created if p.name != "latest")
     assert (run_dir / "run.json").exists()
     cfg = json.loads((run_dir / "run.json").read_text())
-    assert cfg["objective"] == "random" and "created_at" in cfg
+    assert cfg["objective"] == "val-dwa-law-fem" and "created_at" in cfg
     # tree-store is shared machine-wide (content cache, dedup by digest) --
     # NOT per-run; only the worktrees + records stay under the run dir.
     assert recorded["tree_store_root"] == str(tmp_path / "w" / "store")
@@ -113,7 +113,7 @@ def test_evolve_on_log_persists_mutation_stream(tmp_path, monkeypatch):
         captured["on_log"] = kwargs["on_log"]
         return []
     monkeypatch.setattr(launch, "run_loop", fake_run_loop, raising=False)
-    rc = cli._run(["evolve", "random", "--seed", str(seed), "--from-seed",
+    rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed), "--from-seed",
                    "--workdir", str(tmp_path / "w")])
     assert rc == 0
     # the CLI wraps on_log to persist each raw stream line under logs/<tag>.log
@@ -336,6 +336,6 @@ def test_evolve_skips_preflight_without_a_pinned_model(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "preflight_model",
                         lambda *a, **k: fired.update(preflight=True))
     monkeypatch.setattr(launch, "run_loop", lambda **k: [], raising=False)
-    rc = cli._run(["evolve", "random", "--seed", str(seed), "--from-seed",
+    rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed), "--from-seed",
                    "--workdir", str(tmp_path / "w")])       # no --model
     assert rc == 0 and fired["preflight"] is False          # guarded by `if args.model`

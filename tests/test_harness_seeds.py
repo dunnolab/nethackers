@@ -39,12 +39,22 @@ def test_validation_max_steps_override_caps_the_spec():
 def test_dev_spec_single_identity_unchanged():
     assert dev_spec("wiz-elf-cha-mal") is CATALOG["wiz-elf-cha-mal"]
 
-def test_dev_spec_random_unchanged():
-    assert dev_spec("random") is CATALOG["random"]
+def test_dev_spec_random_rejected():
+    # random is retired (Task A1): resolve() itself rejects it now, so
+    # dev_spec's former special-case (returning CATALOG["random"]) is gone --
+    # it's an unknown objective, same as any other invalid token.
+    with pytest.raises(ValueError, match="unknown objective 'random'"):
+        dev_spec("random")
 
 def test_dev_spec_all_rejected_with_hint():
-    with pytest.raises(ValueError, match=r"\*"):
+    # all is retired (Task A1): resolve() rejects it before dev_spec ever
+    # sees a kind, so dev_spec's own former "leaderboard view, not an evolve
+    # target" hint (which assumed "all" still resolved to a real, disallowed
+    # kind) is gone too -- plain unknown-objective rejection, and the
+    # message must not suggest 'random'/'all' as valid alternatives.
+    with pytest.raises(ValueError, match="unknown objective 'all'") as exc_info:
         dev_spec("all")
+    assert "random" not in str(exc_info.value)
 
 def test_dev_spec_role_is_a_union():
     spec = dev_spec("wiz")

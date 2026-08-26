@@ -217,7 +217,8 @@ def test_evolve_defaults_owner_token_to_stored_creds_when_flags_absent(tmp_path,
     monkeypatch.setattr(cli, "sandbox_preflight", lambda operator: None)
     monkeypatch.setattr(cli, "_load_creds", lambda: cred.Credentials("castiel", "stored-tok"))
 
-    rc = cli._run(["evolve", "random", "--seed", str(seed), "--workdir", str(tmp_path / "w")])
+    rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed),
+                   "--workdir", str(tmp_path / "w")])
 
     assert rc == 0
     assert captured["owner"] == "castiel"
@@ -238,7 +239,8 @@ def test_evolve_falls_back_to_dev_when_no_creds_and_no_flags(tmp_path, monkeypat
     monkeypatch.setattr(cli, "sandbox_preflight", lambda operator: None)
     monkeypatch.setattr(cli, "_load_creds", lambda: None)
 
-    rc = cli._run(["evolve", "random", "--seed", str(seed), "--workdir", str(tmp_path / "w")])
+    rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed),
+                   "--workdir", str(tmp_path / "w")])
 
     assert rc == 0
     assert captured["owner"] == "dev"
@@ -261,7 +263,7 @@ def test_evolve_explicit_flags_win_over_stored_creds(tmp_path, monkeypatch):
     monkeypatch.setattr(cli, "_load_creds", lambda: cred.Credentials("castiel", "stored-tok"))
 
     rc = cli._run([
-        "evolve", "random", "--seed", str(seed), "--workdir", str(tmp_path / "w"),
+        "evolve", "val-dwa-law-fem", "--seed", str(seed), "--workdir", str(tmp_path / "w"),
         "--owner", "explicit-owner", "--token", "explicit-token",
     ])
 
