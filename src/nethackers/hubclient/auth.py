@@ -53,11 +53,13 @@ class TokenSource:
         *,
         save: Callable[[Credentials], None] = _credentials.save,
         refresh: Callable[[str], dict[str, Any]] = _refresh_access_token,
+        load: Callable[[], Credentials | None] = _credentials.load,
         now: Callable[[], float] = time.time,
     ) -> None:
         self._creds = creds
         self._save = save
         self._refresh = refresh
+        self._load = load   # re-read disk so parallel runs share a rotated token
         self._now = now
 
     @property
@@ -76,16 +78,42 @@ class TokenSource:
             return self.refresh()
         return self._creds.access_token
 
+    def _adopt_disk(self) -> str | None:
+        """Re-read ``credentials.json`` (a PARALLEL evolve run sharing it may
+        have just refreshed + saved a fresh token) and adopt it as our own.
+        Returns a still-valid access token to REUSE outright -- i.e. a peer
+        already did the refresh -- or ``None`` (we still adopted disk's latest
+        ``refresh_token`` for our own exchange, since it may be newer than our
+        in-memory one). Never raises -- a missing/unreadable file just leaves
+        the in-memory credential in place."""
+        disk = self._load()
+        if disk is None:
+            return None
+        self._creds = disk
+        if disk.access_token and not disk.is_expired(self._now()):
+            return disk.access_token
+        return None
+
     def refresh(self) -> str:
-        """Force a refresh -- used reactively after the hub 401s a token
-        that looked valid locally. Raises ``AuthError`` when there's no
-        refresh token to use, or the refresh call itself fails; otherwise
-        persists the rebuilt credential and returns the new access token."""
+        """Force a refresh -- used reactively after the hub 401s a token that
+        looked valid locally, and proactively by ``current()``.
+
+        Cooperates with PARALLEL runs that share ``credentials.json``: GitHub
+        rotates the refresh token on every use (it is single-use), so a
+        sibling evolve run may have already consumed our token and saved a
+        fresh one. So if our exchange fails, we re-read disk once more and
+        REUSE the peer's freshly-saved token before giving up. ``AuthError``
+        only when there is genuinely no usable token left anywhere -- the
+        "update the token each time it fails, report only if that did not
+        help" contract."""
         if self._creds.refresh_token is None:
             raise AuthError(_LOGIN_HINT)
         try:
             tok = self._refresh(self._creds.refresh_token)
         except Exception as e:
+            reused = self._adopt_disk()   # a peer may have just saved a fresh token
+            if reused is not None:
+                return reused
             raise AuthError(_LOGIN_HINT) from e
         self._creds = Credentials(
             login=self._creds.login,

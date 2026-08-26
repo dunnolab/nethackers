@@ -61,7 +61,8 @@ def test_current_raises_autherror_when_proactive_refresh_fails():
     def boom(rt):
         raise RuntimeError("refresh token revoked")
 
-    source = TokenSource(_creds(expires_at=500.0), refresh=boom, now=lambda: 1000.0)
+    source = TokenSource(_creds(expires_at=500.0), refresh=boom, load=lambda: None,
+                         now=lambda: 1000.0)
     with pytest.raises(AuthError):
         source.current()
 
@@ -118,10 +119,38 @@ def test_refresh_raises_autherror_when_refresh_call_raises():
     def boom(rt):
         raise RuntimeError("bad refresh token")
 
-    source = TokenSource(_creds(), refresh=boom)
+    source = TokenSource(_creds(), refresh=boom, load=lambda: None)
     with pytest.raises(AuthError, match="run `nethackers login`") as exc_info:
         source.refresh()
     assert isinstance(exc_info.value.__cause__, RuntimeError)
+
+
+def test_refresh_reuses_a_peers_fresh_token_after_a_lost_rotation_race():
+    # GitHub rotates the single-use refresh token: a PARALLEL run sharing
+    # credentials.json already refreshed + saved a fresh token, so OUR exchange
+    # of the now-consumed token fails -- but we must re-read disk and reuse the
+    # peer's token, NOT report a failure.
+    def boom(rt):
+        raise RuntimeError("refresh token already used")
+
+    peer = Credentials("sam", "ghu-peer", "ghr-peer", expires_at=1000.0)
+    source = TokenSource(_creds(expires_at=500.0), refresh=boom,
+                         load=lambda: peer, now=lambda: 100.0)  # peer still valid at now=100
+    assert source.refresh() == "ghu-peer"   # reused a peer's token, no AuthError
+    assert source.current() == "ghu-peer"   # adopted the peer credential
+
+
+def test_refresh_raises_when_exchange_fails_and_disk_is_also_stale():
+    # Genuinely unrecoverable: our exchange fails AND disk has no fresh token
+    # either (no peer refreshed) -> report, per the "only if it did not help".
+    def boom(rt):
+        raise RuntimeError("refresh token revoked")
+
+    stale = Credentials("sam", "ghu-stale", "ghr-stale", expires_at=500.0)
+    source = TokenSource(_creds(expires_at=500.0), refresh=boom,
+                         load=lambda: stale, now=lambda: 1000.0)  # disk also expired
+    with pytest.raises(AuthError, match="run `nethackers login`"):
+        source.refresh()
 
 
 def test_refresh_failure_does_not_persist_anything():
