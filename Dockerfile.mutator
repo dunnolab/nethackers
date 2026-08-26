@@ -33,7 +33,7 @@ FROM ${NLE_BASE}
 # is pinned via NodeSource's version-specific setup script -- the same "pinned,
 # deterministic" spirit as nle-base's uv:0.11.2 pin.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        ca-certificates curl gnupg gosu ripgrep \
+        ca-certificates curl gnupg gosu ripgrep jq \
     && curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
     && apt-get install -y --no-install-recommends nodejs \
     && rm -rf /var/lib/apt/lists/*
