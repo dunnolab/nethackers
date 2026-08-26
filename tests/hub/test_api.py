@@ -383,8 +383,11 @@ def test_board_unknown_objective_404(tmp_path: Any) -> None:
 
 def test_hackers_returns_union_shape_and_defaults_to_generalist(tmp_path: Any) -> None:
     client, store = _app(tmp_path)
-    atoms = [_mk_atom(CATALOG[i], solution_digest="sha256:b", owner="dun", identity=i, seed=0, progression=0.2)
-             for i in VAL_IDS]
+    atoms = [
+        _mk_atom(CATALOG[i], solution_digest="sha256:b", owner="dun",
+                 identity=i, seed=0, progression=0.2)
+        for i in VAL_IDS
+    ]
     _seed_atoms(store, atoms, [CATALOG[i] for i in VAL_IDS])
     rows = client.get("/hackers").json()
     assert rows and {"owner", "coverage", "total", "mean_progression"} <= set(rows[0])
