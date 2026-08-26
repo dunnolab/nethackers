@@ -50,9 +50,11 @@ class FakeRun:
                 if self.commit_rc != 0:
                     return _cp(cmd, self.commit_rc, stdout="nothing to commit, working tree clean")
                 return _cp(cmd, 0)
+            if sub == "rev-parse" and "--verify" in cmd:
+                raise subprocess.CalledProcessError(1, cmd, stderr="unknown revision")
             if sub == "rev-parse":
                 return _cp(cmd, 0, stdout=self.sha + "\n")
-            return _cp(cmd, 0)  # add / push
+            return _cp(cmd, 0)  # add / push / checkout
         return _cp(cmd, 0)
 
 
@@ -118,6 +120,29 @@ def test_publish_solution_syncs_commits_and_returns_sha(tmp_path):
     assert (repo / ".git").exists()                             # .git preserved
     verbs = [c[3] for c in fake.calls if c[:2] == ["git", "-C"]]
     assert verbs == ["add", "commit", "push", "rev-parse"]
+
+
+def test_publish_pushes_to_the_given_ref(tmp_path):
+    sol = _solution(tmp_path)
+    fake = FakeRun(sha="e" * 40)
+    P.publish_solution(sol, "sam/nethacker", message="m", run=fake,
+                       workdir=tmp_path / "wd", ref="evo-harness-v1/run-42")
+    pushes = [c for c in fake.calls if c[:2] == ["git", "-C"] and c[3] == "push"]
+    assert pushes, "expected a push"
+    assert any("evo-harness-v1/run-42" in tok for c in pushes for tok in c)
+
+
+def test_two_runs_push_distinct_refs(tmp_path):
+    sol = _solution(tmp_path)
+    for rid, sha in (("run-a", "a" * 40), ("run-b", "b" * 40)):
+        fake = FakeRun(sha=sha)
+        out = P.publish_solution(sol, "sam/nethacker", message="m", run=fake,
+                                 workdir=tmp_path / f"wd-{rid}",
+                                 ref=f"evo-harness-v1/{rid}")
+        assert out == sha
+        assert any(f"evo-harness-v1/{rid}" in tok
+                   for c in fake.calls if c[:2] == ["git", "-C"] and c[3] == "push"
+                   for tok in c)
 
 
 def test_publish_excludes_pycache_and_build_junk(tmp_path):
