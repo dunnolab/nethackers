@@ -344,6 +344,8 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
     border-top:2px solid #000; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace;
     font-size:.84rem; display:flex; align-items:center; justify-content:center; gap:14px; padding:7px 14px; flex-wrap:wrap; }
   #dictbar .dplay{ cursor:pointer; min-width:40px; font:inherit; padding:2px 9px; }
+  #dictbar .dplay.loading{ color:var(--gold); animation:dpulse .9s ease-in-out infinite; }
+  @keyframes dpulse{ 0%,100%{ opacity:.5; } 50%{ opacity:1; } }
   #dictbar .dnote{ color:var(--screen-dim); white-space:nowrap; letter-spacing:.02em; animation:dsurface 5.5s ease-in-out infinite; }
   #dictbar .dnote .demph{ color:var(--gold); }
   @keyframes dsurface{ 0%,100%{ opacity:.45; } 50%{ opacity:.95; } }
@@ -353,7 +355,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
   #dictbar .dmeter:focus-visible{ outline:2px dotted var(--gold); outline-offset:2px; }
   #dictbar .dpct{ color:var(--screen-dim); min-width:36px; }
   @media (max-width:640px){ #dictbar .dnote{ display:none; } }
-  @media (prefers-reduced-motion:reduce){ #dictbar .dnote{ animation:none; } }
+  @media (prefers-reduced-motion:reduce){ #dictbar .dnote,#dictbar .dplay.loading{ animation:none; } }
 </style>
 
 <canvas id="dictviz" aria-hidden="true"></canvas>
@@ -1406,7 +1408,8 @@ boot();
   if(!page||!cv||!bar) return;
   const g=cv.getContext("2d"); if(!g) return;
   const audioEl=new Audio(); audioEl.src="/dictionary.mp3"; audioEl.loop=true; audioEl.preload="none";
-  let actx=null,analyser=null,gain=null,srcNode=null,ready=false, volume=0,playing=false;
+  let actx=null,analyser=null,gain=null,srcNode=null,ready=false, volume=0,playing=false,starting=false;
+  const REDUCE=matchMedia("(prefers-reduced-motion:reduce)").matches;
   // dev preview: ?vizpreview=0..1 drives a synthetic spectrum so the offline harness
   // can screenshot the reactive look; absent in normal use (a silent, opt-in page).
   const PREVIEW=(()=>{ const q=new URLSearchParams(location.search).get("vizpreview");
@@ -1416,7 +1419,7 @@ boot();
   function cssv(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
   function hexRGB(h){ h=(h||"").replace("#",""); if(h.length===3) h=h.split("").map(c=>c+c).join("");
     return [parseInt(h.slice(0,2),16)||0,parseInt(h.slice(2,4),16)||0,parseInt(h.slice(4,6),16)||0]; }
-  let INDIGO,RED,GOLD,GROUND,PAL;
+  let INDIGO,RED,GOLD,GROUND,PAL,GOLD_RGB,MONO;
   // NetHack-flavoured colour per glyph, so the descent is colourful (deeper = more monsters, more colour)
   const PAL_LIGHT={gray:[92,92,104],red:[196,22,22],green:[26,120,26],brown:[140,88,16],blue:[40,40,190],
     magenta:[156,28,156],cyan:[18,126,134],orange:[208,104,0],yellow:[170,122,0],white:[56,56,66]};
@@ -1429,7 +1432,8 @@ boot();
     "gray","cyan","red","magenta","yellow","white","yellow"];
   function readTheme(){ INDIGO=hexRGB(cssv("--indigo")||"#2f3677"); RED=hexRGB(cssv("--red")||"#cc0000");
     GOLD=cssv("--gold")||"#e9c15a"; GROUND=cssv("--ground")||"#d8d6cc";
-    const gb=hexRGB(GROUND), lum=(gb[0]*0.3+gb[1]*0.59+gb[2]*0.11)/255; PAL=lum<0.42?PAL_DARK:PAL_LIGHT; }
+    const gb=hexRGB(GROUND), lum=(gb[0]*0.3+gb[1]*0.59+gb[2]*0.11)/255; PAL=lum<0.42?PAL_DARK:PAL_LIGHT;
+    GOLD_RGB=hexRGB(GOLD); MONO=hexRGB(cssv("--ink")||"#1d1d24"); }   // ink the wall wears at rest -- near-black, theme-aware
 
   function ensureAudio(){ if(actx) return;
     try{ actx=new (window.AudioContext||window.webkitAudioContext)();
@@ -1438,13 +1442,24 @@ boot();
       srcNode.connect(analyser); analyser.connect(gain); gain.connect(actx.destination); ready=true;
     }catch(e){}
   }
+  // Playback is a tiny state machine: idle -> starting (user asked, audio still buffering) -> playing.
+  // The 'starting' state is what makes the click feel instant: the button spins and the wall warms
+  // up right away, before a single byte of the track has decoded.
+  function requestPlay(){ if(playing||starting) return; starting=true; sync(); play(); }
   async function play(){ ensureAudio(); if(actx&&actx.state==="suspended"){ try{ await actx.resume(); }catch(e){} }
-    try{ await audioEl.play(); playing=true; }catch(e){ playing=false; } sync(); }
-  function pause(){ audioEl.pause(); playing=false; sync(); }
+    try{ await audioEl.play(); if(!audioEl.paused){ playing=true; starting=false; sync(); } }
+    catch(e){ starting=false; playing=false; sync(); } }
+  function pause(){ audioEl.pause(); playing=false; starting=false; sync(); }
+  // Mirror the element's real state so the button never lies about whether sound is coming.
+  audioEl.addEventListener("playing",()=>{ playing=true; starting=false; sync(); });
+  audioEl.addEventListener("pause",  ()=>{ playing=false; starting=false; sync(); });
+  audioEl.addEventListener("error",  ()=>{ playing=false; starting=false; sync(); });
 
   let synthT=0;
   function sampleSpectrum(){
-    const scale = PREVIEW>0 ? Math.max(.25,PREVIEW) : 0;
+    // While starting (buffering after a click) drive a gentle synthetic spectrum so the wall
+    // comes alive the instant you press play; hand off to real audio data once it's flowing.
+    const scale = PREVIEW>0 ? Math.max(.25,PREVIEW) : (starting&&!playing ? .55 : 0);
     if(scale>0){ const n=analyser?analyser.frequencyBinCount:512; synthT+=0.05;
       for(let i=0;i<n&&i<freq.length;i++){ const f=i/n;
         let v=(Math.sin(synthT*1.7+f*9)*0.5+0.5)*Math.exp(-f*2.0);
@@ -1457,10 +1472,25 @@ boot();
 
   const meter=bar.querySelector(".dmeter"), pctEl=bar.querySelector(".dpct"), pb=bar.querySelector(".dplay"), BLK=12;
   function setVol(v,u){ volume=Math.max(0,Math.min(1,v)); if(gain) gain.gain.setTargetAtTime(volume,actx.currentTime,.05);
-    if(u&&volume>0&&!playing) play(); sync(); }
+    if(u&&volume>0&&!playing&&!starting) requestPlay(); sync(); }
+  // A terminal-style spinner while the track buffers: proof the click landed even though the
+  // sound is still seconds away. Cleared the instant playback (or a failure) settles the state.
+  const SPIN=["|","/","—","\\"]; let spinTimer=null,spinI=0;
+  function updatePlayGlyph(){
+    if(starting&&!playing){
+      pb.classList.add("loading"); pb.setAttribute("aria-label","loading music");
+      if(REDUCE){ pb.textContent="…"; }
+      else { pb.textContent=SPIN[spinI];
+        if(!spinTimer) spinTimer=setInterval(()=>{ spinI=(spinI+1)%SPIN.length; pb.textContent=SPIN[spinI]; },130); }
+    } else {
+      if(spinTimer){ clearInterval(spinTimer); spinTimer=null; }
+      pb.classList.remove("loading");
+      pb.textContent=playing?"❙❙":"▶"; pb.setAttribute("aria-label",playing?"pause":"play");
+    }
+  }
   function sync(){ let out=""; const f=Math.round(volume*BLK); for(let i=0;i<BLK;i++) out+= i<f?"█":'<span class="doff">░</span>';
     meter.innerHTML="["+out+"]"; const p=Math.round(volume*100); if(pctEl)pctEl.textContent=p+"%"; meter.setAttribute("aria-valuenow",p);
-    pb.innerHTML=playing?"❙❙":"▶"; }
+    updatePlayGlyph(); }
   function fromEv(e){ const r=meter.getBoundingClientRect(); const x=(e.touches?e.touches[0].clientX:e.clientX)-r.left; setVol(x/r.width,true); }
   let drag=false;
   meter.addEventListener("pointerdown",e=>{ drag=true; meter.setPointerCapture(e.pointerId); fromEv(e); });
@@ -1468,7 +1498,7 @@ boot();
   meter.addEventListener("pointerup",()=>drag=false);
   meter.addEventListener("keydown",e=>{ if(e.key==="ArrowUp"||e.key==="ArrowRight"){ setVol(volume+.08,true); e.preventDefault(); }
     if(e.key==="ArrowDown"||e.key==="ArrowLeft"){ setVol(volume-.08,true); e.preventDefault(); } });
-  pb.addEventListener("click",()=>{ if(playing) pause(); else { if(volume===0) setVol(.5,false); play(); } });
+  pb.addEventListener("click",()=>{ if(playing||starting) pause(); else { if(volume===0) setVol(.5,false); requestPlay(); } });
   sync();
 
   // depth ladder: Dlvl 1 surface -> Mines -> mid -> deep -> Amulet -> Astral -> ascend
@@ -1496,12 +1526,17 @@ boot();
   }
   function hash(a,b){ const s=Math.sin(a*127.1+b*311.7)*43758.5453; return s-Math.floor(s); }
 
-  let t=0, activity=0, atK=0, atVel=0, atRide=0;
+  let t=0, bloom=0, energy=0, atK=0, atVel=0, atRide=0;
   function draw(){
-    // EVERYTHING scales with volume: silence => a calm static frame you can read past.
-    const target=(playing?1:0)*Math.min(1,volume);
-    activity += (target-activity)*0.06;
-    t += 0.0012 + activity*0.03;                 // motion clock, near-frozen when silent
+    // Two regimes. At rest the wall breathes gently in ink -- restrained, monochrome, never silent-frozen.
+    // On play, COLOUR blooms in (`bloom`); how hard it reacts -- reach, brightness, tempo -- tracks the
+    // VOLUME (`energy`), so louder => a bigger, brighter, quicker descent.
+    const targetBloom = playing ? 1 : (starting ? 0.9 : 0);
+    bloom += (targetBloom-bloom)*(targetBloom>bloom?0.10:0.05);   // colour rushes in, fades out gently
+    const targetEnergy = playing ? (0.1+0.9*Math.min(1,volume)) : (starting ? 0.6 : 0);
+    energy += (targetEnergy-energy)*(targetEnergy>energy?0.10:0.06);   // reach/brightness/tempo track the volume knob
+    const idleAmt = reduce ? 0 : (1-bloom);                       // reduced-motion: no ambient, stays a calm frame
+    t += 0.0012 + energy*0.03 + 0.005*idleAmt;                    // motion quickens with volume, a slow drift at rest
     sampleSpectrum();
     g.clearRect(0,0,W,H);
     const pr=page.getBoundingClientRect();
@@ -1512,16 +1547,20 @@ boot();
     const vis=[]; g.font=ch+'px "Courier New","Cousine",monospace';
     for(let k=0;k<N;k++){
       const x=per[k][0],y=per[k][1],dx=per[k][2],dy=per[k][3],base=per[k][4],pf=k/N;
-      let m=0.015;                                // faint static outline at rest
-      if(activity>0.002){ const bin=Math.floor(Math.pow(pf<.5?pf*2:(1-pf)*2, 1.2)*(bins*0.48));
+      let m=0.015;                                // faint static outline at the very rest
+      if(idleAmt>0){                              // restrained ambient swell -> silence still breathes, monochrome
+        const w=0.5+0.5*Math.sin(t*1.7 + pf*Math.PI*4 + hash(k,3)*1.4);
+        m=Math.max(m, (0.04+0.065*w)*idleAmt); }
+      if(bloom>0.002){ const bin=Math.floor(Math.pow(pf<.5?pf*2:(1-pf)*2, 1.2)*(bins*0.48));
         const resp=0.26+0.74*hash(k,7);           // some columns spike hard, others barely -> jagged / gap-toothed
-        let am=Math.min(1, Math.pow(freq[bin]/255, 0.85)*1.7)*activity*resp;
+        let am=Math.min(1, Math.pow(freq[bin]/255, 0.85)*1.7)*energy*resp;
         m=Math.max(m, am<0.05?0:am); }
       sm[k]+=(m-sm[k])*(m>sm[k]?0.5:0.14); pk[k]=Math.max(sm[k], pk[k]-0.012);
       if(y<-ch||y>H+ch) continue;
       vis.push(k);
       const mag=sm[k];
-      g.fillStyle="rgba("+INDIGO[0]+","+INDIGO[1]+","+INDIGO[2]+","+(0.24+mag*0.5).toFixed(3)+")";
+      const br=MONO[0]+(INDIGO[0]-MONO[0])*bloom, bg=MONO[1]+(INDIGO[1]-MONO[1])*bloom, bb=MONO[2]+(INDIGO[2]-MONO[2])*bloom;
+      g.fillStyle="rgba("+(br|0)+","+(bg|0)+","+(bb|0)+","+(0.24+mag*0.5).toFixed(3)+")";   // ink frame at rest -> indigo on play
       g.fillText(base,x,y);
       const ext=Math.round(mag*MAXEXT);
       for(let e=1;e<=ext;e++){ const ex=x+dx*cw*e, ey=y+dy*ch*e;
@@ -1530,17 +1569,20 @@ boot();
         // glyph varies within a small band by cell + time -> a living descent, not a fixed ladder
         let di=Math.floor(depth*(DESC.length-1)) + Math.round((hash(k*3+e, shuffle)-0.5)*2.6);
         di=di<0?0:(di>DESC.length-1?DESC.length-1:di);
-        const c=PAL[COLORKEY[di]]||PAL.gray, a=(0.30+depth*0.52)*(0.4+activity*0.6);
-        g.fillStyle="rgba("+c[0]+","+c[1]+","+c[2]+","+a.toFixed(3)+")";
+        const c=PAL[COLORKEY[di]]||PAL.gray;      // colour blooms up out of the monochrome as playback starts
+        const cr=MONO[0]+(c[0]-MONO[0])*bloom, cg=MONO[1]+(c[1]-MONO[1])*bloom, cb=MONO[2]+(c[2]-MONO[2])*bloom;
+        const a=(0.30+depth*0.52)*(0.42+energy*0.58);   // legible ink at rest, brighter as volume rises
+        g.fillStyle="rgba("+(cr|0)+","+(cg|0)+","+(cb|0)+","+a.toFixed(3)+")";
         g.fillText(DESC[di], ex, ey); }
       if(pk[k]>0.9){ const e=Math.round(pk[k]*MAXEXT)+1, sx=x+dx*cw*e, sy=y+dy*ch*e;
         if(sx>=-cw&&sx<=W+cw&&sy>=-ch&&sy<=H+ch){
-          g.fillStyle="rgba("+RED[0]+","+RED[1]+","+RED[2]+","+(0.6+0.4*activity).toFixed(2)+")";
+          g.fillStyle="rgba("+RED[0]+","+RED[1]+","+RED[2]+","+(0.6+0.4*energy).toFixed(2)+")";
           g.fillText("★", sx, sy); } }
     }
-    // @ hero (gold): sporadic darts, speed scales with volume (frozen when silent), rides the spike
+    // @ hero: a slow wanderer at rest (muted), darting and gold once the music is on -> rides the spike
     if(vis.length){
-      if(Math.random() < 0.05*activity) atVel += (Math.random()-0.5)*2.6*activity;   // random impulses
+      atK += 0.02*idleAmt;                                                           // gentle idle crawl
+      if(Math.random() < 0.05*energy) atVel += (Math.random()-0.5)*2.6*energy;       // dart rate tracks volume
       atVel *= 0.86;                                                                 // friction -> pauses between darts
       atK += atVel;
       const ai=vis[((Math.floor(atK)%vis.length)+vis.length)%vis.length], a0=per[ai];
@@ -1549,7 +1591,8 @@ boot();
         ax=Math.max(ch,Math.min(W-ch,ax)); ay=Math.max(ch,Math.min(H-ch,ay));
         g.font="700 "+Math.round(ch*1.08)+'px "Courier New","Cousine",monospace';
         g.lineJoin="round"; g.lineWidth=Math.max(3,ch*0.3); g.strokeStyle=GROUND; g.strokeText("@",ax,ay);
-        g.fillStyle=GOLD; g.fillText("@",ax,ay); }
+        const fr=MONO[0]+(GOLD_RGB[0]-MONO[0])*bloom, fg=MONO[1]+(GOLD_RGB[1]-MONO[1])*bloom, fb=MONO[2]+(GOLD_RGB[2]-MONO[2])*bloom;
+        g.fillStyle="rgba("+(fr|0)+","+(fg|0)+","+(fb|0)+","+(0.55+0.45*bloom).toFixed(2)+")"; g.fillText("@",ax,ay); }
     }
   }
   function loop(){ draw(); requestAnimationFrame(loop); }
