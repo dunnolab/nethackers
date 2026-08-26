@@ -55,8 +55,15 @@ from nethackers.hub.validate import (
 )
 from nethackers.hub.views.attainment import read_attainment
 from nethackers.hub.views.baseline import read_baseline
-from nethackers.hub.views.boards import board, coverage_board, firsts_board
+from nethackers.hub.views.boards import (
+    aggregate_board,
+    board,
+    coverage_board,
+    firsts_board,
+    resolve_scope,
+)
 from nethackers.hub.views.elites import read_elites
+from nethackers.hub.views.hackers import hacker_board
 from nethackers.hub.views.progress import read_progress
 from nethackers.hub.views.solution import read_solution_frontier
 from nethackers.hub.views.stats import read_stats
@@ -188,15 +195,34 @@ def create_app(
                 status_code=400, detail="specify exactly one of ?objective= or ?metric="
             )
         if objective is not None:
-            spec = catalog.get(objective)
-            if spec is None:
-                raise HTTPException(status_code=404, detail=f"unknown objective: {objective!r}")
-            return board(store, spec, tier=tier)
+            # identity (and legacy random/all) stay same-seeds via the catalog;
+            # generalist / role become a macro-average over their identity set.
+            if objective in catalog:
+                return board(store, catalog[objective], tier=tier)
+            try:
+                _kind, ids = resolve_scope(objective)
+            except ValueError as e:
+                raise HTTPException(
+                    status_code=404, detail=f"unknown objective: {objective!r}"
+                ) from e
+            return aggregate_board(store, ids, tier=tier)
         if metric == "coverage":
             return coverage_board(store)
         if metric == "firsts":
             return firsts_board(store)
         raise HTTPException(status_code=400, detail=f"unknown metric: {metric!r}")
+
+    @app.get("/hackers")
+    def hackers(
+        objective: str = "generalist", tier: str = "self-reported"
+    ) -> list[dict[str, Any]]:
+        try:
+            _kind, ids = resolve_scope(objective)
+        except ValueError as e:
+            raise HTTPException(
+                status_code=404, detail=f"unknown objective: {objective!r}"
+            ) from e
+        return hacker_board(store, ids, tier=tier)
 
     @app.get("/solutions/{digest}")
     def get_solution(digest: str) -> dict[str, Any]:
