@@ -70,11 +70,19 @@ img{ max-width:100%; }
 .masthead pre{ margin:0; font-size:clamp(9px,2.1vw,15px); line-height:1.05; color:var(--gold);
   overflow-x:auto; white-space:pre; position:relative; z-index:1; }
 .masthead .sub{ margin-top:8px; font-size:.8rem; color:var(--screen-dim); position:relative; z-index:1; }
-/* ambient demo game: a faint dungeon behind the wordmark, a gold @ pacing a room */
-#demo{ position:absolute; top:10px; right:14px; margin:0; z-index:0; pointer-events:none;
+/* ambient demo game: a faint dungeon behind the wordmark, with a tiny chase in progress */
+#demo{ position:absolute; top:10px; right:15px; margin:0; z-index:0; pointer-events:none;
   font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:12px; line-height:1.12;
-  color:var(--screen-dim); opacity:.28; white-space:pre; }
-#demo .you{ color:var(--gold); }
+  color:var(--screen-dim); opacity:.34; white-space:pre; }
+#demo .you{ color:var(--gold); font-weight:700; }
+#demo .pet{ color:var(--green); font-weight:700; }
+#demo .gridbug{ color:var(--scr-red); font-weight:700; }
+#demo .corpse{ color:var(--scr-red); font-weight:700; }
+#demoMsg{ position:absolute; top:4px; right:18px; z-index:0; pointer-events:none; white-space:pre;
+  text-align:right; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace;
+  font-size:10px; line-height:1.18; }
+#demoMsg.run{ color:var(--screen-dim); opacity:.34; }
+#demoMsg.yasd{ color:var(--scr-red); opacity:.55; font-weight:700; }
 .masthead .sub b{ color:var(--screen-ink); font-weight:400; }
 .masthead .cursor{ display:inline-block; width:.6ch; height:1em; background:var(--gold);
   translate:0 .12em; animation:blink 1s steps(1) infinite; }
@@ -180,17 +188,14 @@ table.grid caption{ text-align:left; background:var(--indigo); color:#fff; font-
 .win{ color:#1a7a2e; text-align:left; }
 .pend{ color:#6a6a72; font-style:italic; text-align:left; }
 .star{ color:var(--red); font-weight:700; }
+.num{ font-variant-numeric:tabular-nums; }
+.dpos{ color:#1a7a2e; } .dneg{ color:var(--red); } .dz{ color:#9a9aa6; }
+.cov .tot{ color:#9a9aa6; }
 .base td{ background:#eef0f6 !important; color:#6a6a72; }
 .base .tag{ font-size:.64rem; border:1px solid var(--silver-lo); padding:0 3px; }
 .more{ text-align:center; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; color:var(--indigo);
   cursor:pointer; padding:6px; user-select:none; background:#f0f0f4; border:1px solid var(--silver-lo); border-top:0; }
 .more:hover{ background:#fff3b0; color:var(--red); }
-.callouts{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px; }
-.callout{ border:2px solid; border-color:var(--silver-hi) var(--silver-lo) var(--silver-lo) var(--silver-hi);
-  background:#eeeef2; padding:7px 10px; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; }
-.callout .lbl2{ font-size:.66rem; text-transform:uppercase; letter-spacing:.06em; color:#55555c; }
-.callout .who{ font-size:.86rem; color:#111; margin-top:3px; }
-.callout .who .at{ color:#8a8a90; } .callout .who .num{ color:var(--indigo); font-weight:700; }
 
 /* FRONTIER heatmap --------------------------------------------------------- */
 .frtop{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:.3rem 0 .7rem; }
@@ -198,15 +203,22 @@ table.grid caption{ text-align:left; background:var(--indigo); color:#fff; font-
 .regime label{ cursor:pointer; margin-right:12px; }
 .gridnote{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; color:#55555c; margin:.2rem 0 .8rem; }
 .gridnote b{ color:var(--indigo); }
-.rolegrid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:10px; }
-table.fr{ width:100%; border-collapse:collapse; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.76rem; }
-table.fr caption{ text-align:left; background:#eeeef2; border:1px solid var(--silver-lo); border-bottom:0;
-  padding:3px 6px; color:var(--indigo); font-weight:700; display:flex; justify-content:space-between; }
-table.fr caption .m{ color:#6a6a72; font-weight:400; }
+.rolegrid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(238px,1fr)); gap:10px; align-items:start; }
+table.fr{ width:100%; table-layout:fixed; border-collapse:collapse; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.76rem; }
+.fr col.c1{ width:44%; } .fr col.c2{ width:28%; } .fr col.c3{ width:28%; }
+.fr td.vn{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.fr tr.frhead td{ background:#eeeef2; border-color:var(--silver-lo); }
+.fr tr.frhead td.rn{ color:var(--indigo); font-weight:700; }
+.fr tr.frhead td.hval{ font-weight:700; color:#2a2a30; }
 .fr td{ border:1px solid #e2e2e8; padding:2px 6px; }
 .fr td.vn{ color:#55555c; } .fr td.vv{ text-align:right; font-variant-numeric:tabular-nums; color:#111; }
 .fr td.empty{ color:#c2c2c8; }
+.fr td.floor{ color:#9a9aa6; font-style:italic; }
 .fr td.asc{ color:var(--red); font-weight:700; }
+/* delta-vs-AutoAscend column */
+.fr td.dcol{ text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.fr td.dpos,.fr .dpos{ color:#1a7a2e; } .fr td.dneg,.fr .dneg{ color:var(--red); } .fr td.dz,.fr .dz{ color:#9a9aa6; }
+.fr .aachip{ color:#9a9aa6; font-style:normal; font-size:.64rem; letter-spacing:.08em; }
 .legend{ display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; margin-top:12px;
   font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.72rem; color:#55555c; }
 .legend .ramp{ display:inline-flex; height:11px; width:120px; border:1px solid var(--silver-lo); }
@@ -287,9 +299,9 @@ dl.ladder dd{ margin:0; color:#33333a; }
 /* FOOTER ------------------------------------------------------------------- */
 footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px 22px;
   background:#efefe9; }
-.footgrid{ display:grid; grid-template-columns:auto 1fr; gap:22px; align-items:center; }
+.footgrid{ display:grid; grid-template-columns:minmax(300px,.8fr) 1.4fr; gap:22px; align-items:center; }
 .tomb{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.64rem; line-height:1.12; color:#3a3a42;
-  margin:0; white-space:pre; overflow-x:auto; }
+  margin:0; white-space:pre; overflow-x:auto; justify-self:center; }
 .tomb .epi{ color:var(--red); }
 .footinfo{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.76rem; color:#55555c; }
 .footinfo a{ }
@@ -324,7 +336,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 @media (max-width:760px){
   .layout{ grid-template-columns:1fr; }
   .sidebar{ border-right:0; border-bottom:1px solid var(--rule-soft); }
-  .callouts,.cards,.footgrid{ grid-template-columns:1fr; }
+  .cards,.footgrid{ grid-template-columns:1fr; }
 }
   /* --- The Nethack Dictionary: audio-reactive dungeon wall around the page frame --- */
   #dictviz{ position:fixed; inset:0; width:100%; height:100%; z-index:0; pointer-events:none; display:block; }
@@ -350,6 +362,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
   <!-- ===================== MASTHEAD ===================== -->
   <header class="masthead">
 <pre id="demo" aria-hidden="true"></pre>
+<div id="demoMsg" class="run" aria-hidden="true"></div>
 <pre>
  _  _     _   _  _         _
 | \| |___| |_| || |__ _ __| |_____ _ _ ___
@@ -368,12 +381,13 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
     <nav class="sidebar" aria-label="Site index">
       <h4>Contents</h4>
       <ol class="idx">
-        <li><span class="k">[1]</span> <a href="#about">What is this?</a></li>
+        <li><span class="k">[1]</span> <a href="#about">What it is?</a></li>
         <li><span class="k">[2]</span> <a href="#why">Why care</a></li>
         <li><span class="k">[3]</span> <a href="#scores">Leaderboard</a></li>
         <li><span class="k">[4]</span> <a href="#frontier">The Frontier</a></li>
         <li><span class="k">[5]</span> <a href="#progress">Progress</a></li>
         <li><span class="k">[6]</span> <a href="#contribute">Contribute</a></li>
+        <li><span class="k">[7]</span> <a href="#faq">FAQ</a></li>
       </ol>
 
       <h4>Registered</h4>
@@ -399,20 +413,29 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 
       <!-- ABOUT -->
       <section id="about" class="about">
-        <h2 class="sec"><span class="glyph">@</span> What is this?</h2>
-        <p class="lead"><b>NetHack</b> (1987) is among the oldest <b>unsolved</b> challenges in games.
+        <h2 class="sec"><span class="glyph">@</span> What it is?</h2>
+        <p class="lead"><b>NetHackers is an open contest to build the first program that can
+          reliably win NetHack&nbsp;3.6.6.</b> Write the bot by hand, evolve it with coding agents, improve the thing
+          that improves it, or recurse until something interesting happens. Whatever path you take, the contest
+          evaluates the same result: the symbolic bot that comes out of the loop.</p>
+        <p>The ultimate goal is an <span class="ref" data-k="ascension"><b>ascension</b></span>; until then, the
+          board measures how far each bot gets.</p>
+
+        <div class="subh">The challenge</div>
+        <p><b>NetHack</b> (1987) is among the oldest <b>unsolved</b> challenges in games.
           Winning &mdash; an <span class="ref" data-k="ascension"><i>ascension</i></span> &mdash; means descending some fifty procedurally
           generated levels, seizing the <span class="ref" data-k="amulet">Amulet of Yendor</span>, and escaping through five final planes: tens of
           thousands of turns under <span class="ref" data-k="permadeath">permadeath</span>, randomized item identity, and a knowledge burden its own developers
           say takes years to master.</p>
-        <p>Humans win rarely but <b>reliably</b> &mdash; 0.4% of 8.6&nbsp;million public games ascend, yet
-          the record streak is <b>61 wins in a row</b> and top players hold 70&ndash;90% lifetime. Machines
-          are another story. The <b>entire</b> history of autonomous wins is three games, in 2015, by one
+        <p>Humans win rarely overall, but expert play is <b>repeatable</b>: only 0.4% of 8.6&nbsp;million public
+          games ascend, yet the record streak is <b>61 wins in a row</b> and the strongest players ascend in
+          70&ndash;90% of their recorded games. Autonomous play remains far behind. The <b>entire</b> history of
+          autonomous wins is three games, in 2015, by one
           hand-coded bot, on a version whose winning exploit was patched out that same year. On modern
           NetHack, <b>no program has ever won.</b></p>
 
         <table class="dtable">
-          <caption>THE STATE OF THE DUNGEON &mdash; every line of attack, ascensions on modern NetHack (3.6+)</caption>
+          <caption>THE STATE OF THE DUNGEON &mdash; every line of attack, ascensions on NLE's NetHack 3.6.6</caption>
           <thead><tr><th>Line of attack</th><th>Best known result</th><th style="text-align:center">Asc.</th></tr></thead>
           <tbody>
             <tr><td>Humans, all logged games</td><td>median score 836 ("Beginner"); ascension is death-cause #15</td><td class="a">0.4%</td></tr>
@@ -423,7 +446,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
             <tr><td>LLM direct play (2026)</td><td>6.8% progression while saturating every other game in <span class="ref" data-k="balrog">BALROG</span></td><td class="a z">0</td></tr>
           </tbody>
         </table>
-        <p class="dfn">Every machine line: <b>zero ascensions on NetHack&nbsp;3.6+</b>, the modern research
+        <p class="dfn">Every machine line: <b>zero ascensions on NetHack&nbsp;3.6.6</b>, the NLE research
           standard. *BotHack's three wins were on the older 3.4.3, via an exploit the developers then removed.</p>
 
         <div class="subh">Why now</div>
@@ -433,9 +456,10 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           human winners of <span class="ref" data-k="satlution">SAT-solver competitions</span>, and turn up
           <span class="ref" data-k="alphaevolve">new, provably-correct algorithms</span>. The pattern is consistent:
           <b>a model that cannot reliably do the task itself can write a program that does.</b></p>
-        <p>NetHack is where that pattern has never held. Its own creators put it forward as
+        <p>NetHack is where that pattern has never held. The researchers behind the
+          <span class="ref" data-k="nle">NetHack Learning Environment</span> put it forward as
           <span class="ref" data-k="grandchallenge">a grand challenge for AI</span>, and it is still unsolved years
-          later; one of them <span class="ref" data-k="rockt">marks the anniversary</span> each year with "AI still
+          later; NLE co-author <span class="ref" data-k="rockt">Tim Rockt&auml;schel marks the anniversary</span> each year with "AI still
           can't learn to play NetHack." It is the hardest game in the <span class="ref" data-k="balrog">BALROG</span>
           suite, the one frontier models fail while saturating the rest. Whether the approach cracking everything
           else can crack this one, <b>nobody knows</b>.</p>
@@ -445,7 +469,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
         <div class="subh">How it works</div>
         <p>The unit of evaluation is the <b>program</b> &mdash; a deterministic bot, cheap to run and exactly
           replayable. Objectives grid over the <span class="ref" data-k="identities"><b>73 starting identities</b></span> and the milestone ladder, so
-          specialists, generalists, and firsts all have somewhere to land. A thin hub keeps each objective's
+          specialists and generalists all have somewhere to land. A thin hub keeps each objective's
           best <span class="ref" data-k="elite"><b>elites</b></span>; anyone can pull one, improve it, and register the result &mdash; so <b>one
           contributor's improvement becomes everyone's parent.</b> The hub never runs your search and assigns
           no work; how you make bots is entirely up to you.</p>
@@ -457,15 +481,30 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
       <!-- WHY IT'S HARD -->
       <section id="why">
         <h2 class="sec"><span class="glyph">!</span> Why you should care</h2>
-        <p class="lead">Two kinds of people get pulled into this.</p>
+        <p class="lead">There are at least three ways to fall into this dungeon.</p>
+
+        <div class="subh">If you cannot leave a loop alone</div>
+        <p>If <span class="ref" data-k="recursiveco">Recursive</span>,
+          <span class="ref" data-k="ricursive">Ricursive</span>,
+          <span class="ref" data-k="discoveryloop">Discovery Loop</span>,
+          <span class="ref" data-k="aide2">AIDE&sup2;</span>, and the
+          <span class="ref" data-k="dgm">Darwin G&ouml;del Machine</span> all appeared in your timeline before
+          breakfast; if every benchmark bump is <i>&ldquo;it&rsquo;s happening&rdquo;</i> and every plateau means
+          <i>&ldquo;add another outer loop&rdquo;</i>; if your honest answer to &ldquo;what improves the
+          improver?&rdquo; is &ldquo;another improver&rdquo; &mdash; welcome. Build the seed, mutate the harness,
+          fork the fork. The intelligence explosion can start with not dying to a grid bug.</p>
 
         <div class="subh">If you do AI research</div>
-        <p>NetHack is a live, unsolved benchmark for the question the whole field is on: can an agent turn knowledge
-          it already has into working code? The <span class="ref" data-k="balrog">knowing&ndash;doing gap</span> is
-          clean and measurable, the output is a <b>symbolic program you can read</b> rather than one more opaque score,
-          and the evaluation is cheap, <span class="ref" data-k="heldout">seeded, and renewable</span> &mdash; a
-          benchmark you cannot memorize or cheaply saturate. It gives agentic operators, program search and evolution,
-          and neuro-symbolic policies a hard, honest target, and every result lands in a shared, permanent archive.
+        <p>Winning NetHack is the headline; the research problem is <b>generalization</b>. A bot must turn wiki
+          knowledge into action, decompose a tens-of-thousands-of-steps objective, discover and compose reusable
+          skills, and recover when unfamiliar seeds or stochastic events break its plan.
+          <span class="ref" data-k="heldout">Held-out evaluation</span> tests whether those skills transfer rather
+          than whether one trajectory was memorized &mdash; and the result is a symbolic program you can inspect.</p>
+        <p>These are not game-only problems. <span class="ref" data-k="aspire">ASPIRE</span> applies a similar loop
+          to robotics, repairing code-as-policy programs after failed rollouts and saving skills for new tasks;
+          <span class="ref" data-k="codepolicies">Code as Policies</span> composes perception, control, and tools into
+          executable robot behavior. NetHack is a cheap, fast arena for studying long-horizon planning, skill
+          composition, tool creation, and generalization to unfamiliar seeds &mdash; without a robot lab.
           <a href="#">&raquo; the paper &amp; hub API</a></p>
 
         <div class="subh">If you just think it's cool</div>
@@ -481,22 +520,19 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
       <!-- HIGH SCORES -->
       <section id="scores">
         <h2 class="sec"><span class="glyph">$</span> Leaderboard</h2>
-        <p class="lead">Every registered <b>program</b>, ranked by mean progression on this objective &mdash; how far
-          each delve got, and how deep it reached. Each was produced by a
-          <b>hacker</b> (that's you, if you join in) through the shared evolution, their own <span class="ref" data-k="harness">harness</span>,
-          or any other means. The platform scores the program and never asks how it was made. <span class="ref" data-k="challenge"><b>AutoAscend</b></span> sits at
-          the bottom of every table, where this effort started, as the yardstick for how far past it we've gotten.</p>
+        <p class="lead">Every <b>hacker</b>, ranked by the union of their programs' best on the chosen objective &mdash; toggle
+          to <b>Programs</b> for the individual solutions behind them. Pick a single <span class="ref" data-k="identities"><b>identity</b></span>
+          for a same-seeds specialist board, a <b>role</b> or the <b>generalist</b> for a macro-average across many identities. Each program
+          was produced through the shared evolution, its author's own <span class="ref" data-k="harness">harness</span>, or any other means &mdash;
+          the platform scores it and never asks how it was made. <span class="ref" data-k="challenge"><b>AutoAscend</b></span> is the yardstick
+          floor in every table &mdash; the &Delta; column is how far past it we've gotten.</p>
         <div class="controls">
           <span class="lbl">objective:</span>
-          <span class="grp"><select class="bevel" id="objSelect" aria-label="Objective">
-            <option value="val-dwa-law-fem">Valkyrie dwa-law-fem</option>
-            <option value="random">generalist (random)</option>
-            <option value="all">all (breadth)</option>
-          </select></span>
+          <span class="grp"><select class="bevel" id="objSelect" aria-label="Objective"></select></span>
           <span class="lbl">tally:</span>
           <span class="grp">
-            <button class="bevel" data-view="programs" aria-pressed="true">Programs</button>
-            <button class="bevel" data-view="people" aria-pressed="false">Hackers</button>
+            <button class="bevel" data-view="people" aria-pressed="true">Hackers</button>
+            <button class="bevel" data-view="programs" aria-pressed="false">Programs</button>
           </span>
           <span class="lbl">tier:</span>
           <span class="grp">
@@ -514,12 +550,6 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           </table>
         </div>
         <div class="more" id="scMore">[ --More-- ]</div>
-        <div class="callouts">
-          <div class="callout"><div class="lbl2">deepest coverage &middot; most cells held</div>
-            <div class="who"><span class="num">&hellip;</span></div></div>
-          <div class="callout"><div class="lbl2">first to light &middot; firsts</div>
-            <div class="who"><span class="num">&hellip;</span></div></div>
-        </div>
       </section>
 
       <hr class="rule">
@@ -527,12 +557,8 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
       <!-- FRONTIER -->
       <section id="frontier">
         <h2 class="sec"><span class="glyph">&lt;</span> The Frontier</h2>
-        <p class="lead">Mean progression (0&ndash;1) for all <span class="ref" data-k="identities">73 role&times;race&times;alignment&times;gender identities</span>.
-          A darker cell is deeper progress; a blank cell is unexplored ground.</p>
-        <p class="note" style="margin:.1rem 0 .8rem">Every number is a <span class="ref" data-k="progression"><b>mean progression</b></span> (0&ndash;1) over that
-          identity's evaluated episodes &mdash; the one thing we measure. <span class="ref" data-k="ascension">Ascension</span> sits at the top of the scale
-          (0.875); today only one identity has been touched, and its deepest cell is far below it. These are all
-          <b>self-reported</b>; the verified frontier lands with M2b.</p>
+        <p class="lead">Mean <span class="ref" data-k="progression">progression</span> (0&ndash;100%) across all <span class="ref" data-k="identities">73 identities</span>, and how far each sits above the
+          <span class="ref" data-k="autoascend"><b>AutoAscend floor</b></span>. Touched cells are a program's best; the rest show the dim floor.</p>
         <div class="controls">
           <span class="lbl">regime:</span>
           <span class="grp regime" role="radiogroup" aria-label="Frontier regime">
@@ -550,9 +576,10 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
         <div class="legend">
           <span>progression:</span>
           <span class="ramp" id="ramp"></span>
-          <span>0.0 &rarr; 1.0</span>
-          <span><span class="sw" style="background:#fff"></span> unexplored</span>
-          <span><span class="sw" style="background:var(--red)"></span> &#9733; ascended &ge; 0.875</span>
+          <span>0% &rarr; 100%</span>
+          <span><span class="sw" style="background:rgba(var(--tint) / .14)"></span> AutoAscend floor</span>
+          <span><span class="sw" style="background:#1a7a2e"></span> &Delta; above floor &middot; <span style="color:var(--red)">below</span></span>
+          <span><span class="sw" style="background:var(--red)"></span> &#9733; ascended &ge; 87.5%</span>
         </div>
       </section>
 
@@ -616,26 +643,73 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           exploring, so seal your operator from <b>its own past</b>, not only from the evaluator.</p>
       </section>
 
+      <hr class="rule">
+
+      <!-- FAQ -->
+      <section id="faq">
+        <h2 class="sec"><span class="glyph">%</span> FAQ</h2>
+
+        <div class="subh">How is this different from the other NetHack competitions?</div>
+        <p>Same dungeon, three different jobs.</p>
+        <div class="tablewrap"><table class="dtable">
+          <caption>THREE NETHACK CONTESTS &mdash; WHAT EACH ONE ACTUALLY BUILDS</caption>
+          <thead><tr><th>Competition</th><th>Your job</th><th>Evaluation</th></tr></thead>
+          <tbody>
+            <tr>
+              <td><a href="https://nethackchallenge.com/">NeurIPS NetHack Challenge&nbsp;2021</a></td>
+              <td>Build an agent to play the full game through NLE&nbsp;3.6.6.</td>
+              <td>A fixed 2021 event: ascensions first, then median in-game score over random characters.</td>
+            </tr>
+            <tr>
+              <td><a href="https://mazesofmenace.ai/">Mazes of Menace</a></td>
+              <td>Port NetHack&nbsp;5.0 from C and Lua to readable ES6 JavaScript.</td>
+              <td>Bit-exact screen and PRNG parity on public and held-out sessions, followed by a generalization phase.</td>
+            </tr>
+            <tr>
+              <td><b>NetHackers</b></td>
+              <td>Build an autonomous symbolic bot that plays NLE's NetHack&nbsp;3.6.6.</td>
+              <td>An ongoing, open leaderboard for progression and ascension across fixed identities, with every bot
+                available as a starting point for the next improvement.</td>
+            </tr>
+          </tbody>
+        </table></div>
+
+        <div class="subh">Why AutoAscend?</div>
+        <p>Because it is a strong starting point, not a finished answer.
+          <span class="ref" data-k="autoascend">AutoAscend</span> won the 2021 challenge and already contains serious
+          symbolic machinery for exploration, combat, inventory, altars, and Sokoban. It also contains plenty of
+          strange, sometimes plainly dumb behavior: every role begins by farming dungeon level&nbsp;1 until experience
+          level&nbsp;8; Monks are hard-coded never to choose a melee weapon or body-armor suit; autopickup is replaced
+          by a brittle hand-written item-priority system; bag use is disabled; shopping is unimplemented; and the
+          post-Mines plan still turns into TODOs. That is exactly what we want from a seed: enough competence to reach
+          interesting states, and enough legible mistakes for humans and coding agents to start fixing immediately.</p>
+
+        <div class="subh">Does one lucky run count?</div>
+        <p>No. Programs are ranked across repeated seeded games, and verification uses
+          <span class="ref" data-k="heldout">held-out seeds</span>. The target is a bot that generalizes, not a seed
+          that happens to be friendly.</p>
+      </section>
+
     </main>
   </div>
 
   <!-- ===================== FOOTER ===================== -->
   <footer><div class="footgrid">
-    <pre class="tomb" aria-label="Here lies the state of the art">        ----------
-       /          \
-      /    REST    \
-     /      IN      \
-     /     PEACE     \
-     /                \
-     |  no program    |
-     |  has ascended  |
-     |  <span class="epi">NetHack 3.6+</span>  |
-     |     yet.       |
-     |                |
-     |  will yours be |
-     |  the  first?   |
-   * |    *  *   *    | *
- ___)/\__//(\/(/\)/\//\/|_)____</pre>
+    <pre class="tomb" aria-label="Here lies the state of the art">       _____________
+      /             \
+     /     REST      \
+    /       IN        \
+   /      PEACE        \
+  /                     \
+  |     no program      |
+  |    has ascended     |
+  |    <span class="epi">NetHack 3.6.6</span>    |
+  |        yet.         |
+  |                     |
+  |   will yours be     |
+  |     the first?      |
+* |   *    *    *       | *
+__)/\_//(\/(/\)/\//\/\|_)__</pre>
     <div class="footinfo">
       <div class="row"><a href="#">GitHub</a> &middot;
         <a href="mailto:hello@dunnolab.ai">Contact</a> &middot; <a href="#">The design doc</a></div>
@@ -668,12 +742,9 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
    omit it -- never a fabricated value (honest standings is the whole point). */
 let PROGRAMS=[];                     // current objective's board rows (progRow shape, + fulldigest)
 let BOARD_BY_OBJ={};                 // {objective: PROGRAMS}
-let PEOPLE=[];                       // {rank,owner,best,progs,asc,deepest}
-let COVERAGE=null;                   // /board?metric=coverage [0]
-let FIRSTS=null;                     // /board?metric=firsts   [0]
+let PEOPLE=[];                       // Hackers tally: {rank,owner,coverage,total,mean} from /hackers
 let BASELINE={owner:"autoascend",per_identity:{},overall:null};  // raw /baseline
 let OBJ_EP={};                       // {objective: episodes} from /objectives (honest ep for tooltips)
-let SEARCH=[];                       // /search rows (all registered solutions) -- for PEOPLE grouping
 /* AutoAscend baseline row -- rebuilt from /baseline in rebuildAutoascend(). Safe default
    (blank, 0.000) so an early render before boot resolves is honest, not fabricated. */
 let AUTOASCEND={digest:"autoascend",owner:"autoascend",score:0,med:0,ep:0,asc:0,deepest:"—",fr:{},base:true};
@@ -695,7 +766,7 @@ const ROLE_VARS={
  val:["dwa-law-fem","hum-law-fem","hum-neu-fem"],
  wiz:["elf-cha-fem","elf-cha-mal","gno-neu-fem","gno-neu-mal","hum-cha-fem","hum-cha-mal","hum-neu-fem","hum-neu-mal","orc-cha-fem","orc-cha-mal"]};
 let UNIVERSE={};                     // /elites?objective=all -> rank-1 per identity {id:{v,o,d,ep}}
-let CHAMPION={digest:"",owner:"",scores:{}};  // /board?objective=random [0] + its /frontier
+let CHAMPION={digest:"",owner:"",scores:{}};  // /board?objective=generalist [0] + its /frontier
 const ASC=0.8745866562925501;
 /* AutoAscend baseline bar first, then day-bucketed best-so-far from /progress */
 let PROGRESS=[];
@@ -714,7 +785,7 @@ const MEMES=[
 const $=s=>document.querySelector(s);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
 const short=d=>String(d).replace(/^sha256:/,"").slice(0,7);   // digest -> ~7-char display id
-function tint(v){ if(v==null) return "#ffffff"; const a=(0.10+0.72*Math.min(1,v)); return `rgba(var(--tint) / ${a.toFixed(3)})`; }
+function tint(v,floor){ if(v==null) return "#ffffff"; const a=(floor?0.05:0.10)+(floor?0.16:0.72)*Math.min(1,v); return `rgba(var(--tint) / ${a.toFixed(3)})`; }
 function tintText(v){ return v!=null && v>=0.5 ? "#ffffff" : "#111"; }
 
 /* ===================== marquee ===================== */
@@ -722,33 +793,144 @@ function tintText(v){ return v!=null && v>=0.5 ? "#ffffff" : "#111"; }
 const _half = MEMES.map(m=>`<b>${esc(m)}</b>`).join('<span class="sep">|||</span>') + '<span class="sep">|||</span>';
 $("#mq").innerHTML = _half + _half;
 
-/* ===================== ambient demo game (a @ delving, behind the wordmark) ===================== */
+/* ===================== ambient demo game (@ + dog fleeing a grid-bug swarm) ===================== */
 (function(){
-  const el=$("#demo"); if(!el) return;
+  const el=$("#demo"), msg=$("#demoMsg"); if(!el || !msg) return;
   const MAP=[
-"  -------------          --------------------  ",
-"  |...........|          |..................|  ",
-"  |....$......|##########+.......d..........|  ",
-"  |...........|         #|..................|  ",
-"  |...........|         #|.........<........|  ",
-"  -------------         #--------------------  ",
-"           ############                        ",
+"  -------------                                   ",
+"  |...........|                                   ",
+"  |....$......+####         --------------------  ",
+"  |...........|   #######   |..................|  ",
+"  ------+------         ####+..................|  ",
+"        #        ######     |..................|  ",
+"        ##########    ######+..........<.......|  ",
+"                            --------------------  ",
   ];
-  const RX0=3,RX1=13,RY0=1,RY1=4;   // left-room interior perimeter (all floor)
-  const PATH=[];
-  for(let x=RX0;x<=RX1;x++) PATH.push([x,RY0]);
-  for(let y=RY0+1;y<=RY1;y++) PATH.push([RX1,y]);
-  for(let x=RX1-1;x>=RX0;x--) PATH.push([x,RY1]);
-  for(let y=RY1-1;y>=RY0+1;y--) PATH.push([RX0,y]);
-  let i=0;
+  const key=([x,y])=>`${x},${y}`;
+  const floor=([x,y])=>MAP[y]?.[x]!==undefined && ".#$+<".includes(MAP[y][x]);
+  const routeMemo=new Map();
+  function route(from,to,diagonal){
+    const memoKey=`${diagonal?1:0}:${key(from)}>${key(to)}`;
+    if(routeMemo.has(memoKey)) return routeMemo.get(memoKey);
+    const steps=diagonal
+      ? [[1,0],[-1,0],[0,1],[0,-1],[1,1],[1,-1],[-1,1],[-1,-1]]
+      : [[1,0],[-1,0],[0,1],[0,-1]]; // grid bugs cannot move diagonally
+    const queue=[from], seen=new Map([[key(from),null]]);
+    for(let n=0;n<queue.length;n++){
+      const here=queue[n];
+      if(key(here)===key(to)) break;
+      for(const [dx,dy] of steps){
+        const next=[here[0]+dx,here[1]+dy], k=key(next);
+        if(floor(next) && !seen.has(k)){ seen.set(k,here); queue.push(next); }
+      }
+    }
+    if(!seen.has(key(to))){ const miss=[from]; routeMemo.set(memoKey,miss); return miss; }
+    const path=[];
+    for(let at=to;at;at=seen.get(key(at))) path.push(at);
+    path.reverse(); routeMemo.set(memoKey,path); return path;
+  }
+  const WAYPOINTS=[
+    [3,1],[7,2],[14,2],[18,2],[18,3],[24,3],[24,4],[28,4],
+    [39,6],[28,6],[22,6],[22,5],[17,5],[17,6],[8,6],[8,4],[3,3],[3,1],
+  ];
+  const HERO_PATH=WAYPOINTS.reduce((all,target,index,points)=>{
+    if(index===0) return [target];
+    return all.concat(route(points[index-1],target,true).slice(1));
+  },[]);
+  HERO_PATH.pop(); // the next modulo frame is the shared start tile: no duplicate, no jump
+  const LOOT_STEP=HERO_PATH.findIndex(([x,y])=>x===7 && y===2);
+  const STAIR_STEP=HERO_PATH.findIndex(([x,y])=>x===39 && y===6);
+  const DEATH_HOLD=10; // 2.6 seconds at the 260 ms animation cadence
+  const DEATHS=[
+    ["killed by a grid bug","while optimizing the harness"],
+    ["killed by a newt","while evolving the evolver"],
+    ["touched a cockatrice","while mutating the mutator"],
+    ["killed by a shopkeeper","while replacing its parent"],
+    ["eaten by a purple worm","while the harness ate itself"],
+    ["slain by a soldier ant","breeding better breeders"],
+    ["zapped by own wand","while scoring its own scorer"],
+    ["crushed by a boulder","while improving the improver"],
+    ["drowned in a moat","one recursion level too deep"],
+    ["starved to death","waiting for next generation"],
+    ["zapped by an angry god","while mutating the objective"],
+    ["burned by a red dragon","while evolving its fitness"],
+    ["poisoned by a dart","while selecting its selector"],
+    ["killed by a mumak","escaping a local optimum"],
+    ["killed by a minotaur","while searching over search"],
+    ["killed by Death","while judging its own judge"],
+    ["fell into lava","promoting its offspring"],
+    ["choked on a ration","while pruning its ancestors"],
+    ["killed by a pony","while harnessing the harness"],
+    ["hit by a falling rock","while bootstrapping itself"],
+    ["killed by a trapper","while rewriting its own loop"],
+    ["killed by a giant eel","while tuning the tuner"],
+    ["killed by a leocrotta","while editing the editor"],
+    ["killed by an owlbear","optimizing optimization"],
+    ["killed by a jackal","while forking its own parent"],
+    ["killed by a gnome","selection selected itself"],
+    ["killed by an elf","recursively self-improving"],
+    ["zapped by a vortex","the loop closed over itself"],
+  ];
+  let heroStep=0, dog=HERO_PATH.at(-3), bugs=[[3,3],[7,3],[11,3]];
+  let hunting=false, huntTicks=0, deathTicks=0, run=42, deathIndex=0;
   function draw(){
-    const [px,py]=PATH[i%PATH.length];
-    el.innerHTML=MAP.map((row,y)=> y!==py
-      ? esc(row)
-      : esc(row.slice(0,px))+'<span class="you">@</span>'+esc(row.slice(px+1))).join("\n");
+    const occupied=new Map();
+    for(const pos of bugs) occupied.set(key(pos),{glyph:"x",cls:"gridbug"});
+    occupied.set(key(dog),{glyph:"d",cls:"pet"});
+    occupied.set(key(HERO_PATH[heroStep]),deathTicks
+      ? {glyph:"%",cls:"corpse"}
+      : {glyph:"@",cls:"you"});
+    if(deathTicks){
+      const [cause,context]=DEATHS[deathIndex];
+      msg.className="yasd";
+      msg.textContent=`YASD #${String(run).padStart(4,"0")}: ${cause}\n${context}`;
+    }else{
+      msg.className="run";
+      msg.textContent=`run #${String(run).padStart(4,"0")}`;
+    }
+    el.innerHTML=MAP.map((row,y)=>[...row].map((ch,x)=>{
+      const actor=occupied.get(`${x},${y}`);
+      return actor ? `<span class="${actor.cls}">${actor.glyph}</span>` : esc(ch);
+    }).join("")).join("\n");
+  }
+  function moveChasers(hero){
+    const blocked=new Set([key(hero)]);
+    const dogNext=route(dog,hero,true)[1];
+    if(dogNext && !blocked.has(key(dogNext))) dog=dogNext;
+    blocked.add(key(dog));
+    bugs=bugs.map(bug=>{
+      const next=route(bug,hero,false)[1];
+      if(next && !blocked.has(key(next))){ blocked.add(key(next)); return next; }
+      blocked.add(key(bug)); return bug;
+    });
+  }
+  function advance(){
+    if(deathTicks){
+      deathTicks--;
+      if(!deathTicks){
+        run++; deathIndex=(deathIndex+11)%DEATHS.length;
+        heroStep=STAIR_STEP; hunting=false; huntTicks=0;
+      }
+    }else if(!hunting){
+      heroStep=(heroStep+1)%HERO_PATH.length;
+      if(heroStep===LOOT_STEP){ hunting=true; huntTicks=0; }
+    }
+    const hero=HERO_PATH[heroStep];
+    moveChasers(hero);
+    if(hunting && !deathTicks){
+      huntTicks++;
+      let caught=bugs.some(([x,y])=>Math.abs(x-hero[0])+Math.abs(y-hero[1])===1);
+      if(!caught && huntTicks>=10){
+        const chase=route(bugs[0],hero,false);
+        bugs[0]=chase[Math.max(0,chase.length-2)];
+        caught=true;
+      }
+      if(caught) deathTicks=DEATH_HOLD;
+    }
+    draw();
   }
   draw();
-  if(!matchMedia("(prefers-reduced-motion: reduce)").matches) setInterval(()=>{ i++; draw(); }, 260);
+  if(!matchMedia("(prefers-reduced-motion: reduce)").matches) setInterval(advance,260);
 })();
 
 /* ===================== references / glossary ===================== */
@@ -766,9 +948,17 @@ const REFS={
   alphaevolve:{t:"AlphaEvolve",d:"A coding agent that discovers algorithmic and scientific constructions by evolving programs &mdash; including novel, provably-correct algorithms that beat the state of the art.",s:[["Novikov et al., 2025",ARX+"2506.13131"]]},
   arcagi:{t:"ARC-AGI",d:"Abstract-reasoning puzzles built to resist memorization; LLMs stalled on them for years. The 2025 jump came from agent harnesses and program-synthesis &quot;refinement&quot; loops &mdash; the same evolve-a-program idea.",s:[["ARC Prize 2025 results","https://arcprize.org/blog/arc-prize-2025-results-analysis"]]},
   rockt:{t:"Tim Rocktaschel (@_rockt)",d:"Co-author of the NetHack Learning Environment. He marks the anniversary each year: &quot;AI still can't learn to play NetHack&quot; &mdash; &quot;despite tremendous progress in AI... this challenge is still very far from being solved.&quot;",s:[["the tweet","https://x.com/_rockt/status/1805245137250816408"]]},
-  grandchallenge:{t:"A grand challenge for AI",d:"NetHack's own researchers proposed it as &quot;the most accessible grand challenge&quot; for AI: &quot;it won't solve AI, but it will unlock pathways towards better AI.&quot; Years on, no method has come close.",s:[["Grefenstette et al., via TechCrunch","https://techcrunch.com/2021/06/09/decades-old-ascii-adventure-nethack-may-hint-at-the-future-of-ai/"],["The NetHack Learning Environment",ARX+"2006.13760"]]},
+  grandchallenge:{t:"A grand challenge for AI",d:"The researchers behind NLE proposed NetHack as &quot;the most accessible grand challenge&quot; for AI: &quot;it won't solve AI, but it will unlock pathways towards better AI.&quot; Years on, no method has come close.",s:[["Grefenstette et al., via TechCrunch","https://techcrunch.com/2021/06/09/decades-old-ascii-adventure-nethack-may-hint-at-the-future-of-ai/"],["The NetHack Learning Environment",ARX+"2006.13760"]]},
   imagenet:{t:"ImageNet / ILSVRC",d:"The annual benchmark whose ratchet drove image-recognition error from <b>28% to ~2%</b> &mdash; a standing challenge, not a one-shot contest.",s:[["Russakovsky et al., 2015",ARX+"1409.0575"]]},
   fishtest:{t:"Fishtest",d:"Stockfish's volunteer distributed-testing framework &mdash; the model for coordinating many machines around one trusted evaluation.",s:[["official-stockfish/fishtest","https://github.com/official-stockfish/fishtest"]]},
+  aspire:{t:"ASPIRE",d:"A self-improving robotics system that diagnoses failed rollouts, rewrites code-as-policy programs, validates the repairs, and saves successful behaviors as reusable skills for new long-horizon tasks.",s:[["NVIDIA GEAR","https://research.nvidia.com/labs/gear/aspire/"]]},
+  codepolicies:{t:"Code as Policies",d:"Robot policies expressed as executable programs: language models compose perception and control APIs, feedback loops, and recursively defined helper functions into embodied behavior.",s:[["Liang et al., 2022","https://code-as-policies.github.io/"]]},
+  autoascend:{t:"AutoAscend",d:"The hand-engineered symbolic winner of the NeurIPS 2021 NetHack Challenge. NetHackers uses it as the reference floor and cold-start seed, not as a solved agent.",s:[["AutoAscend source","https://github.com/maciej-sypetkowski/autoascend"],["Challenge report","https://nethackchallenge.com/report.html"]]},
+  recursiveco:{t:"Recursive",d:"Richard Socher's frontier AI startup, launched in 2026 with a stated mission to build safe, open-ended, recursively self-improving AI for automated knowledge discovery.",s:[["Recursive","https://www.recursive.com/"]]},
+  ricursive:{t:"Ricursive Intelligence",d:"A frontier AI lab building a self-improvement loop between AI chip design and the AI systems that design those chips.",s:[["Ricursive Intelligence","https://www.ricursive.com/"]]},
+  discoveryloop:{t:"Discovery Loop",d:"A research startup automating complete experimental loops: propose, run, evaluate, and learn across thousands of parallel experiments, beginning with machine-learning research and its own technology stack.",s:[["Discovery Loop","https://www.discoveryloop.com/"]]},
+  aide2:{t:"AIDE²",d:"Weco AI's experiment in nested improvement: an outer loop rewrote the research-agent harness that ran the inner problem-solving loop.",s:[["Weco AI","https://www.weco.ai/blog/first-evidence-of-recursive-self-improvement"]]},
+  dgm:{t:"Darwin Gödel Machine",d:"Sakana AI's open-ended system maintains a growing lineage of coding agents that modify their own code and are selected by empirical performance.",s:[["Sakana AI","https://sakana.ai/dgm/"]]},
   /* --- NetHack jargon --- */
   ascension:{t:"Ascension",d:"Winning NetHack: carry the Amulet of Yendor up and offer it on the high altar of the Astral Plane. Progression = 1.0.",s:[["NetHack Wiki",WIKI+"Ascension"]]},
   amulet:{t:"Amulet of Yendor",d:"The artifact you descend ~50 levels to retrieve, then carry back up and out to win.",s:[["NetHack Wiki",WIKI+"Amulet_of_Yendor"]]},
@@ -840,48 +1030,79 @@ function odo(el,n,digits){ if(!el) return; el.innerHTML=String(n).padStart(digit
 })();
 
 /* ===================== leaderboard ===================== */
-let curObj="val-dwa-law-fem", curView="programs", curTier="self-reported", curRegime="universe", curMetric="frontier";
-const OBJ_CAP={"val-dwa-law-fem":"VALKYRIE DWA-LAW-FEM","random":"GENERALIST (RANDOM)","all":"ALL (BREADTH)"};
-const EMPTY_VERIFIED='No verified programs yet &mdash; verification (M2b) is not live. Everything above the baseline is self-reported.';
-const EMPTY_SELF='No programs ranked on this objective yet &mdash; be the first to register one.';
-function setCap(){
-  $("#scCap").innerHTML=`LEADERBOARD &mdash; ${OBJ_CAP[curObj]||curObj.toUpperCase()} &mdash; ${curTier}${curTier==="self-reported"?"*":""}`;
+let curObj="generalist", curView="people", curTier="self-reported", curRegime="universe", curMetric="frontier";
+/* objective scope: the picker sends bare tokens -- "generalist", a role ("val"),
+   or an identity ("val-dwa-law-fem"). Each maps to a set of identities + a caption;
+   the board, the Hackers tally, and the AutoAscend floor all read it the same way. */
+function scopeKind(obj){ return obj==="generalist"?"generalist":(obj in ROLE_NAMES?"role":"identity"); }
+function scopeIds(obj){
+  const k=scopeKind(obj);
+  if(k==="generalist") return Object.keys(ROLE_VARS).flatMap(r=>ROLE_VARS[r].map(v=>r+"-"+v));
+  if(k==="role") return ROLE_VARS[obj].map(v=>obj+"-"+v);
+  return [obj];
 }
+function objCap(obj){ const k=scopeKind(obj);
+  return k==="generalist"?"GENERALIST":(k==="role"?ROLE_NAMES[obj].toUpperCase()+" (ROLE)":obj.toUpperCase()); }
+const EMPTY_VERIFIED='No verified programs yet &mdash; verification (M2b) is not live. Everything above the floor is self-reported.';
+const EMPTY_SELF='No programs ranked here yet &mdash; be the first to register one.';
+const EMPTY_HACKERS='No hackers ranked here yet &mdash; be the first to register.';
+function setCap(){
+  $("#scCap").innerHTML=`LEADERBOARD &mdash; ${objCap(curObj)} &mdash; ${curView==="people"?"hackers":"programs"} &middot; ${curTier}${curTier==="self-reported"?"*":""}`;
+}
+/* AutoAscend floor for the current scope, from /baseline's per-identity values:
+   identity -> that identity; role/generalist -> mean over the scope's identities. */
+function aaScopeMean(){ const per=(BASELINE&&BASELINE.per_identity)||{};
+  const vals=scopeIds(curObj).map(id=>per[id]&&per[id].progression).filter(v=>v!=null);
+  return vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:null; }
+function deltaCell(v){ const aa=aaScopeMean();
+  if(aa==null||v==null) return `<td class="dz">&mdash;</td>`;
+  const d=+(v-aa).toFixed(3), cls=d>0.0005?"dpos":(d<-0.0005?"dneg":"dz");
+  return `<td class="num ${cls}">${(d>0?"+":"")+d.toFixed(3)}</td>`; }
+function covCell(n,t){ return `<td class="num cov">${n}<span class="tot">/${t}</span></td>`; }
 function progRow(p){
-  const name=p.base?'autoascend <span class="tag">baseline</span>':`nethacker@${p.digest} ${p.nu?'<span class="new">NEW!</span>':''}`;
-  const adv=p.base?'<span style="color:#b9b9c0">&mdash;</span>':`<span class="at">@</span>${esc(p.owner)}`;
+  const agg = scopeKind(curObj)!=="identity";
+  const name=p.base?'autoascend <span class="tag">floor</span>':`nethacker@${p.digest} ${p.nu?'<span class="new">NEW!</span>':''}`;
+  const who=p.base?'<span class="dz">&mdash;</span>':`<span class="at">@</span>${esc(p.owner)}`;
+  const scoreCell = `<td class="num">${p.score!=null?p.score.toFixed(3):'&mdash;'}</td>`;
+  const metric = agg
+    ? `${covCell(p.coverage,p.total)}${scoreCell}`
+    : `<td class="l pend">${esc(p.deepest)}</td>${scoreCell}`;
+  const delta = p.base?'<td class="dz">&mdash;</td>':deltaCell(p.score);
   return `<tr data-d="${p.digest}" class="${p.base?'base':''}">
     <td class="l rk ${(!p.base&&p.rank<=3)?'top':''}">${p.base?'&middot;':p.rank}</td>
     <td class="l nm">${name}</td>
-    <td class="l nm">${adv}</td>
-    <td class="l pend">${esc(p.deepest)}</td>
-    <td>${p.score.toFixed(3)}</td>
-    <td class="star">${p.asc?p.asc+' &#9733;':'.'}</td></tr>`;
+    <td class="l nm">${who}</td>
+    ${metric}
+    ${delta}
+    <td class="num star">${!p.base&&p.asc?p.asc+' &#9733;':'.'}</td></tr>`;
 }
 function renderBoard(view){
   const head=$("#scHead"), body=$("#scBody"), verified=curTier==="verified";
+  const agg = scopeKind(curObj)!=="identity", n=scopeIds(curObj).length, aa=aaScopeMean();
   if(view==="people"){
-    head.innerHTML=`<tr><th class="l">#</th><th class="l">hacker</th><th class="l">deepest reach</th>
-      <th>best</th><th>programs</th><th>&#9733;</th></tr>`;
-    const people=verified?[]:PEOPLE;
-    const rowsHTML=people.length?people.map(p=>`<tr>
-      <td class="l rk ${p.rank<=3?'top':''}">${p.rank}</td>
-      <td class="l nm"><span class="at">@</span>${esc(p.owner)}</td>
-      <td class="l pend">${esc(p.deepest)}</td>
-      <td>${p.best.toFixed(3)}</td><td>${p.progs}</td>
-      <td class="star">${p.asc||'.'}</td></tr>`).join("")
-      :`<tr><td class="l pend" colspan="6" style="padding:10px 8px">${verified?EMPTY_VERIFIED:EMPTY_SELF}</td></tr>`;
+    head.innerHTML = agg
+      ? `<tr><th class="l">#</th><th class="l">hacker</th><th>coverage</th><th>mean</th><th>&Delta; vs AA</th></tr>`
+      : `<tr><th class="l">#</th><th class="l">hacker</th><th>best mean</th><th>&Delta; vs AA</th></tr>`;
+    const rows=verified?[]:PEOPLE;
+    const cols=agg?5:4;
+    const rowsHTML=rows.length?rows.map(h=>`<tr>
+      <td class="l rk ${h.rank<=3?'top':''}">${h.rank}</td>
+      <td class="l nm"><span class="at">@</span>${esc(h.owner)}</td>
+      ${agg?covCell(h.coverage,h.total):""}
+      <td class="num">${h.mean.toFixed(3)}</td>
+      ${deltaCell(h.mean)}</tr>`).join("")
+      :`<tr><td class="l pend" colspan="${cols}" style="padding:10px 8px">${verified?EMPTY_VERIFIED:EMPTY_HACKERS}</td></tr>`;
     body.innerHTML=rowsHTML+`<tr class="base"><td class="l rk">&middot;</td>
-      <td class="l nm">autoascend <span class="tag">baseline</span></td>
-      <td class="l pend">${esc(AUTOASCEND.deepest)}</td>
-      <td>${AUTOASCEND.score.toFixed(3)}</td><td>&mdash;</td><td class="star">.</td></tr>`;
+      <td class="l nm">autoascend <span class="tag">floor</span></td>
+      ${agg?covCell(n,n):""}<td class="num">${aa!=null?aa.toFixed(3):'&mdash;'}</td><td class="dz">&mdash;</td></tr>`;
     return;
   }
-  head.innerHTML=`<tr><th class="l">#</th><th class="l">program</th><th class="l">hacker</th>
-    <th class="l">deepest reach</th><th>score</th><th>&#9733;</th></tr>`;
+  head.innerHTML = agg
+    ? `<tr><th class="l">#</th><th class="l">program</th><th class="l">hacker</th><th>coverage</th><th>mean</th><th>&Delta; vs AA</th><th>&#9733;</th></tr>`
+    : `<tr><th class="l">#</th><th class="l">program</th><th class="l">hacker</th><th class="l">deepest reach</th><th>score</th><th>&Delta; vs AA</th><th>&#9733;</th></tr>`;
   const rows=verified?[]:(BOARD_BY_OBJ[curObj]||[]);
   const rowsHTML=rows.length?rows.map(progRow).join("")
-    :`<tr><td class="l pend" colspan="6" style="padding:10px 8px">${verified?EMPTY_VERIFIED:EMPTY_SELF}</td></tr>`;
+    :`<tr><td class="l pend" colspan="7" style="padding:10px 8px">${verified?EMPTY_VERIFIED:EMPTY_SELF}</td></tr>`;
   body.innerHTML=rowsHTML+progRow(AUTOASCEND);
   body.querySelectorAll("tr[data-d]").forEach(tr=>tr.addEventListener("click",()=>openProgram(tr.dataset.d)));
 }
@@ -900,33 +1121,80 @@ $("#scMore").addEventListener("click",function(){
 /* ===================== frontier heatmap ===================== */
 function renderFrontier(regime){
   const grid=$("#rolegrid"), note=$("#gridnote"), verified=curTier==="verified";
-  const src=regime==="program"?CHAMPION.scores:null;
-  const cellVal=id=> verified?null:(regime==="program"?(id in src?src[id]:null):(id in UNIVERSE?UNIVERSE[id].v:null));
-  let filled=0,total=0,sum=0;
-  grid.innerHTML=Object.keys(ROLE_NAMES).map(role=>{
-    const rows=ROLE_VARS[role].map(v=>{
-      const id=role+"-"+v; total++;
-      const val=cellVal(id);
-      if(val!=null){filled++;sum+=val;}
-      const asc=val!=null&&val>=ASC;
-      const shown=val==null?"&middot;":(asc?"&#9733;"+val.toFixed(3):val.toFixed(3));
-      const style=val==null?"":`background:${tint(val)};color:${tintText(val)}`;
-      const title=val==null?`${id} :: ${verified?'no verified result':'unexplored'}`:`${id} :: ${val.toFixed(3)}`+(regime==="universe"&&UNIVERSE[id]?` :: @${UNIVERSE[id].o}, ${UNIVERSE[id].ep} ep`:"");
-      return `<tr title="${esc(title)}"><td class="vn">${esc(v)}</td>
-        <td class="vv ${val==null?'empty':''} ${asc?'asc':''}" style="${style}">${shown}</td></tr>`;
+  const per=(BASELINE&&BASELINE.per_identity)||{};
+  /* per-identity datum: state 'prog' (a program's best, heat-tinted), 'floor' (the dim
+     AutoAscend floor, shown when nothing has touched the cell yet), or 'none'. aa is the
+     identity's own AutoAscend floor -- so every touched cell can report delta = v - aa. */
+  function datum(id){
+    const aa=(per[id]&&per[id].progression!=null)?per[id].progression:null;
+    if(verified) return {state:'none',v:null,aa};
+    let v=null,floor=false;
+    if(regime==="program"){
+      if(id in CHAMPION.scores) v=CHAMPION.scores[id];   // the champion's own cell -- honest, may sit below AA
+    } else {
+      /* Universe = best of ALL, and AutoAscend is one of the competitors: take
+         max(best program, AA floor). A program shows only where it actually beats
+         the floor; otherwise AutoAscend leads and the cell reads as the floor. */
+      const pv=(id in UNIVERSE)?UNIVERSE[id].v:null;
+      if(pv!=null&&(aa==null||pv-aa>0.0005)) v=pv;
+      else if(aa!=null){ v=aa; floor=true; }
+    }
+    if(v==null) return {state:'none',v:null,aa};
+    if(floor) return {state:'floor',v,aa};
+    return {state:'prog',v,aa,delta:aa!=null?+(v-aa).toFixed(3):null};
+  }
+  function rowTitle(id,d){
+    if(d.v==null) return `${id} :: ${verified?'no verified result':'unexplored'}`;
+    if(d.state==='floor') return `${id} :: AutoAscend floor ${pct(d.v)} -- best of all here`;
+    const who=(regime==="universe"&&UNIVERSE[id])?` :: @${UNIVERSE[id].o}, ${UNIVERSE[id].ep} ep`:"";
+    const dl=d.delta!=null?` :: Δ ${fmtP(d.delta)} vs AutoAscend`:"";
+    return `${id} :: ${pct(d.v)}${dl}${who}`;
+  }
+  /* the value cell -- heat tint / star / dim-floor styling */
+  function valTd(d){
+    const v=d.v,isFloor=d.state==='floor',asc=v!=null&&v>=ASC;
+    const shown=v==null?"&middot;":(asc?"&#9733;"+pct(v):pct(v));
+    const st=v==null?"":`background:${tint(v,isFloor)};color:${isFloor?'#9a9aa6':tintText(v)}`;
+    return `<td class="vv ${v==null?'empty':(isFloor?'floor':'')} ${asc?'asc':''}" style="${st}">${shown}</td>`;
+  }
+  function pct(v){ return (v*100).toFixed(1)+"%"; }                       // 0.117 -> 11.7%
+  function fmtP(x){ return (x<0?"-":"+")+Math.abs(x*100).toFixed(1)+"%"; } // delta -> +6.0%
+  function dSigned(delta){                 // signed delta vs the AutoAscend floor, in percentage points
+    if(delta==null) return `<td class="dcol dz">&mdash;</td>`;
+    const cls=delta>0.0005?"dpos":(delta<-0.0005?"dneg":"dz");
+    return `<td class="dcol ${cls}">${fmtP(delta)}</td>`;
+  }
+  const aaTd=`<td class="dcol"><span class="aachip">aa</span></td>`, noTd=`<td class="dcol dz">&middot;</td>`;
+
+  let prog=0,floor=0,total=0,sum=0;
+  const roleOrder=Object.keys(ROLE_NAMES).slice().sort((a,b)=>ROLE_VARS[b].length-ROLE_VARS[a].length); // most identities first
+  grid.innerHTML=roleOrder.map(role=>{
+    const ids=ROLE_VARS[role].map(v=>({v,id:role+"-"+v,d:datum(role+"-"+v)}));
+    let tSum=0,tAA=0,tN=0,shownSum=0,shownN=0;
+    ids.forEach(({d})=>{ total++;
+      if(d.state==='prog'){ prog++; sum+=d.v; tSum+=d.v; if(d.aa!=null) tAA+=d.aa; tN++; shownSum+=d.v; shownN++; }
+      else if(d.state==='floor'){ floor++; shownSum+=d.v; shownN++; } });
+    const roleAvg=shownN?(shownSum/shownN):null;                 // average across the best-of-all cells
+    const roleLift=(tN&&shownN)?((tSum-tAA)/shownN):null;        // avg lift over ALL cells (floor = 0 lift)
+    // header on the same 3 columns as the identity rows: name | avg % | delta (rendered exactly as a cell -- 'aa' when all-floor)
+    const head=`<tr class="frhead"><td class="vn rn"><span class="ref" data-k="role-${role}">${ROLE_NAMES[role]}</span></td>`
+      +`<td class="vv hval">${roleAvg!=null?pct(roleAvg):'&middot;'}</td>`
+      +(roleLift!=null?dSigned(roleLift):(roleAvg!=null?aaTd:noTd))+`</tr>`;
+    const body=ids.map(({v,id,d})=>{
+      const dtd=d.state==='prog'?dSigned(d.delta):(d.state==='floor'?aaTd:noTd);
+      return `<tr title="${esc(rowTitle(id,d))}"><td class="vn">${esc(v)}</td>${valTd(d)}${dtd}</tr>`;
     }).join("");
-    const rv=ROLE_VARS[role].map(v=>cellVal(role+"-"+v)).filter(x=>x!=null);
-    const rmean=rv.length?(rv.reduce((a,b)=>a+b,0)/rv.length).toFixed(2):"&middot;";
-    return `<table class="fr"><caption><span class="ref" data-k="role-${role}">${ROLE_NAMES[role]}</span><span class="m">${rmean}</span></caption>${rows}</table>`;
+    return `<table class="fr"><colgroup><col class="c1"><col class="c2"><col class="c3"></colgroup>${head}${body}</table>`;
   }).join("");
-  const overall=filled?(sum/filled).toFixed(3):"-";
-  const bv=(BASELINE&&BASELINE.overall!=null)?BASELINE.overall.toFixed(3):null;
-  const baseLine=bv?` &middot; baseline &mdash; <b>AutoAscend ${bv}</b> (val-dwa-law-fem)`:` &middot; baseline &mdash; AutoAscend not computed yet`;
+
+  const overall=prog?pct(sum/prog):"-";
+  const bv=(BASELINE&&BASELINE.overall!=null)?pct(BASELINE.overall):null;
+  const baseLine=bv?` &middot; AutoAscend overall <b>${bv}</b>`:` &middot; AutoAscend not computed yet`;
   note.innerHTML=(verified
     ? `<b>verified</b> tier &mdash; no verified results yet (M2b isn't live), so every cell is blank`
     : (regime==="program"
-      ? `champion <b>nethacker@${esc(CHAMPION.digest)}</b> (<b>@${esc(CHAMPION.owner)}</b>) &mdash; overall <b>${overall}</b> over <b>${filled}</b> explored`
-      : `each cell = the <b>best</b> program's mean &middot; overall <b>${overall}</b> over <b>${filled}/${total}</b> explored`))+baseLine;
+      ? `champion <b>nethacker@${esc(CHAMPION.digest)}</b> (<b>@${esc(CHAMPION.owner)}</b>) &mdash; overall <b>${overall}</b> over <b>${prog}</b> explored`
+      : `each cell = the <b>best result yet</b> &mdash; a program's mean where it beats <b>AutoAscend</b>, else the dim floor &middot; <b>${prog}</b> of <b>${total}</b> led by a program, <b>${floor}</b> at the AutoAscend floor`))+baseLine;
   if(window.__refs) window.__refs();
 }
 document.querySelectorAll('input[name="regime"]').forEach(r=>r.addEventListener("change",()=>{ curRegime=r.value; renderFrontier(curRegime); }));
@@ -972,9 +1240,9 @@ async function openProgram(d){
     :`<div style="color:#6a6a72">No per-identity atoms yet.</div>`;
   $("#mBody").innerHTML=`<div class="kv">
     <span class="k">deepest reach</span><span class="v">${esc(p.deepest)}</span>
-    <span class="k">mean progression</span><span class="v">${p.score.toFixed(3)}</span>
-    <span class="k">median</span><span class="v">${p.med.toFixed(3)}</span>
-    <span class="k">episodes</span><span class="v">${p.ep}</span>
+    <span class="k">mean progression</span><span class="v">${p.score!=null?p.score.toFixed(3):'&mdash;'}</span>
+    <span class="k">median</span><span class="v">${p.med!=null?p.med.toFixed(3):'&mdash;'}</span>
+    <span class="k">episodes</span><span class="v">${p.ep!=null?p.ep:'&mdash;'}</span>
     <span class="k">ascensions</span><span class="v" style="color:#cc0000">${p.asc}</span>
     <span class="k">source</span><span class="v">${p.base?'the AutoAscend baseline &mdash; where this effort started':`<a href="#">github.com/${esc(p.owner)}/nethacker@${d}</a>`}</span>
     <span class="k">tier</span><span class="v">${p.base?'baseline':'self-reported*'}</span></div>
@@ -995,40 +1263,30 @@ const jget = async p => { const r = await fetch(p); if(!r.ok) throw new Error(p+
    milestone string (e.g. "Dlvl:3") or "—" when the endpoint has none -- never invented. */
 function rebuildAutoascend(){
   const per = (BASELINE && BASELINE.per_identity) || {};
-  const c = per[curObj];
+  const n = scopeIds(curObj).length;
+  const aa = aaScopeMean();                   // scope-aware floor (identity / role / generalist)
+  const c = per[curObj];                      // present only for an identity scope
   AUTOASCEND = {
     digest:"autoascend", owner:"autoascend",
-    score: BASELINE && BASELINE.overall!=null ? BASELINE.overall : 0,
-    med:   BASELINE && BASELINE.overall!=null ? BASELINE.overall : 0,   // GAP: no median in /baseline
+    score: aa!=null ? aa : null,              // null (not 0) when no baseline -> renders "—", never a fake floor
+    med:   aa!=null ? aa : null,              // GAP: /baseline has no median
+    coverage: n, total: n,                    // AA is the reference floor over the whole scope
     ep: c && c.episodes!=null ? c.episodes : 0,
     asc: 0,
-    deepest: c && c.deepest ? c.deepest : "—",                          // milestone string or — (GAP)
+    deepest: (scopeKind(curObj)==="identity" && c && c.deepest) ? c.deepest : "—",
     fr: Object.fromEntries(Object.entries(per).map(([id,x])=>[id, x.progression])),
     base: true,
   };
 }
 
-/* PEOPLE: group /search solutions by owner (progs = their solution count); best/asc come
-   from that owner's rows on the CURRENT objective's board. deepest is "—" (GAP: no per-hacker
-   deepest endpoint). Ranked by best desc. */
-function buildPeople(boardRows){
-  const byOwner = {};
-  for(const s of SEARCH){ if(!byOwner[s.owner]) byOwner[s.owner]={owner:s.owner, progs:0}; byOwner[s.owner].progs++; }
-  const bstat = {};
-  for(const r of boardRows){
-    if(!bstat[r.owner]) bstat[r.owner]={best:0, asc:0};
-    if(r.mean_progression > bstat[r.owner].best) bstat[r.owner].best = r.mean_progression;
-    bstat[r.owner].asc += r.ascensions;
-  }
-  const people = Object.values(byOwner).map(p=>({
-    owner:p.owner, progs:p.progs,
-    best: bstat[p.owner] ? bstat[p.owner].best : 0,
-    asc:  bstat[p.owner] ? bstat[p.owner].asc  : 0,
-    deepest:"—",
-  }));
-  people.sort((a,b)=> (b.best-a.best) || a.owner.localeCompare(b.owner));
-  people.forEach((p,i)=>{ p.rank = i+1; });
-  return people;
+/* PEOPLE (the Hackers tally): the union-frontier standings for the current scope,
+   from GET /hackers (coverage + mean, coverage-first). The server does the
+   aggregation across each owner's programs. Degrades to [] on failure. */
+async function loadHackers(obj){
+  try{
+    const rows = await jget(`/hackers?objective=${encodeURIComponent(obj)}&tier=${encodeURIComponent(curTier)}`);
+    PEOPLE = rows.map(r=>({rank:r.rank, owner:r.owner, coverage:r.coverage, total:r.total, mean:r.mean_progression}));
+  }catch(e){ PEOPLE = []; }
 }
 
 /* Frontier "universe": each identity's rank-1 elite. /elites has no episodes, so ep comes
@@ -1043,12 +1301,12 @@ async function loadUniverse(){
   }catch(e){ UNIVERSE = {}; }
 }
 
-/* Frontier "program" regime champion: the top solution on the "random" (generalist) board,
-   with its per-identity frontier. /board?objective=random is empty today -> CHAMPION stays
+/* Frontier "program" regime champion: the #1 solution on the generalist board
+   (coverage-first), with its per-identity frontier. Empty board -> CHAMPION stays
    blank and the program regime honestly shows every cell "·". */
 async function loadChampion(){
   try{
-    const rnd = await jget(`/board?objective=random&tier=${encodeURIComponent(curTier)}`);
+    const rnd = await jget(`/board?objective=generalist&tier=${encodeURIComponent(curTier)}`);
     if(rnd.length){
       const top = rnd[0]; let scores = {};
       try{ const fr = await jget("/solutions/"+encodeURIComponent(top.solution_digest)+"/frontier");
@@ -1058,42 +1316,26 @@ async function loadChampion(){
   }catch(e){ CHAMPION = {digest:"", owner:"", scores:{}}; }
 }
 
-/* The two callouts (most cells held / most firsts) come from the objective-independent
-   coverage & firsts boards. Empty or unavailable -> an honest "—", never a stale number. */
-async function loadCallouts(){
-  const who = document.querySelectorAll(".callouts .callout .who");
-  if(who.length<2) return;
-  try{
-    const cov = await jget("/board?metric=coverage");
-    if(cov.length){ COVERAGE={owner:cov[0].owner, digest:short(cov[0].solution_digest), cells:cov[0].cells_held};
-      who[0].innerHTML = `<span class="at">@</span>${esc(COVERAGE.owner)} &mdash; <span class="num">${COVERAGE.cells}</span> cells lit`; }
-    else { COVERAGE=null; who[0].innerHTML = `<span class="num">&mdash;</span> none yet`; }
-  }catch(e){ COVERAGE=null; who[0].innerHTML = `<span class="num">&mdash;</span> none yet`; }
-  try{
-    const fst = await jget("/board?metric=firsts");
-    if(fst.length){ FIRSTS={owner:fst[0].owner, digest:short(fst[0].solution_digest), firsts:fst[0].firsts};
-      who[1].innerHTML = `<span class="at">@</span>${esc(FIRSTS.owner)} &mdash; <span class="num">${FIRSTS.firsts}</span> firsts`; }
-    else { FIRSTS=null; who[1].innerHTML = `<span class="num">&mdash;</span> none yet`; }
-  }catch(e){ FIRSTS=null; who[1].innerHTML = `<span class="num">&mdash;</span> none yet`; }
-}
-
 /* Per-objective + per-tier state: the board (its rows become PROGRAMS/BOARD_BY_OBJ),
    PEOPLE, the baseline row, and the progress series. Called on load and on every
    objective/tier change. Each fetch degrades to an honest empty state on failure. */
 async function loadObjective(obj){
-  rebuildAutoascend();                                  // baseline row reflects this objective
+  rebuildAutoascend();                                  // floor row reflects this objective's scope
+  const agg = scopeKind(obj)!=="identity";
   let rows=[];
   try{ rows = await jget(`/board?objective=${encodeURIComponent(obj)}&tier=${encodeURIComponent(curTier)}`); }
   catch(e){ rows=[]; }                                  // unknown obj (404) / offline -> "be the first" empty state
   PROGRAMS = rows.map(r=>({
     rank:r.rank, digest:short(r.solution_digest), fulldigest:r.solution_digest,
-    owner:r.owner, score:r.mean_progression, med:r.median_progression,
-    ep:r.episodes, asc:r.ascensions,
-    deepest:"—",                                        // GAP: /board carries no deepest -- do NOT fabricate
+    owner:r.owner, score:r.mean_progression,
+    med: r.median_progression!=null ? r.median_progression : null,   // identity board only
+    ep:  r.episodes!=null ? r.episodes : null,                       // identity board only
+    coverage: agg ? r.coverage : null, total: agg ? r.total : null,  // aggregate board only
+    asc:r.ascensions, deepest: r.deepest!=null ? r.deepest : "—",    // /board now carries deepest
     fr:null,                                            // loaded lazily in openProgram
   }));
   BOARD_BY_OBJ[obj] = PROGRAMS;
-  PEOPLE = buildPeople(rows);
+  await loadHackers(obj);                               // the Hackers tally (union frontier)
   let series=[];
   try{ const pr = await jget(`/progress?objective=val-dwa-law-fem&tier=${encodeURIComponent(curTier)}`); series = (pr && pr.series) || []; }
   catch(e){ series=[]; }
@@ -1103,37 +1345,36 @@ async function loadObjective(obj){
   ];
 }
 
-/* Bootstrap: fetch everything, adapt into the render state, then do the first render.
-   Every fetch is guarded -- any failure keeps the page's existing friendly empty/error
-   states; nothing ever throws to the console. */
-/* Every registered solution, following pagination so PEOPLE / progs can never
-   silently under-count: accumulate pages until one comes back short. PAGE is a
-   page size, not a cap on the total -- the loop keeps going until exhausted. */
-async function loadSearch(){
-  const PAGE = 100; let offset = 0, all = [];
-  try{
-    for(;;){
-      const page = await jget(`/search?limit=${PAGE}&offset=${offset}`);
-      all = all.concat(page);
-      if(page.length < PAGE) break;   // a short page is the last page
-      offset += PAGE;
-    }
-    SEARCH = all;
-  }catch(e){ SEARCH = all; }          // keep whatever paged in before a failure
+/* Grouped objective picker: Generalist / Roles / Identities, built from the
+   identity tables so all 73 identities are pickable. Option values are the bare
+   backend tokens ("generalist", a role like "val", an identity). */
+function buildPicker(){
+  const sel=$("#objSelect"); if(!sel) return;
+  let html=`<optgroup label="Generalist"><option value="generalist">Generalist &mdash; all 73 identities</option></optgroup>`;
+  html+=`<optgroup label="Roles (macro-average)">`;
+  for(const r of Object.keys(ROLE_NAMES)) html+=`<option value="${r}">${ROLE_NAMES[r]} &mdash; all ${ROLE_VARS[r].length}</option>`;
+  html+=`</optgroup><optgroup label="Identities (same-seeds)">`;
+  for(const r of Object.keys(ROLE_VARS)) for(const v of ROLE_VARS[r]) html+=`<option value="${r}-${v}">${r}-${v}</option>`;
+  html+=`</optgroup>`;
+  sel.innerHTML=html; sel.value=curObj;
 }
 
+/* Bootstrap: fetch everything, adapt into the render state, then do the first render.
+   Every fetch is guarded -- any failure keeps the page's friendly empty/error
+   states; nothing ever throws to the console. */
 async function boot(){
+  buildPicker();                        // fill the objective menu before the first render
   /* independent setup fetches run concurrently; the real dependencies are
-     awaited after (UNIVERSE needs OBJ_EP; the board/people/baseline need
-     BASELINE + SEARCH). Each is guarded, so any failure keeps a friendly state. */
+     awaited after (UNIVERSE needs OBJ_EP; the board/hackers need BASELINE).
+     Each is guarded, so any failure keeps a friendly state. */
   const statsP = jget("/stats")
     .then(s=>{ odo($("#odoProg"), s.programs, 5); odo($("#odoPlay"), s.hackers, 5); })
     .catch(()=>{ odo($("#odoProg"),0,5); odo($("#odoPlay"),0,5); });
   const baseP = jget("/baseline").then(b=>{ BASELINE = b; }).catch(()=>{ BASELINE = {owner:"autoascend", per_identity:{}, overall:null}; });
   const objP  = jget("/objectives").then(o=>{ OBJ_EP = Object.fromEntries(o.map(x=>[x.name, x.episodes])); }).catch(()=>{ OBJ_EP = {}; });
-  await Promise.all([statsP, baseP, objP, loadSearch(), loadChampion(), loadCallouts()]);
+  await Promise.all([statsP, baseP, objP, loadChampion()]);
   await loadUniverse();                 // needs OBJ_EP (per-identity episode counts)
-  await loadObjective(curObj);          // needs BASELINE + SEARCH
+  await loadObjective(curObj);          // needs BASELINE
   setCap(); renderBoard(curView); renderFrontier(curRegime); renderChart(curMetric);
 }
 boot();
