@@ -370,7 +370,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 |_|\_\___|\__|_||_\__,_\__|_\_\___|_| /__/
 </pre>
     <div class="sub">solving nethack, one stupid harness at a time
-      &nbsp;<b>&middot;</b>&nbsp; v0.8.1<span class="cursor"></span></div>
+      &nbsp;<b>&middot;</b>&nbsp; v{{version}}<span class="cursor"></span></div>
   </header>
   <div class="msgbar"><div class="msgbar__in mono" id="mq"></div></div>
 
@@ -401,7 +401,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
         <span class="od" id="odometer" aria-label="visitor counter"></span>
         <div class="cap" id="odcap">since Jun 2026</div>
       </div>
-      <div class="updated">last updated:<br>24&nbsp;Aug&nbsp;2026</div>
+      <div class="updated">last updated:<br><span id="updated">&mdash;</span></div>
 
       <div class="badges">
         <a class="badge b1" href="https://dunnolab.ai/">powered by<br><b>dunnolab.ai</b></a>
@@ -775,7 +775,7 @@ const METRICS={
  ascensions:{label:"Ascensions -- still zero",max:1,fmt:v=>String(v)},
  coverage:{label:"Milestone cells lit on val-dwa-law-fem",max:40,fmt:v=>String(v)}};
 const MEMES=[
- "You enter the Dungeons of Doom.","3 programs registered; none has ascended.",
+ "You enter the Dungeons of Doom.",
  "Yet Another Stupid Death: killed by a grid bug, while praying.","You hear someone counting money.",
  "This page is under construction.","You feel much better. Welcome to experience level 2.",
  "We do not sell AGI here. :]","Do you want your possessions identified? [ynq]",
@@ -789,9 +789,30 @@ function tint(v,floor){ if(v==null) return "#ffffff"; const a=(floor?0.05:0.10)+
 function tintText(v){ return v!=null && v>=0.5 ? "#ffffff" : "#111"; }
 
 /* ===================== marquee ===================== */
-/* two identical halves (each ends with a separator) so the -50% shift loops seamlessly */
-const _half = MEMES.map(m=>`<b>${esc(m)}</b>`).join('<span class="sep">|||</span>') + '<span class="sep">|||</span>';
-$("#mq").innerHTML = _half + _half;
+/* two identical halves (each ends with a separator) so the -50% shift loops seamlessly.
+   liveLine (the "N programs registered; ..." count) is spliced in from /stats once it
+   loads; until then, or if /stats fails, the marquee simply omits it -- never a fake count. */
+function renderMarquee(liveLine){
+  const items = liveLine ? [MEMES[0], liveLine, ...MEMES.slice(1)] : MEMES;
+  const half = items.map(m=>`<b>${esc(m)}</b>`).join('<span class="sep">|||</span>') + '<span class="sep">|||</span>';
+  $("#mq").innerHTML = half + half;
+}
+/* the live marquee line, built from /stats counts (honest singular/plural) */
+function marqueeStatsLine(s){
+  const progs = `${s.programs} ${s.programs===1?"program":"programs"} registered`;
+  const asc = s.ascensions===0 ? "none has ascended"
+            : `${s.ascensions} ${s.ascensions===1?"has":"have"} ascended`;
+  return `${progs}; ${asc}`;
+}
+/* sidebar "last updated" stamp from /stats' newest registered_at (ISO-8601 UTC);
+   null/absent/unparseable -> a neutral dash, never a fabricated date. */
+const _MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function setUpdated(iso){
+  const el=$("#updated"); if(!el) return;
+  const d = iso ? new Date(iso) : null;
+  el.textContent = (d && !isNaN(d)) ? `${d.getUTCDate()} ${_MON[d.getUTCMonth()]} ${d.getUTCFullYear()}` : "—";
+}
+renderMarquee(null);
 
 /* ===================== ambient demo game (@ + dog fleeing a grid-bug swarm) ===================== */
 (function(){
@@ -1368,7 +1389,8 @@ async function boot(){
      awaited after (UNIVERSE needs OBJ_EP; the board/hackers need BASELINE).
      Each is guarded, so any failure keeps a friendly state. */
   const statsP = jget("/stats")
-    .then(s=>{ odo($("#odoProg"), s.programs, 5); odo($("#odoPlay"), s.hackers, 5); })
+    .then(s=>{ odo($("#odoProg"), s.programs, 5); odo($("#odoPlay"), s.hackers, 5);
+               renderMarquee(marqueeStatsLine(s)); setUpdated(s.last_registered_at); })
     .catch(()=>{ odo($("#odoProg"),0,5); odo($("#odoPlay"),0,5); });
   const baseP = jget("/baseline").then(b=>{ BASELINE = b; }).catch(()=>{ BASELINE = {owner:"autoascend", per_identity:{}, overall:null}; });
   const objP  = jget("/objectives").then(o=>{ OBJ_EP = Object.fromEntries(o.map(x=>[x.name, x.episodes])); }).catch(()=>{ OBJ_EP = {}; });
