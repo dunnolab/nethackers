@@ -160,10 +160,11 @@ async function pass1() {
   ok(/program/.test(phead) && /coverage/.test(phead) && /vs AA/.test(phead), "programs (aggregate) header: coverage + Δ");
   ok(qa("#scBody tr").length === 3, "programs: 2 rows + floor = 3");
 
-  // frontier: every cell has a value (program or floor), 73 total
-  const frCells = qa("#rolegrid td.vv");
-  const floorCells = qa("#rolegrid td.vv.floor").length;
-  const progCells = qa("#rolegrid td.vv:not(.floor):not(.empty)").length;
+  // frontier: every per-identity cell has a value (program or floor), 73 total.
+  // :not(.hval) excludes the per-role header average cells (also class "vv").
+  const frCells = qa("#rolegrid td.vv:not(.hval)");
+  const floorCells = qa("#rolegrid td.vv.floor:not(.hval)").length;
+  const progCells = qa("#rolegrid td.vv:not(.hval):not(.floor):not(.empty)").length;
   ok(frCells.length === 73, "frontier renders 73 identity cells");
   ok(floorCells > 0 && progCells > 0, `frontier mixes program (${progCells}) and floor (${floorCells}) cells`);
   ok(/AutoAscend floor/.test(q("#gridnote").textContent), "gridnote mentions the AutoAscend floor");
