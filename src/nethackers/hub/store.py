@@ -76,6 +76,15 @@ CREATE TABLE IF NOT EXISTS lineage (
     kind TEXT NOT NULL CHECK(kind IN ('parent','influence')),
     PRIMARY KEY(child_digest, parent_digest, kind)
 );
+CREATE TABLE IF NOT EXISTS poll_votes (
+    voter_id   TEXT PRIMARY KEY,           -- one prophecy per browser
+    method     TEXT NOT NULL,
+    timeline   TEXT NOT NULL,
+    roles      TEXT NOT NULL DEFAULT '[]', -- JSON array of role keys
+    xp         TEXT,                        -- nullable
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 -- derived views (schema only here; Tasks 7-8 populate)
 CREATE TABLE IF NOT EXISTS attainment (
     identity TEXT NOT NULL, milestone TEXT NOT NULL,
@@ -281,6 +290,39 @@ class Store:
             values["ascended"] = bool(values["ascended"])
             atoms.append(Atom.from_dict(values))
         return atoms
+
+    def upsert_poll_vote(
+        self, voter_id: str, *, method: str, timeline: str, roles: list[str], xp: str | None
+    ) -> None:
+        """Insert this browser's prophecy, or replace it if the voter_id
+        already voted (one prophecy per browser; re-vote is last-wins).
+        created_at is preserved across replacements; roles is stored as a
+        JSON array."""
+        self._conn.execute(
+            """
+            INSERT INTO poll_votes (voter_id, method, timeline, roles, xp)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(voter_id) DO UPDATE SET
+                method = excluded.method,
+                timeline = excluded.timeline,
+                roles = excluded.roles,
+                xp = excluded.xp,
+                updated_at = datetime('now')
+            """,
+            (voter_id, method, timeline, json.dumps(roles), xp),
+        )
+        self._conn.commit()
+
+    def iter_poll_votes(self) -> list[dict[str, Any]]:
+        """Every vote, anonymized (no voter_id, no timestamps) -- the read
+        shape GET /poll serves and the client aggregates over."""
+        rows = self._conn.execute(
+            "SELECT method, timeline, roles, xp FROM poll_votes ORDER BY created_at"
+        ).fetchall()
+        return [
+            {"method": m, "timeline": t, "roles": json.loads(r), "xp": x}
+            for (m, t, r, x) in rows
+        ]
 
     def insert_baseline_atoms(self, atoms: list[Atom]) -> int:
         """Insert AutoAscend's computed baseline atoms into the isolated
