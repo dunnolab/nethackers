@@ -145,27 +145,20 @@ def test_mean_aggregation_ranks_purely_by_mean_progression(tmp_path):
     assert entries[1]["mean_progression"] == 0.2
 
 
-def test_objective_digest_isolation_a_different_objectives_atoms_do_not_leak_in(tmp_path):
-    # Property 3: two objectives target the SAME identity/character but have
-    # different digests (different name) -- a solution's atoms produced
-    # under the OTHER objective must not appear on this objective's board,
-    # even though both share ``identity``. Proves digest-filtering, not
-    # character-filtering (task-9-context.md's RESOLUTION).
+def test_board_groups_atoms_by_identity_not_objective_digest(tmp_path):
+    # Two atoms on the same identity under DIFFERENT objective digests now
+    # BOTH count on that identity's board -- the rekey's defining behavior.
     store = _new_store(tmp_path)
-    spec_a = _spec(name="objective-a", batch=((0, IDENTITY),))
-    spec_b = _spec(name="objective-b", batch=((0, IDENTITY),))
-    assert spec_a.digest() != spec_b.digest()
-
+    spec_a = _spec(name="obj-a", batch=((0, IDENTITY),))
+    spec_b = _spec(name="obj-b", batch=((1, IDENTITY),))
     atoms = [
-        _atom(spec_a, solution_digest="sha256:under-a", seed=0, progression=0.5),
-        _atom(spec_b, solution_digest="sha256:under-b", seed=0, progression=0.5),
+        _atom(spec_a, solution_digest="sha256:s", seed=0, progression=0.4),
+        _atom(spec_b, solution_digest="sha256:s", seed=1, progression=0.6),
     ]
     _seed(store, atoms, [spec_a, spec_b])
-
-    entries = board(store, spec_a)
-
-    assert [e["solution_digest"] for e in entries] == ["sha256:under-a"]
-    assert "sha256:under-b" not in [e["solution_digest"] for e in entries]
+    (entry,) = board(store, CATALOG[IDENTITY])
+    assert entry["episodes"] == 2
+    assert abs(entry["mean_progression"] - 0.5) < 1e-9
 
 
 # NOTE: test_all_rollup_aggregates_across_every_objectives_atoms was removed
@@ -303,6 +296,11 @@ def test_board_row_includes_deepest_milestone(tmp_path):
 
 # --- aggregate_board (Task 4) -----------------------------------------------
 
+# NOTE: the objective_digest-isolation tests were removed with the identity
+# rekey: after random/all are retired there is exactly one objective per
+# identity, so an identity board IS the per-component view. Isolation is now
+# structural, not a digest filter (spec: "Retire random/all, drop objective_digest").
+
 VAL_IDS = ["val-dwa-law-fem", "val-hum-law-fem", "val-hum-neu-fem"]  # the 3 Valkyrie identities
 
 
@@ -327,26 +325,6 @@ def test_aggregate_board_is_coverage_first_then_mean(tmp_path):
     assert abs(rows[0]["mean_progression"] - 0.2) < 1e-9
     assert rows[1]["coverage"] == 1
     assert [r["rank"] for r in rows] == [1, 2]
-
-
-def test_aggregate_board_scores_each_identity_on_its_own_objective_digest(tmp_path):
-    # an atom on the same character but under a DIFFERENT objective must not leak in
-    store = _new_store(tmp_path)
-    ident = VAL_IDS[0]
-    real = CATALOG[ident]
-    other = _spec(name="other-objective", batch=((0, ident),))  # different digest, same character
-    assert other.digest() != real.digest()
-    atoms = [
-        _atom(real, solution_digest="sha256:s", identity=ident, seed=0, progression=0.3),
-        _atom(other, solution_digest="sha256:s", identity=ident, seed=1, progression=0.9),
-    ]
-    _seed(store, atoms, [real, other])
-
-    rows = aggregate_board(store, [ident])
-
-    assert len(rows) == 1
-    assert rows[0]["coverage"] == 1
-    assert abs(rows[0]["mean_progression"] - 0.3) < 1e-9  # 0.3 only, not (0.3+0.9)/2
 
 
 def test_aggregate_board_empty_when_no_atoms(tmp_path):

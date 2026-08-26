@@ -1,17 +1,19 @@
 """Hub boards view (M2a Task 9): the third derived view -- rankings computed
-PURELY on read, nothing stored. See task-9-context.md -- the crux is its
-RESOLUTION over the brief's wording ("filter atoms to the objective's
-characters"): filtering by character would lump in atoms produced under
-OTHER objectives (different published seeds) on the same identity, so two
-solutions could be ranked on different atom-sets -- breaking the spec Sec2
-comparability guarantee ("everyone evaluates on the same atoms"). Instead:
+PURELY on read, nothing stored. See task-9-context.md -- the crux was its
+original RESOLUTION over the brief's wording ("filter atoms to the
+objective's characters"): filtering by character would lump in atoms
+produced under OTHER objectives (different published seeds) on the same
+identity, so two solutions could be ranked on different atom-sets --
+breaking the spec Sec2 comparability guarantee ("everyone evaluates on the
+same atoms"). That was solved by scoring each objective only on atoms under
+its own ``objective_digest``.
 
-- Every objective is scored only on atoms produced under exactly its own
-  objective: ``store.iter_atoms(objective_digest=objective.digest(),
-  tier=tier)``. Same batch => fair, same-atom-set ranking. (The prior
-  functional ``"all"`` breadth rollup -- every atom at a tier, regardless of
-  which objective produced it -- was retired alongside ``random``/``all``:
-  see ``selector.py``'s module docstring.)
+Task A1 retired ``random``/``all``, so that concern no longer applies:
+every identity now has exactly one canonical objective, meaning an
+identity's atoms are only ever on its own batch. Filtering by *identity* is
+therefore equivalent to the old digest filter, but structural rather than a
+digest lookup -- Task A2 rekeyed the views accordingly:
+``store.iter_atoms(identity=objective.characters()[0], tier=tier)``.
 
 Aggregation happens in Python, not SQL: sqlite has no ``MEDIAN()``, and
 ``asc_median_mean`` needs one, so atoms are pulled via ``iter_atoms`` and
@@ -32,7 +34,7 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from nethackers.contracts.models import Atom, ObjectiveSpec
-from nethackers.hub.objectives import CATALOG, IDENTITIES, ROLES
+from nethackers.hub.objectives import IDENTITIES, ROLES
 from nethackers.hub.store import Store
 from nethackers.hub.views.milestones import deepest_milestone
 
@@ -96,12 +98,12 @@ ORDER BY firsts DESC, first_solution ASC
 def board(
     store: Store, objective: ObjectiveSpec, *, tier: str = "self-reported"
 ) -> list[dict[str, Any]]:
-    """Rank solutions on ``objective`` at ``tier``, purely on read.
+    """Rank solutions on ``objective``'s *identity* at ``tier``, purely on
+    read.
 
-    Filtering (task-9-context.md's RESOLUTION -- by digest, not character):
-    scored only on atoms produced under exactly ``objective.digest()`` (the
-    prior functional ``"all"`` breadth-rollup branch was retired alongside
-    ``random``/``all`` -- see module docstring).
+    Filtering: scored on every atom on ``objective.characters()[0]``
+    (``random``/``all`` are retired, so each identity has exactly one
+    canonical objective -- see module docstring).
 
     Atoms are grouped by ``solution_digest`` and aggregated in Python:
     ``owner`` (constant per solution -- any atom's), ``episodes`` (atom
@@ -118,7 +120,7 @@ def board(
     if sort_key is None:
         raise ValueError(f"unknown board aggregation: {objective.aggregation!r}")
 
-    atoms = store.iter_atoms(objective_digest=objective.digest(), tier=tier)
+    atoms = store.iter_atoms(identity=objective.characters()[0], tier=tier)
 
     grouped: dict[str, list[Atom]] = {}
     for atom in atoms:
@@ -147,17 +149,17 @@ def aggregate_board(
     store: Store, ids: Sequence[str], *, tier: str = "self-reported"
 ) -> list[dict[str, Any]]:
     """Macro-average board over ``ids`` (generalist = all 73; a role = its
-    identities). Each identity is scored on ITS OWN published batch
-    (``objective_digest``), preserving same-seeds comparability per component;
-    a solution's per-identity means are then rolled up:
+    identities). Each identity is scored on ``iter_atoms(identity=ident)``,
+    preserving same-seeds comparability per component (every atom for an
+    identity sits on that identity's canonical batch); a solution's
+    per-identity means are then rolled up:
       ``coverage`` = #identities in ``ids`` it has >=1 atom on,
       ``mean_progression`` = mean of its per-identity means over covered ids.
     Ranked coverage desc, mean desc, ``solution_digest`` asc. Pure read."""
     per_solution: dict[str, dict[str, Any]] = {}
     for ident in ids:
-        digest = CATALOG[ident].digest()
         by_sol: dict[str, list[Atom]] = {}
-        for atom in store.iter_atoms(objective_digest=digest, tier=tier):
+        for atom in store.iter_atoms(identity=ident, tier=tier):
             by_sol.setdefault(atom.solution_digest, []).append(atom)
         for sol, group in by_sol.items():
             entry = per_solution.setdefault(
