@@ -321,3 +321,74 @@ def test_root_serves_the_dungeon_viz(tmp_path: Any) -> None:
     assert "/dictionary.mp3" in body
     # the dev-only window hook must be gone from the shipped page
     assert "__dictviz" not in body and "__dictSynth" not in body
+
+
+# --- leaderboard rework: aggregate boards + /hackers (Task 6) ---------------
+
+VAL_IDS = ["val-dwa-law-fem", "val-hum-law-fem", "val-hum-neu-fem"]
+
+
+def _seed_atoms(store: Store, atoms: list[Any], specs: list[Any]) -> None:
+    for spec in specs:
+        store.objectives_upsert(spec)
+    for digest in {a.solution_digest for a in atoms}:
+        store.upsert_solution(digest, repo="r", commit_sha="c", owner="sam",
+                              root=".", entrypoint="bot.py", registered_at="t")
+    store.insert_atoms(atoms)
+
+
+def _mk_atom(objective: Any, **kw: Any) -> Any:
+    from nethackers.contracts.models import Atom
+    base = dict(solution_digest="sha256:s", objective_digest=objective.digest(),
+                owner="dun", tier="self-reported", identity="val-dwa-law-fem", seed=0,
+                progression=0.5, milestone=None, ascended=False, status="completed",
+                turns=1, steps=1, evaluator_image="img")
+    base.update(kw)
+    return Atom(**base)
+
+
+def test_board_generalist_returns_aggregate_shape(tmp_path: Any) -> None:
+    client, store = _app(tmp_path)
+    atoms = [_mk_atom(CATALOG[i], solution_digest="sha256:b", identity=i, seed=0, progression=0.2)
+             for i in VAL_IDS]
+    _seed_atoms(store, atoms, [CATALOG[i] for i in VAL_IDS])
+    rows = client.get("/board?objective=generalist&tier=self-reported").json()
+    assert rows and {"coverage", "total", "mean_progression"} <= set(rows[0])
+    assert rows[0]["total"] == 73
+
+
+def test_board_role_returns_aggregate_shape(tmp_path: Any) -> None:
+    client, store = _app(tmp_path)
+    atoms = [_mk_atom(CATALOG[i], solution_digest="sha256:b", identity=i, seed=0, progression=0.2)
+             for i in VAL_IDS]
+    _seed_atoms(store, atoms, [CATALOG[i] for i in VAL_IDS])
+    rows = client.get("/board?objective=val").json()
+    assert rows[0]["total"] == 3 and rows[0]["coverage"] == 3
+
+
+def test_board_identity_includes_deepest(tmp_path: Any) -> None:
+    client, store = _app(tmp_path)
+    from nethackers.arena.progress import ACHIEVEMENTS
+    atoms = [_mk_atom(CATALOG[IDENTITY], solution_digest="sha256:s", seed=0,
+                      progression=ACHIEVEMENTS["Dlvl:5"], milestone="Dlvl:5")]
+    _seed_atoms(store, atoms, [CATALOG[IDENTITY]])
+    rows = client.get(f"/board?objective={IDENTITY}").json()
+    assert rows[0]["deepest"] == "Dlvl:5"
+
+
+def test_board_unknown_objective_404(tmp_path: Any) -> None:
+    client, _store = _app(tmp_path)
+    assert client.get("/board?objective=nonsense").status_code == 404
+
+
+def test_hackers_returns_union_shape_and_defaults_to_generalist(tmp_path: Any) -> None:
+    client, store = _app(tmp_path)
+    atoms = [
+        _mk_atom(CATALOG[i], solution_digest="sha256:b", owner="dun",
+                 identity=i, seed=0, progression=0.2)
+        for i in VAL_IDS
+    ]
+    _seed_atoms(store, atoms, [CATALOG[i] for i in VAL_IDS])
+    rows = client.get("/hackers").json()
+    assert rows and {"owner", "coverage", "total", "mean_progression"} <= set(rows[0])
+    assert rows[0]["total"] == 73 and rows[0]["owner"] == "dun"
