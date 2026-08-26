@@ -8,9 +8,13 @@ import re
 from pathlib import Path
 
 import pytest
+from fastapi.testclient import TestClient
 
 from nethackers.hub import poll
+from nethackers.hub.api import create_app
+from nethackers.hub.auth import LocalStubAuth
 from nethackers.hub.poll import PollValidationError, clean_vote
+from nethackers.hub.store import Store
 
 _HTML = (Path(__file__).parents[2] / "src/nethackers/hub/web/index.html").read_text("utf-8")
 
@@ -51,13 +55,6 @@ def test_clean_vote_allows_empty_roles_and_null_xp():
 def test_clean_vote_rejects_bad_fields(kwargs):
     with pytest.raises(PollValidationError):
         clean_vote(**kwargs)
-
-
-from fastapi.testclient import TestClient
-
-from nethackers.hub.api import create_app
-from nethackers.hub.auth import LocalStubAuth
-from nethackers.hub.store import Store
 
 
 def _client(tmp_path):
