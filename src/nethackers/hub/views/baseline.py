@@ -7,14 +7,9 @@ from __future__ import annotations
 import statistics
 from typing import Any
 
-from nethackers.arena.progress import ACHIEVEMENTS
 from nethackers.contracts.models import Atom
 from nethackers.hub.store import Store
-
-
-def _deepest(milestones: list[str | None]) -> str | None:
-    ms = [m for m in milestones if m is not None]
-    return max(ms, key=lambda m: ACHIEVEMENTS.get(m, 0.0)) if ms else None
+from nethackers.hub.views.milestones import deepest_milestone
 
 
 def read_baseline(store: Store) -> dict[str, Any]:
@@ -25,7 +20,7 @@ def read_baseline(store: Store) -> dict[str, Any]:
     per_identity: dict[str, dict[str, Any]] = {
         ident: {
             "progression": round(statistics.mean(a.progression for a in group), 3),
-            "deepest": _deepest([a.milestone for a in group]),
+            "deepest": deepest_milestone([a.milestone for a in group]),
             "episodes": len(group),
         }
         for ident, group in per.items()
