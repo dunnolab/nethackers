@@ -267,3 +267,28 @@ def sample_seeds(
     while len(out) < n:
         out.append((seed_tree, None))
     return out
+
+
+def per_identity_elites(
+    hub, identities: tuple[str, ...], owner: str, *,
+    store: LocalTreeStore,
+    fetch: Callable[[dict, Path], Path | None] = pull_fetch,
+) -> dict[str, tuple[dict, Path]]:
+    """For each identity in ``identities``, the top TRUSTED elite entry plus
+    its resolved tree on disk -- the thin per-identity read the MAP-Elites cold
+    start seeds cells from. An identity with no trusted elite (or whose top
+    elite fails to resolve) is simply absent. Any hub error on a member ->
+    that member absent (never raises)."""
+    out: dict[str, tuple[dict, Path]] = {}
+    for ident in identities:
+        try:
+            entries = [e for e in hub.elites(ident) if _trusted(e, owner)]
+        except Exception:
+            entries = []
+        if not entries:
+            continue
+        top = max(entries, key=lambda e: e["score"])
+        resolved = _resolve(top, store, fetch)
+        if resolved is not None:
+            out[ident] = (top, resolved[0])
+    return out
