@@ -62,13 +62,22 @@ class HubClient:
     behavior exactly: send the passed ``token=`` string, no retry."""
 
     def __init__(self, base_url: str, *, http: Any = httpx,
-                 token_source: TokenSource | None = None) -> None:
+                 token_source: TokenSource | None = None,
+                 timeout: float | None = None) -> None:
         self._base = base_url.rstrip("/")
         self._http = http
         self._token_source = token_source
+        self._timeout = timeout
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
-        response = self._http.get(self._base + path, params=params)
+        # ``timeout`` is only forwarded when set, so callers that inject a fake
+        # ``http`` whose ``get`` has no ``timeout`` kwarg (the tests) are
+        # untouched. The TUI passes one so a slow hub fails fast on its worker
+        # thread instead of leaving the loading animation up indefinitely.
+        kwargs: dict[str, Any] = {"params": params}
+        if self._timeout is not None:
+            kwargs["timeout"] = self._timeout
+        response = self._http.get(self._base + path, **kwargs)
         response.raise_for_status()
         return response.json()
 
@@ -117,11 +126,13 @@ class HubClient:
 
     def _post_register(self, token: str, reference: dict[str, Any],
                        manifest: dict[str, Any], evidence: dict[str, Any]) -> Any:
-        response = self._http.post(
-            self._base + "/register",
-            json={"reference": reference, "manifest": manifest, "evidence": evidence},
-            headers={"Authorization": f"Bearer {token}"},
-        )
+        kwargs: dict[str, Any] = {
+            "json": {"reference": reference, "manifest": manifest, "evidence": evidence},
+            "headers": {"Authorization": f"Bearer {token}"},
+        }
+        if self._timeout is not None:
+            kwargs["timeout"] = self._timeout
+        response = self._http.post(self._base + "/register", **kwargs)
         response.raise_for_status()
         return response.json()
 

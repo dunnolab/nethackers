@@ -27,6 +27,16 @@ def _render_to_str(renderable) -> str:
     return string_file.getvalue()
 
 
+async def _settle(app, pilot) -> None:
+    """Let the view's on_show fire, then wait for its worker-thread fetch to
+    finish and its result to be applied -- the views now load off the UI thread
+    (``@work(thread=True)``), so a bare ``pilot.pause()`` would sample the
+    ``loading…`` placeholder, not the fetched content."""
+    await pilot.pause()
+    await app.workers.wait_for_complete()
+    await pilot.pause()
+
+
 class _HostBoards(App):
     """Test host app for mounting BoardsView."""
 
@@ -55,7 +65,7 @@ async def test_boards_view_handles_hub_unreachable():
     """BoardsView renders friendly error on hub outage, not a crash."""
     app = _HostBoards()
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await _settle(app, pilot)
         body = app.query_one("#boards_body")
         # Should render the except-path message, not crash
         assert "could not load" in str(body.content)
@@ -65,7 +75,7 @@ async def test_map_view_handles_hub_unreachable():
     """MapView renders friendly error on hub outage, not a crash."""
     app = _HostMap()
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await _settle(app, pilot)
         body = app.query_one("#map_body")
         # Should render the except-path message, not crash
         assert "could not load" in str(body.content)
@@ -75,10 +85,116 @@ async def test_elites_view_handles_hub_unreachable():
     """ElitesView renders friendly error on hub outage, not a crash."""
     app = _HostElites()
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await _settle(app, pilot)
         body = app.query_one("#elites_body")
         # Should render the except-path message, not crash
         assert "could not load" in str(body.content)
+
+
+# --- Non-blocking regression: the fetch must NOT run on the UI thread -------
+#
+# The lag bug: each view fetched from the hub synchronously inside on_mount/
+# on_show, freezing the terminal for the whole round-trip (startup fired several
+# at once; every tab-switch fired one). The fix runs the fetch on a worker
+# thread, showing a plain "loading…" line meanwhile. This proves it: with the
+# fetch wedged open on its worker, the panel has ALREADY painted "loading…" —
+# if the fetch were still on the UI thread, run_test could never reach here.
+
+
+async def test_boards_view_shows_loading_line_while_fetch_is_blocked(monkeypatch):
+    import threading
+
+    import nethackers.tui.screens.hub as hub
+
+    release = threading.Event()
+    entered = threading.Event()
+
+    def blocking_board(self, *a, **k):
+        entered.set()
+        assert release.wait(5.0), "test failed to release the blocked fetch"
+        return [{"rank": 1, "owner": "vale", "mean_progression": 0.5,
+                 "solution_digest": "a" * 12}]
+
+    monkeypatch.setattr(hub.HubClient, "board", blocking_board)
+    app = _HostBoards()
+    try:
+        async with app.run_test() as pilot:
+            # let on_show start the worker; the worker is now wedged in board()
+            for _ in range(5):
+                await pilot.pause()
+                if entered.is_set():
+                    break
+            assert entered.is_set(), "the fetch worker never started"
+
+            # UI is live despite the in-flight fetch: the loading line is up.
+            content = str(app.query_one("#boards_body").content)
+            assert "loading" in content
+            assert "could not load" not in content
+
+            release.set()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            # now the real board content has replaced the loading line
+            assert "vale" in _render_to_str(app.query_one("#boards_body").content)
+    finally:
+        release.set()  # never leave the worker thread wedged
+
+
+async def test_revisiting_a_tab_shows_cached_content_without_a_loading_flash(monkeypatch):
+    """Re-showing a view paints the last-loaded content immediately (stale-
+    while-revalidate) instead of flashing "loading…": even with the refresh
+    fetch wedged open, the cached table is on screen the moment we switch back,
+    and a background refresh still fires."""
+    import threading
+
+    import nethackers.tui.screens.hub as hub
+
+    block = threading.Event()    # once set, the NEXT board fetch wedges
+    release = threading.Event()
+    calls = {"n": 0}
+
+    def board(self, *a, **k):
+        calls["n"] += 1
+        if block.is_set():
+            assert release.wait(5.0), "test failed to release the blocked fetch"
+        return [{"rank": 1, "owner": "vale", "mean_progression": 0.5,
+                 "solution_digest": "a" * 12}]
+
+    monkeypatch.setattr(hub.HubClient, "board", board)
+    app = NetHackersApp(hub=_DEAD_HUB, creds=None)
+    async with app.run_test() as pilot:
+        try:
+            await pilot.pause()
+            # first visit to the Leaderboard: load and cache it
+            app.action_show("boards")
+            await pilot.pause()                    # let on_show fire -> fetch starts
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            assert "vale" in _render_to_str(app.query_one("#boards_body").content)
+            assert calls["n"] == 1
+
+            # leave, then arm the next board fetch to wedge
+            app.action_show("map")
+            await pilot.pause()
+            block.set()
+
+            # revisit: the cached table is up immediately (no "loading…"),
+            # although the revalidation fetch is now blocked (so we don't wait)
+            app.action_show("boards")
+            await pilot.pause()
+            shown = _render_to_str(app.query_one("#boards_body").content)
+            assert "loading" not in shown
+            assert "vale" in shown            # served straight from the cache
+
+            # ...and a background refresh really did fire (it's the wedged one)
+            for _ in range(50):
+                if calls["n"] == 2:
+                    break
+                await pilot.pause()
+            assert calls["n"] == 2
+        finally:
+            release.set()
+            await app.workers.wait_for_complete()
 
 
 # --- Empty-payload tests: verify empty-state messages from renderers --------
@@ -91,7 +207,7 @@ async def test_boards_view_renders_empty_board_message(monkeypatch):
     monkeypatch.setattr(hub.HubClient, "board", lambda self, *a, **k: [])
     app = _HostBoards()
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await _settle(app, pilot)
         body = app.query_one("#boards_body")
         # BoardsView's own empty message must appear
         assert "No ranked solutions yet" in str(body.content)
@@ -104,7 +220,7 @@ async def test_elites_view_renders_empty_elites_message(monkeypatch):
     monkeypatch.setattr(hub.HubClient, "elites", lambda self, *a, **k: [])
     app = _HostElites()
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await _settle(app, pilot)
         body = app.query_one("#elites_body")
         # render_elites's empty message must appear
         assert "no elites recorded yet" in str(body.content)
@@ -118,8 +234,9 @@ class _FakeHubClient:
 
     instances: list[_FakeHubClient] = []
 
-    def __init__(self, base_url: str) -> None:
+    def __init__(self, base_url: str, *, timeout: float | None = None) -> None:
         self.base_url = base_url
+        self.timeout = timeout
         self.board_calls: list[tuple] = []
         self.attainment_calls: list[tuple] = []
         self.elites_calls: list[tuple] = []
@@ -159,7 +276,7 @@ async def test_boards_view_calls_board_and_passes_you(monkeypatch):
 
     app = _HostBoards()
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await _settle(app, pilot)
         # Verify client.board was called with "random"
         assert len(_FakeHubClient.instances) > 0
         client = _FakeHubClient.instances[0]
@@ -188,7 +305,7 @@ async def test_elites_view_calls_elites_and_passes_to_renderer(monkeypatch):
 
     app = _HostElites()
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await _settle(app, pilot)
         # Verify client.elites was called with "all"
         assert len(_FakeHubClient.instances) > 0
         client = _FakeHubClient.instances[0]
@@ -219,7 +336,7 @@ async def test_boards_view_renders_entry_content(monkeypatch):
     monkeypatch.setattr(hub.HubClient, "board", lambda self, *a, **k: fake_entries)
     app = _HostBoards()
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await _settle(app, pilot)
         body = app.query_one("#boards_body")
         # The entry's owner should appear in rendered output
         rendered = _render_to_str(body.content)
@@ -270,7 +387,7 @@ async def test_map_view_universe_default_shows_a_known_identity_number(monkeypat
     monkeypatch.setattr(hub.HubClient, "elites", _fake_elites_rank_spread)
     app = _HostMap()
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await _settle(app, pilot)
         body = app.query_one("#map_body")
         rendered = _render_to_str(body.content)
         assert "Valkyrie" in rendered
@@ -297,14 +414,14 @@ async def test_map_view_activating_program_subtab_shows_champion_grid(monkeypatc
 
     app = _HostMap()
     async with app.run_test() as pilot:
-        await pilot.pause()
+        await _settle(app, pilot)
         body = app.query_one("#map_body")
 
         # Sanity: mounts into Universe first.
         assert "0.42" in _render_to_str(body.content)
 
         app.query_one("#ftabs", Tabs).active = "ft-program"
-        await pilot.pause()
+        await _settle(app, pilot)
 
         rendered = _render_to_str(body.content)
         assert "0.91" in rendered  # the champion's number
@@ -327,7 +444,7 @@ async def test_map_view_program_subtab_shows_friendly_line_when_no_champion(monk
     app = _HostMap()
     async with app.run_test() as pilot:
         app.query_one("#ftabs", Tabs).active = "ft-program"
-        await pilot.pause()
+        await _settle(app, pilot)
         body = app.query_one("#map_body")
         rendered = _render_to_str(body.content)
         assert "no ranked programs yet" in rendered
