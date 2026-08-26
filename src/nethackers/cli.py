@@ -74,6 +74,7 @@ from nethackers.harness.sandbox_preflight import (
 from nethackers.hub.objectives import CATALOG
 from nethackers.hub.selector import resolve
 from nethackers.hubclient import credentials as _cred
+from nethackers.hubclient.auth import AuthError, TokenSource
 from nethackers.hubclient.client import (
     HubClient,
     _short_digest,
@@ -140,26 +141,17 @@ def _authed_token() -> str | None:
     silently when it has expired and a refresh token is on hand.
 
     Returns ``None`` when there is no stored credential at all (the caller
-    prints the "run ``nethackers login``" hint). Otherwise: if the credential
-    is expired and carries a ``refresh_token``, exchange it for a fresh token
-    set via ``refresh_access_token``, persist the rebuilt credential (with a
-    recomputed ``expires_at``), and return the new access token; if it is
-    still valid (or no refresh token is available), return the stored access
-    token as-is."""
+    prints the "run ``nethackers login``" hint). Otherwise delegates to
+    ``TokenSource.current()`` -- the same adapter ``harness.launch.
+    prepare_evolve`` wires into an evolve run's ``HubClient``, so there is
+    exactly one implementation of "refresh before it's needed" in this
+    codebase. Raises ``AuthError`` (caught by ``main``'s top-level guard,
+    rendered as a plain hint) when the credential is expired and the
+    refresh itself fails -- there is no usable token left to fall back to."""
     creds = _cred.load()
     if creds is None:
         return None
-    if creds.is_expired(_time_now()) and creds.refresh_token:
-        tok = refresh_access_token(creds.refresh_token)
-        creds = Credentials(
-            creds.login,
-            tok["access_token"],
-            tok["refresh_token"],
-            (_time_now() + tok["expires_in"]) if tok["expires_in"] else None,
-        )
-        _cred.save(creds)
-        return creds.access_token
-    return creds.access_token
+    return TokenSource(creds, refresh=refresh_access_token, now=_time_now).current()
 
 
 def _models_table(operator: str, rows: list[dict[str, Any]]):
@@ -774,6 +766,12 @@ def main(argv: list[str] | None = None) -> int:
     except KeyboardInterrupt:
         err.print("[yellow]aborted[/]")
         return 130
+    except AuthError as exc:
+        # An expired token with no way to refresh -- an expected, actionable
+        # condition (same styling as the "not logged in" hints above), never
+        # the red "unexpected error" banner a real bug would get.
+        err.print(f"[yellow]{exc}[/]")
+        return 1
     except httpx.HTTPStatusError as exc:
         err.print(f"[red]hub error:[/] {exc.response.status_code} for {exc.request.url}")
         return 1

@@ -45,6 +45,38 @@ def test_apply_state_registered_without_detail_keeps_the_plain_reason():
     assert r.ledger_rows == [(1, True, "registered")]
 
 
+def test_apply_state_registered_with_hub_reason_shows_local_only_in_the_ledger():
+    # A win that never reached the hub must be VISIBLE as such in the ledger
+    # -- "registered" alone would silently overstate what happened (the bug
+    # this whole adapter exists to stop).
+    r = Run("r1", CFG)
+    r.apply_state(_state(
+        "registered", iteration=1,
+        hub_reason="local-only: not published (no gh publisher / dev owner)"))
+    assert r.ledger_rows == [
+        (1, True, "local-only: not published (no gh publisher / dev owner)")]
+
+
+def test_apply_state_registered_hub_reason_and_regression_detail_combine():
+    # hub_reason (why it's local-only) and detail (the regression-count
+    # marker) are orthogonal -- both must survive in the ledger line.
+    r = Run("r1", CFG)
+    r.apply_state(_state(
+        "registered", iteration=1, detail="⚠2",
+        hub_reason="local-only: hub error — boom"))
+    assert r.ledger_rows == [(1, True, "local-only: hub error — boom ⚠2")]
+
+
+def test_apply_state_registered_without_hub_reason_is_unaffected():
+    # No hub_reason key at all (older state payload shape) must behave
+    # exactly like hub_reason=None -- plain "registered", never a KeyError.
+    r = Run("r1", CFG)
+    state = _state("registered", iteration=1, detail="")
+    assert "hub_reason" not in state
+    r.apply_state(state)
+    assert r.ledger_rows == [(1, True, "registered")]
+
+
 def test_apply_episode_orders_by_index_and_counts_completed():
     r = Run("r1", CFG)
     for idx in (2, 0, 1):  # arrival order != batch order (parallel eval)

@@ -24,3 +24,17 @@ def test_assemble_lays_out_refs_and_manifest_without_junk(tmp_path):
     assert (dest / "parent-eval.json").read_text().startswith("[")
     ctx = (dest / "CONTEXT.md").read_text()
     assert "hub-elite-9d09" in ctx and "iter-14" in ctx and "mon-hum-cha-mal" in ctx
+
+
+def test_assemble_copies_the_pristine_parent(tmp_path):
+    parent = tmp_path / "parent"
+    parent.mkdir()
+    (parent / "bot.py").write_text("VERSION = 0\n")
+    (parent / "__pycache__").mkdir()
+    (parent / "__pycache__" / "x.pyc").write_text("junk")
+    dest = tmp_path / "refs"
+    assemble(dest, base_eval=None, influences=[], attempts=[], parent=parent)
+    assert (dest / "parent" / "bot.py").read_text() == "VERSION = 0\n"
+    assert not (dest / "parent" / "__pycache__").exists()   # junk excluded
+    ctx = (dest / "CONTEXT.md").read_text()
+    assert "parent/" in ctx and "/refs/parent" in ctx       # manifest points at it

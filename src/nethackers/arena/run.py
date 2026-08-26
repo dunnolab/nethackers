@@ -95,23 +95,31 @@ def run_batch(
     return results  # type: ignore[return-value]
 
 
-def main(argv: list[str] | None = None) -> int:
-    # AutoAscend floods stderr with numpy RuntimeWarnings (e.g. tty_cursor
-    # underflow at agent.py:371). Silence them by default so the per-episode
-    # progress is readable; re-enable with NETHACKERS_ARENA_WARNINGS=1.
-    if os.environ.get("NETHACKERS_ARENA_WARNINGS") != "1":
-        warnings.filterwarnings("ignore", category=RuntimeWarning)
+def _parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser()
     p.add_argument("--solution", required=True)
     p.add_argument("--batch", required=True)  # JSON [[seed, character], ...]
-    p.add_argument("--evaluation-id", required=True)
+    p.add_argument(
+        "--evaluation-id", default="local",
+        help="Seed namespace (NLE seeds = HMAC(secret, evaluation-id, trajectory)). "
+             "Default 'local' is exactly what the evolve judge scores on -- omit it to "
+             "match the judge; a different value evaluates on different, unrelated games.")
     p.add_argument("--secret", default="public")
     p.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS)
     p.add_argument("--no-progress-timeout", type=int, default=DEFAULT_NO_PROGRESS_TIMEOUT)
     p.add_argument("--action-timeout", type=float, default=5.0)
     p.add_argument("--max-parallel-evals", type=int, default=8)
     p.add_argument("--out", required=True)
-    a = p.parse_args(argv)
+    return p
+
+
+def main(argv: list[str] | None = None) -> int:
+    # AutoAscend floods stderr with numpy RuntimeWarnings (e.g. tty_cursor
+    # underflow at agent.py:371). Silence them by default so the per-episode
+    # progress is readable; re-enable with NETHACKERS_ARENA_WARNINGS=1.
+    if os.environ.get("NETHACKERS_ARENA_WARNINGS") != "1":
+        warnings.filterwarnings("ignore", category=RuntimeWarning)
+    a = _parser().parse_args(argv)
     sys.path.insert(0, a.solution)  # so `import bot`, `import arena_adapter` resolve
 
     # Published (seed, character) batch -- one trajectory per pair, fanned

@@ -24,6 +24,13 @@ class TokenUsage:
     def total(self) -> int:
         return self.input + self.output + self.cache_creation + self.cache_read
 
+    @property
+    def spend(self) -> int:
+        """The user-facing cost proxy: fresh input + output + cache writes.
+        EXCLUDES cache_read (billed ~10%), which otherwise dominates and
+        inflates the headline ~40x. `.total` (all tokens) is unchanged."""
+        return self.input + self.output + self.cache_creation
+
 
 def _usage_from_dict(usage: object) -> TokenUsage:
     if not isinstance(usage, dict):
@@ -35,6 +42,23 @@ def _usage_from_dict(usage: object) -> TokenUsage:
 
     return TokenUsage(g("input_tokens"), g("output_tokens"),
                       g("cache_creation_input_tokens"), g("cache_read_input_tokens"))
+
+
+def _usage_from_codex_dict(usage: dict) -> TokenUsage:
+    """codex's turn.completed usage: `input_tokens` is cache-inclusive and
+    `cached_input_tokens` is the cached portion of it (a discount, not an
+    addend). Folding the whole cache-inclusive number into `input` (as
+    `_usage_from_dict` would, since codex's key doesn't match its
+    `cache_read_input_tokens`) overstates apparent fresh spend by ~40x. The
+    fresh remainder goes in `input`; the cached portion goes in `cache_read`
+    (matching claude's cache-read semantics) -- `.total` is unaffected
+    either way, since it only depends on the (input + cache_read) sum."""
+    def g(key: str) -> int:
+        value = usage.get(key)
+        return int(value) if isinstance(value, (int, float)) else 0
+
+    cached = g("cached_input_tokens")
+    return TokenUsage(g("input_tokens") - cached, g("output_tokens"), 0, cached)
 
 
 def classify(backend: str, line: str) -> tuple[str, TokenUsage] | None:
@@ -55,14 +79,15 @@ def classify(backend: str, line: str) -> tuple[str, TokenUsage] | None:
             return "inc", _usage_from_dict(inner["usage"])
     # codex-cli (>=0.1x) reports usage once, on `turn.completed` -- it emits NO
     # `result` line, so without this codex tokens would stay 0 forever. Its
-    # `input_tokens` already includes the cached portion (cached_input_tokens is
-    # a discount, not an addend), and codex's cache keys don't match
-    # _usage_from_dict's, so the (unmatched -> 0) cache fields yield a faithful
-    # input+output total with no double-count. `codex exec` is single-turn, so
-    # this fires once -- total-replace is correct.
+    # `input_tokens` already includes the cached portion, so
+    # _usage_from_codex_dict splits it into a fresh `input` remainder and a
+    # `cache_read` (cached_input_tokens) instead of folding the whole
+    # cache-inclusive number into `input` (which overstated apparent spend
+    # ~40x). `codex exec` is single-turn, so this fires once -- total-replace
+    # is correct.
     if (backend == "codex" and obj.get("type") == "turn.completed"
             and isinstance(obj.get("usage"), dict)):
-        return "total", _usage_from_dict(obj["usage"])
+        return "total", _usage_from_codex_dict(obj["usage"])
     return None
 
 

@@ -59,6 +59,11 @@ def append_log(run_dir: Path, tag: str, line: str) -> None:
 def metric_record(iteration: int, result: IterationResult) -> dict:
     if result.reason == "baseline":
         outcome = "baseline"
+    elif result.registered and result.hub_reason is not None:
+        # Accepted as the local elite, but never reached the hub (auth
+        # failure, publish failure, hub error) -- "registered" would
+        # overstate what happened, so metrics.jsonl gets its own outcome.
+        outcome = "local-only"
     elif result.registered:
         outcome = "registered"
     elif result.reason.startswith(("error", "operator-error")):
@@ -73,4 +78,5 @@ def metric_record(iteration: int, result: IterationResult) -> dict:
         "stopped_reason": result.stopped_reason,
         "child_digest": result.digest,
         "causes": result.causes,
+        "hub_reason": result.hub_reason,
     }

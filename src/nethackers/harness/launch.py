@@ -18,6 +18,8 @@ from nethackers.harness.container_operator import ContainerOperator
 from nethackers.harness.loop import run_loop
 from nethackers.harness.select import select_parent
 from nethackers.harness.store import LocalTreeStore
+from nethackers.hubclient import credentials as _credentials
+from nethackers.hubclient.auth import TokenSource
 from nethackers.hubclient.client import HubClient
 from nethackers.hubclient.output import err
 from nethackers.tui.status import EvolveConfig
@@ -108,6 +110,22 @@ def _publisher_for(
     return publish
 
 
+def _authed_hub(base_url: str) -> HubClient:
+    """Build the run's HubClient, self-healing across a token refresh when a
+    stored login exists (``nethackers login``) -- ``register()`` then
+    resolves and retries its own Bearer token via ``TokenSource`` instead of
+    being handed a single, possibly-already-expired ``access_token`` (the
+    bug: a stale stored token 401s, ``harness.loop`` downgrades that to an
+    unpersisted ``report(...)`` line, and the win never reaches the hub even
+    though a valid ``refresh_token`` was sitting right there). No stored
+    creds (dev/test) -> no source, so ``register()`` falls back to whatever
+    ``token=`` it's given -- unchanged pre-adapter behavior. This is the one
+    place both the CLI's ``evolve`` and the in-app form's launch path pick
+    up the fix, since both funnel through this function."""
+    creds = _credentials.load()
+    return HubClient(base_url, token_source=TokenSource(creds) if creds is not None else None)
+
+
 def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
                    tree_store: LocalTreeStore | None = None) -> EvolvePlan:
     started = datetime.datetime.now(datetime.UTC)
@@ -117,6 +135,10 @@ def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
     # Shared machine-wide content cache (dedup by digest) -- a win registered
     # by one run is instantly a cache hit for the next run's SELECT.
     store = tree_store if tree_store is not None else LocalTreeStore(Path(params.workdir) / "store")
+    # ONE client for both this run's SELECT (read-only, never authed) and its
+    # registrations (authed, self-refreshing when a login is stored) -- see
+    # `_authed_hub`.
+    hub = _authed_hub(params.hub)
 
     # SELECT the parent: the objective's top *trusted* hub elite (so evolution
     # compounds), unless from_seed forces a deliberate cold start. rng is
@@ -125,7 +147,7 @@ def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
         parent_tree, parent_digest = Path(params.seed), None
     else:
         parent_tree, parent_digest = select_parent(
-            HubClient(params.hub), params.objective, store, Path(params.seed),
+            hub, params.objective, store, Path(params.seed),
             owner=params.owner, k=params.select_k, temperature=params.select_temp,
             rng=random.Random(rid))
 
@@ -166,7 +188,7 @@ def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
         return run_loop(
             objective=params.objective, seed_tree=parent_tree,
             tree_store=store, operator=operator,
-            hub=HubClient(params.hub), image=params.image, token=params.token,
+            hub=hub, image=params.image, token=params.token,
             owner=params.owner, iterations=total_iterations,
             validation_n=params.validation_n,
             islands=params.islands, reset_period=params.reset_period,

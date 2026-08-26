@@ -12,6 +12,12 @@ def test_tokenusage_add_and_total():
     assert u.total == 110
 
 
+def test_spend_excludes_cache_read_but_total_still_includes_it():
+    u = TokenUsage(input=47060, output=4112, cache_creation=0, cache_read=733184)
+    assert u.spend == 51172          # fresh input + output (+ cache writes), cheap reads excluded
+    assert u.total == 784356         # unchanged: all tokens processed
+
+
 def test_classify_claude_assistant_is_increment():
     kind, u = classify("claude", _A)
     assert kind == "inc" and u.total == 2 + 3 + 16016 + 5448
@@ -62,6 +68,21 @@ def test_meter_claude_accumulates_then_result_replaces():
     assert m.usage.total == 2 * (2 + 3 + 16016 + 5448)
     m.observe(_R)  # authoritative total REPLACES the running sum
     assert m.usage.total == 11402730
+
+
+def test_codex_cached_input_is_counted_as_cache_not_fresh():
+    # codex's input_tokens is cache-inclusive; cached_input_tokens is a
+    # discount, not an addend. Folding the whole cache-inclusive number into
+    # `input` (the old behavior) overstated apparent spend ~40x (metrics.jsonl
+    # reported tokens: 14.5M when ~98% was cache reads). The fresh remainder
+    # belongs in `input`; the cached portion belongs in `cache_read`.
+    line = ('{"type":"turn.completed","usage":{"input_tokens":14415859,'
+            '"cached_input_tokens":14171904,"output_tokens":17754}}')
+    kind, usage = classify("codex", line)
+    assert kind == "total"
+    assert usage.cache_read == 14171904
+    assert usage.input == 14415859 - 14171904   # 243_955 fresh, not 14.4M
+    assert usage.output == 17754
 
 
 def test_meter_codex_zero_until_result():

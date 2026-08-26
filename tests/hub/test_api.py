@@ -98,6 +98,22 @@ def test_root_serves_the_page(tmp_path: Any) -> None:
     assert "text/html" in resp.headers["content-type"]
     assert "NetHackers" in resp.text
     assert 'id="scBody"' in resp.text
+    # The marquee count and the freshness stamp are live (JS from /stats); the
+    # old hardcoded literals must never creep back into the served page. (The
+    # full behavior lives in the manual jsdom harness tests/hub/web/wire.test.mjs.)
+    assert "3 programs registered" not in resp.text
+    assert 'id="updated"' in resp.text
+
+
+def test_root_injects_the_real_package_version(tmp_path: Any) -> None:
+    # The masthead version is stamped from the installed package at serve time,
+    # so it never drifts from pyproject -- and no {{version}} token leaks through.
+    from importlib.metadata import version
+
+    client, _store = _app(tmp_path)
+    body = client.get("/").text
+    assert f"v{version('nethackers')}" in body
+    assert "{{version}}" not in body
 
 
 def test_stats_reads_empty(tmp_path: Any) -> None:
@@ -111,6 +127,7 @@ def test_stats_reads_empty(tmp_path: Any) -> None:
         "ascensions": 0,
         "identities_touched": 0,
         "best": 0.0,
+        "last_registered_at": None,
     }
 
 

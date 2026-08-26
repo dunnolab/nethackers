@@ -36,12 +36,20 @@ def _copy_refs(dest_section: Path, refs: list[Ref]) -> None:
 
 
 def _render_context(
-    base_eval: str | None, influences: list[Ref], attempts: list[Ref]
+    base_eval: str | None, influences: list[Ref], attempts: list[Ref],
+    parent: Path | None = None,
 ) -> str:
     lines = ["# /refs/ manifest", "", "| section | label | note |", "| --- | --- | --- |"]
     for section, refs in (("influences", influences), ("attempts", attempts)):
+        if not refs:
+            lines.append(f"| {section} | — | (none yet) |")
         for label, _tree, note in refs:
             lines.append(f"| {section} | {_md_cell(label)} | {_md_cell(note)} |")
+    if parent is not None:
+        lines.append("")
+        lines.append("Pristine copy of the bot you started from: `parent/` — "
+                     "`diff -ru /refs/parent /workspace` shows your changes "
+                     "(there is no git repo in `/workspace`).")
     if base_eval is not None:
         lines.append("")
         lines.append("Base's raw per-episode eval output: `parent-eval.json`.")
@@ -54,22 +62,27 @@ def assemble(
     base_eval: str | None,
     influences: list[Ref],
     attempts: list[Ref],
+    parent: Path | None = None,
 ) -> None:
     """Lay out `dest` as the mutator's `/refs/` tree: `dest/influences/<label>/`
     and `dest/attempts/<label>/` (each a junk-excluded copy of `tree`),
+    `dest/parent/` (a junk-excluded copy of `parent`, only when given),
     `dest/parent-eval.json` (only when `base_eval` is given), and
     `dest/CONTEXT.md` (always -- a section/label/note manifest table).
 
     Filesystem-only: no hub, no network. Degrades gracefully -- empty
-    `influences`/`attempts` and a `None` `base_eval` still produce a valid
-    (mostly empty) tree, matching the "hub down / thin pool" fallback in
-    design doc §7.
+    `influences`/`attempts`, a `None` `parent`, and a `None` `base_eval` still
+    produce a valid (mostly empty) tree, matching the "hub down / thin pool"
+    fallback in design doc §7.
     """
     dest.mkdir(parents=True, exist_ok=True)
     if influences:
         _copy_refs(dest / "influences", influences)
     if attempts:
         _copy_refs(dest / "attempts", attempts)
+    if parent is not None:
+        shutil.copytree(parent, dest / "parent", ignore=_junk_ignore)   # pristine start
     if base_eval is not None:
         (dest / "parent-eval.json").write_text(base_eval)
-    (dest / "CONTEXT.md").write_text(_render_context(base_eval, influences, attempts))
+    (dest / "CONTEXT.md").write_text(
+        _render_context(base_eval, influences, attempts, parent))

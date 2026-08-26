@@ -34,6 +34,7 @@ import os
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
+from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Any
 
@@ -145,7 +146,13 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
-        return _INDEX.read_text(encoding="utf-8")
+        # Stamp the masthead {{version}} from the installed package at serve
+        # time, so it can never drift from pyproject the way a hardcoded
+        # string does. Read per-request (like _dict_audio_path) -- cheap, and
+        # keeps the handler a pure function of the file + package metadata.
+        return _INDEX.read_text(encoding="utf-8").replace(
+            "{{version}}", _pkg_version("nethackers")
+        )
 
     @app.get("/poll")
     def poll() -> dict[str, Any]:

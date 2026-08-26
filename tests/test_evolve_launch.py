@@ -29,6 +29,80 @@ def test_prepare_evolve_writes_config_and_drives_run_loop(tmp_path, monkeypatch)
     assert (Path(tmp_path) / "runs" / "latest").resolve().name == plan.rid
 
 
+def _run_kwargs():
+    return {"on_state": lambda s: None,
+            "on_episode": lambda label, ep: None, "on_log": lambda tag, line: None}
+
+
+def test_prepare_evolve_attaches_token_source_when_creds_exist(tmp_path, monkeypatch):
+    # The M2 bug this closes: evolve used to hand run_loop a raw, possibly-
+    # already-expired access_token; the hub 401s it and the win silently
+    # stayed local-only. prepare_evolve must instead build the run's
+    # HubClient with a TokenSource wired from the stored credential, so
+    # register() can refresh+retry on its own.
+    from nethackers.hubclient.auth import TokenSource
+    from nethackers.hubclient.credentials import Credentials
+    creds = Credentials("sam", "ghu_a", "ghr_b", expires_at=1000.0)
+    monkeypatch.setattr(launch._credentials, "load", lambda: creds)
+    captured = {}
+    monkeypatch.setattr(launch, "run_loop", lambda **kw: captured.update(kw) or [])
+    monkeypatch.setattr(launch, "_now", lambda: "2026-08-26T00:00:00+00:00")
+    p = EvolveParams(objective="wiz-elf-cha-mal", seed="roots/autoascend",
+                     from_seed=True, workdir=str(tmp_path), hub="http://h",
+                     token="tok", owner="sam")
+
+    prepare_evolve(p, git_sha="deadbeef").run(_run_kwargs())
+
+    hub = captured["hub"]
+    assert isinstance(hub._token_source, TokenSource)
+    assert hub._token_source.login == "sam"
+    # run_loop's own token= is untouched -- it's only the fallback used when
+    # register() has no token_source (see the no-creds test below).
+    assert captured["token"] == "tok"
+
+
+def test_prepare_evolve_no_token_source_without_stored_creds(tmp_path, monkeypatch):
+    # Back-compat: dev/test with nothing logged in -> no source, register()
+    # falls back to plain token="dev-token" (or whatever was passed), exactly
+    # like before this adapter existed.
+    monkeypatch.setattr(launch._credentials, "load", lambda: None)
+    captured = {}
+    monkeypatch.setattr(launch, "run_loop", lambda **kw: captured.update(kw) or [])
+    monkeypatch.setattr(launch, "_now", lambda: "2026-08-26T00:00:00+00:00")
+    p = EvolveParams(objective="wiz-elf-cha-mal", seed="roots/autoascend",
+                     from_seed=True, workdir=str(tmp_path), hub="http://h",
+                     token="dev-token", owner="dev")
+
+    prepare_evolve(p, git_sha="deadbeef").run(_run_kwargs())
+
+    assert captured["hub"]._token_source is None
+    assert captured["token"] == "dev-token"
+
+
+def test_prepare_evolve_shares_one_hub_client_between_select_and_run_loop(tmp_path, monkeypatch):
+    # SELECT and registration should go through the SAME client -- not two
+    # independently-constructed HubClients -- so there's exactly one place
+    # auth (or lack of it) is decided for the whole run.
+    monkeypatch.setattr(launch._credentials, "load", lambda: None)
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    seen = {}
+
+    def fake_select_parent(hub, objective, store, seed_tree, *, owner, k, temperature, rng):
+        seen["select_hub"] = hub
+        return seed_tree, "sha256:elite"
+    monkeypatch.setattr(launch, "select_parent", fake_select_parent, raising=False)
+    captured = {}
+    monkeypatch.setattr(launch, "run_loop", lambda **kw: captured.update(kw) or [])
+    monkeypatch.setattr(launch, "_now", lambda: "2026-08-26T00:00:00+00:00")
+    p = EvolveParams(objective="wiz-elf-cha-mal", seed=str(seed),
+                     workdir=str(tmp_path), hub="http://h", token="t", owner="o")
+
+    prepare_evolve(p, git_sha="x").run(_run_kwargs())
+
+    assert seen["select_hub"] is captured["hub"]
+
+
 def test_prepare_evolve_iterations_are_per_island(tmp_path, monkeypatch):
     """iterations is per-island: run_loop's total cap, EvolveConfig, and
     run.json all carry iterations × islands; iterations_per_island keeps the

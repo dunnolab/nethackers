@@ -43,19 +43,41 @@ from typing import Any
 
 import httpx
 
+from nethackers.hubclient.auth import AuthError, TokenSource
+
 
 class HubClient:
     """Thin HTTP wrapper over the hub API. Every method mirrors one
     endpoint's exact request shape; ``http`` is injectable (default: the
     real ``httpx`` module) so callers -- including tests -- can swap in a
-    fake transport."""
+    fake transport.
 
-    def __init__(self, base_url: str, *, http: Any = httpx) -> None:
+    ``token_source``, when given, makes ``register`` self-healing: it
+    resolves the Bearer token via ``token_source.current()`` (proactive
+    refresh already happened there if needed) and, on an actual 401 from the
+    hub, reactively calls ``token_source.refresh()`` and retries the request
+    exactly once. A 401 that survives the retry becomes an ``AuthError`` --
+    never a bare ``httpx.HTTPStatusError`` a caller has to know to interpret.
+    With no ``token_source`` (the default), ``register`` keeps today's
+    behavior exactly: send the passed ``token=`` string, no retry."""
+
+    def __init__(self, base_url: str, *, http: Any = httpx,
+                 token_source: TokenSource | None = None,
+                 timeout: float | None = None) -> None:
         self._base = base_url.rstrip("/")
         self._http = http
+        self._token_source = token_source
+        self._timeout = timeout
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
-        response = self._http.get(self._base + path, params=params)
+        # ``timeout`` is only forwarded when set, so callers that inject a fake
+        # ``http`` whose ``get`` has no ``timeout`` kwarg (the tests) are
+        # untouched. The TUI passes one so a slow hub fails fast on its worker
+        # thread instead of leaving the loading animation up indefinitely.
+        kwargs: dict[str, Any] = {"params": params}
+        if self._timeout is not None:
+            kwargs["timeout"] = self._timeout
+        response = self._http.get(self._base + path, **kwargs)
         response.raise_for_status()
         return response.json()
 
@@ -102,10 +124,22 @@ class HubClient:
         """``GET /solutions/{digest}/frontier``."""
         return self._get(f"/solutions/{digest}/frontier")
 
+    def _post_register(self, token: str, reference: dict[str, Any],
+                       manifest: dict[str, Any], evidence: dict[str, Any]) -> Any:
+        kwargs: dict[str, Any] = {
+            "json": {"reference": reference, "manifest": manifest, "evidence": evidence},
+            "headers": {"Authorization": f"Bearer {token}"},
+        }
+        if self._timeout is not None:
+            kwargs["timeout"] = self._timeout
+        response = self._http.post(self._base + "/register", **kwargs)
+        response.raise_for_status()
+        return response.json()
+
     def register(
         self,
         *,
-        token: str,
+        token: str | None = None,
         reference: dict[str, Any],
         manifest: dict[str, Any],
         evidence: dict[str, Any],
@@ -115,14 +149,31 @@ class HubClient:
         ``repo@commit`` link (``reference``, the solution identity), the
         solution ``manifest``, and the self-reported ``evidence`` (an
         ``Evidence.to_dict()``). This method only transports them -- the hub
-        validates the link and the batch and writes per-identity atoms."""
-        response = self._http.post(
-            self._base + "/register",
-            json={"reference": reference, "manifest": manifest, "evidence": evidence},
-            headers={"Authorization": f"Bearer {token}"},
-        )
-        response.raise_for_status()
-        return response.json()
+        validates the link and the batch and writes per-identity atoms.
+
+        ``token`` is used as-is only when this client has no
+        ``token_source`` -- see the class docstring for the self-healing
+        401 -> refresh -> retry path taken when one is set (``token`` is
+        then ignored)."""
+        if self._token_source is None:
+            if token is None:
+                raise ValueError(
+                    "HubClient.register requires token= when no token_source is set")
+            return self._post_register(token, reference, manifest, evidence)
+        tok = self._token_source.current()
+        try:
+            return self._post_register(tok, reference, manifest, evidence)
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code != 401:
+                raise
+            tok = self._token_source.refresh()
+            try:
+                return self._post_register(tok, reference, manifest, evidence)
+            except httpx.HTTPStatusError as exc2:
+                if exc2.response.status_code == 401:
+                    raise AuthError(
+                        "the hub rejected the token even after refresh") from exc2
+                raise
 
 
 def _is_numeric(cell: str) -> bool:

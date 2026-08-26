@@ -31,6 +31,10 @@ class OperatorResult:
     def total(self) -> int:
         return self.usage.total
 
+    @property
+    def spend(self) -> int:
+        return self.usage.spend
+
 
 def run_operator(
     cmd: list[str],

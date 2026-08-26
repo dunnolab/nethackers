@@ -42,12 +42,33 @@ def test_metric_record_maps_outcome():
     assert metric_record(3, reg) == {
         "iteration": 3, "outcome": "registered", "reason": "registered",
         "dev_fitness": 0.2, "validation_fitness": 0.1, "tokens": 5, "usage": None,
-        "stopped_reason": "completed", "child_digest": "sha256:abc", "causes": None}
+        "stopped_reason": "completed", "child_digest": "sha256:abc", "causes": None,
+        "hub_reason": None}
     base = IterationResult(False, "baseline", dev_fitness=0.05, validation_fitness=0.05)
     assert metric_record(0, base)["outcome"] == "baseline"
     assert metric_record(2, IterationResult(False, "no-dev-gain"))["outcome"] == "rejected"
     assert metric_record(4, IterationResult(False, "error: boom"))["outcome"] == "error"
     assert metric_record(1, IterationResult(False, "operator-error:1"))["outcome"] == "error"
+
+
+def test_metric_record_marks_local_only_outcome_when_hub_reason_set():
+    # A win that never reached the hub (auth failure, publish failure, hub
+    # error) must be visibly distinct from an ordinary hub-registered win in
+    # metrics.jsonl -- "registered" would silently overstate what happened.
+    r = IterationResult(True, "registered", dev_fitness=0.5, validation_fitness=0.4,
+                        digest="sha256:abc",
+                        hub_reason="local-only: not published (no gh publisher / dev owner)")
+    rec = metric_record(5, r)
+    assert rec["outcome"] == "local-only"
+    assert rec["hub_reason"] == "local-only: not published (no gh publisher / dev owner)"
+    assert rec["reason"] == "registered"   # the loop's internal tag is untouched
+
+
+def test_metric_record_hub_reason_defaults_to_none_for_an_ordinary_registered_win():
+    r = IterationResult(True, "registered", digest="sha256:abc")
+    rec = metric_record(1, r)
+    assert rec["outcome"] == "registered"
+    assert rec["hub_reason"] is None
 
 
 def test_metric_record_uses_faithful_usage_when_present():
