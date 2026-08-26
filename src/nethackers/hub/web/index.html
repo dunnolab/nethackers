@@ -1680,51 +1680,27 @@ boot();
   const RLABEL=Object.fromEntries(ROLE), XLABEL=Object.fromEntries(XP);
   const TIME_ORD={"2027":0,"2030":1,"2035":2,"2040":3,"after":4,"never":5};
 
-  /* ---- deterministic RNG so the synthetic crowd is stable across reloads ---- */
-  function lcg(seed){ let s=seed>>>0; return ()=>{ s=(s*1664525+1013904223)>>>0; return s/4294967296; }; }
-  function pick(rng,w){ let t=0; for(const k in w) t+=w[k]; let r=rng()*t;
-    for(const k in w){ r-=w[k]; if(r<=0) return k; } return Object.keys(w)[0]; }
-  const scale=(base,m)=>{ const o={}; for(const k in base) o[k]=base[k]*(m&&m[k]!=null?m[k]:1); return o; };
-
-  /* ---- synthetic crowd. Each voter has a driving PRIMARY archetype plus overlapping
-     secondary tribes (tribe is multi-select). NetHack XP is conditioned on whether they
-     play at all; method / timeline leanings follow the primary + XP. That's what makes the
-     segment splits (NetHack players vs AI enthusiasts; ascended vs never-played) diverge. */
-  const PRIMARY={mlr:30,player:16,eng:30,enth:24};
-  /* p(also has role r | primary): researchers rarely play; enthusiasts often engineer */
-  const ALSO={ mlr:{eng:.45,enth:.30,player:.10}, player:{eng:.30,mlr:.12,enth:.18},
-    eng:{enth:.30,mlr:.20,player:.12}, enth:{eng:.35,player:.10,mlr:.06} };
-  const M_BASE={programs:30,rl:14,llm:20,symbolic:6,hybrid:22,never:8};
-  const T_BASE={"2027":8,"2030":20,"2035":26,"2040":18,"after":16,"never":12};
-  const M_ROLE={ mlr:{programs:1.2,rl:1.2,hybrid:1.05}, player:{symbolic:2.4,hybrid:1.5,llm:.4,never:1.3},
-    eng:{programs:1.4,llm:1.3,symbolic:.7}, enth:{llm:1.6,programs:1.2,rl:.7,symbolic:.5} };
-  const T_ROLE={ mlr:{"2030":1.2,"2035":1.1}, player:{"2027":.5,"2035":1.1,"2040":1.3,"after":1.3,"never":1.2},
-    eng:{"2027":1.5,"2030":1.4,"2035":1.1,"after":.6}, enth:{"2027":1.7,"2030":1.5,"2040":.6,"after":.4,"never":.4} };
-  const XP_PLAYER={never:1,casual:10,serious:34,ascended:34};   // people who play NetHack
-  const XP_NON={never:30,casual:38,serious:9,ascended:3};        // people who don't
-  const M_XP={ never:{llm:1.6,programs:1.25,symbolic:.5,hybrid:.85}, casual:{llm:1.2,programs:1.12,symbolic:.85},
-    serious:{symbolic:2.0,hybrid:1.5,llm:.55,never:1.4,programs:.85}, ascended:{symbolic:3.0,hybrid:2.0,never:2.0,llm:.3,programs:.5,rl:.8} };
-  const T_XP={ never:{"2027":1.7,"2030":1.5,"after":.6,"never":.5}, casual:{"2027":1.3,"2030":1.2,"never":.8},
-    serious:{"2040":1.4,"after":1.5,"never":1.4,"2027":.5}, ascended:{"2040":1.4,"after":1.9,"never":2.0,"2027":.3,"2030":.5} };
-  function genCorpus(n){ const rng=lcg(20260826), rows=[];
-    for(let i=0;i<n;i++){ const primary=pick(rng,PRIMARY), roles=[primary], also=ALSO[primary]||{};
-      for(const r in also){ if(rng()<also[r]) roles.push(r); }
-      const xp=pick(rng, roles.includes("player")?XP_PLAYER:XP_NON);
-      rows.push({roles,xp,
-        method:pick(rng,scale(scale(M_BASE,M_ROLE[primary]),M_XP[xp])),
-        timeline:pick(rng,scale(scale(T_BASE,T_ROLE[primary]),T_XP[xp]))}); }
-    return rows; }
-  const CORPUS=genCorpus(500);
-
-  /* ---- one prophecy per browser ---- */
-  const KEY="nh-oracle-vote";
+  /* ---- one prophecy per browser: a stable voter id, the last cast, and the live crowd ---- */
+  const KEY="nh-oracle-vote", VKEY="nh-oracle-voter";
   function readVote(){ try{ return JSON.parse(localStorage.getItem(KEY)||"null"); }catch(e){ return null; } }
   function writeVote(v){ try{ localStorage.setItem(KEY,JSON.stringify(v)); }catch(e){} }
+  function voterId(){ let id=null; try{ id=localStorage.getItem(VKEY); }catch(e){}
+    if(!id){ id=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():"v"+Date.now()+Math.random().toString(36).slice(2);
+      try{ localStorage.setItem(VKEY,id); }catch(e){} }
+    return id; }
+  let CORPUS=[];                                   // the live crowd, from GET /poll (was the synthetic corpus)
+  const _jget = p => fetch(p).then(r=>{ if(!r.ok) throw new Error(p+" "+r.status); return r.json(); });
+  async function loadPoll(){ const d=await _jget("/poll"); CORPUS=(d&&d.votes)||[]; }
+  async function postVote(vote){
+    const r=await fetch("/poll/vote",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({voter_id:voterId(),method:vote.method,timeline:vote.timeline,roles:vote.roles,xp:vote.xp})});
+    if(!r.ok) throw new Error("vote "+r.status);
+    const d=await r.json(); CORPUS=(d&&d.votes)||[];   // aggregate incl. this vote -- no second GET
+  }
 
   /* ---- state (roles is a SET -- tribe is multi-select) ---- */
   let sel={method:null,timeline:null,roles:[],xp:null};
   let lens="all", segFilter=null;      // segFilter: null=everyone; "__cmp"=compare-all; a key=one segment
-  let sessionVotes=[];                 // this browser's own vote, laid on top of the synthetic crowd
 
   /* ---- helpers ---- */
   function distrib(rows,order,key){ const c={}; order.forEach(([k])=>c[k]=0);
@@ -1733,7 +1709,7 @@ boot();
   function medianTime(rows){ if(!rows.length) return null;
     const ord=rows.map(r=>TIME_ORD[r.timeline]).sort((a,b)=>a-b);
     return TIME[ord[Math.floor((ord.length-1)/2)]][0]; }
-  const allRows=()=>CORPUS.concat(sessionVotes);
+  const allRows=()=>CORPUS;   // CORPUS already includes this browser's own vote after it POSTs
   const inSeg=(r,field,k)=> field==="role" ? r.roles.includes(k) : r[field]===k;   // role membership is set-wise
   function rowsFor(field,k){ return allRows().filter(r=>inSeg(r,field,k)); }
 
@@ -1826,19 +1802,24 @@ boot();
   function reveal(vote){ $("#orcBallot").hidden=true; $("#orcResults").hidden=false;
     const m=OMETHOD[vote.method]||("the first win is "+LABEL[vote.method]), t=OTIME[vote.timeline]||LABEL[vote.timeline];
     $("#orcSpeak").innerHTML=`<b>The Oracle speaks.</b> You have seen it, then: ${m}, <b>${t}</b>. The dungeon has buried surer prophets than you &mdash; read on, and see who shares your vision.`;
-    sessionVotes=[{roles:(vote.roles||[]).slice(), xp:vote.xp||null, method:vote.method, timeline:vote.timeline}];
     setLens("all"); }
-  $("#orcCast").addEventListener("click",()=>{ if(!sel.method||!sel.timeline) return;
+  $("#orcCast").addEventListener("click",async ()=>{ if(!sel.method||!sel.timeline) return;
     const vote={method:sel.method,timeline:sel.timeline,roles:sel.roles.slice(),xp:sel.xp};
-    writeVote(vote); reveal(vote); });
+    $("#orcCast").disabled=true;
+    try{ await postVote(vote); writeVote(vote); reveal(vote); }
+    catch(e){ $("#orcHint").textContent="the Oracle is silent — try again"; $("#orcCast").disabled=false; }
+  });
   $("#orcRevote").addEventListener("click",()=>{ $("#orcResults").hidden=true; $("#orcBallot").hidden=false; });
 
   /* ---- restore a prior vote (already prophesied in this browser) ---- */
-  (function(){ const v=readVote(); if(!v||!v.method||!v.timeline) return;
+  (async function(){ const v=readVote(); if(!v||!v.method||!v.timeline) return;   // no prior cast -> ballot, fetch nothing
     sel={method:v.method,timeline:v.timeline,roles:Array.isArray(v.roles)?v.roles.slice():[],xp:v.xp||null};
     markSingle($("#orcQmethod"),"method",true); markSingle($("#orcQtimeline"),"timeline",true);
     markRoles(); markSingle($("#orcXp"),"xp",false);
-    updateCast(); reveal(v); })();
+    updateCast();
+    try{ await loadPoll(); reveal(v); }
+    catch(e){ $("#orcResults").hidden=true; $("#orcBallot").hidden=false; }   // offline: leave the ballot pre-filled
+  })();
 
   if(window.__refs) window.__refs();
 })();
