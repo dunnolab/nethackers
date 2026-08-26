@@ -35,11 +35,29 @@ over what Tasks 5-8 already store.
 from __future__ import annotations
 
 import statistics
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Any
 
 from nethackers.contracts.models import Atom, ObjectiveSpec
+from nethackers.hub.objectives import CATALOG, IDENTITIES, ROLES
 from nethackers.hub.store import Store
+from nethackers.hub.views.milestones import deepest_milestone
+
+_IDENTITY_SET = frozenset(IDENTITIES)
+
+
+def resolve_scope(token: str) -> tuple[str, tuple[str, ...]]:
+    """Map an objective token to ``(kind, ids)``. ``"generalist"`` -> all 73;
+    a role (e.g. ``"val"``) -> that role's identities; an identity -> a
+    singleton. Raises ``ValueError`` on anything else. Distinct from
+    ``selector.resolve`` (which serves the evolve path's glob/comma/'all')."""
+    if token == "generalist":
+        return ("generalist", tuple(IDENTITIES))
+    if token in ROLES:
+        return ("role", tuple(i for i in IDENTITIES if i.startswith(f"{token}-")))
+    if token in _IDENTITY_SET:
+        return ("identity", (token,))
+    raise ValueError(f"unknown objective scope: {token!r}")
 
 # board()'s two ranking rules (task-9-context.md), keyed by
 # ObjectiveSpec.aggregation. Each maps one aggregated entry dict to a sort
@@ -129,10 +147,51 @@ def board(
                 "ascensions": sum(1 for a in group if a.ascended),
                 "median_progression": statistics.median(progressions),
                 "mean_progression": statistics.mean(progressions),
+                "deepest": deepest_milestone([a.milestone for a in group]),
             }
         )
 
     unranked.sort(key=sort_key)
+    return [{"rank": rank, **entry} for rank, entry in enumerate(unranked, start=1)]
+
+
+def aggregate_board(
+    store: Store, ids: Sequence[str], *, tier: str = "self-reported"
+) -> list[dict[str, Any]]:
+    """Macro-average board over ``ids`` (generalist = all 73; a role = its
+    identities). Each identity is scored on ITS OWN published batch
+    (``objective_digest``), preserving same-seeds comparability per component;
+    a solution's per-identity means are then rolled up:
+      ``coverage`` = #identities in ``ids`` it has >=1 atom on,
+      ``mean_progression`` = mean of its per-identity means over covered ids.
+    Ranked coverage desc, mean desc, ``solution_digest`` asc. Pure read."""
+    per_solution: dict[str, dict[str, Any]] = {}
+    for ident in ids:
+        digest = CATALOG[ident].digest()
+        by_sol: dict[str, list[Atom]] = {}
+        for atom in store.iter_atoms(objective_digest=digest, tier=tier):
+            by_sol.setdefault(atom.solution_digest, []).append(atom)
+        for sol, group in by_sol.items():
+            entry = per_solution.setdefault(
+                sol, {"owner": group[0].owner, "means": [], "asc": 0, "milestones": []}
+            )
+            entry["means"].append(statistics.mean(a.progression for a in group))
+            entry["asc"] += sum(1 for a in group if a.ascended)
+            entry["milestones"].extend(a.milestone for a in group)
+
+    unranked = [
+        {
+            "solution_digest": sol,
+            "owner": e["owner"],
+            "coverage": len(e["means"]),
+            "total": len(ids),
+            "mean_progression": statistics.mean(e["means"]),
+            "ascensions": e["asc"],
+            "deepest": deepest_milestone(e["milestones"]),
+        }
+        for sol, e in per_solution.items()
+    ]
+    unranked.sort(key=lambda x: (-x["coverage"], -x["mean_progression"], x["solution_digest"]))
     return [{"rank": rank, **entry} for rank, entry in enumerate(unranked, start=1)]
 
 

@@ -18,10 +18,16 @@ import pytest
 
 from nethackers.arena.progress import ACHIEVEMENTS
 from nethackers.contracts.models import Atom, ObjectiveSpec
-from nethackers.hub.objectives import CATALOG
+from nethackers.hub.objectives import CATALOG, IDENTITIES
 from nethackers.hub.store import Store
 from nethackers.hub.views.attainment import update_attainment
-from nethackers.hub.views.boards import board, coverage_board, firsts_board
+from nethackers.hub.views.boards import (
+    aggregate_board,
+    board,
+    coverage_board,
+    firsts_board,
+    resolve_scope,
+)
 
 IDENTITY = "val-dwa-law-fem"
 OTHER_IDENTITY = "wiz-elf-cha-fem"
@@ -274,3 +280,101 @@ def test_board_raises_on_unknown_aggregation(tmp_path):
 
     with pytest.raises(ValueError, match="not-a-real-aggregation"):
         board(store, spec)
+
+
+# --- resolve_scope (Task 2) -------------------------------------------------
+
+
+def test_resolve_scope_generalist_is_all_73():
+    kind, ids = resolve_scope("generalist")
+    assert kind == "generalist"
+    assert set(ids) == set(IDENTITIES)
+    assert len(ids) == 73
+
+
+def test_resolve_scope_role_is_that_roles_identities():
+    kind, ids = resolve_scope("val")
+    assert kind == "role"
+    assert set(ids) == {i for i in IDENTITIES if i.startswith("val-")}
+    assert all(i.startswith("val-") for i in ids)
+
+
+def test_resolve_scope_identity_is_singleton():
+    kind, ids = resolve_scope("val-dwa-law-fem")
+    assert kind == "identity"
+    assert ids == ("val-dwa-law-fem",)
+
+
+def test_resolve_scope_unknown_raises():
+    with pytest.raises(ValueError):
+        resolve_scope("not-a-thing")
+
+
+# --- deepest on board() (Task 3) --------------------------------------------
+
+
+def test_board_row_includes_deepest_milestone(tmp_path):
+    store = _new_store(tmp_path)
+    spec = _spec(aggregation="mean")
+    atoms = [
+        _atom(spec, solution_digest="sha256:s", seed=0,
+              progression=ACHIEVEMENTS["Dlvl:5"], milestone="Dlvl:5"),
+        _atom(spec, solution_digest="sha256:s", seed=1,
+              progression=ACHIEVEMENTS["Dlvl:2"], milestone="Dlvl:2"),
+    ]
+    _seed(store, atoms, [spec])
+    (entry,) = board(store, spec)
+    assert entry["deepest"] == "Dlvl:5"
+
+
+# --- aggregate_board (Task 4) -----------------------------------------------
+
+VAL_IDS = ["val-dwa-law-fem", "val-hum-law-fem", "val-hum-neu-fem"]  # the 3 Valkyrie identities
+
+
+def test_aggregate_board_is_coverage_first_then_mean(tmp_path):
+    # broad-shallow (covers 3 ids @0.2) must outrank narrow-deep (1 id @0.9)
+    store = _new_store(tmp_path)
+    specs = [CATALOG[i] for i in VAL_IDS]
+    atoms = [
+        _atom(CATALOG[i], solution_digest="sha256:broad", identity=i, seed=0, progression=0.2)
+        for i in VAL_IDS
+    ]
+    atoms.append(
+        _atom(CATALOG[VAL_IDS[0]], solution_digest="sha256:narrow",
+              identity=VAL_IDS[0], seed=0, progression=0.9)
+    )
+    _seed(store, atoms, specs)
+
+    rows = aggregate_board(store, VAL_IDS)
+
+    assert [r["solution_digest"] for r in rows] == ["sha256:broad", "sha256:narrow"]
+    assert rows[0]["coverage"] == 3 and rows[0]["total"] == 3
+    assert abs(rows[0]["mean_progression"] - 0.2) < 1e-9
+    assert rows[1]["coverage"] == 1
+    assert [r["rank"] for r in rows] == [1, 2]
+
+
+def test_aggregate_board_scores_each_identity_on_its_own_objective_digest(tmp_path):
+    # an atom on the same character but under a DIFFERENT objective must not leak in
+    store = _new_store(tmp_path)
+    ident = VAL_IDS[0]
+    real = CATALOG[ident]
+    other = _spec(name="other-objective", batch=((0, ident),))  # different digest, same character
+    assert other.digest() != real.digest()
+    atoms = [
+        _atom(real, solution_digest="sha256:s", identity=ident, seed=0, progression=0.3),
+        _atom(other, solution_digest="sha256:s", identity=ident, seed=1, progression=0.9),
+    ]
+    _seed(store, atoms, [real, other])
+
+    rows = aggregate_board(store, [ident])
+
+    assert len(rows) == 1
+    assert rows[0]["coverage"] == 1
+    assert abs(rows[0]["mean_progression"] - 0.3) < 1e-9  # 0.3 only, not (0.3+0.9)/2
+
+
+def test_aggregate_board_empty_when_no_atoms(tmp_path):
+    store = _new_store(tmp_path)
+    assert aggregate_board(store, VAL_IDS) == []
