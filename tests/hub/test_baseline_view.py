@@ -10,7 +10,7 @@ from nethackers.hub.views.baseline import read_baseline
 
 def _a(ident, prog, milestone):
     # baseline_atoms has no UNIQUE constraint, so two rows may share seed=1.
-    return Atom(solution_digest="autoascend", objective_digest="o", owner="autoascend",
+    return Atom(solution_digest="autoascend", owner="autoascend",
                 tier="baseline", identity=ident, seed=1, progression=prog, milestone=milestone,
                 ascended=False, status="completed", turns=1, steps=1, evaluator_image="img")
 

@@ -1,7 +1,7 @@
 """Tests for ``nethackers.hub.views.hackers``: the Hackers union-frontier view.
 A person's standing is the union of all their programs' best-per-identity over
-a scope, scored per-component on each identity's own published batch
-(objective_digest). Coverage-first ranking, no ``firsts``."""
+a scope, scored per-component on each identity's own atoms (identity-keyed,
+Task A3). Coverage-first ranking, no ``firsts``."""
 
 from __future__ import annotations
 
@@ -19,9 +19,9 @@ def _new_store(tmp_path):
     return store
 
 
-def _atom(objective, **overrides):
+def _atom(**overrides):
     fields = dict(
-        solution_digest="sha256:s", objective_digest=objective.digest(),
+        solution_digest="sha256:s",
         owner="sam", tier="self-reported", identity="val-dwa-law-fem", seed=0,
         progression=0.5, milestone=None, ascended=False, status="completed",
         turns=5, steps=10, evaluator_image="img@sha256:x",
@@ -43,13 +43,13 @@ def test_hacker_board_unions_best_per_identity_across_a_persons_solutions(tmp_pa
     store = _new_store(tmp_path)
     i0, i1 = VAL_IDS[0], VAL_IDS[1]
     atoms = [
-        _atom(CATALOG[i0], solution_digest="sha256:d1", owner="dun",
+        _atom(solution_digest="sha256:d1", owner="dun",
               identity=i0, seed=0, progression=0.4),
-        _atom(CATALOG[i0], solution_digest="sha256:d2", owner="dun",  # best on i0
+        _atom(solution_digest="sha256:d2", owner="dun",  # best on i0
               identity=i0, seed=0, progression=0.6),
-        _atom(CATALOG[i1], solution_digest="sha256:d1", owner="dun",
+        _atom(solution_digest="sha256:d1", owner="dun",
               identity=i1, seed=0, progression=0.5),
-        _atom(CATALOG[i0], solution_digest="sha256:a1", owner="ako",
+        _atom(solution_digest="sha256:a1", owner="ako",
               identity=i0, seed=0, progression=0.3),
     ]
     _seed(store, atoms, [CATALOG[i0], CATALOG[i1]])

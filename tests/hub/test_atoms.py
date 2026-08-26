@@ -1,11 +1,8 @@
 """Tests for ``nethackers.hub.atoms``: the pure ``Evidence -> list[Atom]``
-converter (M2a Task 6). See task-6-context.md's Resolution -- an atom's
-``objective_digest`` must come from the *published* ``ObjectiveSpec``'s
-``.digest()``, never from ``evidence.objective.digest()``. Task 3's
-``eval_batch`` sets ``Evidence.objective`` to a synthesized ``Objective``
-(character=None, seed_set=spec.name) -- a different dataclass whose digest
-never equals the spec's, and using it would break the atoms table's FK to
-``objectives`` plus board/attainment/elite-pool grouping.
+converter (M2a Task 6). Task A3 dropped ``objective_digest`` end-to-end: an
+atom no longer references any published ``ObjectiveSpec`` at all -- it is
+keyed by ``identity`` (``result.character``), since after random/all's
+retirement (Task A1) every identity has exactly one canonical objective.
 """
 
 from __future__ import annotations
@@ -71,7 +68,7 @@ def test_evidence_to_atoms_maps_every_field_for_two_different_characters():
     ]
     evidence = _evidence(results=results)
 
-    atoms = evidence_to_atoms(evidence, owner="sam", spec=SPEC)
+    atoms = evidence_to_atoms(evidence, owner="sam")
 
     assert len(atoms) == 2
     first, second = atoms
@@ -103,27 +100,17 @@ def test_evidence_to_atoms_maps_every_field_for_two_different_characters():
     assert second.evaluator_image == evidence.evaluator_image
 
 
-def test_evidence_to_atoms_objective_digest_is_spec_digest_not_evidence_objective_digest():
-    # Property 2 (the Resolution's FK-match guard): every atom's
-    # objective_digest must equal spec.digest(), and must NOT equal
-    # evidence.objective.digest() -- eval_batch's synthesized Objective
-    # digests to something structurally different from the published spec.
-    evidence = _evidence(results=[_result(trajectory_id=0), _result(trajectory_id=1)])
-    assert evidence.objective.digest() != SPEC.digest()  # guards the fixtures actually differ
-
-    atoms = evidence_to_atoms(evidence, owner="sam", spec=SPEC)
-
-    assert len(atoms) == 2
-    for atom in atoms:
-        assert atom.objective_digest == SPEC.digest()
-        assert atom.objective_digest != evidence.objective.digest()
+# NOTE: test_evidence_to_atoms_objective_digest_is_spec_digest_not_evidence_objective_digest
+# was removed here (Task A3): it asserted atom.objective_digest, a field Atom
+# no longer has -- superseded by test_atom_has_no_objective_digest_and_dedup_is_identity_keyed
+# and test_evidence_to_atoms_drops_spec_and_keys_by_identity below.
 
 
 def test_evidence_to_atoms_empty_results_returns_empty_list():
     # Property 3.
     evidence = _evidence(results=[])
 
-    assert evidence_to_atoms(evidence, owner="sam", spec=SPEC) == []
+    assert evidence_to_atoms(evidence, owner="sam") == []
 
 
 def test_evidence_to_atoms_preserves_result_order():
@@ -136,10 +123,32 @@ def test_evidence_to_atoms_preserves_result_order():
     ]
     evidence = _evidence(results=results)
 
-    atoms = evidence_to_atoms(evidence, owner="sam", spec=SPEC)
+    atoms = evidence_to_atoms(evidence, owner="sam")
 
     assert [(a.identity, a.seed) for a in atoms] == [
         ("arc-hum-law-fem", 5),
         ("bar-hum-neu-mal", 2),
         ("wiz-elf-cha-fem", 9),
     ]
+
+
+def test_atom_has_no_objective_digest_and_dedup_is_identity_keyed():
+    from dataclasses import fields
+
+    from nethackers.contracts.models import Atom
+    assert "objective_digest" not in {f.name for f in fields(Atom)}
+
+
+def test_evidence_to_atoms_drops_spec_and_keys_by_identity():
+    ev = Evidence.from_results(
+        solution_digest="sha256:s",
+        objective=Objective(character=None, seed_set="val-dwa-law-fem"),
+        evaluator_image="img",
+        results=[TrajectoryResult(
+            trajectory_id=0, status="completed", progress=0.5, ascended=False,
+            steps=1, turns=1, max_depth=1, end_status="died", error=None,
+            wall_seconds=0.1, character="val-dwa-law-fem", milestone=None)],
+        created_at="t")
+    atoms = evidence_to_atoms(ev, owner="sam", solution_id="repo@sha")
+    assert atoms[0].identity == "val-dwa-law-fem"
+    assert not hasattr(atoms[0], "objective_digest")

@@ -12,14 +12,8 @@ from nethackers.hub.views.stats import read_stats
 
 
 def _atom(**kw):
-    # objective_digest is wired to a real CATALOG entry (keyed by identity)
-    # rather than the brief's literal "o1": atoms.objective_digest has a
-    # FOREIGN KEY REFERENCES objectives(objective_digest), so it must name a
-    # row insert_atoms can actually see -- and varying it per identity (as
-    # real evidence would) keeps each atom's UNIQUE(solution_digest,
-    # objective_digest, seed) key distinct from the others below.
     identity = kw.get("identity", "val-dwa-law-fem")
-    base = dict(solution_digest="s1", objective_digest=CATALOG[identity].digest(), owner="alice",
+    base = dict(solution_digest="s1", owner="alice",
                 tier="self-reported", identity=identity, seed=1, progression=0.2,
                 milestone="Dlvl:5", ascended=False, status="completed", turns=10, steps=10,
                 evaluator_image="img")

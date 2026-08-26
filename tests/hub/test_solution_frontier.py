@@ -37,7 +37,6 @@ def _atom(**overrides):
     identity = overrides.get("identity", WIZ_IDENTITY)
     fields = dict(
         solution_digest=DIGEST,
-        objective_digest=CATALOG[identity].digest(),
         owner="sam",
         tier="self-reported",
         identity=identity,
@@ -61,9 +60,10 @@ def _new_store(tmp_path):
 
 
 def _seed(store: Store, atoms: list[Atom]) -> None:
-    """Seed every FK parent ``insert_atoms`` needs -- ``atoms`` has FKs to
-    both ``objectives`` and ``solutions`` -- then insert the atoms
-    themselves. Safe to call more than once per test."""
+    """Upsert each atom's identity into the catalog (provenance only --
+    atoms no longer FK to ``objectives``, Task A3) and one ``solutions`` row
+    per distinct solution (``insert_atoms``' remaining FK) -- then insert the
+    atoms themselves. Safe to call more than once per test."""
     for identity in {atom.identity for atom in atoms}:
         store.objectives_upsert(CATALOG[identity])
     for digest in {atom.solution_digest for atom in atoms}:

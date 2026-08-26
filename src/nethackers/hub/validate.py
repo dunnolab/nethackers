@@ -170,7 +170,7 @@ def register(
     for influence in manifest.get("influences", []):
         store.add_lineage(solution_id, influence, "influence")
 
-    atoms = evidence_to_atoms(evidence, owner=login, spec=spec, solution_id=solution_id)
+    atoms = evidence_to_atoms(evidence, owner=login, solution_id=solution_id)
     inserted = store.insert_atoms(atoms)
     update_attainment(store, atoms, now=now)
     recompute_elites(store)

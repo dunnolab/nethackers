@@ -144,13 +144,14 @@ class Atom:
     """One episode's stored, immutable result (M2a §3/§5): the hub's only
     substrate -- every derived view (attainment record, elite pool, boards)
     is computed from atoms. Flatter than ``Evidence``: it carries a
-    ``solution_digest``/``objective_digest`` pair (references, not nested
-    objects) plus ``owner``/``tier`` provenance, so a whole ``Evidence``
-    becomes one ``Atom`` per ``TrajectoryResult`` (``identity`` <-
-    ``result.character``, ``milestone`` <- ``result.milestone``)."""
+    ``solution_digest`` (a reference, not a nested object) plus
+    ``owner``/``tier`` provenance, so a whole ``Evidence`` becomes one
+    ``Atom`` per ``TrajectoryResult`` (``identity`` <- ``result.character``,
+    ``milestone`` <- ``result.milestone``). No ``objective_digest``: after
+    random/all's retirement (Task A1) every identity has exactly one
+    canonical objective, so ``identity`` alone is the key."""
 
     solution_digest: str
-    objective_digest: str
     owner: str
     tier: str
     identity: str

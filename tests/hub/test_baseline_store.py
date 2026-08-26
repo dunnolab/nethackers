@@ -9,7 +9,7 @@ from nethackers.hub.store import Store
 
 
 def _atom(ident="val-dwa-law-fem", prog=0.089):
-    return Atom(solution_digest="autoascend", objective_digest="o1", owner="autoascend",
+    return Atom(solution_digest="autoascend", owner="autoascend",
                 tier="baseline", identity=ident, seed=1, progression=prog, milestone="Dlvl:3",
                 ascended=False, status="completed", turns=1, steps=1, evaluator_image="img")
 

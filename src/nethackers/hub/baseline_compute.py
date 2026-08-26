@@ -2,7 +2,8 @@
 objective, storing them in the isolated baseline_atoms table. AutoAscend is the
 reference floor, not a participant: owner/solution="autoascend", tier="baseline",
 and the atoms never rank in boards/elites (separate table). Idempotent per
-objective so a re-run (arena or objectives changed) replaces, never doubles."""
+identity (Task A3: baseline_atoms has no objective_digest either) so a re-run
+(arena or objectives changed) replaces, never doubles."""
 
 from __future__ import annotations
 
@@ -32,15 +33,14 @@ def compute_baseline(store: Store, specs: Iterable[ObjectiveSpec], *, image: str
     for spec in specs:
         _mean, evidence = evaluate_fn(tree, spec, image, now=now, runner=runner)
         atoms = [replace(atom, tier="baseline")
-                 for atom in evidence_to_atoms(evidence, owner=AUTOASCEND_ID, spec=spec,
+                 for atom in evidence_to_atoms(evidence, owner=AUTOASCEND_ID,
                                                solution_id=AUTOASCEND_ID)]
-        # Idempotent recompute: drop this objective's prior baseline rows first.
-        # This DELETE opens the transaction that insert_baseline_atoms' own
-        # `with self._conn:` block commits -- DELETE and inserts land together
-        # (or roll back together). Keep the insert unconditional so that pairing
-        # holds even for an empty batch (which commits just the DELETE).
-        store.conn.execute("DELETE FROM baseline_atoms WHERE objective_digest = ?",
-                           (spec.digest(),))
+        # Idempotent recompute: drop this objective's prior baseline rows,
+        # keyed by identity now that objective_digest is gone. The DELETE(s)
+        # open the transaction insert_baseline_atoms' own `with self._conn:`
+        # commits -- DELETE and inserts land (or roll back) together.
+        for ident in sorted({character for _seed, character in spec.batch}):
+            store.conn.execute("DELETE FROM baseline_atoms WHERE identity = ?", (ident,))
         total += store.insert_baseline_atoms(atoms)
     return total
 

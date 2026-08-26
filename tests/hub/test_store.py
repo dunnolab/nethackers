@@ -1,10 +1,11 @@
 """Tests for ``nethackers.hub.store``: the sqlite data layer over
 solutions/objectives/atoms/lineage (+ the derived-view tables Tasks 7-8
-populate). See task-5-context.md for the schema and Resolution A -- the
-atoms table's dedup key is UNIQUE(solution_digest, objective_digest, seed),
-not the brief's (evidence_digest, trajectory_id), because the Task-1 Atom
-dataclass has neither field and ``seed`` already serves as the trajectory
-id within a published batch.
+populate). See task-5-context.md for the schema; Task A3 dropped
+``objective_digest`` from atoms end-to-end, so the dedup key is now
+UNIQUE(solution_digest, identity, seed) -- ``seed`` already served as the
+trajectory id within a published batch, and after random/all's retirement
+(Task A1) ``identity`` alone identifies which canonical objective an atom
+belongs to.
 """
 
 from __future__ import annotations
@@ -42,7 +43,6 @@ OTHER_OBJECTIVE = ObjectiveSpec(
 def _atom(**overrides):
     fields = dict(
         solution_digest=SOLUTION_DIGEST,
-        objective_digest=OBJECTIVE.digest(),
         owner="sam",
         tier="self-reported",
         identity="val-dwa-law-fem",
@@ -98,6 +98,18 @@ def test_insert_atoms_dedups_and_returns_newly_inserted_count(tmp_path):
     assert second == 0
 
 
+def test_atoms_dedup_on_solution_identity_seed(tmp_path):
+    # The new (Task A3) dedup key: same (solution, identity, seed) collides
+    # regardless of progression -- objective_digest is no longer part of it.
+    store, _ = _new_store(tmp_path)
+    _seed_solution(store)
+    a = _atom(seed=0, identity="val-dwa-law-fem", progression=0.3)
+    b = _atom(seed=0, identity="val-dwa-law-fem", progression=0.9)  # same (sol,identity,seed)
+    assert store.insert_atoms([a]) == 1
+    assert store.insert_atoms([b]) == 0   # dedup: identity-keyed unique
+    assert len(store.iter_atoms(identity="val-dwa-law-fem")) == 1
+
+
 def test_iter_atoms_filters_narrow_and_reconstruct_atom_instances(tmp_path):
     # Property 2: iter_atoms(identity=...) filters; a second filter narrows
     # further; results are real Atom instances with a real bool ascended.
@@ -106,8 +118,8 @@ def test_iter_atoms_filters_narrow_and_reconstruct_atom_instances(tmp_path):
     store.insert_atoms(
         [
             _atom(seed=0, identity="val-dwa-law-fem"),
-            _atom(seed=1, identity="val-dwa-law-fem", objective_digest=OTHER_OBJECTIVE.digest()),
-            _atom(seed=0, identity="wiz-elf-cha-fem", objective_digest=OTHER_OBJECTIVE.digest()),
+            _atom(seed=1, identity="val-dwa-law-fem"),
+            _atom(seed=0, identity="wiz-elf-cha-fem"),
         ]
     )
 
@@ -117,10 +129,9 @@ def test_iter_atoms_filters_narrow_and_reconstruct_atom_instances(tmp_path):
     assert all(a.identity == "val-dwa-law-fem" for a in by_identity)
     assert all(isinstance(a.ascended, bool) for a in by_identity)
 
-    narrowed = store.iter_atoms(identity="val-dwa-law-fem", objective_digest=OBJECTIVE.digest())
+    narrowed = store.iter_atoms(identity="val-dwa-law-fem", seed=0)
     assert len(narrowed) == 1
     assert narrowed[0].seed == 0
-    assert narrowed[0].objective_digest == OBJECTIVE.digest()
 
 
 def test_upsert_solution_is_idempotent_and_get_solution_reads_it_back(tmp_path):
@@ -146,9 +157,9 @@ def test_upsert_solution_is_idempotent_and_get_solution_reads_it_back(tmp_path):
 
 
 def test_insert_atoms_raises_integrity_error_for_unregistered_solution(tmp_path):
-    # Property 4: an atom whose solution_digest/objective_digest isn't in
-    # solutions/objectives raises sqlite3.IntegrityError (FK), proving
-    # PRAGMA foreign_keys=ON actually took effect on this connection.
+    # Property 4: an atom whose solution_digest isn't in solutions raises
+    # sqlite3.IntegrityError (FK), proving PRAGMA foreign_keys=ON actually
+    # took effect on this connection.
     store, _ = _new_store(tmp_path)
     with pytest.raises(sqlite3.IntegrityError):
         store.insert_atoms([_atom()])
