@@ -196,12 +196,6 @@ table.grid caption{ text-align:left; background:var(--indigo); color:#fff; font-
 .more{ text-align:center; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; color:var(--indigo);
   cursor:pointer; padding:6px; user-select:none; background:#f0f0f4; border:1px solid var(--silver-lo); border-top:0; }
 .more:hover{ background:#fff3b0; color:var(--red); }
-.callouts{ display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px; }
-.callout{ border:2px solid; border-color:var(--silver-hi) var(--silver-lo) var(--silver-lo) var(--silver-hi);
-  background:#eeeef2; padding:7px 10px; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; }
-.callout .lbl2{ font-size:.66rem; text-transform:uppercase; letter-spacing:.06em; color:#55555c; }
-.callout .who{ font-size:.86rem; color:#111; margin-top:3px; }
-.callout .who .at{ color:#8a8a90; } .callout .who .num{ color:var(--indigo); font-weight:700; }
 
 /* FRONTIER heatmap --------------------------------------------------------- */
 .frtop{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:.3rem 0 .7rem; }
@@ -336,7 +330,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 @media (max-width:760px){
   .layout{ grid-template-columns:1fr; }
   .sidebar{ border-right:0; border-bottom:1px solid var(--rule-soft); }
-  .callouts,.cards,.footgrid{ grid-template-columns:1fr; }
+  .cards,.footgrid{ grid-template-columns:1fr; }
 }
   /* --- The Nethack Dictionary: audio-reactive dungeon wall around the page frame --- */
   #dictviz{ position:fixed; inset:0; width:100%; height:100%; z-index:0; pointer-events:none; display:block; }
@@ -1066,9 +1060,10 @@ function progRow(p){
   const agg = scopeKind(curObj)!=="identity";
   const name=p.base?'autoascend <span class="tag">floor</span>':`nethacker@${p.digest} ${p.nu?'<span class="new">NEW!</span>':''}`;
   const who=p.base?'<span class="dz">&mdash;</span>':`<span class="at">@</span>${esc(p.owner)}`;
+  const scoreCell = `<td class="num">${p.score!=null?p.score.toFixed(3):'&mdash;'}</td>`;
   const metric = agg
-    ? `${covCell(p.coverage,p.total)}<td class="num">${p.score.toFixed(3)}</td>`
-    : `<td class="l pend">${esc(p.deepest)}</td><td class="num">${p.score.toFixed(3)}</td>`;
+    ? `${covCell(p.coverage,p.total)}${scoreCell}`
+    : `<td class="l pend">${esc(p.deepest)}</td>${scoreCell}`;
   const delta = p.base?'<td class="dz">&mdash;</td>':deltaCell(p.score);
   return `<tr data-d="${p.digest}" class="${p.base?'base':''}">
     <td class="l rk ${(!p.base&&p.rank<=3)?'top':''}">${p.base?'&middot;':p.rank}</td>
@@ -1206,7 +1201,7 @@ async function openProgram(d){
     :`<div style="color:#6a6a72">No per-identity atoms yet.</div>`;
   $("#mBody").innerHTML=`<div class="kv">
     <span class="k">deepest reach</span><span class="v">${esc(p.deepest)}</span>
-    <span class="k">mean progression</span><span class="v">${p.score.toFixed(3)}</span>
+    <span class="k">mean progression</span><span class="v">${p.score!=null?p.score.toFixed(3):'&mdash;'}</span>
     <span class="k">median</span><span class="v">${p.med!=null?p.med.toFixed(3):'&mdash;'}</span>
     <span class="k">episodes</span><span class="v">${p.ep!=null?p.ep:'&mdash;'}</span>
     <span class="k">ascensions</span><span class="v" style="color:#cc0000">${p.asc}</span>
@@ -1234,8 +1229,8 @@ function rebuildAutoascend(){
   const c = per[curObj];                      // present only for an identity scope
   AUTOASCEND = {
     digest:"autoascend", owner:"autoascend",
-    score: aa!=null ? aa : 0,
-    med:   aa!=null ? aa : 0,                 // GAP: /baseline has no median
+    score: aa!=null ? aa : null,              // null (not 0) when no baseline -> renders "—", never a fake floor
+    med:   aa!=null ? aa : null,              // GAP: /baseline has no median
     coverage: n, total: n,                    // AA is the reference floor over the whole scope
     ep: c && c.episodes!=null ? c.episodes : 0,
     asc: 0,

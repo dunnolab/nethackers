@@ -209,6 +209,11 @@ async function pass3() {
   const q = (s) => document.querySelector(s);
   ok(/be the first/i.test(q("#scBody").textContent), "empty hackers state invites the first register");
   ok(/autoascend/.test(q("#scBody").textContent), "floor row still present under the empty state");
+  // honesty: with no baseline the floor must read "—", never a fabricated 0.000 (both views)
+  q('[data-view="programs"]').click();
+  await sleep(20);
+  const floorRow = [...document.querySelectorAll("#scBody tr")].find((r) => /autoascend/.test(r.textContent));
+  ok(floorRow && !/0\.000/.test(floorRow.textContent), "programs floor shows no fake 0.000 when baseline is absent");
   ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
   dom.window.close();
 }
