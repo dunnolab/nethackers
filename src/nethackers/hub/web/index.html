@@ -203,16 +203,22 @@ table.grid caption{ text-align:left; background:var(--indigo); color:#fff; font-
 .regime label{ cursor:pointer; margin-right:12px; }
 .gridnote{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; color:#55555c; margin:.2rem 0 .8rem; }
 .gridnote b{ color:var(--indigo); }
-.rolegrid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(210px,1fr)); gap:10px; }
-table.fr{ width:100%; border-collapse:collapse; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.76rem; }
-table.fr caption{ text-align:left; background:#eeeef2; border:1px solid var(--silver-lo); border-bottom:0;
-  padding:3px 6px; color:var(--indigo); font-weight:700; display:flex; justify-content:space-between; }
-table.fr caption .m{ color:#6a6a72; font-weight:400; }
+.rolegrid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(238px,1fr)); gap:10px; align-items:start; }
+table.fr{ width:100%; table-layout:fixed; border-collapse:collapse; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.76rem; }
+.fr col.c1{ width:44%; } .fr col.c2{ width:28%; } .fr col.c3{ width:28%; }
+.fr td.vn{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+.fr tr.frhead td{ background:#eeeef2; border-color:var(--silver-lo); }
+.fr tr.frhead td.rn{ color:var(--indigo); font-weight:700; }
+.fr tr.frhead td.hval{ font-weight:700; color:#2a2a30; }
 .fr td{ border:1px solid #e2e2e8; padding:2px 6px; }
 .fr td.vn{ color:#55555c; } .fr td.vv{ text-align:right; font-variant-numeric:tabular-nums; color:#111; }
 .fr td.empty{ color:#c2c2c8; }
 .fr td.floor{ color:#9a9aa6; font-style:italic; }
 .fr td.asc{ color:var(--red); font-weight:700; }
+/* delta-vs-AutoAscend column */
+.fr td.dcol{ text-align:right; font-variant-numeric:tabular-nums; white-space:nowrap; }
+.fr td.dpos,.fr .dpos{ color:#1a7a2e; } .fr td.dneg,.fr .dneg{ color:var(--red); } .fr td.dz,.fr .dz{ color:#9a9aa6; }
+.fr .aachip{ color:#9a9aa6; font-style:normal; font-size:.64rem; letter-spacing:.08em; }
 .legend{ display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; margin-top:12px;
   font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.72rem; color:#55555c; }
 .legend .ramp{ display:inline-flex; height:11px; width:120px; border:1px solid var(--silver-lo); }
@@ -551,12 +557,8 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
       <!-- FRONTIER -->
       <section id="frontier">
         <h2 class="sec"><span class="glyph">&lt;</span> The Frontier</h2>
-        <p class="lead">Mean progression (0&ndash;1) for all <span class="ref" data-k="identities">73 role&times;race&times;alignment&times;gender identities</span>.
-          A darker cell is deeper progress; every cell no program has touched shows the dim <b>AutoAscend floor</b> instead of a blank.</p>
-        <p class="note" style="margin:.1rem 0 .8rem">Every number is a <span class="ref" data-k="progression"><b>mean progression</b></span> (0&ndash;1) over that
-          identity's evaluated episodes &mdash; the one thing we measure. <span class="ref" data-k="ascension">Ascension</span> sits at the top of the scale
-          (0.875), and nothing is close to it yet. These are all
-          <b>self-reported</b>; the verified frontier lands with M2b.</p>
+        <p class="lead">Mean <span class="ref" data-k="progression">progression</span> (0&ndash;100%) across all <span class="ref" data-k="identities">73 identities</span>, and how far each sits above the
+          <span class="ref" data-k="autoascend"><b>AutoAscend floor</b></span>. Touched cells are a program's best; the rest show the dim floor.</p>
         <div class="controls">
           <span class="lbl">regime:</span>
           <span class="grp regime" role="radiogroup" aria-label="Frontier regime">
@@ -574,9 +576,10 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
         <div class="legend">
           <span>progression:</span>
           <span class="ramp" id="ramp"></span>
-          <span>0.0 &rarr; 1.0</span>
+          <span>0% &rarr; 100%</span>
           <span><span class="sw" style="background:rgba(var(--tint) / .14)"></span> AutoAscend floor</span>
-          <span><span class="sw" style="background:var(--red)"></span> &#9733; ascended &ge; 0.875</span>
+          <span><span class="sw" style="background:#1a7a2e"></span> &Delta; above floor &middot; <span style="color:var(--red)">below</span></span>
+          <span><span class="sw" style="background:var(--red)"></span> &#9733; ascended &ge; 87.5%</span>
         </div>
       </section>
 
@@ -1119,43 +1122,79 @@ $("#scMore").addEventListener("click",function(){
 function renderFrontier(regime){
   const grid=$("#rolegrid"), note=$("#gridnote"), verified=curTier==="verified";
   const per=(BASELINE&&BASELINE.per_identity)||{};
-  /* {v, floor}: a program value (floor=false), the dim AutoAscend floor
-     (floor=true) when no program has touched the cell, or null. The champion
-     regime shows only the champion's own cells (no floor). */
-  function cell(id){
-    if(verified) return null;
-    if(regime==="program") return (id in CHAMPION.scores)?{v:CHAMPION.scores[id],floor:false}:null;
-    if(id in UNIVERSE) return {v:UNIVERSE[id].v,floor:false};
-    if(per[id]&&per[id].progression!=null) return {v:per[id].progression,floor:true};
-    return null;
+  /* per-identity datum: state 'prog' (a program's best, heat-tinted), 'floor' (the dim
+     AutoAscend floor, shown when nothing has touched the cell yet), or 'none'. aa is the
+     identity's own AutoAscend floor -- so every touched cell can report delta = v - aa. */
+  function datum(id){
+    const aa=(per[id]&&per[id].progression!=null)?per[id].progression:null;
+    if(verified) return {state:'none',v:null,aa};
+    let v=null,floor=false;
+    if(regime==="program"){
+      if(id in CHAMPION.scores) v=CHAMPION.scores[id];   // the champion's own cell -- honest, may sit below AA
+    } else {
+      /* Universe = best of ALL, and AutoAscend is one of the competitors: take
+         max(best program, AA floor). A program shows only where it actually beats
+         the floor; otherwise AutoAscend leads and the cell reads as the floor. */
+      const pv=(id in UNIVERSE)?UNIVERSE[id].v:null;
+      if(pv!=null&&(aa==null||pv-aa>0.0005)) v=pv;
+      else if(aa!=null){ v=aa; floor=true; }
+    }
+    if(v==null) return {state:'none',v:null,aa};
+    if(floor) return {state:'floor',v,aa};
+    return {state:'prog',v,aa,delta:aa!=null?+(v-aa).toFixed(3):null};
   }
+  function rowTitle(id,d){
+    if(d.v==null) return `${id} :: ${verified?'no verified result':'unexplored'}`;
+    if(d.state==='floor') return `${id} :: AutoAscend floor ${pct(d.v)} -- best of all here`;
+    const who=(regime==="universe"&&UNIVERSE[id])?` :: @${UNIVERSE[id].o}, ${UNIVERSE[id].ep} ep`:"";
+    const dl=d.delta!=null?` :: Δ ${fmtP(d.delta)} vs AutoAscend`:"";
+    return `${id} :: ${pct(d.v)}${dl}${who}`;
+  }
+  /* the value cell -- heat tint / star / dim-floor styling */
+  function valTd(d){
+    const v=d.v,isFloor=d.state==='floor',asc=v!=null&&v>=ASC;
+    const shown=v==null?"&middot;":(asc?"&#9733;"+pct(v):pct(v));
+    const st=v==null?"":`background:${tint(v,isFloor)};color:${isFloor?'#9a9aa6':tintText(v)}`;
+    return `<td class="vv ${v==null?'empty':(isFloor?'floor':'')} ${asc?'asc':''}" style="${st}">${shown}</td>`;
+  }
+  function pct(v){ return (v*100).toFixed(1)+"%"; }                       // 0.117 -> 11.7%
+  function fmtP(x){ return (x<0?"-":"+")+Math.abs(x*100).toFixed(1)+"%"; } // delta -> +6.0%
+  function dSigned(delta){                 // signed delta vs the AutoAscend floor, in percentage points
+    if(delta==null) return `<td class="dcol dz">&mdash;</td>`;
+    const cls=delta>0.0005?"dpos":(delta<-0.0005?"dneg":"dz");
+    return `<td class="dcol ${cls}">${fmtP(delta)}</td>`;
+  }
+  const aaTd=`<td class="dcol"><span class="aachip">aa</span></td>`, noTd=`<td class="dcol dz">&middot;</td>`;
+
   let prog=0,floor=0,total=0,sum=0;
-  grid.innerHTML=Object.keys(ROLE_NAMES).map(role=>{
-    const rows=ROLE_VARS[role].map(v=>{
-      const id=role+"-"+v; total++;
-      const c=cell(id), val=c?c.v:null, isFloor=c?c.floor:false;
-      if(c){ if(isFloor) floor++; else { prog++; sum+=val; } }
-      const asc=val!=null&&val>=ASC;
-      const shown=val==null?"&middot;":(asc?"&#9733;"+val.toFixed(3):val.toFixed(3));
-      const style=val==null?"":`background:${tint(val,isFloor)};color:${isFloor?'#9a9aa6':tintText(val)}`;
-      const title=val==null?`${id} :: ${verified?'no verified result':'unexplored'}`
-        :(isFloor?`${id} :: AutoAscend floor ${val.toFixed(3)} -- no program here yet`
-          :`${id} :: ${val.toFixed(3)}`+(regime==="universe"&&UNIVERSE[id]?` :: @${UNIVERSE[id].o}, ${UNIVERSE[id].ep} ep`:""));
-      return `<tr title="${esc(title)}"><td class="vn">${esc(v)}</td>
-        <td class="vv ${val==null?'empty':(isFloor?'floor':'')} ${asc?'asc':''}" style="${style}">${shown}</td></tr>`;
+  const roleOrder=Object.keys(ROLE_NAMES).slice().sort((a,b)=>ROLE_VARS[b].length-ROLE_VARS[a].length); // most identities first
+  grid.innerHTML=roleOrder.map(role=>{
+    const ids=ROLE_VARS[role].map(v=>({v,id:role+"-"+v,d:datum(role+"-"+v)}));
+    let tSum=0,tAA=0,tN=0,shownSum=0,shownN=0;
+    ids.forEach(({d})=>{ total++;
+      if(d.state==='prog'){ prog++; sum+=d.v; tSum+=d.v; if(d.aa!=null) tAA+=d.aa; tN++; shownSum+=d.v; shownN++; }
+      else if(d.state==='floor'){ floor++; shownSum+=d.v; shownN++; } });
+    const roleAvg=shownN?(shownSum/shownN):null;                 // average across the best-of-all cells
+    const roleLift=(tN&&shownN)?((tSum-tAA)/shownN):null;        // avg lift over ALL cells (floor = 0 lift)
+    // header on the same 3 columns as the identity rows: name | avg % | delta (rendered exactly as a cell -- 'aa' when all-floor)
+    const head=`<tr class="frhead"><td class="vn rn"><span class="ref" data-k="role-${role}">${ROLE_NAMES[role]}</span></td>`
+      +`<td class="vv hval">${roleAvg!=null?pct(roleAvg):'&middot;'}</td>`
+      +(roleLift!=null?dSigned(roleLift):(roleAvg!=null?aaTd:noTd))+`</tr>`;
+    const body=ids.map(({v,id,d})=>{
+      const dtd=d.state==='prog'?dSigned(d.delta):(d.state==='floor'?aaTd:noTd);
+      return `<tr title="${esc(rowTitle(id,d))}"><td class="vn">${esc(v)}</td>${valTd(d)}${dtd}</tr>`;
     }).join("");
-    const rv=ROLE_VARS[role].map(v=>{ const c=cell(role+"-"+v); return c?c.v:null; }).filter(x=>x!=null);
-    const rmean=rv.length?(rv.reduce((a,b)=>a+b,0)/rv.length).toFixed(2):"&middot;";
-    return `<table class="fr"><caption><span class="ref" data-k="role-${role}">${ROLE_NAMES[role]}</span><span class="m">${rmean}</span></caption>${rows}</table>`;
+    return `<table class="fr"><colgroup><col class="c1"><col class="c2"><col class="c3"></colgroup>${head}${body}</table>`;
   }).join("");
-  const overall=prog?(sum/prog).toFixed(3):"-";
-  const bv=(BASELINE&&BASELINE.overall!=null)?BASELINE.overall.toFixed(3):null;
+
+  const overall=prog?pct(sum/prog):"-";
+  const bv=(BASELINE&&BASELINE.overall!=null)?pct(BASELINE.overall):null;
   const baseLine=bv?` &middot; AutoAscend overall <b>${bv}</b>`:` &middot; AutoAscend not computed yet`;
   note.innerHTML=(verified
     ? `<b>verified</b> tier &mdash; no verified results yet (M2b isn't live), so every cell is blank`
     : (regime==="program"
       ? `champion <b>nethacker@${esc(CHAMPION.digest)}</b> (<b>@${esc(CHAMPION.owner)}</b>) &mdash; overall <b>${overall}</b> over <b>${prog}</b> explored`
-      : `each touched cell = the <b>best</b> program's mean &middot; <b>${prog}</b> of <b>${total}</b> reached by a program, <b>${floor}</b> at the AutoAscend floor`))+baseLine;
+      : `each cell = the <b>best result yet</b> &mdash; a program's mean where it beats <b>AutoAscend</b>, else the dim floor &middot; <b>${prog}</b> of <b>${total}</b> led by a program, <b>${floor}</b> at the AutoAscend floor`))+baseLine;
   if(window.__refs) window.__refs();
 }
 document.querySelectorAll('input[name="regime"]').forEach(r=>r.addEventListener("change",()=>{ curRegime=r.value; renderFrontier(curRegime); }));
