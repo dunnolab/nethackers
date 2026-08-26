@@ -1655,10 +1655,10 @@ boot();
 })();
 
 /* ===================== The Oracle: community prediction poll =====================
-   Pure client-side PROTOTYPE -- visuals + dynamics only, over a SYNTHETIC vote
-   corpus; there is NO hub API here yet. Vote-to-reveal; one prophecy per browser
-   (localStorage, like the visitor counter). The real version swaps genCorpus() +
-   localStorage for GET /poll + POST /poll/vote and leaves render() untouched. */
+   Reads the live crowd from the hub: GET /poll for the anonymized votes,
+   POST /poll/vote to cast. Vote-to-reveal; one prophecy per browser (a voter_id
+   in localStorage; the crowd is fetched only when revealing). All render /
+   aggregation runs client-side over the fetched rows. */
 (function(){
   const root=document.getElementById("oracle"); if(!root) return;
 
@@ -1689,8 +1689,7 @@ boot();
       try{ localStorage.setItem(VKEY,id); }catch(e){} }
     return id; }
   let CORPUS=[];                                   // the live crowd, from GET /poll (was the synthetic corpus)
-  const _jget = p => fetch(p).then(r=>{ if(!r.ok) throw new Error(p+" "+r.status); return r.json(); });
-  async function loadPoll(){ const d=await _jget("/poll"); CORPUS=(d&&d.votes)||[]; }
+  async function loadPoll(){ const d=await jget("/poll"); CORPUS=(d&&d.votes)||[]; }
   async function postVote(vote){
     const r=await fetch("/poll/vote",{method:"POST",headers:{"Content-Type":"application/json"},
       body:JSON.stringify({voter_id:voterId(),method:vote.method,timeline:vote.timeline,roles:vote.roles,xp:vote.xp})});
@@ -1759,7 +1758,7 @@ boot();
     $("#orcN").innerHTML = (lens!=="all"&&segFilter)
       ? `showing <b>${(lens==="role"?RLABEL:XLABEL)[segFilter]}</b> &middot; n=${n} of ${allRows().length}`
         +(small?` &middot; <span class="orc-small">small sample &mdash; read with salt</span>`:``)
-      : `n=${n} prophecies &middot; a synthetic crowd for now &mdash; your own vote is real and counted`;
+      : `n=${n} prophecies &middot; self-reported, one per browser`;
   }
 
   function renderCompare(){ const axis=lens==="role"?ROLE:XP, field=lens, v=readVote()||{}, mine=v.roles||[];
