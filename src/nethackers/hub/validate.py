@@ -30,10 +30,10 @@ import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from nethackers.contracts.models import Evidence
+from nethackers.contracts.models import Evidence, ObjectiveSpec
 from nethackers.hub.atoms import evidence_to_atoms
 from nethackers.hub.auth import AuthProvider, owns_repo
-from nethackers.hub.objectives import CATALOG
+from nethackers.hub.objectives import CATALOG, IDENTITIES, build_union_spec
 from nethackers.hub.store import Store
 from nethackers.hub.views.attainment import update_attainment
 from nethackers.hub.views.elites import recompute_elites
@@ -102,6 +102,29 @@ class WrongTier(RegisterError):
     """Evidence: ``evidence.tier`` isn't ``"self-reported"`` (the only tier register writes)."""
 
 
+_IDENTITY_SET = frozenset(IDENTITIES)
+
+
+def _objective_and_batch(
+    name: str, submitted: set[tuple[int, str]]
+) -> tuple[ObjectiveSpec, set[tuple[int, str]]] | None:
+    """Resolve the evidence's objective name to (spec, canonical batch).
+
+    A catalog objective (a single identity, or a legacy name still in the
+    catalog) -> its own spec/batch. Otherwise a SET objective: reconstruct the
+    member identities from the submitted evidence's distinct characters and
+    build their canonical union batch. Returns ``None`` for an unknown
+    objective (a character that isn't a published identity)."""
+    spec = CATALOG.get(name)
+    if spec is not None:
+        return spec, set(spec.batch)
+    identities = sorted({character for _seed, character in submitted})
+    if not identities or any(i not in _IDENTITY_SET for i in identities):
+        return None
+    union = build_union_spec(identities, name=name)
+    return union, set(union.batch)
+
+
 def register(
     store: Store,
     auth: AuthProvider,
@@ -140,12 +163,13 @@ def register(
     # 4. evidence well-formed -- a published objective, its exact batch, finite
     #    metrics, an evaluator image, and the self-reported tier.
     name = evidence.objective.seed_set
-    spec = CATALOG.get(name)
-    if spec is None:
-        raise UnknownObjective(f"{name!r} is not a published catalog objective")
     submitted = {(r.trajectory_id, r.character) for r in evidence.results}
-    if submitted != set(spec.batch):
-        raise WrongBatch(f"submitted batch does not match {name!r}'s published batch")
+    resolved = _objective_and_batch(name, submitted)
+    if resolved is None:
+        raise UnknownObjective(f"{name!r} is not a published catalog objective or identity set")
+    spec, canonical_batch = resolved
+    if submitted != canonical_batch:
+        raise WrongBatch(f"submitted batch does not match {name!r}'s canonical batch")
     if not all(math.isfinite(r.progress) for r in evidence.results):
         raise NonFiniteMetrics("some result's progress is not finite")
     if not evidence.evaluator_image:

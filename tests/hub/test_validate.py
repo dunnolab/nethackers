@@ -17,7 +17,7 @@ import pytest
 
 from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
 from nethackers.hub.auth import AuthError, LocalStubAuth
-from nethackers.hub.objectives import CATALOG
+from nethackers.hub.objectives import CATALOG, build_union_spec
 from nethackers.hub.store import Store
 from nethackers.hub.validate import (
     MissingCommit,
@@ -172,3 +172,47 @@ def test_auth_error_propagates(tmp_path):
             git=_Git(),
             now="n",
         )
+
+
+def _set_evidence(identities, name):
+    spec = build_union_spec(identities, name=name)
+    results = tuple(
+        TrajectoryResult(
+            trajectory_id=seed, status="completed", progress=0.5, ascended=False,
+            steps=1, turns=1, max_depth=1, end_status="died", error=None,
+            wall_seconds=0.1, character=character, milestone=None)
+        for seed, character in spec.batch)
+    return Evidence.from_results(
+        solution_digest="sha256:" + "cd" * 32,
+        objective=Objective(character=None, seed_set=name),
+        evaluator_image="img", results=results, created_at="t")
+
+
+def test_register_slices_a_set_objective_into_per_identity_atoms(tmp_path):
+    s = _store(tmp_path)
+    ids = ["wiz-elf-cha-mal", "wiz-orc-cha-mal"]
+    register(
+        s, LocalStubAuth({"t": "sam"}), token="t",
+        reference=SolutionReference("github.com/sam/nethacker", SHA),
+        manifest=MANIFEST, evidence=_set_evidence(ids, "set:2:deadbeef"),
+        git=_Git(), now="2026-08-26T00:00:00Z")
+    sol = "github.com/sam/nethacker@" + SHA
+    # atoms keyed by identity for BOTH members, from ONE register call
+    for ident in ids:
+        stored = s.iter_atoms(solution_digest=sol, identity=ident)
+        assert len(stored) == len(CATALOG[ident].batch)
+        assert all(a.identity == ident for a in stored)
+
+
+def test_register_wrong_batch_for_a_cherry_picked_set(tmp_path):
+    s = _store(tmp_path)
+    ids = ["wiz-elf-cha-mal", "wiz-orc-cha-mal"]
+    ev = _set_evidence(ids, "set:2:deadbeef")
+    ev = Evidence.from_results(                       # drop one episode -> cherry-pick
+        solution_digest=ev.solution_digest, objective=ev.objective,
+        evaluator_image=ev.evaluator_image, results=ev.results[:-1],
+        created_at=ev.created_at)
+    with pytest.raises(WrongBatch):
+        register(s, LocalStubAuth({"t": "sam"}), token="t",
+                 reference=SolutionReference("github.com/sam/nethacker", SHA),
+                 manifest=MANIFEST, evidence=ev, git=_Git(), now="n")
