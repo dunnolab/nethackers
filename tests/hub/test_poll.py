@@ -51,3 +51,51 @@ def test_clean_vote_allows_empty_roles_and_null_xp():
 def test_clean_vote_rejects_bad_fields(kwargs):
     with pytest.raises(PollValidationError):
         clean_vote(**kwargs)
+
+
+from fastapi.testclient import TestClient
+
+from nethackers.hub.api import create_app
+from nethackers.hub.auth import LocalStubAuth
+from nethackers.hub.store import Store
+
+
+def _client(tmp_path):
+    store = Store(tmp_path / "h.db")
+    store.init_schema()
+    return TestClient(create_app(store, LocalStubAuth({}))), store
+
+
+def test_get_poll_empty(tmp_path):
+    client, _ = _client(tmp_path)
+    r = client.get("/poll")
+    assert r.status_code == 200 and r.json() == {"votes": [], "total": 0}
+
+
+def test_post_vote_persists_and_returns_aggregate(tmp_path):
+    client, _ = _client(tmp_path)
+    r = client.post("/poll/vote", json={"voter_id": "v1", "method": "programs",
+                    "timeline": "2035", "roles": ["mlr", "player"], "xp": "ascended"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["total"] == 1
+    assert body["votes"][0] == {"method": "programs", "timeline": "2035",
+                                "roles": ["mlr", "player"], "xp": "ascended"}
+    assert "voter_id" not in body["votes"][0]  # anonymized
+
+
+def test_post_vote_same_voter_replaces(tmp_path):
+    client, _ = _client(tmp_path)
+    client.post("/poll/vote", json={"voter_id": "v1", "method": "programs",
+                "timeline": "2035", "roles": [], "xp": None})
+    r = client.post("/poll/vote", json={"voter_id": "v1", "method": "hybrid",
+                    "timeline": "2040", "roles": ["player"], "xp": "serious"})
+    assert r.json()["total"] == 1  # still one row
+    assert r.json()["votes"][0]["method"] == "hybrid"
+
+
+def test_post_vote_rejects_bad_key(tmp_path):
+    client, _ = _client(tmp_path)
+    r = client.post("/poll/vote", json={"voter_id": "v1", "method": "telepathy",
+                    "timeline": "2035", "roles": [], "xp": None})
+    assert r.status_code == 400
