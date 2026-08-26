@@ -48,6 +48,28 @@ def test_training_seeds_render_when_given():
     b = build_brief("o", "c", _evidence(1, 1, {}), training_seeds=[3, 17, 42])
     assert "3, 17, 42" in b
 
+def test_brief_pins_the_judges_eval_config():
+    ev = Evidence(solution_digest="sha256:x", objective=Objective(character=None),
+                  evaluator_image="img", tier="self-reported", results=(),
+                  episodes=0, mean_progress=0.0, ascensions=0, created_at="t")
+    b = build_brief("mon-hum-cha-fem", "mon-hum-cha-fem", ev, training_seeds=[0, 1, 2])
+    # The mutator must reproduce the JUDGE's games, not invent an evaluation-id.
+    assert "python -m nethackers.arena.run" in b
+    assert "--evaluation-id local" in b   # explicit judge namespace, not "the default"
+    assert "local" in b   # names the judge's default namespace
+
+
+def test_brief_gives_a_runnable_eval_command():
+    from nethackers.contracts.models import Evidence, Objective
+    from nethackers.harness.brief import build_brief
+    ev = Evidence(solution_digest="sha256:x", objective=Objective(character=None),
+                  evaluator_image="img", tier="self-reported", results=(),
+                  episodes=0, mean_progress=0.0, ascensions=0, created_at="t")
+    b = build_brief("kni-hum-law-fem", "kni-hum-law-fem", ev, training_seeds=[0, 1])
+    assert "--evaluation-id local" in b   # explicit, not "the default"
+    assert "--out" in b                   # the required flag that was missing
+
+
 # --- generalist (set) brief -----------------------------------------------
 
 def test_set_brief_lists_builds_and_weakest_first():

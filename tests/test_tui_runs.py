@@ -61,6 +61,29 @@ def test_read_runs_summarizes_wins_and_best(tmp_path):
     assert r["best_dev"] == 0.44 and r["best_held"] == 0.41
 
 
+def test_read_runs_counts_local_only_wins_and_their_fitness_too(tmp_path):
+    # A "local-only" outcome (runlog.metric_record's new local-only-vs-hub
+    # distinction) is still a REAL, accepted local elite -- the Runs list's
+    # win count and best-fitness must not silently drop it just because it
+    # never reached the hub.
+    _mk(
+        tmp_path / "r-2",
+        {"run_id": "r-2", "objective": "wiz-elf-cha-mal", "operator": "claude",
+         "iterations": 1, "created_at": "2026-08-26T00:00:00"},
+        [
+            {"iteration": 0, "outcome": "baseline", "dev_fitness": 0.30,
+             "validation_fitness": 0.28},
+            {"iteration": 1, "outcome": "local-only", "dev_fitness": 0.50,
+             "validation_fitness": 0.45,
+             "hub_reason": "local-only: not published (no gh publisher / dev owner)"},
+        ],
+    )
+    runs = read_runs(tmp_path)
+    r = next(x for x in runs if x["run_id"] == "r-2")
+    assert r["wins"] == 1
+    assert r["best_dev"] == 0.50 and r["best_held"] == 0.45
+
+
 def test_read_runs_empty_dir(tmp_path):
     assert read_runs(tmp_path) == []
     assert read_runs(tmp_path / "nope") == []

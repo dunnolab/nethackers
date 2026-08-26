@@ -21,6 +21,21 @@ def _seed_tree(root: Path) -> Path:
     return root
 
 
+def test_hypothesis_extracted_from_worktree(tmp_path):
+    # loop.py._track_rejected_attempt currently labels aggregate.outcome_summary(...)
+    # (end-status counts) as the attempt's note, which refs.assemble renders under a
+    # "hypothesis" column in CONTEXT.md -- so a revisiting island sees
+    # "hypothesis: 1x11, -1x3", never the actual idea the mutator tried. This pure
+    # helper greps the worktree's Python for the mutator's real `# hypothesis:` line.
+    from nethackers.harness.loop import _hypothesis_of
+    (tmp_path / "bot.py").write_text("x = 1\n")
+    (tmp_path / "autoascend").mkdir()
+    (tmp_path / "autoascend" / "logic.py").write_text(
+        "def f():\n    return 1  # hypothesis: heal earlier at <1/2 HP\n")
+    assert _hypothesis_of(tmp_path) == "heal earlier at <1/2 HP"
+    assert _hypothesis_of(tmp_path / "autoascend") is not None  # dir walk
+
+
 class _FakeHub:
     def __init__(self): self.registered = []
     def register(self, *, token, reference, manifest, evidence):
@@ -174,6 +189,7 @@ validation_n=3,
         publish=lambda wt: {"repo": "github.com/dev/nethacker", "commit": "a" * 40})
     assert results[0].registered is True
     assert len(hub.registered) == 1
+    assert results[0].hub_reason is None   # reached the hub -- nothing to explain
 
 
 def test_loop_win_without_publisher_is_a_local_elite(tmp_path):
@@ -188,6 +204,7 @@ def test_loop_win_without_publisher_is_a_local_elite(tmp_path):
         runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work")
     assert results[0].registered is True   # still a new (local) elite
     assert hub.registered == []            # but nothing went to the hub
+    assert results[0].hub_reason == "local-only: not published (no gh publisher / dev owner)"
 
 
 class _FailingHub:
@@ -211,8 +228,51 @@ def test_loop_keeps_win_local_when_register_fails(tmp_path):
         publish=lambda wt: {"repo": "github.com/dev/nethacker", "commit": "a" * 40})
     assert results[0].registered is True         # win kept despite the register 400
     assert results[0].reason == "registered"     # not "error:hub 400"
+    assert results[0].hub_reason == "local-only: hub error — hub 400"
     assert results[1].registered is False         # elite advanced to 0.40...
     assert results[1].reason == "no-dev-gain"     # ...so iter2's 0.30 is rejected
+
+
+class _AuthFailingHub:
+    """register always raises AuthError (an expired stored token whose
+    refresh_token is dead, or absent) -- same local-elite-kept contract as
+    _FailingHub, but the loop must add owner context to its own generic
+    message (the adapter itself never knows whose run it's serving)."""
+    def register(self, *, token, reference, manifest, evidence):
+        from nethackers.hubclient.auth import AuthError
+        raise AuthError("hub token expired and could not refresh — run `nethackers login`")
+
+
+def test_loop_win_records_auth_failure_reason_with_owner_context(tmp_path):
+    results = run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+        hub=_AuthFailingHub(), image="img:dev", token="stale-token", owner="sam",
+        iterations=1, validation_n=3, now_fn=lambda: "2026-08-10T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
+        publish=lambda wt: {"repo": "github.com/sam/nethacker", "commit": "a" * 40})
+    assert results[0].registered is True   # win kept as a local elite
+    assert results[0].reason == "registered"
+    assert results[0].hub_reason == (
+        "local-only: auth failed for run owner 'sam' — "
+        "hub token expired and could not refresh — run `nethackers login`")
+
+
+def test_loop_emits_hub_reason_on_the_registered_state_payload(tmp_path):
+    # The monitor's ledger reads hub_reason off the "registered" on_state
+    # payload (harness.loop._emit), not off IterationResult directly -- prove
+    # it's actually threaded through there, not just onto the return value.
+    states = []
+    run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+        hub=_FakeHub(), image="img:dev", token="dev-token", owner="dev", iterations=1,
+        validation_n=3, now_fn=lambda: "2026-08-10T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
+        on_state=states.append)   # no publisher -> local-only
+    registered = [s for s in states if s["phase"] == "registered"]
+    assert len(registered) == 1
+    assert registered[0]["hub_reason"] == "local-only: not published (no gh publisher / dev owner)"
 
 
 def test_loop_records_faithful_usage(tmp_path):

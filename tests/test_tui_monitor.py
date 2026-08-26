@@ -61,6 +61,24 @@ async def test_backfill_renders_the_runs_accumulated_state():
         assert "#seed" in str(mon.query_one("#lineage").render())  # seed0 -> #seed
 
 
+async def test_backfill_renders_local_only_reason_instead_of_registered():
+    # A win that never reached the hub must read "local-only: <reason>" in
+    # the ledger, not the plain (misleadingly complete-sounding) "registered".
+    r = Run("run-1", CFG)
+    r.apply_state(_state("mutating", iteration=1, parent_digest="seed0"))
+    r.apply_state(_state(
+        "registered", iteration=1, parent_digest="elite1",
+        hub_reason="local-only: not published (no gh publisher / dev owner)"))
+    host = _Host(r)
+    async with host.run_test() as pilot:
+        await pilot.pause()
+        mon = host.screen
+        assert isinstance(mon, RunMonitor)
+        ledger = str(mon.query_one("#ledger").render())
+        assert "1 ✓ local-only: not published (no gh publisher / dev owner)" in ledger
+        assert "1 ✓ registered" not in ledger
+
+
 async def test_live_render_mounts_a_new_batch_table():
     run = _populated_run()
     host = _Host(run)

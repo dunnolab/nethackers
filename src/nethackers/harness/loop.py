@@ -1,6 +1,7 @@
 """The MAP-Elites loop: select -> mutate -> evaluate -> insert (MVP)."""
 from __future__ import annotations
 
+import contextlib
 import json
 import math
 import random
@@ -25,6 +26,7 @@ from nethackers.harness.register import register_win, register_win_slices
 from nethackers.harness.seeds import dev_spec, validation_spec
 from nethackers.harness.store import LocalTreeStore
 from nethackers.hub.selector import resolve
+from nethackers.hubclient.auth import AuthError
 
 
 @dataclass
@@ -57,12 +59,35 @@ class IterationResult:
     stopped_reason: str | None = None
     regressions: list[tuple[str, float]] | None = None
     causes: dict[str, int] | None = None
+    # None means the win reached the hub; otherwise WHY it didn't (never
+    # published, auth failed, or some other hub-side error) -- `registered`
+    # alone only ever meant "the LOCAL win was accepted", so this is what
+    # distinguishes a hub-registered win from a local-only one instead of
+    # swallowing the difference into a report()-only line (runlog.metric_record
+    # + the monitor ledger both surface it).
+    hub_reason: str | None = None
 
 
 def _causes(results) -> dict[str, int]:
     """Count genuine causes of death across an evaluation's episodes (mirrors
     brief.py's end_status tally, but over the verbatim death string)."""
     return dict(Counter(r.cause_of_death for r in results if r.cause_of_death))
+
+
+_HYP = re.compile(r"#\s*hypothesis:\s*(.+)", re.IGNORECASE)
+
+
+def _hypothesis_of(worktree: Path) -> str | None:
+    """The mutator's own `# hypothesis: …` comment (brief.py asks for one at
+    the edit) -- the first match across the worktree's Python files, in
+    sorted path order. Best-effort: an unreadable file (encoding issue, race)
+    is skipped, not fatal; no match anywhere yields None."""
+    for p in sorted(Path(worktree).rglob("*.py")):
+        with contextlib.suppress(OSError, UnicodeDecodeError):
+            m = _HYP.search(p.read_text())
+            if m:
+                return m.group(1).strip()
+    return None
 
 
 def select_reseed(survivors: list[EliteState], rng: random.Random,
@@ -159,7 +184,8 @@ def run_loop(
         cb = on_log
         return lambda line: cb(tag, line)
 
-    def _emit(phase: str, iteration: int, *, tokens: int = 0, detail: str = "") -> None:
+    def _emit(phase: str, iteration: int, *, tokens: int = 0, detail: str = "",
+              hub_reason: str | None = None) -> None:
         if on_state is None:
             return
         active = island_states[idx]
@@ -167,7 +193,7 @@ def run_loop(
             "phase": phase, "iteration": iteration,
             "baseline_dev": base_dev, "baseline_held": base_validation,
             "best_dev": active.dev_fitness, "best_held": active.validation_fitness,
-            "wins": wins, "tokens": tokens, "detail": detail,
+            "wins": wins, "tokens": tokens, "detail": detail, "hub_reason": hub_reason,
             # parent snapshot for the monitor's PARENT panel + lineage chain
             # (additive; the in-flight child's digest isn't known here).
             # generation = the iteration being worked (advances every attempt),
@@ -305,7 +331,14 @@ def run_loop(
         # constructs a fresh EliteState that doesn't carry `recent_attempts`
         # forward.
         active = island_states[idx]
-        active.recent_attempts.append((f"iter-{k + 1}", worktree, note))
+        # Prepend the mutator's REAL hypothesis (its `# hypothesis: …` comment
+        # in the worktree) when one is present -- `note` itself stays exactly
+        # as callers build it (score/outcome summary), so a revisiting island
+        # sees both the actual idea tried and the outcome, not just the latter
+        # mislabeled as the former.
+        hyp = _hypothesis_of(worktree)
+        full_note = f"hypothesis: {hyp}; {note}" if hyp else note
+        active.recent_attempts.append((f"iter-{k + 1}", worktree, full_note))
         del active.recent_attempts[:-3]   # bounded <=3 -- drop oldest first
 
     def _hub_reseed_candidate(held: set[str]) -> EliteState | None:
@@ -453,6 +486,7 @@ def run_loop(
                 base_eval=json.dumps([r.to_dict() for r in active.dev_evidence.results]),
                 influences=_pick_influences(active.digest),
                 attempts=active.recent_attempts,
+                parent=active.tree,
             )
             _emit("mutating", k + 1)
             report(f"{tag} · mutating…")
@@ -481,40 +515,40 @@ def run_loop(
                 continue
             consecutive_errors = 0   # a healthy operator run resets the breaker
 
-            report(f"{tag} · operator: {op.total} tok ({op.stopped_reason}); gating…")
-            _emit("gating", k + 1, tokens=op.total)
+            report(f"{tag} · operator: {op.spend} tok ({op.stopped_reason}); gating…")
+            _emit("gating", k + 1, tokens=op.spend)
 
             ok, reason = passes_gate(worktree, active.digest, smoke_spec=smoke,
                                      image=image, now=now_fn(), runner=runner,
                                      on_episode=_episode_cb(f"{tag} · smoke"))
             if not ok:
-                _emit("rejected", k + 1, tokens=op.total, detail=f"gate: {reason}")
+                _emit("rejected", k + 1, tokens=op.spend, detail=f"gate: {reason}")
                 report(f"{tag} · ✗ gate: {reason}")
-                _record(k + 1, IterationResult(False, f"gate:{reason}", tokens=op.total,
+                _record(k + 1, IterationResult(False, f"gate:{reason}", tokens=op.spend,
                                                usage=op.usage,
                                                stopped_reason=op.stopped_reason))
                 continue
 
-            _emit("evaluating-dev", k + 1, tokens=op.total)
+            _emit("evaluating-dev", k + 1, tokens=op.spend)
             report(f"{tag} · gate ok; dev eval ({len(dev.batch)}ep)…")
             dev_fit, dev_ev = evaluate(
                 worktree, dev, image, now=now_fn(), runner=runner,
                 on_episode=_episode_cb(f"{tag} · dev"), max_parallel_evals=max_parallel_evals,
             )
             if dev_fit <= active.dev_fitness:
-                _emit("rejected", k + 1, tokens=op.total, detail="no dev gain")
+                _emit("rejected", k + 1, tokens=op.spend, detail="no dev gain")
                 report(f"{tag} · ✗ no dev gain: {dev_fit:.3f} ≤ {active.dev_fitness:.3f}")
                 _track_rejected_attempt(
                     worktree,
                     f"score dev={dev_fit:.3f} (parent {active.dev_fitness:.3f}); "
-                    f"hypothesis: {aggregate.outcome_summary(dev_ev.results)}")
+                    f"outcome: {aggregate.outcome_summary(dev_ev.results)}")
                 _record(k + 1, IterationResult(False, "no-dev-gain", dev_fitness=dev_fit,
-                                               tokens=op.total, usage=op.usage,
+                                               tokens=op.spend, usage=op.usage,
                                                stopped_reason=op.stopped_reason,
                                                causes=_causes(dev_ev.results)))
                 continue
 
-            _emit("evaluating-held", k + 1, tokens=op.total)
+            _emit("evaluating-held", k + 1, tokens=op.spend)
             report(f"{tag} · dev win {dev_fit:.3f}; validation ({len(validation.batch)}ep)…")
             val_fit, _ = evaluate(
                 worktree, validation, image, now=now_fn(), runner=runner,
@@ -522,17 +556,17 @@ def run_loop(
                 max_parallel_evals=max_parallel_evals,
             )
             if val_fit <= active.validation_fitness:
-                _emit("rejected", k + 1, tokens=op.total, detail="no validation gain")
+                _emit("rejected", k + 1, tokens=op.spend, detail="no validation gain")
                 report(f"{tag} · ✗ no validation gain: {val_fit:.3f} "
                        f"≤ {active.validation_fitness:.3f}")
                 _track_rejected_attempt(
                     worktree,
                     f"score dev={dev_fit:.3f} validation={val_fit:.3f} "
                     f"(parent validation {active.validation_fitness:.3f}); "
-                    f"hypothesis: {aggregate.outcome_summary(dev_ev.results)}")
+                    f"outcome: {aggregate.outcome_summary(dev_ev.results)}")
                 _record(k + 1, IterationResult(False, "no-validation-gain",
                                                dev_fitness=dev_fit, validation_fitness=val_fit,
-                                               tokens=op.total, usage=op.usage,
+                                               tokens=op.spend, usage=op.usage,
                                                stopped_reason=op.stopped_reason,
                                                causes=_causes(dev_ev.results)))
                 continue
@@ -546,12 +580,18 @@ def run_loop(
             # re-publishes from the advanced elite). Publish to a real repo@commit
             # (fetchable, passes the hub's commit-exists check) then register the
             # self-reported evidence; no publisher (or any failure) -> local elite
-            # only, never a synthetic, unfetchable hub reference.
+            # only, never a synthetic, unfetchable hub reference. `hub_reason`
+            # records WHY a local-only win never reached the hub -- never
+            # swallowed silently (runlog.metric_record + the monitor ledger both
+            # surface it) -- while `registered=True` keeps meaning "the local
+            # win was accepted" regardless.
             hub_ok = True
+            hub_reason: str | None = None
             try:
                 reference = publish(worktree) if publish is not None else None
                 if reference is None:
                     hub_ok = False
+                    hub_reason = "local-only: not published (no gh publisher / dev owner)"
                     report(f"{tag} · ✓ new local elite (not published to the hub)")
                 elif is_set:
                     register_win_slices(hub, token=token, child_manifest=manifest,
@@ -561,8 +601,16 @@ def run_loop(
                     register_win(hub, token=token, child_manifest=manifest,
                                  evidence=dev_ev, parent_digest=active.digest,
                                  reference=reference)
+            except AuthError as e:
+                # The adapter's own error is owner-agnostic (it never knows
+                # WHOSE run failed to auth) -- add that context here, once,
+                # rather than in every caller of HubClient.register.
+                hub_ok = False
+                hub_reason = f"local-only: auth failed for run owner '{owner}' — {e}"
+                report(f"{tag} · ⚠ win kept as a local elite; hub auth failed: {e}")
             except Exception as e:
                 hub_ok = False
+                hub_reason = f"local-only: hub error — {e}"
                 report(f"{tag} · ⚠ win kept as a local elite; hub publish/register "
                        f"failed: {e}")
             # A rising union mean can still hide a per-identity drop on a set
@@ -580,15 +628,17 @@ def run_loop(
             island_states[idx] = EliteState(
                 digest, tree_store.path(digest), dev_fit, val_fit, dev_ev)
             wins += 1
-            _emit("registered", k + 1, tokens=op.total, detail=(f"⚠{len(regs)}" if regs else ""))
+            _emit("registered", k + 1, tokens=op.spend,
+                  detail=(f"⚠{len(regs)}" if regs else ""), hub_reason=hub_reason)
             if hub_ok:
                 report(f"{tag} · ✓ REGISTERED dev={dev_fit:.3f} validation={val_fit:.3f}")
             _record(k + 1, IterationResult(True, "registered", dev_fitness=dev_fit,
-                                           validation_fitness=val_fit, tokens=op.total,
+                                           validation_fitness=val_fit, tokens=op.spend,
                                            usage=op.usage, digest=digest,
                                            stopped_reason=op.stopped_reason,
                                            regressions=regs or None,
-                                           causes=_causes(dev_ev.results)))
+                                           causes=_causes(dev_ev.results),
+                                           hub_reason=hub_reason))
         except Exception as e:
             _emit("error", k + 1, detail=str(e))
             report(f"{tag} · ✗ error: {e}")

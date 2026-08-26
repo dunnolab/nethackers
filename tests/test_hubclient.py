@@ -9,9 +9,11 @@ body's link shape, and the register ``Authorization: Bearer`` header.
 
 from __future__ import annotations
 
+import httpx
 import pytest
 
 from nethackers.hubclient import register as r
+from nethackers.hubclient.auth import AuthError
 from nethackers.hubclient.client import HubClient
 from nethackers.hubclient.register import device_login
 
@@ -186,6 +188,118 @@ def test_client_register_body():
         "evidence": {"solution_digest": "sha256:x"},
     }
     assert sent["headers"]["Authorization"] == "Bearer t"
+
+
+# --- register() self-healing via an injected TokenSource -------------------
+#
+# No real network call in any of these -- ``httpx.Request``/``Response`` are
+# just used as data so ``raise_for_status()`` raises a genuine
+# ``httpx.HTTPStatusError`` (the exact type/shape ``HubClient`` branches on),
+# rather than a hand-rolled stand-in exception.
+
+
+class _FakeTokenSource:
+    """Duck-types ``TokenSource``: ``current()`` answers whatever token is
+    "on hand" right now; ``refresh()`` swaps it for ``after_refresh`` (or
+    raises, when the reactive exchange itself fails) and counts its calls."""
+
+    def __init__(self, *, current, after_refresh=None, raise_on_refresh=None):
+        self._current = current
+        self._after_refresh = after_refresh
+        self._raise_on_refresh = raise_on_refresh
+        self.refresh_calls = 0
+
+    def current(self):
+        return self._current
+
+    def refresh(self):
+        self.refresh_calls += 1
+        if self._raise_on_refresh is not None:
+            raise self._raise_on_refresh
+        self._current = self._after_refresh
+        return self._after_refresh
+
+
+def _register_response(status: int, payload: dict | None = None) -> httpx.Response:
+    return httpx.Response(status, request=httpx.Request("POST", "https://hub/register"),
+                          json=payload)
+
+
+class _ScriptedHttp:
+    """Answers one queued ``httpx.Response`` per ``post()`` call; records the
+    bearer token sent each time."""
+
+    def __init__(self, responses: list[httpx.Response]):
+        self._responses = list(responses)
+        self.tokens_used: list[str] = []
+
+    def post(self, url, *, json=None, headers=None):
+        self.tokens_used.append(headers["Authorization"].removeprefix("Bearer "))
+        return self._responses.pop(0)
+
+
+def test_register_without_token_source_uses_the_passed_token_with_no_retry():
+    # Exactly today's behavior when no token_source is wired in: the passed
+    # token= is used as-is, and a 401 is NOT retried -- it just raises.
+    http = _ScriptedHttp([_register_response(401)])
+    client = HubClient("https://hub", http=http)
+    with pytest.raises(httpx.HTTPStatusError):
+        client.register(token="stale", reference={}, manifest={}, evidence={})
+    assert http.tokens_used == ["stale"]
+
+
+def test_register_with_token_source_uses_current_token_on_success():
+    http = _ScriptedHttp([_register_response(200, {"solution_id": "x"})])
+    source = _FakeTokenSource(current="fresh")
+    client = HubClient("https://hub", http=http, token_source=source)
+
+    result = client.register(reference={}, manifest={}, evidence={})
+
+    assert result == {"solution_id": "x"}
+    assert http.tokens_used == ["fresh"]
+    assert source.refresh_calls == 0
+
+
+def test_register_retries_once_after_401_and_succeeds():
+    http = _ScriptedHttp([_register_response(401), _register_response(200, {"solution_id": "x"})])
+    source = _FakeTokenSource(current="stale", after_refresh="fresh")
+    client = HubClient("https://hub", http=http, token_source=source)
+
+    result = client.register(reference={}, manifest={}, evidence={})
+
+    assert result == {"solution_id": "x"}
+    assert http.tokens_used == ["stale", "fresh"]
+    assert source.refresh_calls == 1
+
+
+def test_register_raises_autherror_when_still_401_after_refresh():
+    http = _ScriptedHttp([_register_response(401), _register_response(401)])
+    source = _FakeTokenSource(current="stale", after_refresh="also-stale")
+    client = HubClient("https://hub", http=http, token_source=source)
+
+    with pytest.raises(AuthError, match="rejected the token even after refresh"):
+        client.register(reference={}, manifest={}, evidence={})
+    assert http.tokens_used == ["stale", "also-stale"]
+    assert source.refresh_calls == 1  # exactly one retry, never a loop
+
+
+def test_register_propagates_non_401_errors_without_touching_the_source():
+    http = _ScriptedHttp([_register_response(500)])
+    source = _FakeTokenSource(current="fresh")
+    client = HubClient("https://hub", http=http, token_source=source)
+
+    with pytest.raises(httpx.HTTPStatusError):
+        client.register(reference={}, manifest={}, evidence={})
+    assert source.refresh_calls == 0
+
+
+def test_register_propagates_autherror_when_the_reactive_refresh_itself_fails():
+    http = _ScriptedHttp([_register_response(401)])
+    source = _FakeTokenSource(current="stale", raise_on_refresh=AuthError("no refresh token"))
+    client = HubClient("https://hub", http=http, token_source=source)
+
+    with pytest.raises(AuthError, match="no refresh token"):
+        client.register(reference={}, manifest={}, evidence={})
 
 
 def test_base_url_trailing_slash_is_stripped():

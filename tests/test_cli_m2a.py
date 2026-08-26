@@ -326,6 +326,26 @@ def test_cli_unexpected_error_is_caught_unless_debug(monkeypatch, capsys):
         C.main(["board", "--metric", "coverage"])
 
 
+def test_cli_auth_error_is_caught_as_a_friendly_hint_not_a_raw_traceback(monkeypatch, capsys):
+    # AuthError (a stored token expired and refresh itself failed) is an
+    # EXPECTED, well-understood condition with a clear fix -- it must render
+    # like the existing "not logged in" hints (plain, actionable), not fall
+    # through to the generic "unexpected error" banner a bug would get.
+    from nethackers.hubclient.auth import AuthError
+
+    def boom():
+        raise AuthError("hub token expired and could not refresh — run `nethackers login`")
+    monkeypatch.setattr(C, "_authed_token", boom)
+
+    rc = C.main(["register", "--repo", "github.com/x/y", "--commit", "a" * 40,
+                 "--evidence", "unused.json"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "run `nethackers login`" in err
+    assert "unexpected error" not in err
+    assert "Traceback" not in err
+
+
 def test_cli_elites_dispatches_with_objective(monkeypatch, capsys):
     FakeHubClient, calls = _make_fake_hub_client({"elites": [{"identity": "x"}]})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)

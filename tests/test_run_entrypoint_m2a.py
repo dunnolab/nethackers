@@ -152,6 +152,16 @@ def test_run_batch_isolates_a_dead_worker():
     assert len(results) == 2
 
 
+def test_evaluation_id_defaults_to_local_when_omitted():
+    """Root cause ①: the judge hardcodes --evaluation-id local (eval/runner.py).
+    A mutator self-eval that omits the flag must play the judge's dungeons, not
+    an invented namespace -- so the default has to match the judge exactly."""
+    from nethackers.arena.run import _parser
+    args = _parser().parse_args(
+        ["--solution", "/sol", "--batch", "[]", "--out", "/out/x.json"])
+    assert args.evaluation_id == "local"   # matches the judge (eval/runner.py passes "local")
+
+
 def test_main_passes_knob_and_writes_batch_order(tmp_path, monkeypatch):
     calls = {}
 

@@ -8,6 +8,8 @@
 """
 import json
 
+import pytest
+
 from nethackers import cli
 from nethackers.harness import launch
 from nethackers.hubclient import credentials as cred
@@ -127,6 +129,28 @@ def test_authed_token_refreshes_when_expired(monkeypatch, tmp_path):
     )
     assert cli._authed_token() == "ghu_new"
     assert c.load().access_token == "ghu_new"
+
+
+def test_authed_token_raises_autherror_when_refresh_fails(monkeypatch, tmp_path):
+    # _authed_token() now delegates to the same TokenSource adapter
+    # harness.launch wires into evolve -- a dead refresh token must surface
+    # as AuthError (caught by main()'s top-level guard), not a raw
+    # DeviceFlowError/httpx exception leaking out of the CLI.
+    from nethackers import cli
+    from nethackers.hubclient import credentials as c
+    from nethackers.hubclient.auth import AuthError
+    from nethackers.hubclient.register import DeviceFlowError
+    monkeypatch.setattr(c, "path", lambda: tmp_path / "credentials.json")
+    c.save(c.Credentials("sam", "ghu_old", "ghr_y", expires_at=500.0))
+    monkeypatch.setattr(cli, "_time_now", lambda: 1000.0)
+
+    def dead_refresh(rt, **k):
+        raise DeviceFlowError("bad_refresh_token")
+    monkeypatch.setattr(cli, "refresh_access_token", dead_refresh)
+
+    with pytest.raises(AuthError, match="run `nethackers login`"):
+        cli._authed_token()
+    assert c.load().access_token == "ghu_old"  # untouched -- nothing persisted on failure
 
 
 # --- whoami --------------------------------------------------------------
