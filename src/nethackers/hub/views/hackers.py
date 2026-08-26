@@ -34,7 +34,7 @@ def hacker_board(
             if ident not in slot or mean > slot[ident]:
                 slot[ident] = mean
 
-    unranked = [
+    unranked: list[dict[str, Any]] = [
         {
             "owner": owner,
             "coverage": len(per_ident),
