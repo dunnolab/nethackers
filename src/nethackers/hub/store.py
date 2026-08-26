@@ -17,6 +17,11 @@ if provenance/verification ever needs them.
 This module is a thin data layer only: ``init_schema()`` provisions the
 derived-view tables (``attainment``, ``attainment_holders``, ``elite_pool``)
 but nothing here ever writes to them -- Tasks 7-8 own that logic.
+
+``init_schema()`` also migrates a legacy (pre-A3) ``atoms``/``baseline_atoms``
+still carrying ``objective_digest`` to the identity-keyed shape (Task A4,
+``_migrate_drop_objective_digest``) -- a no-op on a fresh or
+already-migrated DB.
 """
 
 from __future__ import annotations
@@ -122,6 +127,42 @@ _ITER_ATOMS_FILTER_KEYS: frozenset[str] = frozenset(
 )
 
 
+def _migrate_drop_objective_digest(conn: sqlite3.Connection) -> None:
+    """Convert a legacy ``atoms``/``baseline_atoms`` (carrying the dropped
+    ``objective_digest`` column) to the identity-keyed shape via
+    ``INSERT OR IGNORE ... ORDER BY rowid`` into the freshly (re)created
+    table. No-op when the column is already absent (fresh or
+    already-migrated DB).
+
+    For ``atoms``, whose new shape has a real ``UNIQUE(solution_digest,
+    identity, seed)`` index, this collapses any duplicate row to the
+    EARLIEST (lowest ``rowid`` / insertion order). ``baseline_atoms`` has no
+    such unique key in either shape (``insert_baseline_atoms`` is
+    deliberately "no dedup" -- see its docstring), so nothing collides:
+    every row is carried over losslessly, just minus the column.
+
+    Ordered by ``rowid`` rather than the ``id`` column: ``atoms``' legacy
+    ``id INTEGER PRIMARY KEY`` *is* its rowid (sqlite aliases the two), but
+    ``baseline_atoms`` has never had an ``id`` column at all, even in its
+    legacy shape -- ``rowid`` is the only insertion-order column both
+    tables have.
+    """
+    for table in ("atoms", "baseline_atoms"):
+        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+        if not cols or "objective_digest" not in cols:
+            continue   # fresh/new-shape table -> nothing to migrate
+        new_cols = [c for c in cols if c not in ("id", "objective_digest")]
+        col_list = ", ".join(new_cols)
+        with conn:
+            conn.execute(f"ALTER TABLE {table} RENAME TO {table}_old")
+            conn.executescript(_SCHEMA)   # recreates the new-shape table (IF NOT EXISTS)
+            conn.execute(
+                f"INSERT OR IGNORE INTO {table} ({col_list}) "
+                f"SELECT {col_list} FROM {table}_old ORDER BY rowid"
+            )
+            conn.execute(f"DROP TABLE {table}_old")
+
+
 class Store:
     """A single-connection sqlite3 data layer over the hub's schema.
 
@@ -145,9 +186,13 @@ class Store:
 
     def init_schema(self) -> None:
         """Create every table (idempotent) -- including the derived-view
-        tables, which Tasks 7-8 populate, not this class."""
+        tables, which Tasks 7-8 populate, not this class. Then migrate a
+        legacy ``atoms``/``baseline_atoms`` (still carrying the dropped
+        ``objective_digest`` column) to the identity-keyed shape -- a no-op
+        on a fresh or already-migrated DB (Task A4)."""
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
+        _migrate_drop_objective_digest(self._conn)
 
     def upsert_solution(
         self,
