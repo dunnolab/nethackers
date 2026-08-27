@@ -179,18 +179,35 @@ def test_identities_and_parent_means_default_empty_when_absent():
     assert r.parent_means() == {}
 
 
-def test_islands_run_does_not_build_the_single_lineage_chain():
-    """islands>1: the round-robin parent flips between islands each iteration,
-    so the single-lineage chain must stay empty (the islands panel replaces
-    it). islands==1 still builds the chain with consecutive-parent dedup."""
+def test_multi_identity_run_does_not_build_the_single_lineage_chain():
+    """A set run (len(identities) > 1): the loop picks a random cell each
+    iteration, so the single-lineage chain must stay empty (the cell-archive
+    panel replaces it). A single-identity run still builds the chain with
+    consecutive-parent dedup."""
     r = Run("ri", CFG)
-    r.apply_state(_state("gating", parent_digest="isl0", islands=3))
-    r.apply_state(_state("gating", parent_digest="isl1", islands=3))
-    r.apply_state(_state("gating", parent_digest="isl2", islands=3))
-    assert r.chain == []   # no fake chain spliced from separate islands
+    r.apply_state(_state("gating", parent_digest="cellA", identities=["a", "b"]))
+    r.apply_state(_state("gating", parent_digest="cellB", identities=["a", "b"]))
+    r.apply_state(_state("gating", parent_digest="cellA", identities=["a", "b"]))
+    assert r.chain == []   # no fake chain spliced from separate cells
 
     r1 = Run("r1", CFG)
-    r1.apply_state(_state("gating", parent_digest="seed0", islands=1))
-    r1.apply_state(_state("gating", parent_digest="seed0", islands=1))   # same -> dedup
-    r1.apply_state(_state("gating", parent_digest="elite1", islands=1))
+    r1.apply_state(_state("gating", parent_digest="seed0", identities=["a"]))
+    r1.apply_state(_state("gating", parent_digest="seed0", identities=["a"]))   # same -> dedup
+    r1.apply_state(_state("gating", parent_digest="elite1", identities=["a"]))
     assert r1.chain == ["seed0", "elite1"]   # single-lineage chain intact
+
+
+def test_run_tracks_cells_and_coverage_from_state():
+    r = Run("r1", EvolveConfig("wiz-elf-cha-mal,wiz-orc-cha-mal", "claude", 3))
+    r.apply_state({
+        "phase": "mutating", "iteration": 1, "baseline_dev": 0.2, "wins": 0,
+        "tokens": 0, "detail": "", "hub_reason": None, "generation": 1,
+        "parent_digest": "sha256:aaaa", "parent_dev": 0.9,
+        "identities": ["wiz-elf-cha-mal", "wiz-orc-cha-mal"],
+        "cell": "wiz-orc-cha-mal", "coverage": (1, 2),
+        "cells": [{"identity": "wiz-elf-cha-mal", "score": 0.9, "digest": "sha256:aaaa"},
+                  {"identity": "wiz-orc-cha-mal", "score": 0.3, "digest": "sha256:bbbb"}]})
+    assert r.cells()[0]["identity"] == "wiz-elf-cha-mal"
+    assert r.coverage() == (1, 2)
+    assert r.active_cell() == "wiz-orc-cha-mal"
+    assert r.chain == []   # set run: no single-lineage chain

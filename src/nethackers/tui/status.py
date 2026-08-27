@@ -82,9 +82,10 @@ def lineage_strip(chain: list[str], *, best_dev: float, baseline_dev: float) -> 
 
 
 def _short(digest: str) -> str:
-    """A short, DISTINGUISHING id for a champion: the hex after a content
-    digest's ``sha256:`` prefix (or the commit after an atom's ``@``), so
-    islands seeded from the same tree aren't all rendered identically."""
+    """A short, DISTINGUISHING id for a champion or cell elite: the hex after
+    a content digest's ``sha256:`` prefix (or the commit after an atom's
+    ``@``), so cells seeded from the same tree aren't all rendered
+    identically."""
     d = str(digest)
     if ":" in d:
         d = d.split(":", 1)[1]
@@ -93,23 +94,23 @@ def _short(digest: str) -> str:
     return d[:6] or "seed"
 
 
-def islands_panel(champions: list[dict], *, active: int,
-                  reset_period: int | None) -> str:
-    """Per-island cockpit (islands>1): one row per island champion with its
-    short id + dev/held fitness -- the round-robin-active island marked ►, the
-    current best ★. Replaces the single-lineage strip when K>1 (that strip is
-    meaningless once the parent flips between islands each iteration)."""
-    if not champions:
+def cells_panel(cells: list[dict], *, active: str | None,
+                coverage: tuple[int, int]) -> str:
+    """The MAP-Elites cell archive: one row per cell (identity) with its short
+    elite id + per-identity score -- the cell being mutated marked ►, the
+    highest-scoring cell ★. Replaces the islands panel. Empty -> "" (single-
+    identity runs and pre-cold-start states leave it hidden)."""
+    if not cells:
         return ""
-    best = max(range(len(champions)), key=lambda i: champions[i].get("dev", 0.0))
-    reset = f" · reset every {reset_period}" if reset_period else ""
-    lines = [f"ISLANDS {len(champions)}{reset}"]
-    for i, c in enumerate(champions):
-        mark = "►" if i == active else " "
+    filled, total = coverage
+    best = max(range(len(cells)), key=lambda i: cells[i].get("score", 0.0))
+    lines = [f"CELLS {filled}/{total}"]
+    for i, c in enumerate(cells):
+        mark = "►" if c.get("identity") == active else " "
         star = " ★" if i == best else ""
         lines.append(
-            f"{mark} {i}  {_short(c.get('digest', '')):>6}  "
-            f"dev {c.get('dev', 0.0):.2f}  held {c.get('held', 0.0):.2f}{star}")
+            f"{mark} {c.get('identity', ''):<18} {_short(c.get('digest', '')):>6}  "
+            f"{c.get('score', 0.0):.2f}{star}")
     return "\n".join(lines)
 
 

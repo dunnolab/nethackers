@@ -258,26 +258,26 @@ async def test_arrows_navigate_tabs_and_panes_then_enter_interacts():
         assert mon._nav_mode == "navigate" and isinstance(host.screen, RunMonitor)
 
 
-async def test_islands_run_shows_island_panel_and_blanks_lineage():
+async def test_cells_run_shows_cell_panel_and_blanks_lineage():
     r = Run("run-i", CFG)
     r.apply_state(_state(
-        "gating", islands=3, active_island=1, reset_period=8,
-        island_champions=[
-            {"digest": "sha256:aaaa", "dev": 0.12, "held": 0.14},
-            {"digest": "sha256:bbbb", "dev": 0.20, "held": 0.18},
-            {"digest": "sha256:cccc", "dev": 0.10, "held": 0.11},
+        "gating", identities=["wiz-elf-cha-mal", "wiz-orc-cha-mal"],
+        cell="wiz-orc-cha-mal", coverage=(1, 2),
+        cells=[
+            {"identity": "wiz-elf-cha-mal", "score": 0.9, "digest": "sha256:aaaa"},
+            {"identity": "wiz-orc-cha-mal", "score": 0.3, "digest": "sha256:bbbb"},
         ]))
     host = _Host(r)
     async with host.run_test() as pilot:
         await pilot.pause()
         mon = host.screen
-        islands = str(mon.query_one("#islands").render())
-        assert "ISLANDS 3" in islands and "► 1" in islands   # panel shown, active marked
+        cells = str(mon.query_one("#islands").render())
+        assert "CELLS 1/2" in cells and "►" in cells   # panel shown, active marked
         assert str(mon.query_one("#lineage").render()).strip() == ""   # lineage blanked
 
 
-async def test_single_island_run_keeps_lineage_and_blanks_islands():
-    host = _Host(_populated_run())   # no islands key in state -> single-lineage view
+async def test_single_identity_run_keeps_lineage_and_blanks_cells():
+    host = _Host(_populated_run())   # no cells key in state -> single-lineage view
     async with host.run_test() as pilot:
         await pilot.pause()
         mon = host.screen
