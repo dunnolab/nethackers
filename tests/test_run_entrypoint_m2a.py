@@ -162,6 +162,18 @@ def test_evaluation_id_defaults_to_local_when_omitted():
     assert args.evaluation_id == "local"   # matches the judge (eval/runner.py passes "local")
 
 
+def test_action_timeout_default_is_the_local_hang_guard():
+    """Root cause ③: the arena's per-action wall-clock budget is a HANG-GUARD,
+    not a scoring knob. The LOCAL default is a generous 120s so a normal action
+    (incl. a cold numba JIT compile under parallel load) is never cut -- only a
+    genuinely hung bot times out. The validator overrides --action-timeout with
+    its own value; it must not inherit this local default."""
+    from nethackers.arena.run import _parser
+    args = _parser().parse_args(
+        ["--solution", "/sol", "--batch", "[]", "--out", "/out/x.json"])
+    assert args.action_timeout == 120.0
+
+
 def test_main_passes_knob_and_writes_batch_order(tmp_path, monkeypatch):
     calls = {}
 

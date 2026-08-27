@@ -107,7 +107,10 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("--secret", default="public")
     p.add_argument("--max-steps", type=int, default=DEFAULT_MAX_STEPS)
     p.add_argument("--no-progress-timeout", type=int, default=DEFAULT_NO_PROGRESS_TIMEOUT)
-    p.add_argument("--action-timeout", type=float, default=5.0)
+    # 120s LOCAL hang-guard default (see hub/objectives.py ACTION_TIMEOUT_SECONDS):
+    # only a genuinely hung bot times out; a normal (or cold-JIT) action is never
+    # cut. The validator passes its own --action-timeout; it must not inherit this.
+    p.add_argument("--action-timeout", type=float, default=120.0)
     p.add_argument("--max-parallel-evals", type=int, default=8)
     p.add_argument("--out", required=True)
     return p
