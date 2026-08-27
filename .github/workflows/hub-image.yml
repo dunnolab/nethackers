@@ -65,6 +65,7 @@ jobs:
         env:
           REF: ghcr.io/dunnolab/nethackers-hub@${{ needs.build-push.outputs.digest }}
           HOST: ${{ secrets.HUB_TAILNET_HOST }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           install -m 600 /dev/stdin key <<< "${{ secrets.HUB_DEPLOY_SSH_KEY }}"
           printf '%s' "$GITHUB_TOKEN" | \
