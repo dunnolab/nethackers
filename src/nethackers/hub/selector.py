@@ -1,9 +1,9 @@
 """Resolve an evolve/objective token to a subset S of the 73 identities.
 
-Precedence: exact catalog identity | 'random' | 'all' | bare role | comma
-list | fnmatch glob. Pure -- no I/O, no CATALOG mutation. `all` resolves to
-every identity but is marked kind='all' so the evolve path can reject it with
-a hint (use '*'); the hub board keeps its own 'all' handling untouched."""
+Precedence: exact catalog identity | bare role | comma list | fnmatch glob.
+Pure -- no I/O, no CATALOG mutation. `random`/`all` are retired (Task A1):
+every atom now lives on its identity's own canonical batch, so `resolve`
+raises `ValueError` for both tokens."""
 from __future__ import annotations
 
 import hashlib
@@ -19,7 +19,7 @@ _IDENTITY_SET = frozenset(IDENTITIES)
 class ResolvedObjective:
     name: str
     identities: tuple[str, ...]
-    kind: str  # "single" | "random" | "all" | "set"
+    kind: str  # "single" | "set"
 
 
 def _set_name(members: tuple[str, ...], token: str) -> str:
@@ -35,10 +35,6 @@ def resolve(token: str) -> ResolvedObjective:
     token = token.strip()
     if not token:
         raise ValueError("empty objective")
-    if token == "random":
-        return ResolvedObjective("random", (), "random")
-    if token == "all":
-        return ResolvedObjective("all", tuple(IDENTITIES), "all")
     if token in _IDENTITY_SET:
         return ResolvedObjective(token, (token,), "single")
     if token in ROLES:

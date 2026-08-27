@@ -10,12 +10,9 @@ Ranking, per identity: mean progression (``AVG``) across ALL atoms with
 that ``identity`` (any objective) desc; ties broken by total ascensions
 desc, then earliest atom (``created_at``) first.
 
-Parked caveat: atoms from different objectives use different published
-seeds, so a cross-objective mean isn't perfectly apples-to-apples -- a
-solution evaluated on an easier seed subset could outrank one evaluated on
-a harder subset even at equal "true" skill. Acceptable at M2a scale;
-restricting the mean to a single canonical objective's seeds is a future
-refinement.
+Every atom for an identity now sits on that identity's canonical batch
+(random/all retired), so ``AVG(progression)`` per identity is a same-seeds
+mean -- the former cross-objective caveat no longer applies.
 
 ``read_elites`` rolls a functional (``all``) or ``random`` objective up
 into a *spread* across identities -- round-robin (``ORDER BY rank,

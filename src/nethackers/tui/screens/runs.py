@@ -28,7 +28,7 @@ def _summarize(run_dir: Path) -> dict | None:
         return None
     if not isinstance(cfg, dict):
         return None
-    wins, best_dev, best_held, tokens = 0, None, None, 0
+    wins, best_dev, tokens = 0, None, 0
     causes: Counter[str] = Counter()
     mfile = run_dir / "metrics.jsonl"
     if mfile.exists():
@@ -49,11 +49,6 @@ def _summarize(run_dir: Path) -> dict | None:
                 wins += 1
                 if m.get("dev_fitness") is not None:
                     best_dev = m["dev_fitness"]
-                # main renamed the loop's held-out fitness -> validation; keep a
-                # fallback so pre-rename runs still show a held score.
-                held = m.get("validation_fitness", m.get("heldout_fitness"))
-                if held is not None:
-                    best_held = held
     return {
         "run_id": cfg.get("run_id", run_dir.name),
         "objective": cfg.get("objective", ""),
@@ -62,7 +57,6 @@ def _summarize(run_dir: Path) -> dict | None:
         "iterations": cfg.get("iterations", 0),
         "wins": wins,
         "best_dev": best_dev,
-        "best_held": best_held,
         "tokens": tokens,
         "causes": dict(causes),
     }

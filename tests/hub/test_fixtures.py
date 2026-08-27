@@ -64,15 +64,11 @@ def test_attainment_matches_committed_snapshot(tmp_path: Any) -> None:
     assert live == snapshot
 
 
-def test_board_random_matches_committed_snapshot(tmp_path: Any) -> None:
-    client = _client(tmp_path)
-
-    response = client.get("/board", params={"objective": "random"})
-
-    assert response.status_code == 200
-    live = _normalize_board(response.json())
-    snapshot = _normalize_board(_load_snapshot("board_random.json"))
-    assert live == snapshot
+# NOTE: test_board_random_matches_committed_snapshot was removed here (Task
+# A1, pulled forward from Task A3's own scheduled removal of this test):
+# random is retired, so /board?objective=random now 404s instead of
+# returning the snapshot. The attainment snapshot + structural attainment
+# tests below remain valid unchanged.
 
 
 # --- Independent structural assertions (not snapshot echo) ----------------
@@ -135,16 +131,7 @@ def test_no_milestone_none_atom_leaks_into_attainment(tmp_path: Any) -> None:
     assert all(c["milestone"] is not None for c in cells)
 
 
-def test_board_random_ranks_the_ascended_solution_first(tmp_path: Any) -> None:
-    # BETA has one ascension under "random"; ALPHA has none -- the
-    # asc_median_mean aggregation must rank BETA first regardless of mean
-    # progression. GAMMA has no "random" atoms at all, so it must not
-    # appear here.
-    client = _client(tmp_path)
-
-    entries = client.get("/board", params={"objective": "random"}).json()
-
-    assert [e["solution_digest"] for e in entries] == [BETA, ALPHA]
-    assert entries[0]["ascensions"] == 1
-    assert entries[1]["ascensions"] == 0
-    assert GAMMA not in [e["solution_digest"] for e in entries]
+# NOTE: test_board_random_ranks_the_ascended_solution_first was removed here
+# (Task A1, pulled forward from Task A3's own scheduled removal of this
+# test): random is retired, so /board?objective=random now 404s instead of
+# returning a ranked board.

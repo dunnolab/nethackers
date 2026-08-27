@@ -14,7 +14,7 @@ def universe_scores(client: Any) -> dict[str, float]:
 
 
 def champion(client: Any) -> tuple[str, str] | None:
-    board = client.board("random") or []
+    board = client.board("generalist") or []
     if not board:
         return None
     top = board[0]

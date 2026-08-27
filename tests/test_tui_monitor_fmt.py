@@ -9,8 +9,8 @@ from nethackers.tui.status import (
     EvolveConfig,
     _bar,
     candidate_line,
+    cells_panel,
     eval_line,
-    islands_panel,
     iterations_ledger,
     lineage_strip,
     parent_panel,
@@ -165,21 +165,17 @@ def test_scorecard_empty_candidate_means_no_crash_no_delta():
     assert "Δ" not in text  # no Delta
 
 
-def test_islands_panel_lists_each_champion_marks_active_and_best():
-    champs = [
-        {"digest": "sha256:aaaa1111", "dev": 0.12, "held": 0.14},
-        {"digest": "sha256:bbbb2222", "dev": 0.20, "held": 0.18},   # best (dev 0.20)
-        {"digest": "sha256:cccc3333", "dev": 0.10, "held": 0.11},
+def test_cells_panel_marks_active_and_best_and_shows_coverage():
+    cells = [
+        {"identity": "wiz-elf-cha-mal", "score": 0.9, "digest": "sha256:aaaa"},
+        {"identity": "wiz-orc-cha-mal", "score": 0.3, "digest": "sha256:bbbb"},
     ]
-    lines = islands_panel(champs, active=0, reset_period=8).splitlines()
-    assert lines[0] == "ISLANDS 3 · reset every 8"
-    assert lines[1].startswith("► 0") and "aaaa11" in lines[1]   # active + distinguishing id
-    assert not lines[1].rstrip().endswith("★")                    # island0 isn't best
-    assert lines[2].startswith("  1") and lines[2].rstrip().endswith("★")  # island1 is best
-    assert lines[3].startswith("  2")
+    out = cells_panel(cells, active="wiz-orc-cha-mal", coverage=(1, 2))
+    assert "CELLS 1/2" in out                      # coverage header
+    assert "►" in out and "wiz-orc-cha-mal" in out  # active cell marked
+    assert "★" in out                               # best cell marked
+    assert "0.90" in out and "0.30" in out
 
 
-def test_islands_panel_empty_and_no_reset_clause():
-    assert islands_panel([], active=0, reset_period=None) == ""
-    champs = [{"digest": "sha256:aa", "dev": 0.1, "held": 0.1}]
-    assert "reset every" not in islands_panel(champs, active=0, reset_period=None)
+def test_cells_panel_empty_is_blank():
+    assert cells_panel([], active=None, coverage=(0, 0)) == ""

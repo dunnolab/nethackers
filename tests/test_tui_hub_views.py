@@ -259,7 +259,7 @@ class _FakeHubClient:
 
 
 async def test_boards_view_calls_board_and_passes_you(monkeypatch):
-    """BoardsView calls client.board('random') with you=login passed to renderer."""
+    """BoardsView calls client.board('generalist') with you=login passed to renderer."""
     import nethackers.tui.screens.hub as hub
 
     captured_renderer_calls = []
@@ -277,11 +277,11 @@ async def test_boards_view_calls_board_and_passes_you(monkeypatch):
     app = _HostBoards()
     async with app.run_test() as pilot:
         await _settle(app, pilot)
-        # Verify client.board was called with "random"
+        # Verify client.board was called with "generalist"
         assert len(_FakeHubClient.instances) > 0
         client = _FakeHubClient.instances[0]
         assert len(client.board_calls) > 0
-        assert client.board_calls[0][0] == "random"
+        assert client.board_calls[0][0] == "generalist"
         # Also verify render_board was called with you='castiel'
         assert len(captured_renderer_calls) > 0
         assert captured_renderer_calls[0][2].get("you") == "castiel"
@@ -434,7 +434,7 @@ async def test_map_view_activating_program_subtab_shows_champion_grid(monkeypatc
 
 
 async def test_map_view_program_subtab_shows_friendly_line_when_no_champion(monkeypatch):
-    """board('random') == [] means champion() is None: Program shows a
+    """board('generalist') == [] means champion() is None: Program shows a
     friendly line, not a crash and not the outage message."""
     import nethackers.tui.screens.hub as hub
 

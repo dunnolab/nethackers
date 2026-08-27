@@ -17,6 +17,7 @@ _INITIAL_STATE: dict = {
     "best_dev": 0.0, "best_held": 0.0, "wins": 0, "tokens": 0, "detail": "",
     "hub_reason": None,
     "parent_digest": "", "parent_dev": 0.0, "parent_held": 0.0, "generation": 0,
+    "cell": None, "cells": [], "coverage": (0, 0),
 }
 
 
@@ -72,12 +73,14 @@ class Run:
             self.sel_tag = tag
         elif phase in ("evaluating-dev", "evaluating-held") and prev != phase:
             self.eval_step = None
-        # The single-lineage chain is only meaningful at islands==1; with K>1
-        # the round-robin parent flips between islands each iteration, so
-        # appending would splice unrelated lineages into one fake chain. The
-        # islands panel replaces the lineage strip there.
+        # The single-lineage chain is only meaningful for a single-identity
+        # run; a set (len(identities) > 1) has the loop pick a random cell
+        # each iteration, so appending would splice unrelated cells' parents
+        # into one fake chain. The cell-archive panel replaces the lineage
+        # strip there.
+        idents = state.get("identities") or []
         pd = state.get("parent_digest")
-        if state.get("islands", 1) == 1 and pd and (not self.chain or self.chain[-1] != pd):
+        if len(idents) <= 1 and pd and (not self.chain or self.chain[-1] != pd):
             self.chain.append(pd)  # seed -> elite1 -> elite2 ...
         if phase == "registered":
             # hub_reason (harness.loop's win-path) means the win never
@@ -186,6 +189,21 @@ class Run:
         "identities" in state for set objectives; single/random runs never
         set it, so this stays empty for them."""
         return list(self.state.get("identities") or [])
+
+    def cells(self) -> list[dict]:
+        """The MAP-Elites cell archive as of the last state: one
+        {identity, score, digest} row per identity currently filled."""
+        return list(self.state.get("cells") or [])
+
+    def coverage(self) -> tuple[int, int]:
+        """(filled, total) cells in the archive."""
+        cov = self.state.get("coverage") or (0, 0)
+        return (int(cov[0]), int(cov[1]))
+
+    def active_cell(self) -> str | None:
+        """The identity of the cell the current iteration is mutating, or
+        None (cold-start / done)."""
+        return self.state.get("cell")
 
     def parent_means(self) -> dict[str, float]:
         """The parent's per-identity means, or {} when absent (single/random

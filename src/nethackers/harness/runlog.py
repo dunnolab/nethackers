@@ -72,7 +72,7 @@ def metric_record(iteration: int, result: IterationResult) -> dict:
         outcome = "rejected"
     return {
         "iteration": iteration, "outcome": outcome, "reason": result.reason,
-        "dev_fitness": result.dev_fitness, "validation_fitness": result.validation_fitness,
+        "dev_fitness": result.dev_fitness, "improved": result.improved,
         "tokens": result.usage.total if result.usage else result.tokens,
         "usage": asdict(result.usage) if result.usage else None,
         "stopped_reason": result.stopped_reason,

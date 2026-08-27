@@ -20,7 +20,6 @@ OTHER_IDENTITY = "wiz-elf-cha-fem"
 def _atom(**overrides):
     fields = dict(
         solution_digest="sha256:solution-a",
-        objective_digest="sha256:objective-a",
         owner="sam",
         tier="self-reported",
         identity=IDENTITY,

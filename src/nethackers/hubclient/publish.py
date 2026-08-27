@@ -127,6 +127,7 @@ def publish_solution(
     message: str,
     run: Run = subprocess.run,
     workdir: str | Path | None = None,
+    ref: str | None = None,
 ) -> str:
     """Publish ``solution_dir`` as the content of ``slug`` and return the
     pushed commit sha.
@@ -136,6 +137,14 @@ def publish_solution(
     ``message`` and pushes. Re-submitting identical content is a safe no-op:
     the commit reports "nothing to commit" and the current HEAD sha is
     returned unchanged. Requires ``solution_dir/nethackers.solution.json``.
+
+    When ``ref`` is given, publishes to that branch instead of the repo's
+    default branch: if ``origin/<ref>`` already exists (a prior publish under
+    the same ref), the branch is rebuilt on that remote tip so re-publishing
+    identical content still diffs to "nothing to commit" (idempotent); if not,
+    it's created fresh off the just-cloned default branch. This is what lets
+    concurrent callers (e.g. parallel evolve runs, each with their own ref)
+    publish without racing on a single default-branch fast-forward.
     """
     solution_dir = Path(solution_dir)
     if not (solution_dir / "nethackers.solution.json").is_file():
@@ -144,6 +153,21 @@ def publish_solution(
     repo = base / "repo"
 
     _run(run, ["gh", "repo", "clone", slug, str(repo)])
+    if ref is not None:
+        # check=False: a real `git rev-parse --verify` on a missing ref just
+        # returns nonzero rather than raising. The `except` is only for the
+        # test double, which (like this module's other fakes, e.g. `gh repo
+        # view`) raises CalledProcessError to script a failing probe.
+        try:
+            probe = run(["git", "-C", str(repo), "rev-parse", "--verify", f"origin/{ref}"],
+                        check=False, capture_output=True, text=True)
+            ref_exists = probe.returncode == 0
+        except subprocess.CalledProcessError:
+            ref_exists = False
+        if ref_exists:
+            _run(run, ["git", "-C", str(repo), "checkout", "-B", ref, f"origin/{ref}"])
+        else:
+            _run(run, ["git", "-C", str(repo), "checkout", "-B", ref])
     _sync_tree(solution_dir, repo)
     _run(run, ["git", "-C", str(repo), "add", "-A"])
 
@@ -153,7 +177,8 @@ def publish_solution(
         if "nothing to commit" not in blob:
             raise PublishError(f"git commit failed: {blob.strip()}")
     else:
-        _run(run, ["git", "-C", str(repo), "push", "-u", "origin", "HEAD"])
+        target = f"HEAD:{ref}" if ref is not None else "HEAD"
+        _run(run, ["git", "-C", str(repo), "push", "-u", "origin", target])
 
     sha = _run(run, ["git", "-C", str(repo), "rev-parse", "HEAD"]).stdout.strip()
     if not sha:

@@ -45,7 +45,6 @@ def test_compute_baseline_stores_atoms_as_autoascend(tmp_path):
     assert got[0].owner == "autoascend"
     assert got[0].solution_digest == "autoascend"
     assert got[0].tier == "baseline"                 # forced, not the evidence's tier
-    assert got[0].objective_digest == spec.digest()
     # isolation: nothing leaked into the participant atoms table
     assert store.conn.execute("SELECT COUNT(*) FROM atoms").fetchone()[0] == 0
 

@@ -110,12 +110,12 @@ class _HubView(VerticalScroll):
 
 
 class BoardsView(_HubView):
-    """The public ranking board for the north-star ``random`` objective."""
+    """The public ranking board for the north-star ``generalist`` objective."""
 
-    PANEL_TITLE = "♛ Leaderboard — random"
+    PANEL_TITLE = "♛ Leaderboard — generalist"
 
     def _render_hub(self, client: HubClient):
-        entries = client.board("random")
+        entries = client.board("generalist")
         if not entries:
             return "[dim]No ranked solutions yet.[/]"
         return highscore_table(entries, you=self._login)

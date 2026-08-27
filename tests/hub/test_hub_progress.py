@@ -14,9 +14,7 @@ IDENT = "val-dwa-law-fem"
 
 
 def _atom(digest, seed, prog, asc=False, ident=IDENT, milestone="Dlvl:5"):
-    # objective_digest wired to a real CATALOG entry (FK to objectives);
-    # distinct seeds keep UNIQUE(solution_digest, objective_digest, seed) clear.
-    return Atom(solution_digest=digest, objective_digest=CATALOG[ident].digest(),
+    return Atom(solution_digest=digest,
                 owner="a", tier="self-reported", identity=ident, seed=seed,
                 progression=prog, milestone=milestone, ascended=asc,
                 status="completed", turns=1, steps=1, evaluator_image="img")

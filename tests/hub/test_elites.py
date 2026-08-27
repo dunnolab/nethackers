@@ -34,7 +34,6 @@ def _atom(**overrides):
     identity = overrides.get("identity", IDENTITY)
     fields = dict(
         solution_digest="sha256:solution-a",
-        objective_digest=CATALOG[identity].digest(),
         owner="sam",
         tier="self-reported",
         identity=identity,
@@ -61,10 +60,11 @@ def _seed(
     store: Store, atoms: list[Atom], *, owner: str = "sam", repo: str = "r",
     commit_sha: str = "c",
 ) -> None:
-    """Seed every FK parent ``insert_atoms`` needs -- ``atoms`` has FKs to
-    both ``objectives`` and ``solutions`` (task-8-context.md's test-setup
-    note) -- then insert the atoms themselves. Safe to call more than once
-    per test: both upserts and ``insert_atoms`` are idempotent.
+    """Upsert each atom's identity into the catalog (provenance only --
+    atoms no longer FK to ``objectives``, Task A3) and one ``solutions`` row
+    per distinct solution (``insert_atoms``' remaining FK) -- then insert the
+    atoms themselves. Safe to call more than once per test: both upserts and
+    ``insert_atoms`` are idempotent.
 
     ``owner``/``repo``/``commit_sha`` describe the *registered solution*
     row (default ``sam``/``r``/``c``, matching every pre-existing caller)

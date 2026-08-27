@@ -2,21 +2,26 @@
 objectives, atoms, lineage (+ the derived-view tables Tasks 7-8 populate).
 Pure stdlib ``sqlite3`` -- no NLE, no Docker, no network.
 
-Schema and method contracts are exactly per ``task-5-context.md``. Two
-deliberate spec-vs-``Atom`` reconciliations (that file's Resolution A):
-
-- The atoms table's dedup key is ``UNIQUE(solution_digest, objective_digest,
-  seed)``, not the brief's ``(evidence_digest, trajectory_id)`` -- the
-  Task-1 ``Atom`` dataclass has neither field, and ``seed`` already serves
-  as the trajectory id within a published batch.
-- ``evidence_digest``/``horizon`` (spec Sec5's atoms columns) are omitted
-  entirely: they aren't on ``Atom``, and aren't needed for M2a reads
-  (``horizon`` is derivable via ``objectives.max_steps``). Parked for M2b
-  if provenance/verification ever needs them.
+Schema and method contracts are exactly per ``task-5-context.md``, as
+amended by Task A3: the atoms table's dedup key is now
+``UNIQUE(solution_digest, identity, seed)`` -- ``objective_digest`` is gone
+from both ``atoms`` and ``baseline_atoms`` (after random/all's retirement,
+Task A1, every identity has exactly one canonical objective, so ``identity``
+alone is the key; the ``objectives`` catalog table itself stays, for
+``WrongBatch``/provenance, but atoms stop referencing it).
+``evidence_digest``/``horizon`` (spec Sec5's atoms columns) are omitted
+entirely: they aren't on ``Atom``, and aren't needed for M2a reads
+(``horizon`` is derivable via ``objectives.max_steps``). Parked for M2b
+if provenance/verification ever needs them.
 
 This module is a thin data layer only: ``init_schema()`` provisions the
 derived-view tables (``attainment``, ``attainment_holders``, ``elite_pool``)
 but nothing here ever writes to them -- Tasks 7-8 own that logic.
+
+``init_schema()`` also migrates a legacy (pre-A3) ``atoms``/``baseline_atoms``
+still carrying ``objective_digest`` to the identity-keyed shape (Task A4,
+``_migrate_drop_objective_digest``) -- a no-op on a fresh or
+already-migrated DB.
 """
 
 from __future__ import annotations
@@ -46,17 +51,15 @@ CREATE TABLE IF NOT EXISTS objectives (
 CREATE TABLE IF NOT EXISTS atoms (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     solution_digest TEXT NOT NULL REFERENCES solutions(digest),
-    objective_digest TEXT NOT NULL REFERENCES objectives(objective_digest),
     owner TEXT NOT NULL, tier TEXT NOT NULL, identity TEXT NOT NULL,
     seed INTEGER NOT NULL, progression REAL NOT NULL, milestone TEXT,
     ascended INTEGER NOT NULL, status TEXT NOT NULL,
     turns INTEGER NOT NULL, steps INTEGER NOT NULL, evaluator_image TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(solution_digest, objective_digest, seed)
+    UNIQUE(solution_digest, identity, seed)
 );
 CREATE TABLE IF NOT EXISTS baseline_atoms (
     solution_digest TEXT NOT NULL,
-    objective_digest TEXT NOT NULL,
     owner TEXT NOT NULL,
     tier TEXT NOT NULL,
     identity TEXT NOT NULL,
@@ -107,11 +110,11 @@ _SOLUTION_COLUMNS: tuple[str, ...] = (
     "digest", "repo", "commit_sha", "owner", "root", "entrypoint", "registered_at",
 )
 
-# The 13 Atom columns, in Atom's declared field order. insert_atoms and
+# The 12 Atom columns, in Atom's declared field order. insert_atoms and
 # iter_atoms both key off this single list so the SQL column order and
 # Atom.to_dict()/from_dict() can never drift apart.
 _ATOM_COLUMNS: tuple[str, ...] = (
-    "solution_digest", "objective_digest", "owner", "tier", "identity",
+    "solution_digest", "owner", "tier", "identity",
     "seed", "progression", "milestone", "ascended", "status",
     "turns", "steps", "evaluator_image",
 )
@@ -127,10 +130,46 @@ _SELECT_ATOM_COLUMNS_SQL = ", ".join(_ATOM_COLUMNS)
 # parametrized).
 _ITER_ATOMS_FILTER_KEYS: frozenset[str] = frozenset(
     {
-        "solution_digest", "objective_digest", "owner", "tier", "identity",
+        "solution_digest", "owner", "tier", "identity",
         "seed", "ascended", "status", "milestone",
     }
 )
+
+
+def _migrate_drop_objective_digest(conn: sqlite3.Connection) -> None:
+    """Convert a legacy ``atoms``/``baseline_atoms`` (carrying the dropped
+    ``objective_digest`` column) to the identity-keyed shape via
+    ``INSERT OR IGNORE ... ORDER BY rowid`` into the freshly (re)created
+    table. No-op when the column is already absent (fresh or
+    already-migrated DB).
+
+    For ``atoms``, whose new shape has a real ``UNIQUE(solution_digest,
+    identity, seed)`` index, this collapses any duplicate row to the
+    EARLIEST (lowest ``rowid`` / insertion order). ``baseline_atoms`` has no
+    such unique key in either shape (``insert_baseline_atoms`` is
+    deliberately "no dedup" -- see its docstring), so nothing collides:
+    every row is carried over losslessly, just minus the column.
+
+    Ordered by ``rowid`` rather than the ``id`` column: ``atoms``' legacy
+    ``id INTEGER PRIMARY KEY`` *is* its rowid (sqlite aliases the two), but
+    ``baseline_atoms`` has never had an ``id`` column at all, even in its
+    legacy shape -- ``rowid`` is the only insertion-order column both
+    tables have.
+    """
+    for table in ("atoms", "baseline_atoms"):
+        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+        if not cols or "objective_digest" not in cols:
+            continue   # fresh/new-shape table -> nothing to migrate
+        new_cols = [c for c in cols if c not in ("id", "objective_digest")]
+        col_list = ", ".join(new_cols)
+        with conn:
+            conn.execute(f"ALTER TABLE {table} RENAME TO {table}_old")
+            conn.executescript(_SCHEMA)   # recreates the new-shape table (IF NOT EXISTS)
+            conn.execute(
+                f"INSERT OR IGNORE INTO {table} ({col_list}) "
+                f"SELECT {col_list} FROM {table}_old ORDER BY rowid"
+            )
+            conn.execute(f"DROP TABLE {table}_old")
 
 
 class Store:
@@ -156,9 +195,13 @@ class Store:
 
     def init_schema(self) -> None:
         """Create every table (idempotent) -- including the derived-view
-        tables, which Tasks 7-8 populate, not this class."""
+        tables, which Tasks 7-8 populate, not this class. Then migrate a
+        legacy ``atoms``/``baseline_atoms`` (still carrying the dropped
+        ``objective_digest`` column) to the identity-keyed shape -- a no-op
+        on a fresh or already-migrated DB (Task A4)."""
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
+        _migrate_drop_objective_digest(self._conn)
 
     def upsert_solution(
         self,
@@ -239,11 +282,10 @@ class Store:
         self._conn.commit()
 
     def insert_atoms(self, atoms: list[Atom]) -> int:
-        """Insert each atom, deduping on ``UNIQUE(solution_digest,
-        objective_digest, seed)``. Returns the count of rows actually
-        inserted (0 for atoms that already existed). Raises
-        ``sqlite3.IntegrityError`` if an atom's ``solution_digest`` or
-        ``objective_digest`` doesn't reference an existing row: ``OR
+        """Insert each atom, deduping on ``UNIQUE(solution_digest, identity,
+        seed)``. Returns the count of rows actually inserted (0 for atoms
+        that already existed). Raises ``sqlite3.IntegrityError`` if an
+        atom's ``solution_digest`` doesn't reference an existing row: ``OR
         IGNORE`` suppresses the UNIQUE dedup conflict, but sqlite always
         enforces FOREIGN KEY violations as ABORT regardless of the
         statement's own conflict-resolution clause.

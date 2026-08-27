@@ -12,12 +12,12 @@ from nethackers.hub.selector import resolve
 
 
 def dev_spec(objective_name: str) -> ObjectiveSpec:
+    # random/all are retired (Task A1) -- resolve() itself rejects both
+    # tokens now, so this never sees kind "random" or the former functional
+    # "all" case; only "single" (an identity) or "set" (role/list/glob) ever
+    # reach here.
     r = resolve(objective_name)
-    if r.kind == "all":
-        raise ValueError(
-            "'all' is a leaderboard view, not an evolve target; "
-            "to evolve across every identity use the glob '*'")
-    if r.kind in ("single", "random"):
+    if r.kind == "single":
         return CATALOG[r.name]
     return build_union_spec(r.identities, name=r.name)
 
@@ -33,7 +33,7 @@ def validation_spec(
             for ident in sorted(r.identities)
             for seed in range(start, start + n)
         )
-    else:  # single / random: one character (today's behavior), fresh seeds
+    else:  # single: one character (today's behavior), fresh seeds
         character = dev.characters()[0]
         batch = tuple((seed, character) for seed in range(start, start + n))
     return ObjectiveSpec(

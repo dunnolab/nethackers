@@ -152,7 +152,7 @@ def test_cli_frontier_program_digest_dispatches_to_solution_frontier(monkeypatch
 
     assert rc == 0
     assert ("solution_frontier", digest) in calls
-    assert ("board", "random", None) not in calls  # no champion lookup needed
+    assert ("board", "generalist", None) not in calls  # no champion lookup needed
     assert json.loads(capsys.readouterr().out) == {"val-hum-neu-fem": 0.42}
 
 
@@ -170,7 +170,7 @@ def test_cli_frontier_bare_program_flag_resolves_champion_with_owner_note(monkey
     rc = C.main(["frontier", "--program", "-o", "table"])
 
     assert rc == 0
-    assert ("board", "random", None) in calls
+    assert ("board", "generalist", None) in calls
     assert ("solution_frontier", "sha256:abcdef0123456789") in calls
     out = capsys.readouterr().out
     assert "@sam" in out  # the champion's owner, called out by name
@@ -185,7 +185,7 @@ def test_cli_frontier_bare_program_flag_no_ranked_programs_is_friendly(monkeypat
     rc = C.main(["frontier", "--program", "-o", "table"])
 
     assert rc == 0
-    assert ("board", "random", None) in calls
+    assert ("board", "generalist", None) in calls
     assert "no ranked programs yet" in capsys.readouterr().out
 
 

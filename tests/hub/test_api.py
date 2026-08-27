@@ -282,7 +282,7 @@ def test_elites_unknown_objective_404(tmp_path: Any) -> None:
 
 def test_board_reads_are_lists(tmp_path: Any) -> None:
     client, _store = _app(tmp_path)
-    for params in ({"objective": "random"}, {"metric": "coverage"}, {"metric": "firsts"}):
+    for params in ({"objective": IDENTITY}, {"metric": "coverage"}, {"metric": "firsts"}):
         response = client.get("/board", params=params)
         assert response.status_code == 200
         assert isinstance(response.json(), list)
@@ -300,8 +300,16 @@ def test_board_unknown_objective_404_and_neither_param_400(tmp_path: Any) -> Non
 
 def test_board_both_params_400(tmp_path: Any) -> None:
     client, _store = _app(tmp_path)
-    response = client.get("/board", params={"objective": "random", "metric": "coverage"})
+    response = client.get("/board", params={"objective": IDENTITY, "metric": "coverage"})
     assert response.status_code == 400
+
+
+def test_board_rejects_retired_random_and_all(tmp_path: Any) -> None:
+    # random/all are retired (Task A1): every atom now lives on its
+    # identity's own canonical batch, so neither is a board objective anymore.
+    client, _store = _app(tmp_path)
+    for token in ("random", "all"):
+        assert client.get("/board", params={"objective": token}).status_code == 404
 
 
 def test_search_lists_and_owner_filter(tmp_path: Any) -> None:
@@ -363,9 +371,9 @@ def _seed_atoms(store: Store, atoms: list[Any], specs: list[Any]) -> None:
     store.insert_atoms(atoms)
 
 
-def _mk_atom(objective: Any, **kw: Any) -> Any:
+def _mk_atom(**kw: Any) -> Any:
     from nethackers.contracts.models import Atom
-    base = dict(solution_digest="sha256:s", objective_digest=objective.digest(),
+    base: dict[str, Any] = dict(solution_digest="sha256:s",
                 owner="dun", tier="self-reported", identity="val-dwa-law-fem", seed=0,
                 progression=0.5, milestone=None, ascended=False, status="completed",
                 turns=1, steps=1, evaluator_image="img")
@@ -375,7 +383,7 @@ def _mk_atom(objective: Any, **kw: Any) -> Any:
 
 def test_board_generalist_returns_aggregate_shape(tmp_path: Any) -> None:
     client, store = _app(tmp_path)
-    atoms = [_mk_atom(CATALOG[i], solution_digest="sha256:b", identity=i, seed=0, progression=0.2)
+    atoms = [_mk_atom(solution_digest="sha256:b", identity=i, seed=0, progression=0.2)
              for i in VAL_IDS]
     _seed_atoms(store, atoms, [CATALOG[i] for i in VAL_IDS])
     rows = client.get("/board?objective=generalist&tier=self-reported").json()
@@ -385,7 +393,7 @@ def test_board_generalist_returns_aggregate_shape(tmp_path: Any) -> None:
 
 def test_board_role_returns_aggregate_shape(tmp_path: Any) -> None:
     client, store = _app(tmp_path)
-    atoms = [_mk_atom(CATALOG[i], solution_digest="sha256:b", identity=i, seed=0, progression=0.2)
+    atoms = [_mk_atom(solution_digest="sha256:b", identity=i, seed=0, progression=0.2)
              for i in VAL_IDS]
     _seed_atoms(store, atoms, [CATALOG[i] for i in VAL_IDS])
     rows = client.get("/board?objective=val").json()
@@ -395,7 +403,7 @@ def test_board_role_returns_aggregate_shape(tmp_path: Any) -> None:
 def test_board_identity_includes_deepest(tmp_path: Any) -> None:
     client, store = _app(tmp_path)
     from nethackers.arena.progress import ACHIEVEMENTS
-    atoms = [_mk_atom(CATALOG[IDENTITY], solution_digest="sha256:s", seed=0,
+    atoms = [_mk_atom(solution_digest="sha256:s", seed=0,
                       progression=ACHIEVEMENTS["Dlvl:5"], milestone="Dlvl:5")]
     _seed_atoms(store, atoms, [CATALOG[IDENTITY]])
     rows = client.get(f"/board?objective={IDENTITY}").json()
@@ -410,7 +418,7 @@ def test_board_unknown_objective_404(tmp_path: Any) -> None:
 def test_hackers_returns_union_shape_and_defaults_to_generalist(tmp_path: Any) -> None:
     client, store = _app(tmp_path)
     atoms = [
-        _mk_atom(CATALOG[i], solution_digest="sha256:b", owner="dun",
+        _mk_atom(solution_digest="sha256:b", owner="dun",
                  identity=i, seed=0, progression=0.2)
         for i in VAL_IDS
     ]

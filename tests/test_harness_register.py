@@ -1,6 +1,6 @@
 # tests/test_harness_register.py
 from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
-from nethackers.harness.register import register_win, register_win_slices
+from nethackers.harness.register import register_win
 
 
 class _FakeHub:
@@ -38,32 +38,10 @@ def test_register_win_builds_payload_and_records_lineage():
     assert manifest["parents"] == []                            # caller's dict untouched
     assert call["evidence"]["solution_digest"] == "sha256:" + "ab" * 32
 
-# --- generalist (per-identity slices) -------------------------------------
 
-def _tr(seed, character, progress=0.3):
-    return TrajectoryResult(trajectory_id=seed, status="completed", progress=progress,
-                            ascended=False, steps=1, turns=1, max_depth=1, end_status="died",
-                            error=None, wall_seconds=0.1, character=character, milestone=None)
+# -- B5: dead client-side register_win_slices removed ------------------------
 
-def _union_evidence():
-    results = [_tr(s, c) for c in ("wiz-elf-cha-mal", "wiz-orc-cha-mal") for s in range(15)]
-    return Evidence.from_results(
-        solution_digest="sha256:" + "ab" * 32,
-        objective=Objective(character=None, seed_set="wiz"),
-        evaluator_image="img", results=results, created_at="t")
-
-def test_register_win_slices_makes_one_call_per_identity_with_correct_batch():
-    hub = _FakeHub()
-    manifest = {"schema": "nethackers.solution/v1", "name": "c", "root": ".",
-                "parents": [], "influences": [], "entrypoint": "bot.py"}
-    register_win_slices(
-        hub, token="dev-token", child_manifest=manifest,
-        evidence=_union_evidence(), identities=["wiz-elf-cha-mal", "wiz-orc-cha-mal"],
-        parent_digest="sha256:PARENT", reference=REFERENCE)
-    assert len(hub.calls) == 2
-    assert all(c["reference"] == REFERENCE for c in hub.calls)  # same link for every slice
-    by_ident = {c["evidence"]["objective"]["seed_set"]: c["evidence"] for c in hub.calls}
-    assert set(by_ident) == {"wiz-elf-cha-mal", "wiz-orc-cha-mal"}
-    for ident, ev in by_ident.items():
-        submitted = {(r["trajectory_id"], r["character"]) for r in ev["results"]}
-        assert submitted == {(s, ident) for s in range(15)}
+def test_register_win_slices_removed():
+    from nethackers.harness import register
+    assert not hasattr(register, "register_win_slices")
+    assert hasattr(register, "register_win")

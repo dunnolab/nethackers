@@ -106,7 +106,6 @@ def test_trajectoryresult_from_dict_tolerates_legacy_dicts():
 def test_atom_roundtrips():
     at = Atom(
         solution_digest="sha256:s",
-        objective_digest="sha256:o",
         owner="sam",
         tier="self-reported",
         identity="val-dwa-law-fem",
@@ -125,7 +124,6 @@ def test_atom_roundtrips():
 def test_atom_allows_milestone_none():
     at = Atom(
         solution_digest="sha256:s",
-        objective_digest="sha256:o",
         owner="sam",
         tier="self-reported",
         identity="val-dwa-law-fem",

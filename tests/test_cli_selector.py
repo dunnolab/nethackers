@@ -2,16 +2,16 @@
 """``evolve`` objective validation: Task 9 (generalist objectives) has the
 CLI accept whatever ``nethackers.hub.selector.resolve`` accepts -- a full
 identity, a role, a comma list, a glob -- not just the exact hub catalog
-``eval`` still requires. This module covers the rejection path only: a
-token ``resolve`` can't make sense of, and the one token it does resolve
-but ``evolve`` still refuses (``all`` -- a leaderboard view, not a target).
-Both must fail with rc 2 and one clean message *before*
-``sandbox_preflight``/``image_present``/``prepare_evolve`` ever run -- so
-no docker, no run dir, and no need to mock them green the way
+``eval`` still requires. This module covers the rejection path only: any
+token ``resolve`` can't make sense of -- including ``random``/``all``,
+retired (Task A1): both used to resolve to a real (if, for ``all``, evolve-
+disallowed) kind, but now hit the exact same unknown-objective rejection as
+``definitely-not-a-build``. Must fail with rc 2 and one clean message
+*before* ``sandbox_preflight``/``image_present``/``prepare_evolve`` ever
+run -- so no docker, no run dir, and no need to mock them green the way
 test_cli_evolve.py does. Valid role/comma-list/glob wiring is exercised at
 the selector layer (tests/hub/test_selector.py) and the harness layer, not
-here; the existing single-identity/'random' CLI path stays covered by
-test_cli_evolve.py.
+here.
 """
 from nethackers import cli
 
@@ -40,15 +40,20 @@ def test_evolve_rejects_unresolvable_selector_cleanly(capsys, monkeypatch):
 
 
 def test_evolve_rejects_all_as_leaderboard_view_not_a_target(capsys, monkeypatch):
+    # "all" is retired (Task A1): resolve() itself rejects it now, the same
+    # as any other unrecognized token -- evolve's former special case (which
+    # steered users to a "leaderboard view, not an evolve target" hint,
+    # premised on "all" still resolving to a real, disallowed kind) is gone.
+    # Kept as its own test -- a regression guard that "all" specifically
+    # stays rejected, not silently accepted now that it's no longer special-
+    # cased.
     _refuse_docker(monkeypatch)
     rc = cli._run(["evolve", "all", "--seed", "roots/autoascend"])
     assert rc == 2
     captured = capsys.readouterr()
     combined = captured.out + captured.err
-    assert "*" in combined
-    assert "leaderboard" in combined.lower()
+    assert "unknown objective 'all'" in combined.lower()
     assert "Traceback" not in combined
-    # one clean message, not the leaderboard hint doubled up with the
-    # "unknown objective" text -- 'all' resolves fine, it just isn't a legal
-    # evolve target, so the unknown-objective message must not also appear.
-    assert "unknown objective 'all'" not in combined.lower()
+    # random/all are retired -- the hint must not suggest either as a
+    # fallback objective to try instead.
+    assert "'random'" not in combined

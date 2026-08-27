@@ -25,7 +25,12 @@ NETHACK_PREAMBLE = (
     "--batch '[[0,\"<build>\"], …]' --evaluation-id local --out /tmp/eval.json` "
     "— pass `--evaluation-id local` (the judge's seed namespace; any other id plays "
     "different, meaningless games) and read the per-episode results from the `/tmp/eval.json` "
-    "`--out` file. Put your edits in the strategy code (the `autoascend/` package), not the "
+    "`--out` file. **Run that eval as ONE foreground command and wait for it to finish** — give "
+    "Bash a long timeout (up to 600000 ms) and evaluate a SMALL sample of seeds so it completes "
+    "synchronously in that window. This sandbox is single-shot: do NOT background the eval "
+    "(`run_in_background`), `sleep`-wait for it, or rely on task notifications — a backgrounded "
+    "eval's result is lost when your turn ends, leaving you to decide the change blind. "
+    "Put your edits in the strategy code (the `autoascend/` package), not the "
     "`arena_adapter.py` glue."
 )
 
@@ -48,15 +53,31 @@ def _set_block(identities: list[str], per_identity: dict[str, float] | None) -> 
     return "\n\n".join(lines)
 
 
+def _attempts_block(attempts: list[str] | None) -> str:
+    """A run-global anti-repeat list: one line per earlier attempt this run
+    (its id + the change it made + its outcome). Surfaced verbatim so the
+    mutator can avoid re-deriving a mutation that already failed. Empty/absent
+    -> no block at all (the first iteration has no history)."""
+    if not attempts:
+        return ""
+    lines = "\n".join(f"- {a}" for a in attempts)
+    return (
+        "**Earlier attempts this run — don't just repeat these.** These changes "
+        "were already tried this run; build on them or go elsewhere, don't rediscover "
+        f"a dead end:\n{lines}"
+    )
+
+
 def build_brief(
     objective_name: str,
     character: str,
-    parent_evidence: Evidence,
+    parent_evidence: Evidence | None,
     *,
     training_seeds: list[int] | None = None,
     wiki_path: str | None = None,
     identities: list[str] | None = None,
     per_identity: dict[str, float] | None = None,
+    attempts: list[str] | None = None,
 ) -> str:
     # parent_evidence is kept for caller/signature stability but is no longer
     # distilled into text -- its score/outcome detail lives in
@@ -87,4 +108,9 @@ def build_brief(
         f"{have}"
     )
 
-    return f"{NETHACK_PREAMBLE}\n\n{body}\n\n{tail}"
+    attempts_block = _attempts_block(attempts)
+    parts = [NETHACK_PREAMBLE, body]
+    if attempts_block:
+        parts.append(attempts_block)
+    parts.append(tail)
+    return "\n\n".join(parts)
