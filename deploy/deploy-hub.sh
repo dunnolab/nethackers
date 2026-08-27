@@ -108,22 +108,49 @@ cmd_deploy() {
   record_history "$ref" "${prev:-none}"
   pin_ref "$ref"
   compose up -d --no-deps hub          # --no-deps: never touch caddy (dodges depends_on hang)
-  # (health + URL verification and auto-rollback are added in Task 3)
-  wait_healthy || die "new hub did not become healthy"
-  curl -fsS "$PUBLIC_HEALTH_URL" >/dev/null || die "public URL unhealthy after flip"
+  if ! { wait_healthy && curl -fsS "$PUBLIC_HEALTH_URL" >/dev/null; }; then
+    log "post-flip verification FAILED — rolling back to ${prev:-none}"
+    if [ -n "${prev:-}" ]; then
+      pin_ref "$prev"; compose up -d --no-deps hub || true
+    fi
+    die "deploy failed; rolled back to ${prev:-none}"
+  fi
   log "deployed $ref"
 }
 
-# Placeholders filled in later tasks:
-cmd_rollback() { die "rollback not implemented yet"; }
-cmd_status()   { echo "status: not implemented yet"; }
+cmd_rollback() {
+  local prev
+  prev="$(awk -F'\t' 'END{print $3}' "$DEPLOY_HISTORY" 2>/dev/null || true)"
+  [ -n "$prev" ] && [ "$prev" != "none" ] || die "no previous digest in $DEPLOY_HISTORY"
+  log "rolling back to $prev"
+  [ "$DRY_RUN" -eq 1 ] && { log "[dry-run] would pin $prev and up --no-deps hub"; return 0; }
+  local cur; cur="$(current_ref)"
+  record_history "rollback:$prev" "$cur"
+  pin_ref "$prev"; compose up -d --no-deps hub
+  wait_healthy || die "hub unhealthy after rollback"
+  log "rolled back to $prev"
+}
+
+cmd_status() {
+  local cid; cid="$(compose ps -q hub 2>/dev/null || true)"
+  printf 'running image: %s\n' "$(current_ref)"
+  if [ -n "$cid" ]; then
+    printf 'container health: %s\n' "$(docker inspect -f '{{.State.Health.Status}}' "$cid" 2>/dev/null || echo unknown)"
+  else
+    printf 'container health: unknown\n'
+  fi
+  if curl -fsS "$PUBLIC_HEALTH_URL" >/dev/null 2>&1; then printf 'public URL: ok\n'; else printf 'public URL: DOWN\n'; fi
+  printf 'recent deploys:\n'; tail -n 5 "$DEPLOY_HISTORY" 2>/dev/null || printf '  (none)\n'
+}
 
 main() {
   # Under a forced-command key, sshd passes the request in SSH_ORIGINAL_COMMAND
   # with no positional args. Parse it as `subcommand [arg]` — never eval it.
   if [ "$#" -eq 0 ] && [ -n "${SSH_ORIGINAL_COMMAND:-}" ]; then
+    set -f
     # shellcheck disable=SC2086  # deliberate: split into whitelisted words; noglob prevents expansion
-    set -f; set -- $SSH_ORIGINAL_COMMAND; set +f
+    set -- $SSH_ORIGINAL_COMMAND
+    set +f
   fi
   local sub="${1:-}"; shift || true
   local ref=""
