@@ -1,19 +1,19 @@
 """Hub boards view (M2a Task 9): the third derived view -- rankings computed
-PURELY on read, nothing stored. See task-9-context.md -- the crux was its
-original RESOLUTION over the brief's wording ("filter atoms to the
-objective's characters"): filtering by character would lump in atoms
-produced under OTHER objectives (different published seeds) on the same
-identity, so two solutions could be ranked on different atom-sets --
-breaking the spec Sec2 comparability guarantee ("everyone evaluates on the
-same atoms"). That was solved by scoring each objective only on atoms under
-its own ``objective_digest``.
-
-Task A1 retired ``random``/``all``, so that concern no longer applies:
-every identity now has exactly one canonical objective, meaning an
-identity's atoms are only ever on its own batch. Filtering by *identity* is
-therefore equivalent to the old digest filter, but structural rather than a
-digest lookup -- Task A2 rekeyed the views accordingly:
-``store.iter_atoms(identity=objective.characters()[0], tier=tier)``.
+PURELY on read, nothing stored. A board is scored on its objective's
+*identity*: ``store.iter_atoms(identity=objective.characters()[0],
+tier=tier)``. See task-9-context.md -- the crux was its original RESOLUTION
+over the brief's wording ("filter atoms to the objective's characters"):
+filtering by character would lump in atoms produced under OTHER objectives
+(different published seeds) on the same identity, so two solutions could be
+ranked on different atom-sets -- breaking the spec Sec2 comparability
+guarantee ("everyone evaluates on the same atoms"). That was originally
+solved with a digest filter (each objective scored only on atoms under its
+own ``objective_digest``); Task A1 then retired ``random``/``all``, so that
+concern no longer applies -- every identity now has exactly one canonical
+objective, meaning an identity's atoms are only ever on its own batch.
+Filtering by *identity* is therefore equivalent to the old digest filter,
+but structural rather than a digest lookup -- Task A2 rekeyed the views
+accordingly.
 
 Aggregation happens in Python, not SQL: sqlite has no ``MEDIAN()``, and
 ``asc_median_mean`` needs one, so atoms are pulled via ``iter_atoms`` and
