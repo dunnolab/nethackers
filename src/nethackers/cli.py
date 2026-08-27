@@ -290,6 +290,11 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
         "--from-seed", action="store_true",
         help="Ignore the hub; cold-start every cell from --seed.",
     )
+    evolve.add_argument(
+        "--offline", action="store_true",
+        help="Evaluate locally without publishing or registering (still reads "
+        "the configured hub for cell-seeding).",
+    )
     evolve.add_argument("--operator", choices=["codex", "claude"], default="claude")
     evolve.add_argument(
         "--model", default=None,
@@ -541,9 +546,19 @@ def _run(argv: list[str] | None) -> int:
             image=args.image, hub=args.hub, workdir=args.workdir, run_name=args.run_name,
             token=args.token or (_creds.access_token if _creds else config.DEV_TOKEN),
             owner=args.owner or (_creds.login if _creds else config.DEV_OWNER),
-            from_seed=args.from_seed,
+            from_seed=args.from_seed, offline=args.offline,
             model=args.model, effort=args.effort, mutator_image=args.mutator_image,
         )
+        # An anonymous run is offline by necessity (the owner==DEV_OWNER backstop
+        # in _publisher_for), but --offline is the only case that says so up
+        # front -- without this note, a caller who forgot `nethackers login`
+        # would only find out several iterations in, as a silent per-iteration
+        # "local-only" outcome.
+        if not args.offline and params.owner == config.DEV_OWNER:
+            err.print(
+                "[dim]not logged in — running offline "
+                "(publishing needs `nethackers login`)[/]"
+            )
 
         # Preflight only when a model is pinned: harness-default has nothing to
         # validate, and this keeps the model=None path (the common case + every
