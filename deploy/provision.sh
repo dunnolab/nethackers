@@ -40,6 +40,27 @@ install -d -m 0750 -o nethacker -g nethacker /srv/nethackers
 install -d -m 0750 -o root -g nethacker /srv/nethackers/data /srv/nethackers/backups
 install -d -m 0750 -o root -g nethacker /etc/nethackers
 
+# CI deploy public key (forced-command). Passed as $2.
+ci_deploy_key=${2:-}
+if [[ -n ${ci_deploy_key} && ! ${ci_deploy_key} =~ ^ssh-ed25519\ [A-Za-z0-9+/=]+ ]]; then
+    printf 'Second arg, if given, must be an ssh-ed25519 public key.\n' >&2
+    exit 1
+fi
+
+# Install the deploy script (repo copy sits next to this script during provisioning).
+install -m 0755 "$(dirname "$0")/deploy-hub.sh" /usr/local/bin/deploy-hub.sh
+install -d -m 0750 -o root -g nethacker /srv/nethackers
+: > /srv/nethackers/deploy-history.log
+chown root:nethacker /srv/nethackers/deploy-history.log
+chmod 0664 /srv/nethackers/deploy-history.log
+
+if [[ -n ${ci_deploy_key} ]]; then
+    authk=/home/nethacker/.ssh/authorized_keys
+    line="restrict,command=\"/usr/local/bin/deploy-hub.sh\" ${ci_deploy_key}"
+    touch "${authk}"; chown nethacker:nethacker "${authk}"; chmod 0600 "${authk}"
+    grep -qF "${ci_deploy_key%% *}" "${authk}" || printf '%s\n' "${line}" >> "${authk}"
+fi
+
 # 2 GiB swap only if the host has none.
 if ! swapon --show=NAME --noheadings | grep --quiet .; then
     [[ -e /swapfile ]] || fallocate -l 2G /swapfile
