@@ -50,7 +50,7 @@ fi
 # Install the deploy script (repo copy sits next to this script during provisioning).
 install -m 0755 "$(dirname "$0")/deploy-hub.sh" /usr/local/bin/deploy-hub.sh
 install -d -m 0750 -o root -g nethacker /srv/nethackers
-: > /srv/nethackers/deploy-history.log
+touch /srv/nethackers/deploy-history.log
 chown root:nethacker /srv/nethackers/deploy-history.log
 chmod 0664 /srv/nethackers/deploy-history.log
 
