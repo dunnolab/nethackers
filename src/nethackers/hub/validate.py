@@ -9,11 +9,11 @@ Reconciles two models:
   (``repo@commit``), so it is fetchable and no content digest is computed or
   verified here.
 - the **atom model** (v1 / generalist objectives): the submission carries
-  ``Evidence`` (a batch of per-identity results); those become per-identity
-  atoms at ``tier="self-reported"``, which the boards / attainment / elite
-  views aggregate. A generalist win registers one slice per identity (see
-  ``harness.register.register_win_slices``), so one solution row grows atoms
-  across the whole identity set.
+  ``Evidence`` (a batch of per-identity results) in a single call spanning
+  the whole identity set's canonical union batch; ``evidence_to_atoms`` keys
+  each atom by its own result's identity (``tier="self-reported"``), which
+  the boards / attainment / elite views aggregate. So one solution row grows
+  atoms across the whole identity set from that one registration.
 
 The held-out re-evaluation (a later "verified" tier) is out of scope: here the
 reporter's own eval is trusted (self-reported), while provenance is the *real*
