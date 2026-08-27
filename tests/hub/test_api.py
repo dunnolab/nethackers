@@ -338,6 +338,15 @@ def test_root_serves_the_dungeon_viz(tmp_path: Any) -> None:
     assert "/dictionary.mp3" in body
     # the dev-only window hook must be gone from the shipped page
     assert "__dictviz" not in body and "__dictSynth" not in body
+    # regression: the hero "@" must stay UNIQUE on the canvas. The descent-glyph
+    # ladder (DESC=[...]) must NOT contain "@" -- otherwise the wall renders many
+    # stray @s that read as the hero duplicating (reported while scrolling).
+    import re
+
+    desc = re.search(r"const DESC=\[(.*?)\];", body, re.S)
+    assert desc is not None, "DESC descent ladder not found in page"
+    assert '"@"' not in desc.group(1), "hero glyph @ leaked into the DESC descent ladder"
+    assert 'strokeText("@"' in body  # ...while the one true hero @ is still drawn
 
 
 # --- leaderboard rework: aggregate boards + /hackers (Task 6) ---------------
