@@ -12,6 +12,7 @@ alongside the rest of the M2a hub-facing CLI coverage.
 import json
 
 import nethackers.cli as C
+from nethackers.config import load_stage
 from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
 from nethackers.hub.objectives import CATALOG
 
@@ -137,7 +138,7 @@ def test_bare_tty_launches_app(monkeypatch):
     assert C.main([]) == 0
 
     assert launched.get("ran") is True
-    assert launched.get("hub") == C._default_hub()  # the resolved top-level --hub, not None
+    assert launched.get("hub") == load_stage().hub_url  # the resolved top-level --hub, not None
 
 
 def test_bare_no_tui_prints_help_and_never_constructs_the_app(monkeypatch, capsys):
@@ -185,4 +186,5 @@ def test_cli_pull_invokes_pull(monkeypatch, capsys, tmp_path):
 def test_default_hub_is_prod(monkeypatch):
     from nethackers import cli
     monkeypatch.delenv("NETHACKERS_HUB", raising=False)
-    assert cli._default_hub() == "https://nethackers.dunnolab.ai"
+    parser = cli._build_parser(load_stage())
+    assert parser.parse_args([]).hub == "https://nethackers.dunnolab.ai"

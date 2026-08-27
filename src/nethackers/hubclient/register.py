@@ -17,21 +17,20 @@ called rather than actually pausing.
 
 from __future__ import annotations
 
-import os
 import time
 from typing import Any
 
 import httpx
 
+from nethackers.config import load_stage
+
 GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code"
 GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
-# Public GitHub App client id -- a public value, not a secret, so it lives in
-# source. This is the "NetHackers Hub" App (a personal dev App today; swap for
-# the dunnolab-org App at launch). The hub resolves whatever token this flow
-# produces (hub/auth.py's GitHubAppAuth). Overridable via NETHACKERS_CLIENT_ID
-# to point at a throwaway/dev App without a code change.
-NETHACKERS_APP_CLIENT_ID = "Iv23liWooDi2WlkrDAOw"
-DEFAULT_CLIENT_ID = os.environ.get("NETHACKERS_CLIENT_ID", NETHACKERS_APP_CLIENT_ID)
+# The GitHub App client id is public config, not a secret -- it lives on
+# Stage.github_client_id (this is the "NetHackers Hub" App: a personal dev App
+# today, swapped for the dunnolab-org App at launch). ``client_id=None`` below
+# resolves it from ``load_stage()`` at call time -- never at import -- so it
+# stays live to both NETHACKERS_CLIENT_ID and NETHACKERS_STAGE.
 
 
 class DeviceFlowError(Exception):
@@ -59,7 +58,7 @@ def _announce(verification_uri: str, user_code: str) -> None:
 
 def device_login(
     *,
-    client_id: str = DEFAULT_CLIENT_ID,
+    client_id: str | None = None,
     http=httpx,
     prompt=_announce,
     sleep=time.sleep,
@@ -73,10 +72,17 @@ def device_login(
     (``access_denied``, ``expired_token``, ...) is terminal and raises
     ``DeviceFlowError``.
 
+    ``client_id=None`` (the default) resolves to ``load_stage().
+    github_client_id`` at call time -- pass one explicitly (e.g. the CLI's
+    login handler threading through its own resolved ``Stage``) to avoid a
+    second ``load_stage()`` call.
+
     Returns the ``_token_set`` dict -- ``{"access_token", "refresh_token" |
     None, "expires_in" | None}`` -- so callers can persist a refreshable
     credential rather than just a bare access token.
     """
+    if client_id is None:
+        client_id = load_stage().github_client_id
 
     def _post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
         response = http.post(url, data=payload, headers={"Accept": "application/json"})
@@ -107,7 +113,7 @@ def device_login(
 def refresh_access_token(
     refresh_token,
     *,
-    client_id: str = DEFAULT_CLIENT_ID,
+    client_id: str | None = None,
     http=httpx,
 ) -> dict[str, Any]:
     """Exchange a GitHub refresh token for a fresh user token set.
@@ -116,7 +122,14 @@ def refresh_access_token(
     same ``_token_set`` shape as ``device_login``. A response without an
     ``access_token`` (e.g. ``bad_refresh_token``) is terminal and raises
     ``DeviceFlowError`` -- the caller must fall back to a full ``device_login``.
+
+    ``client_id=None`` (the default) resolves to ``load_stage().
+    github_client_id`` at call time, same as ``device_login`` -- this is the
+    path ``TokenSource``'s ``.refresh()`` actually exercises (it calls this
+    with just a bare refresh token, no ``client_id``).
     """
+    if client_id is None:
+        client_id = load_stage().github_client_id
     response = http.post(
         GITHUB_TOKEN_URL,
         data={

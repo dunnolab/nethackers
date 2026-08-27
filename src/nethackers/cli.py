@@ -62,7 +62,8 @@ from rich.panel import Panel
 from rich.text import Text
 from rich_argparse import RichHelpFormatter
 
-from nethackers import clipboard
+from nethackers import clipboard, config
+from nethackers.config import Stage, load_stage
 from nethackers.eval.runner import eval_batch
 from nethackers.harness.discovery import ModelInfo, list_models, preflight_model
 from nethackers.harness.launch import EvolveParams, _now, prepare_evolve
@@ -103,10 +104,6 @@ from nethackers.tui.app import NetHackersApp
 # Time seam: tests monkeypatch ``cli._time_now`` to make credential
 # expiry/refresh deterministic (avoids a wall-clock ``time.time()`` read).
 _time_now = time.time
-
-
-def _default_hub() -> str:
-    return os.environ.get("NETHACKERS_HUB", "https://nethackers.dunnolab.ai")
 
 
 def _login_prompt(verification_uri: str, user_code: str) -> None:
@@ -186,7 +183,7 @@ def _common_parser() -> argparse.ArgumentParser:
     itself never mentioned it. ``SUPPRESS`` means the subparser only ever
     contributes a ``hub``/``output`` key when the user actually typed the
     flag after the subcommand, so the top-level value (itself defaulted via
-    ``_default_hub()``/``"auto"`` on ``_build_parser``'s own flags) survives
+    ``stage.hub_url``/``"auto"`` on ``_build_parser``'s own flags) survives
     untouched otherwise -- giving exactly "subcommand-level wins if given,
     else the top-level value" without hand-rolling the merge.
     """
@@ -195,7 +192,7 @@ def _common_parser() -> argparse.ArgumentParser:
         "--hub",
         default=argparse.SUPPRESS,
         help="Hub API base URL (default: the top-level --hub, itself "
-        "http://localhost:8000 or $NETHACKERS_HUB).",
+        "$NETHACKERS_HUB or the active stage).",
     )
     common.add_argument(
         "-o",
@@ -208,7 +205,7 @@ def _common_parser() -> argparse.ArgumentParser:
     return common
 
 
-def _build_parser() -> argparse.ArgumentParser:
+def _build_parser(stage: Stage) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="nethackers",
         formatter_class=RichHelpFormatter,
@@ -227,7 +224,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--hub",
-        default=_default_hub(),
+        default=stage.hub_url,
         help="Hub API base URL (default: %(default)s; or $NETHACKERS_HUB).",
     )
     parser.add_argument(
@@ -266,7 +263,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     e.add_argument("solution", help="Path to the solution directory (mounted read-only).")
     e.add_argument("--objective", required=True, help="A catalog objective name.")
-    e.add_argument("--image", default="nethackers/arena:dev", help="Arena image to run.")
+    e.add_argument("--image", default=stage.arena_image, help="Arena image to run.")
     e.add_argument(
         "--max-parallel-evals", type=int, default=8,
         help="Cap on episodes the arena runs concurrently (default: %(default)s).",
@@ -278,7 +275,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     mo.add_argument("--operator", choices=["codex", "claude"], default="codex")
     mo.add_argument(
-        "--mutator-image", default="nethackers/mutator:latest",
+        "--mutator-image", default=stage.mutator_image,
         help="Probe this image's operator CLI (the one a run uses), not the host's "
         "(default: %(default)s).",
     )
@@ -305,7 +302,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "default: the harness's own default.",
     )
     evolve.add_argument(
-        "--mutator-image", default="nethackers/mutator:latest",
+        "--mutator-image", default=stage.mutator_image,
         help="Container image the mutator runs in (default: %(default)s). The "
         "mutator always runs sandboxed in this image; a working container "
         "runtime and the selected --operator's host login are required.",
@@ -318,7 +315,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--max-parallel-evals", type=int, default=8,
         help="Cap on episodes the arena runs concurrently per eval (default: %(default)s).",
     )
-    evolve.add_argument("--image", default="nethackers/arena:dev")
+    evolve.add_argument("--image", default=stage.arena_image)
     evolve.add_argument(
         "--token", default=None,
         help="Attribution token (default: stored `nethackers login` credentials, "
@@ -328,7 +325,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "--owner", default=None,
         help="Attribution owner (default: stored `nethackers login` credentials, else 'dev').",
     )
-    evolve.add_argument("--workdir", default=str(Path.home() / ".nethackers" / "evolve"))
+    evolve.add_argument("--workdir", default=str(stage.data_root))
     evolve.add_argument(
         "--run-name", default=None,
         help="Optional label appended to the run-id folder under runs/.",
@@ -402,8 +399,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sm.add_argument("solution_dir", help="Path to the solution directory to publish.")
     sm.add_argument(
-        "--repo-name", default="nethacker",
-        help="Repo under your account to publish into (default: nethacker).",
+        "--repo-name", default=stage.repo_name,
+        help="Repo under your account to publish into (default: %(default)s).",
     )
     sm.add_argument(
         "--message", default="nethackers submit",
@@ -411,7 +408,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sm.add_argument("--objective", required=True,
                     help="A catalog objective name to evaluate on (self-reported score).")
-    sm.add_argument("--image", default="nethackers/arena:dev", help="Arena image to run.")
+    sm.add_argument("--image", default=stage.arena_image, help="Arena image to run.")
     sm.add_argument("--max-parallel-evals", type=int, default=8,
                     help="Cap on concurrent episodes (default: %(default)s).")
 
@@ -430,7 +427,8 @@ def _run(argv: list[str] | None) -> int:
     """Parse args and dispatch one subcommand. May raise -- ``main`` is the
     single place that turns any failure into a clean message, so nothing here
     needs its own try/except for hub I/O."""
-    parser = _build_parser()
+    stage = load_stage()
+    parser = _build_parser(stage)
     args = parser.parse_args(argv)
 
     if args.cmd is None:
@@ -448,7 +446,7 @@ def _run(argv: list[str] | None) -> int:
         return 0
 
     if args.cmd == "login":
-        tok = device_login(prompt=_login_prompt)
+        tok = device_login(prompt=_login_prompt, client_id=stage.github_client_id)
         login = whoami_from_token(tok["access_token"])
         _cred.save(Credentials(
             login=login,
@@ -541,8 +539,8 @@ def _run(argv: list[str] | None) -> int:
             iterations=args.iterations,
             max_parallel_evals=args.max_parallel_evals,
             image=args.image, hub=args.hub, workdir=args.workdir, run_name=args.run_name,
-            token=args.token or (_creds.access_token if _creds else "dev-token"),
-            owner=args.owner or (_creds.login if _creds else "dev"),
+            token=args.token or (_creds.access_token if _creds else config.DEV_TOKEN),
+            owner=args.owner or (_creds.login if _creds else config.DEV_OWNER),
             from_seed=args.from_seed,
             model=args.model, effort=args.effort, mutator_image=args.mutator_image,
         )

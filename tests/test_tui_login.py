@@ -19,7 +19,7 @@ from textual.widgets import Static
 from nethackers.hubclient import credentials
 from nethackers.hubclient.credentials import Credentials
 from nethackers.tui.app import NetHackersApp
-from nethackers.tui.screens import home as home_mod, login as login_mod
+from nethackers.tui.screens import login as login_mod
 from nethackers.tui.screens.login import LoginModal
 
 # nothing listens on port 1 -> the hub-backed refreshes fail near-instantly
@@ -148,7 +148,7 @@ async def test_app_login_wires_creds_and_idbar_then_logout_clears(monkeypatch, t
     monkeypatch.setattr(login_mod, "whoami_from_token", lambda tok: "sam")
     monkeypatch.setattr(credentials, "path", lambda: tmp_path / "credentials.json")
     # keep Home's standing refresh hermetic (never touch the real runs dir)
-    monkeypatch.setattr(home_mod, "_RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setenv("NETHACKERS_DATA_ROOT", str(tmp_path))
 
     app = NetHackersApp(hub=_DEAD_HUB, creds=None)
     async with app.run_test() as pilot:

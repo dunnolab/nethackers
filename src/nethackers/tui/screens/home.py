@@ -10,7 +10,6 @@ exist. ``recent_runs_panel`` stays here because the Runs tab reuses it.
 from __future__ import annotations
 
 import contextlib
-from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
 from rich import box
@@ -23,6 +22,7 @@ from textual.containers import Center, Vertical, VerticalScroll
 from textual.widgets import Button, Static
 from textual.worker import get_current_worker
 
+from nethackers.config import load_stage
 from nethackers.hubclient.client import HubClient
 from nethackers.tui.art import NETHACKERS_BANNER, platform_status_line
 from nethackers.tui.screens.runs import read_runs, run_causes, run_totals
@@ -31,7 +31,6 @@ from nethackers.tui.status import _compact
 if TYPE_CHECKING:
     from nethackers.tui.app import NetHackersApp
 
-_RUNS_DIR = Path.home() / ".nethackers" / "evolve" / "runs"
 # Give up on the standing's program count fast so the worker never lingers;
 # Home stays responsive and just shows "—" if the hub is slow (see hub._HUB_TIMEOUT).
 _HUB_TIMEOUT = 4.0
@@ -194,7 +193,7 @@ class HomeView(VerticalScroll):
             return
         btn.label = "Log out"
         status.display = True
-        runs = read_runs(_RUNS_DIR)  # local files, cheap
+        runs = read_runs(load_stage().runs_dir)  # local files, cheap
         totals = run_totals(runs)
         # Paint the standing immediately with programs unknown ("—"); the count
         # is the one hub round-trip here, so fetch it on a worker and fill it in
