@@ -58,7 +58,9 @@ if [[ -n ${ci_deploy_key} ]]; then
     authk=/home/nethacker/.ssh/authorized_keys
     line="restrict,command=\"/usr/local/bin/deploy-hub.sh\" ${ci_deploy_key}"
     touch "${authk}"; chown nethacker:nethacker "${authk}"; chmod 0600 "${authk}"
-    grep -qF "${ci_deploy_key%% *}" "${authk}" || printf '%s\n' "${line}" >> "${authk}"
+    key_body=${ci_deploy_key#* }      # strip the "ssh-ed25519 " type prefix
+    key_body=${key_body%% *}          # strip any trailing " comment"
+    grep -qF "${key_body}" "${authk}" || printf '%s\n' "${line}" >> "${authk}"
 fi
 
 # 2 GiB swap only if the host has none.
