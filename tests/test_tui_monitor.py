@@ -271,7 +271,7 @@ async def test_cells_run_shows_cell_panel_and_blanks_lineage():
     async with host.run_test() as pilot:
         await pilot.pause()
         mon = host.screen
-        cells = str(mon.query_one("#islands").render())
+        cells = str(mon.query_one("#cells").render())
         assert "CELLS 1/2" in cells and "►" in cells   # panel shown, active marked
         assert str(mon.query_one("#lineage").render()).strip() == ""   # lineage blanked
 
@@ -282,4 +282,4 @@ async def test_single_identity_run_keeps_lineage_and_blanks_cells():
         await pilot.pause()
         mon = host.screen
         assert "lineage" in str(mon.query_one("#lineage").render())
-        assert str(mon.query_one("#islands").render()).strip() == ""
+        assert str(mon.query_one("#cells").render()).strip() == ""

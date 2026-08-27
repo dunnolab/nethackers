@@ -47,11 +47,12 @@ def _p(renderable) -> str:
 def test_recent_runs_panel_shows_objective_and_win_fraction():
     runs = [
         {"run_id": "r-1", "objective": "wiz-elf-cha-mal", "operator": "claude",
-         "wins": 2, "iterations": 5, "best_dev": 0.44, "best_held": 0.41},
+         "wins": 2, "iterations": 5, "best_dev": 0.44},
     ]
     out = _p(recent_runs_panel(runs))
     assert "wiz-elf-cha-mal" in out
     assert "2/5" in out  # wins/iterations, not just a lone digit that could match anything
+    assert "held" not in out  # validation/held-out is gone -- no dead column
 
 
 # --- _identity_text: logged-out prompt vs. the @login hero -----------------

@@ -31,25 +31,21 @@ def test_read_runs_summarizes_wins_and_best(tmp_path):
                 "iteration": 0,
                 "outcome": "baseline",
                 "dev_fitness": 0.30,
-                "heldout_fitness": 0.28,
             },
             {
                 "iteration": 1,
                 "outcome": "rejected",
                 "dev_fitness": 0.31,
-                "heldout_fitness": None,
             },
             {
                 "iteration": 2,
                 "outcome": "registered",
                 "dev_fitness": 0.44,
-                "heldout_fitness": 0.41,
             },
             {
                 "iteration": 3,
                 "outcome": "rejected",
                 "dev_fitness": 0.99,
-                "heldout_fitness": 0.98,
             },
         ],
     )
@@ -58,7 +54,8 @@ def test_read_runs_summarizes_wins_and_best(tmp_path):
     assert len(runs) == 1
     r = runs[0]
     assert r["run_id"] == "r-1" and r["wins"] == 1
-    assert r["best_dev"] == 0.44 and r["best_held"] == 0.41
+    assert r["best_dev"] == 0.44
+    assert "best_held" not in r  # held/validation is gone -- MAP-Elites has no held column
 
 
 def test_read_runs_counts_local_only_wins_and_their_fitness_too(tmp_path):
@@ -71,17 +68,15 @@ def test_read_runs_counts_local_only_wins_and_their_fitness_too(tmp_path):
         {"run_id": "r-2", "objective": "wiz-elf-cha-mal", "operator": "claude",
          "iterations": 1, "created_at": "2026-08-26T00:00:00"},
         [
-            {"iteration": 0, "outcome": "baseline", "dev_fitness": 0.30,
-             "validation_fitness": 0.28},
+            {"iteration": 0, "outcome": "baseline", "dev_fitness": 0.30},
             {"iteration": 1, "outcome": "local-only", "dev_fitness": 0.50,
-             "validation_fitness": 0.45,
              "hub_reason": "local-only: not published (no gh publisher / dev owner)"},
         ],
     )
     runs = read_runs(tmp_path)
     r = next(x for x in runs if x["run_id"] == "r-2")
     assert r["wins"] == 1
-    assert r["best_dev"] == 0.50 and r["best_held"] == 0.45
+    assert r["best_dev"] == 0.50
 
 
 def test_read_runs_empty_dir(tmp_path):
@@ -113,7 +108,6 @@ def test_read_runs_skips_malformed_metrics_line(tmp_path):
                 "iteration": 0,
                 "outcome": "baseline",
                 "dev_fitness": 0.30,
-                "heldout_fitness": 0.28,
             },
         ],
     )
@@ -142,7 +136,6 @@ def test_read_runs_sorts_newest_first(tmp_path):
                 "iteration": 0,
                 "outcome": "registered",
                 "dev_fitness": 0.40,
-                "heldout_fitness": 0.39,
             },
         ],
     )
@@ -160,7 +153,6 @@ def test_read_runs_sorts_newest_first(tmp_path):
                 "iteration": 0,
                 "outcome": "registered",
                 "dev_fitness": 0.50,
-                "heldout_fitness": 0.49,
             },
         ],
     )
@@ -191,7 +183,6 @@ def test_summarize_sums_tokens_across_metrics_lines(tmp_path):
                 "outcome": "registered",
                 "tokens": 4000,
                 "dev_fitness": 0.44,
-                "validation_fitness": 0.41,
             },
         ],
     )
@@ -231,7 +222,6 @@ def test_run_totals_over_read_runs_sums_tokens(tmp_path):
                 "outcome": "registered",
                 "tokens": 3000,
                 "dev_fitness": 0.44,
-                "validation_fitness": 0.41,
             },
         ],
     )
@@ -250,7 +240,6 @@ def test_run_totals_over_read_runs_sums_tokens(tmp_path):
                 "outcome": "registered",
                 "tokens": 500,
                 "dev_fitness": 0.50,
-                "validation_fitness": 0.49,
             },
         ],
     )

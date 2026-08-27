@@ -34,17 +34,17 @@ _TAGLINE = ("Evolve symbolic NetHack players with coding agents.\n"
 
 def recent_runs_panel(runs: list[dict[str, Any]]) -> Table:
     """The most recent local evolve runs (``read_runs``'s per-run summaries):
-    run id, objective, operator, a ``wins/iterations`` fraction, and best
-    dev/held scores. Capped to the 6 most recent (already newest-first). Kept
-    here because the Runs tab reuses it."""
+    run id, objective, operator, a ``wins/iterations`` fraction, and the best
+    dev score. Capped to the 6 most recent (already newest-first). Kept here
+    because the Runs tab reuses it."""
     t = Table(header_style="bold", pad_edge=False, box=box.SIMPLE_HEAVY)
-    for c in ("run", "objective", "op", "wins", "dev", "held"):
+    for c in ("run", "objective", "op", "wins", "dev"):
         t.add_column(c)
     for r in runs[:6]:
         t.add_row(
             str(r["run_id"]), str(r["objective"]), str(r.get("operator", "")),
             f"{r['wins']}/{r['iterations']}",
-            f"{(r.get('best_dev') or 0):.2f}", f"{(r.get('best_held') or 0):.2f}",
+            f"{(r.get('best_dev') or 0):.2f}",
         )
     return t
 

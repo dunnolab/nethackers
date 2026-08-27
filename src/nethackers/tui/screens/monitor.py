@@ -100,7 +100,7 @@ class RunMonitor(Screen):
                          id="influences")
             yield Static(id="eval")
             yield Static(id="lineage")
-            yield Static(id="islands")  # reused for the MAP-Elites cell-archive panel
+            yield Static(id="cells")  # the MAP-Elites cell-archive panel
             yield Static(id="ledger")
         yield Static("↑↓←→ move · enter use · esc back · c copy log", id="navhint")
         with TabbedContent():
@@ -189,11 +189,11 @@ class RunMonitor(Screen):
         # plain lineage strip, exactly as before.
         cells = run.cells()
         if cells:
-            self.query_one("#islands", Static).update(S.cells_panel(
+            self.query_one("#cells", Static).update(S.cells_panel(
                 cells, active=run.active_cell(), coverage=run.coverage()))
             self.query_one("#lineage", Static).update("")
         else:
-            self.query_one("#islands", Static).update("")
+            self.query_one("#cells", Static).update("")
             self.query_one("#lineage", Static).update(S.lineage_strip(
                 run.chain, best_dev=st["best_dev"], baseline_dev=st["baseline_dev"]))
         self.query_one("#ledger", Static).update(S.iterations_ledger(run.ledger_rows))
