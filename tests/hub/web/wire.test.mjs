@@ -88,7 +88,7 @@ function router(path) {
   const [route, query] = path.split("?");
   const params = new URLSearchParams(query || "");
   const obj = params.get("objective");
-  if (route === "/stats") return { programs: 2, hackers: 2 };
+  if (route === "/stats") return { programs: 2, hackers: 2, ascensions: 0, last_registered_at: "2026-08-27T09:30:00+00:00" };
   if (route === "/baseline") return BASELINE;
   if (route === "/objectives") return IDENTITIES.map((n) => ({ name: n, episodes: 15 }));
   if (route === "/elites") return ELITES_ALL;
@@ -169,6 +169,13 @@ async function pass1() {
   ok(floorCells > 0 && progCells > 0, `frontier mixes program (${progCells}) and floor (${floorCells}) cells`);
   ok(/AutoAscend floor/.test(q("#gridnote").textContent), "gridnote mentions the AutoAscend floor");
 
+  // masthead marquee + sidebar freshness stamp read live from /stats
+  const mq = q("#mq").textContent;
+  ok(/2 programs registered/.test(mq), "marquee shows the live program count (2)");
+  ok(/none has ascended/.test(mq), "marquee: 'none has ascended' when ascensions=0");
+  ok(!/3 programs registered/.test(mq), "marquee no longer hardcodes '3 programs'");
+  ok(/27 Aug 2026/.test(q("#updated").textContent), "last-updated shows the formatted registered_at (UTC)");
+
   ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
   dom.window.close();
 }
@@ -215,6 +222,10 @@ async function pass3() {
   await sleep(20);
   const floorRow = [...document.querySelectorAll("#scBody tr")].find((r) => /autoascend/.test(r.textContent));
   ok(floorRow && !/0\.000/.test(floorRow.textContent), "programs floor shows no fake 0.000 when baseline is absent");
+  // honesty: /stats failed -> the marquee omits the count line and the freshness
+  // stamp stays a neutral dash, never a stale/fabricated value
+  ok(!/programs registered/.test(q("#mq").textContent), "marquee omits the stats line when /stats fails");
+  ok(q("#updated") && q("#updated").textContent.trim() === "—", "last-updated is a neutral dash offline");
   ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
   dom.window.close();
 }

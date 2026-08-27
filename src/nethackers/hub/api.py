@@ -34,6 +34,7 @@ import os
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
+from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Any
 
@@ -45,6 +46,7 @@ from nethackers.contracts.models import Evidence, ObjectiveSpec
 from nethackers.hub.auth import AuthError, AuthProvider, GitHubAppAuth, LocalStubAuth
 from nethackers.hub.github import GitHubRead, GitHubReadError
 from nethackers.hub.objectives import CATALOG
+from nethackers.hub.poll import PollValidationError, clean_vote
 from nethackers.hub.store import Store
 from nethackers.hub.validate import (
     CommitChecker,
@@ -102,6 +104,16 @@ class RegisterRequest(BaseModel):
     evidence: dict[str, Any]
 
 
+class PollVoteRequest(BaseModel):
+    """POST /poll/vote body. roles is multi-select (0-4 keys); xp may be null."""
+
+    voter_id: str
+    method: str
+    timeline: str
+    roles: list[str] = []
+    xp: str | None = None
+
+
 def _bearer_token(authorization: str | None) -> str:
     """The token out of ``Authorization: Bearer <token>``; raises a 401
     ``HTTPException`` if the header is missing or isn't that scheme --
@@ -134,7 +146,34 @@ def create_app(
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:
-        return _INDEX.read_text(encoding="utf-8")
+        # Stamp the masthead {{version}} from the installed package at serve
+        # time, so it can never drift from pyproject the way a hardcoded
+        # string does. Read per-request (like _dict_audio_path) -- cheap, and
+        # keeps the handler a pure function of the file + package metadata.
+        return _INDEX.read_text(encoding="utf-8").replace(
+            "{{version}}", _pkg_version("nethackers")
+        )
+
+    @app.get("/poll")
+    def poll() -> dict[str, Any]:
+        votes = store.iter_poll_votes()
+        return {"votes": votes, "total": len(votes)}
+
+    @app.post("/poll/vote")
+    def poll_vote(body: PollVoteRequest) -> dict[str, Any]:
+        try:
+            vote = clean_vote(
+                voter_id=body.voter_id, method=body.method, timeline=body.timeline,
+                roles=body.roles, xp=body.xp,
+            )
+        except PollValidationError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        store.upsert_poll_vote(
+            vote["voter_id"], method=vote["method"], timeline=vote["timeline"],
+            roles=vote["roles"], xp=vote["xp"],
+        )
+        votes = store.iter_poll_votes()
+        return {"votes": votes, "total": len(votes)}
 
     @app.get("/dictionary.mp3")
     def dictionary_audio() -> FileResponse:

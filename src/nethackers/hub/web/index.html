@@ -344,6 +344,8 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
     border-top:2px solid #000; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace;
     font-size:.84rem; display:flex; align-items:center; justify-content:center; gap:14px; padding:7px 14px; flex-wrap:wrap; }
   #dictbar .dplay{ cursor:pointer; min-width:40px; font:inherit; padding:2px 9px; }
+  #dictbar .dplay.loading{ color:var(--gold); animation:dpulse .9s ease-in-out infinite; }
+  @keyframes dpulse{ 0%,100%{ opacity:.5; } 50%{ opacity:1; } }
   #dictbar .dnote{ color:var(--screen-dim); white-space:nowrap; letter-spacing:.02em; animation:dsurface 5.5s ease-in-out infinite; }
   #dictbar .dnote .demph{ color:var(--gold); }
   @keyframes dsurface{ 0%,100%{ opacity:.45; } 50%{ opacity:.95; } }
@@ -353,7 +355,73 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
   #dictbar .dmeter:focus-visible{ outline:2px dotted var(--gold); outline-offset:2px; }
   #dictbar .dpct{ color:var(--screen-dim); min-width:36px; }
   @media (max-width:640px){ #dictbar .dnote{ display:none; } }
-  @media (prefers-reduced-motion:reduce){ #dictbar .dnote{ animation:none; } }
+  @media (prefers-reduced-motion:reduce){ #dictbar .dnote,#dictbar .dplay.loading{ animation:none; } }
+
+/* ==== THE ORACLE: community prediction poll (vote-to-reveal), Web-1.0 ballot ==== */
+.orc{ margin:.5rem 0 0; }
+.orc-ballot{ border:1px solid var(--rule-soft); background:#fbfbf7; padding:2px 15px 14px; }
+.orc-q{ margin:.7rem 0 .2rem; }
+.orc-q .qh{ font-family:"Times New Roman","Tinos","Liberation Serif","Nimbus Roman",Times,serif; font-weight:700; color:var(--indigo);
+  font-size:1.08rem; margin:.7rem 0 .5rem; }
+.orc-q .qh .qn{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; color:var(--red); font-size:.82rem; margin-right:.4ch; }
+.orc-opts{ display:flex; flex-direction:column; gap:2px; }
+.orc-opt{ display:flex; align-items:baseline; gap:9px; width:100%; text-align:left; cursor:pointer;
+  font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.86rem; color:#26262c;
+  background:transparent; border:1px solid transparent; padding:3px 8px; }
+.orc-opt:hover{ background:#fff3b0; }
+.orc-opt .mk{ color:var(--silver-lo); }
+.orc-opt[aria-checked="true"]{ background:#eef0f6; border-color:var(--rule-soft); color:var(--indigo); font-weight:700; }
+.orc-opt[aria-checked="true"] .mk{ color:var(--indigo); }
+.orc-about{ display:grid; grid-template-columns:max-content 1fr; gap:8px 12px; align-items:center;
+  margin:.9rem 0 .2rem; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; }
+.orc-about .albl{ color:#55555c; text-align:right; white-space:nowrap; }
+.orc-about .grp{ display:flex; flex-wrap:wrap; gap:6px; }
+/* tribe chips are radio-semantic (aria-checked); give them the pressed bevel look too */
+.orc-about .bevel[aria-checked="true"]{ border-color:var(--silver-lo) var(--silver-hi) var(--silver-hi) var(--silver-lo);
+  background:#b6b6b1; color:var(--indigo); font-weight:700; }
+.orc-cast{ margin:1rem 0 .2rem; display:flex; align-items:center; gap:13px; flex-wrap:wrap; }
+.orc-cast .go{ font-size:.92rem; padding:5px 16px; font-weight:700; color:var(--indigo); }
+.orc-cast .go[disabled]{ opacity:.45; cursor:not-allowed; color:#111; }
+.orc-hint{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.74rem; color:#6b6b72; }
+/* results */
+.orc-results{ margin:.2rem 0 0; }
+.orc-speak{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.85rem; color:#33333a;
+  background:var(--screen); color:var(--screen-ink); border:1px solid #000; padding:8px 11px; margin:.2rem 0 .8rem; }
+.orc-speak b{ color:var(--gold); font-weight:400; }
+.orc-lens{ margin:.2rem 0 .5rem; }
+.orc-seg-chips{ display:flex; flex-wrap:wrap; gap:6px; margin:.2rem 0 .5rem; }
+.orc-two{ display:grid; grid-template-columns:1fr 1fr; gap:24px; align-items:start; }
+@media (max-width:720px){ .orc-two{ grid-template-columns:1fr; gap:14px; } }
+.orc-cap{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.72rem; text-transform:uppercase;
+  letter-spacing:.05em; color:#55555c; border-bottom:1px solid var(--rule-soft); padding-bottom:3px; margin:0 0 9px; }
+.orc-bars{ display:flex; flex-direction:column; gap:9px; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.79rem; }
+.orc-bar{ display:flex; flex-direction:column; gap:3px; }
+.orc-bar .brow{ display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
+.orc-bar .bl{ color:#33333a; }
+.orc-bar .bv{ text-align:right; font-variant-numeric:tabular-nums; color:#111; white-space:nowrap; }
+.orc-bar .bv .cnt{ color:#a6a6ae; }
+.orc-bar .bt{ height:12px; background:#e9e9f0; border:1px solid var(--rule-soft); }
+.orc-bar .bf{ display:block; height:100%; background:#9a9aa6; min-width:1px; }
+.orc-bar.you .bl{ color:var(--indigo); font-weight:700; }
+.orc-bar.you .bf{ background:var(--indigo); }
+.orc-bar.you .yq{ color:var(--indigo); font-weight:700; margin-left:.4ch; }
+.orc-bar.dim .bf{ opacity:.42; }
+.orc-median{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; color:#55555c; margin:9px 0 0; }
+.orc-median b{ color:var(--indigo); }
+.orc-nrow{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.74rem; color:#6b6b72; margin:13px 0 0; }
+.orc-small{ color:var(--red); }
+/* compare tribes */
+.orc-cmp{ display:grid; grid-template-columns:repeat(auto-fill,minmax(152px,1fr)); gap:9px; margin:.3rem 0 0; }
+.orc-cmp-c{ border:1px solid var(--rule-soft); background:#fff; padding:7px 10px;
+  font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.76rem; }
+.orc-cmp-c.you{ border-color:var(--indigo); box-shadow:2px 2px 0 rgba(47,54,119,.28); }
+.orc-cmp-c .nm{ color:var(--indigo); font-weight:700; }
+.orc-cmp-c .nm .yb{ color:var(--indigo); }
+.orc-cmp-c .n{ color:#a6a6ae; font-weight:400; }
+.orc-cmp-c .md{ color:#111; margin:6px 0 2px; } .orc-cmp-c .md b{ color:var(--indigo); }
+.orc-cmp-c .ld{ color:#55555c; }
+.orc-revote{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; margin:15px 0 0; }
+.orc-revote a{ cursor:pointer; }
 </style>
 
 <canvas id="dictviz" aria-hidden="true"></canvas>
@@ -370,7 +438,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 |_|\_\___|\__|_||_\__,_\__|_\_\___|_| /__/
 </pre>
     <div class="sub">solving nethack, one stupid harness at a time
-      &nbsp;<b>&middot;</b>&nbsp; v0.8.1<span class="cursor"></span></div>
+      &nbsp;<b>&middot;</b>&nbsp; v{{version}}<span class="cursor"></span></div>
   </header>
   <div class="msgbar"><div class="msgbar__in mono" id="mq"></div></div>
 
@@ -386,8 +454,9 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
         <li><span class="k">[3]</span> <a href="#scores">Leaderboard</a></li>
         <li><span class="k">[4]</span> <a href="#frontier">The Frontier</a></li>
         <li><span class="k">[5]</span> <a href="#progress">Progress</a></li>
-        <li><span class="k">[6]</span> <a href="#contribute">Contribute</a></li>
-        <li><span class="k">[7]</span> <a href="#faq">FAQ</a></li>
+        <li><span class="k">[6]</span> <a href="#oracle">The Oracle</a> <span class="new">NEW!</span></li>
+        <li><span class="k">[7]</span> <a href="#contribute">Contribute</a></li>
+        <li><span class="k">[8]</span> <a href="#faq">FAQ</a></li>
       </ol>
 
       <h4>Registered</h4>
@@ -401,7 +470,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
         <span class="od" id="odometer" aria-label="visitor counter"></span>
         <div class="cap" id="odcap">since Jun 2026</div>
       </div>
-      <div class="updated">last updated:<br>24&nbsp;Aug&nbsp;2026</div>
+      <div class="updated">last updated:<br><span id="updated">&mdash;</span></div>
 
       <div class="badges">
         <a class="badge b1" href="https://dunnolab.ai/">powered by<br><b>dunnolab.ai</b></a>
@@ -609,6 +678,57 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 
       <hr class="rule">
 
+      <!-- THE ORACLE (prediction poll) -->
+      <section id="oracle">
+        <h2 class="sec"><span class="glyph">*</span> The Oracle</h2>
+        <p class="lead">NetHack's <span class="ref" data-k="oracle">Oracle</span> sells prophecy for gold; ours is free &mdash; and it's
+          <b>you</b>. Two questions on <b>whether</b>, and <b>how</b>, a program finally wins. Cast your prophecy to see where the
+          crowd &mdash; and <b>your own tribe</b> &mdash; lands.</p>
+
+        <div class="orc">
+          <!-- BALLOT -->
+          <div class="orc-ballot" id="orcBallot">
+            <div class="orc-q">
+              <div class="qh"><span class="qn">Q1.</span> Which approach writes the first ascending program?</div>
+              <div class="orc-opts" id="orcQmethod" role="radiogroup" aria-label="first ascension approach"></div>
+            </div>
+            <div class="orc-q">
+              <div class="qh"><span class="qn">Q2.</span> When does the first <span class="ref" data-k="ascension">ascension</span> on <span class="ref" data-k="heldout">held-out seeds</span> happen?</div>
+              <div class="orc-opts" id="orcQtimeline" role="radiogroup" aria-label="first ascension date"></div>
+            </div>
+            <div class="orc-about">
+              <span class="albl">your tribe:</span>
+              <span class="grp" id="orcRole" role="group" aria-label="your background (choose any)"></span>
+              <span class="albl">nethack:</span>
+              <span class="grp" id="orcXp" role="radiogroup" aria-label="your nethack experience"></span>
+            </div>
+            <div class="orc-cast">
+              <button class="bevel go" id="orcCast" disabled>Consult the Oracle</button>
+              <span class="orc-hint" id="orcHint">answer Q1 &amp; Q2 to cast &middot; one prophecy per browser</span>
+            </div>
+          </div>
+
+          <!-- RESULTS (revealed after voting) -->
+          <div class="orc-results" id="orcResults" hidden>
+            <div class="orc-speak" id="orcSpeak"></div>
+            <div class="controls orc-lens">
+              <span class="lbl">segment:</span>
+              <span class="grp" id="orcLens">
+                <button class="bevel" data-lens="all" aria-pressed="true">Everyone</button>
+                <button class="bevel" data-lens="role">By role</button>
+                <button class="bevel" data-lens="xp">By NetHack XP</button>
+              </span>
+            </div>
+            <div class="orc-seg-chips" id="orcChips" hidden></div>
+            <div id="orcCharts"></div>
+            <div class="orc-nrow" id="orcN"></div>
+            <div class="orc-revote"><a id="orcRevote">[ change my prophecy ]</a></div>
+          </div>
+        </div>
+      </section>
+
+      <hr class="rule">
+
       <!-- CONTRIBUTE -->
       <section id="contribute">
         <h2 class="sec"><span class="glyph">?</span> Contribute</h2>
@@ -775,7 +895,7 @@ const METRICS={
  ascensions:{label:"Ascensions -- still zero",max:1,fmt:v=>String(v)},
  coverage:{label:"Milestone cells lit on val-dwa-law-fem",max:40,fmt:v=>String(v)}};
 const MEMES=[
- "You enter the Dungeons of Doom.","3 programs registered; none has ascended.",
+ "You enter the Dungeons of Doom.",
  "Yet Another Stupid Death: killed by a grid bug, while praying.","You hear someone counting money.",
  "This page is under construction.","You feel much better. Welcome to experience level 2.",
  "We do not sell AGI here. :]","Do you want your possessions identified? [ynq]",
@@ -789,9 +909,30 @@ function tint(v,floor){ if(v==null) return "#ffffff"; const a=(floor?0.05:0.10)+
 function tintText(v){ return v!=null && v>=0.5 ? "#ffffff" : "#111"; }
 
 /* ===================== marquee ===================== */
-/* two identical halves (each ends with a separator) so the -50% shift loops seamlessly */
-const _half = MEMES.map(m=>`<b>${esc(m)}</b>`).join('<span class="sep">|||</span>') + '<span class="sep">|||</span>';
-$("#mq").innerHTML = _half + _half;
+/* two identical halves (each ends with a separator) so the -50% shift loops seamlessly.
+   liveLine (the "N programs registered; ..." count) is spliced in from /stats once it
+   loads; until then, or if /stats fails, the marquee simply omits it -- never a fake count. */
+function renderMarquee(liveLine){
+  const items = liveLine ? [MEMES[0], liveLine, ...MEMES.slice(1)] : MEMES;
+  const half = items.map(m=>`<b>${esc(m)}</b>`).join('<span class="sep">|||</span>') + '<span class="sep">|||</span>';
+  $("#mq").innerHTML = half + half;
+}
+/* the live marquee line, built from /stats counts (honest singular/plural) */
+function marqueeStatsLine(s){
+  const progs = `${s.programs} ${s.programs===1?"program":"programs"} registered`;
+  const asc = s.ascensions===0 ? "none has ascended"
+            : `${s.ascensions} ${s.ascensions===1?"has":"have"} ascended`;
+  return `${progs}; ${asc}`;
+}
+/* sidebar "last updated" stamp from /stats' newest registered_at (ISO-8601 UTC);
+   null/absent/unparseable -> a neutral dash, never a fabricated date. */
+const _MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+function setUpdated(iso){
+  const el=$("#updated"); if(!el) return;
+  const d = iso ? new Date(iso) : null;
+  el.textContent = (d && !isNaN(d)) ? `${d.getUTCDate()} ${_MON[d.getUTCMonth()]} ${d.getUTCFullYear()}` : "—";
+}
+renderMarquee(null);
 
 /* ===================== ambient demo game (@ + dog fleeing a grid-bug swarm) ===================== */
 (function(){
@@ -1368,7 +1509,8 @@ async function boot(){
      awaited after (UNIVERSE needs OBJ_EP; the board/hackers need BASELINE).
      Each is guarded, so any failure keeps a friendly state. */
   const statsP = jget("/stats")
-    .then(s=>{ odo($("#odoProg"), s.programs, 5); odo($("#odoPlay"), s.hackers, 5); })
+    .then(s=>{ odo($("#odoProg"), s.programs, 5); odo($("#odoPlay"), s.hackers, 5);
+               renderMarquee(marqueeStatsLine(s)); setUpdated(s.last_registered_at); })
     .catch(()=>{ odo($("#odoProg"),0,5); odo($("#odoPlay"),0,5); });
   const baseP = jget("/baseline").then(b=>{ BASELINE = b; }).catch(()=>{ BASELINE = {owner:"autoascend", per_identity:{}, overall:null}; });
   const objP  = jget("/objectives").then(o=>{ OBJ_EP = Object.fromEntries(o.map(x=>[x.name, x.episodes])); }).catch(()=>{ OBJ_EP = {}; });
@@ -1384,7 +1526,8 @@ boot();
   if(!page||!cv||!bar) return;
   const g=cv.getContext("2d"); if(!g) return;
   const audioEl=new Audio(); audioEl.src="/dictionary.mp3"; audioEl.loop=true; audioEl.preload="none";
-  let actx=null,analyser=null,gain=null,srcNode=null,ready=false, volume=0,playing=false;
+  let actx=null,analyser=null,gain=null,srcNode=null,ready=false, volume=0,playing=false,starting=false;
+  const REDUCE=matchMedia("(prefers-reduced-motion:reduce)").matches;
   // dev preview: ?vizpreview=0..1 drives a synthetic spectrum so the offline harness
   // can screenshot the reactive look; absent in normal use (a silent, opt-in page).
   const PREVIEW=(()=>{ const q=new URLSearchParams(location.search).get("vizpreview");
@@ -1394,7 +1537,7 @@ boot();
   function cssv(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
   function hexRGB(h){ h=(h||"").replace("#",""); if(h.length===3) h=h.split("").map(c=>c+c).join("");
     return [parseInt(h.slice(0,2),16)||0,parseInt(h.slice(2,4),16)||0,parseInt(h.slice(4,6),16)||0]; }
-  let INDIGO,RED,GOLD,GROUND,PAL;
+  let INDIGO,RED,GOLD,GROUND,PAL,GOLD_RGB,MONO;
   // NetHack-flavoured colour per glyph, so the descent is colourful (deeper = more monsters, more colour)
   const PAL_LIGHT={gray:[92,92,104],red:[196,22,22],green:[26,120,26],brown:[140,88,16],blue:[40,40,190],
     magenta:[156,28,156],cyan:[18,126,134],orange:[208,104,0],yellow:[170,122,0],white:[56,56,66]};
@@ -1407,7 +1550,8 @@ boot();
     "gray","cyan","red","magenta","yellow","white","yellow"];
   function readTheme(){ INDIGO=hexRGB(cssv("--indigo")||"#2f3677"); RED=hexRGB(cssv("--red")||"#cc0000");
     GOLD=cssv("--gold")||"#e9c15a"; GROUND=cssv("--ground")||"#d8d6cc";
-    const gb=hexRGB(GROUND), lum=(gb[0]*0.3+gb[1]*0.59+gb[2]*0.11)/255; PAL=lum<0.42?PAL_DARK:PAL_LIGHT; }
+    const gb=hexRGB(GROUND), lum=(gb[0]*0.3+gb[1]*0.59+gb[2]*0.11)/255; PAL=lum<0.42?PAL_DARK:PAL_LIGHT;
+    GOLD_RGB=hexRGB(GOLD); MONO=hexRGB(cssv("--ink")||"#1d1d24"); }   // ink the wall wears at rest -- near-black, theme-aware
 
   function ensureAudio(){ if(actx) return;
     try{ actx=new (window.AudioContext||window.webkitAudioContext)();
@@ -1416,13 +1560,24 @@ boot();
       srcNode.connect(analyser); analyser.connect(gain); gain.connect(actx.destination); ready=true;
     }catch(e){}
   }
+  // Playback is a tiny state machine: idle -> starting (user asked, audio still buffering) -> playing.
+  // The 'starting' state is what makes the click feel instant: the button spins and the wall warms
+  // up right away, before a single byte of the track has decoded.
+  function requestPlay(){ if(playing||starting) return; starting=true; sync(); play(); }
   async function play(){ ensureAudio(); if(actx&&actx.state==="suspended"){ try{ await actx.resume(); }catch(e){} }
-    try{ await audioEl.play(); playing=true; }catch(e){ playing=false; } sync(); }
-  function pause(){ audioEl.pause(); playing=false; sync(); }
+    try{ await audioEl.play(); if(!audioEl.paused){ playing=true; starting=false; sync(); } }
+    catch(e){ starting=false; playing=false; sync(); } }
+  function pause(){ audioEl.pause(); playing=false; starting=false; sync(); }
+  // Mirror the element's real state so the button never lies about whether sound is coming.
+  audioEl.addEventListener("playing",()=>{ playing=true; starting=false; sync(); });
+  audioEl.addEventListener("pause",  ()=>{ playing=false; starting=false; sync(); });
+  audioEl.addEventListener("error",  ()=>{ playing=false; starting=false; sync(); });
 
   let synthT=0;
   function sampleSpectrum(){
-    const scale = PREVIEW>0 ? Math.max(.25,PREVIEW) : 0;
+    // While starting (buffering after a click) drive a gentle synthetic spectrum so the wall
+    // comes alive the instant you press play; hand off to real audio data once it's flowing.
+    const scale = PREVIEW>0 ? Math.max(.25,PREVIEW) : (starting&&!playing ? .55 : 0);
     if(scale>0){ const n=analyser?analyser.frequencyBinCount:512; synthT+=0.05;
       for(let i=0;i<n&&i<freq.length;i++){ const f=i/n;
         let v=(Math.sin(synthT*1.7+f*9)*0.5+0.5)*Math.exp(-f*2.0);
@@ -1435,10 +1590,25 @@ boot();
 
   const meter=bar.querySelector(".dmeter"), pctEl=bar.querySelector(".dpct"), pb=bar.querySelector(".dplay"), BLK=12;
   function setVol(v,u){ volume=Math.max(0,Math.min(1,v)); if(gain) gain.gain.setTargetAtTime(volume,actx.currentTime,.05);
-    if(u&&volume>0&&!playing) play(); sync(); }
+    if(u&&volume>0&&!playing&&!starting) requestPlay(); sync(); }
+  // A terminal-style spinner while the track buffers: proof the click landed even though the
+  // sound is still seconds away. Cleared the instant playback (or a failure) settles the state.
+  const SPIN=["|","/","—","\\"]; let spinTimer=null,spinI=0;
+  function updatePlayGlyph(){
+    if(starting&&!playing){
+      pb.classList.add("loading"); pb.setAttribute("aria-label","loading music");
+      if(REDUCE){ pb.textContent="…"; }
+      else { pb.textContent=SPIN[spinI];
+        if(!spinTimer) spinTimer=setInterval(()=>{ spinI=(spinI+1)%SPIN.length; pb.textContent=SPIN[spinI]; },130); }
+    } else {
+      if(spinTimer){ clearInterval(spinTimer); spinTimer=null; }
+      pb.classList.remove("loading");
+      pb.textContent=playing?"❙❙":"▶"; pb.setAttribute("aria-label",playing?"pause":"play");
+    }
+  }
   function sync(){ let out=""; const f=Math.round(volume*BLK); for(let i=0;i<BLK;i++) out+= i<f?"█":'<span class="doff">░</span>';
     meter.innerHTML="["+out+"]"; const p=Math.round(volume*100); if(pctEl)pctEl.textContent=p+"%"; meter.setAttribute("aria-valuenow",p);
-    pb.innerHTML=playing?"❙❙":"▶"; }
+    updatePlayGlyph(); }
   function fromEv(e){ const r=meter.getBoundingClientRect(); const x=(e.touches?e.touches[0].clientX:e.clientX)-r.left; setVol(x/r.width,true); }
   let drag=false;
   meter.addEventListener("pointerdown",e=>{ drag=true; meter.setPointerCapture(e.pointerId); fromEv(e); });
@@ -1446,13 +1616,13 @@ boot();
   meter.addEventListener("pointerup",()=>drag=false);
   meter.addEventListener("keydown",e=>{ if(e.key==="ArrowUp"||e.key==="ArrowRight"){ setVol(volume+.08,true); e.preventDefault(); }
     if(e.key==="ArrowDown"||e.key==="ArrowLeft"){ setVol(volume-.08,true); e.preventDefault(); } });
-  pb.addEventListener("click",()=>{ if(playing) pause(); else { if(volume===0) setVol(.5,false); play(); } });
+  pb.addEventListener("click",()=>{ if(playing||starting) pause(); else { if(volume===0) setVol(.5,false); requestPlay(); } });
   sync();
 
   // depth ladder: Dlvl 1 surface -> Mines -> mid -> deep -> Amulet -> Astral -> ascend
   const DESC=[".",",","`","x",":","r","d","F","j","f","k","o","G","g","h","*","$","c","S",";",
-              "@","u","n","Z","M","q","y","e","N","R","T","W","&","V","H","P","U","L","D",
-              "_","+","&","@",'"',"*","<"];
+              "C","u","n","Z","M","q","y","e","N","R","T","W","&","V","H","P","U","L","D",
+              "_","+","&","A",'"',"*","<"];   // deliberately no hero glyph in the ladder — the gold hero is the only one on screen
   let W=0,H=0,DPR=1,cw=11,ch=16,MAXEXT=48;
   let sm=new Float32Array(0),pk=new Float32Array(0),lastN=0;
   const reduce=matchMedia("(prefers-reduced-motion:reduce)").matches;
@@ -1474,12 +1644,17 @@ boot();
   }
   function hash(a,b){ const s=Math.sin(a*127.1+b*311.7)*43758.5453; return s-Math.floor(s); }
 
-  let t=0, activity=0, atK=0, atVel=0, atRide=0;
+  let t=0, bloom=0, energy=0, atK=0, atVel=0, atRide=0;
   function draw(){
-    // EVERYTHING scales with volume: silence => a calm static frame you can read past.
-    const target=(playing?1:0)*Math.min(1,volume);
-    activity += (target-activity)*0.06;
-    t += 0.0012 + activity*0.03;                 // motion clock, near-frozen when silent
+    // Two regimes. At rest the wall breathes gently in ink -- restrained, monochrome, never silent-frozen.
+    // On play, COLOUR blooms in (`bloom`); how hard it reacts -- reach, brightness, tempo -- tracks the
+    // VOLUME (`energy`), so louder => a bigger, brighter, quicker descent.
+    const targetBloom = playing ? 1 : (starting ? 0.9 : 0);
+    bloom += (targetBloom-bloom)*(targetBloom>bloom?0.10:0.05);   // colour rushes in, fades out gently
+    const targetEnergy = playing ? (0.1+0.9*Math.min(1,volume)) : (starting ? 0.6 : 0);
+    energy += (targetEnergy-energy)*(targetEnergy>energy?0.10:0.06);   // reach/brightness/tempo track the volume knob
+    const idleAmt = reduce ? 0 : (1-bloom);                       // reduced-motion: no ambient, stays a calm frame
+    t += 0.0012 + energy*0.03 + 0.005*idleAmt;                    // motion quickens with volume, a slow drift at rest
     sampleSpectrum();
     g.clearRect(0,0,W,H);
     const pr=page.getBoundingClientRect();
@@ -1490,16 +1665,20 @@ boot();
     const vis=[]; g.font=ch+'px "Courier New","Cousine",monospace';
     for(let k=0;k<N;k++){
       const x=per[k][0],y=per[k][1],dx=per[k][2],dy=per[k][3],base=per[k][4],pf=k/N;
-      let m=0.015;                                // faint static outline at rest
-      if(activity>0.002){ const bin=Math.floor(Math.pow(pf<.5?pf*2:(1-pf)*2, 1.2)*(bins*0.48));
+      let m=0.015;                                // faint static outline at the very rest
+      if(idleAmt>0){                              // restrained ambient swell -> silence still breathes, monochrome
+        const w=0.5+0.5*Math.sin(t*1.7 + pf*Math.PI*4 + hash(k,3)*1.4);
+        m=Math.max(m, (0.04+0.065*w)*idleAmt); }
+      if(bloom>0.002){ const bin=Math.floor(Math.pow(pf<.5?pf*2:(1-pf)*2, 1.2)*(bins*0.48));
         const resp=0.26+0.74*hash(k,7);           // some columns spike hard, others barely -> jagged / gap-toothed
-        let am=Math.min(1, Math.pow(freq[bin]/255, 0.85)*1.7)*activity*resp;
+        let am=Math.min(1, Math.pow(freq[bin]/255, 0.85)*1.7)*energy*resp;
         m=Math.max(m, am<0.05?0:am); }
       sm[k]+=(m-sm[k])*(m>sm[k]?0.5:0.14); pk[k]=Math.max(sm[k], pk[k]-0.012);
       if(y<-ch||y>H+ch) continue;
       vis.push(k);
       const mag=sm[k];
-      g.fillStyle="rgba("+INDIGO[0]+","+INDIGO[1]+","+INDIGO[2]+","+(0.24+mag*0.5).toFixed(3)+")";
+      const br=MONO[0]+(INDIGO[0]-MONO[0])*bloom, bg=MONO[1]+(INDIGO[1]-MONO[1])*bloom, bb=MONO[2]+(INDIGO[2]-MONO[2])*bloom;
+      g.fillStyle="rgba("+(br|0)+","+(bg|0)+","+(bb|0)+","+(0.24+mag*0.5).toFixed(3)+")";   // ink frame at rest -> indigo on play
       g.fillText(base,x,y);
       const ext=Math.round(mag*MAXEXT);
       for(let e=1;e<=ext;e++){ const ex=x+dx*cw*e, ey=y+dy*ch*e;
@@ -1508,17 +1687,20 @@ boot();
         // glyph varies within a small band by cell + time -> a living descent, not a fixed ladder
         let di=Math.floor(depth*(DESC.length-1)) + Math.round((hash(k*3+e, shuffle)-0.5)*2.6);
         di=di<0?0:(di>DESC.length-1?DESC.length-1:di);
-        const c=PAL[COLORKEY[di]]||PAL.gray, a=(0.30+depth*0.52)*(0.4+activity*0.6);
-        g.fillStyle="rgba("+c[0]+","+c[1]+","+c[2]+","+a.toFixed(3)+")";
+        const c=PAL[COLORKEY[di]]||PAL.gray;      // colour blooms up out of the monochrome as playback starts
+        const cr=MONO[0]+(c[0]-MONO[0])*bloom, cg=MONO[1]+(c[1]-MONO[1])*bloom, cb=MONO[2]+(c[2]-MONO[2])*bloom;
+        const a=(0.30+depth*0.52)*(0.42+energy*0.58);   // legible ink at rest, brighter as volume rises
+        g.fillStyle="rgba("+(cr|0)+","+(cg|0)+","+(cb|0)+","+a.toFixed(3)+")";
         g.fillText(DESC[di], ex, ey); }
       if(pk[k]>0.9){ const e=Math.round(pk[k]*MAXEXT)+1, sx=x+dx*cw*e, sy=y+dy*ch*e;
         if(sx>=-cw&&sx<=W+cw&&sy>=-ch&&sy<=H+ch){
-          g.fillStyle="rgba("+RED[0]+","+RED[1]+","+RED[2]+","+(0.6+0.4*activity).toFixed(2)+")";
+          g.fillStyle="rgba("+RED[0]+","+RED[1]+","+RED[2]+","+(0.6+0.4*energy).toFixed(2)+")";
           g.fillText("★", sx, sy); } }
     }
-    // @ hero (gold): sporadic darts, speed scales with volume (frozen when silent), rides the spike
+    // @ hero: a slow wanderer at rest (muted), darting and gold once the music is on -> rides the spike
     if(vis.length){
-      if(Math.random() < 0.05*activity) atVel += (Math.random()-0.5)*2.6*activity;   // random impulses
+      atK += 0.02*idleAmt;                                                           // gentle idle crawl
+      if(Math.random() < 0.05*energy) atVel += (Math.random()-0.5)*2.6*energy;       // dart rate tracks volume
       atVel *= 0.86;                                                                 // friction -> pauses between darts
       atK += atVel;
       const ai=vis[((Math.floor(atK)%vis.length)+vis.length)%vis.length], a0=per[ai];
@@ -1527,12 +1709,182 @@ boot();
         ax=Math.max(ch,Math.min(W-ch,ax)); ay=Math.max(ch,Math.min(H-ch,ay));
         g.font="700 "+Math.round(ch*1.08)+'px "Courier New","Cousine",monospace';
         g.lineJoin="round"; g.lineWidth=Math.max(3,ch*0.3); g.strokeStyle=GROUND; g.strokeText("@",ax,ay);
-        g.fillStyle=GOLD; g.fillText("@",ax,ay); }
+        const fr=MONO[0]+(GOLD_RGB[0]-MONO[0])*bloom, fg=MONO[1]+(GOLD_RGB[1]-MONO[1])*bloom, fb=MONO[2]+(GOLD_RGB[2]-MONO[2])*bloom;
+        g.fillStyle="rgba("+(fr|0)+","+(fg|0)+","+(fb|0)+","+(0.55+0.45*bloom).toFixed(2)+")"; g.fillText("@",ax,ay); }
     }
   }
   function loop(){ draw(); requestAnimationFrame(loop); }
   for(let i=0;i<8;i++) draw();
   if(PREVIEW>0){ playing=true; volume=PREVIEW; sync(); }
   requestAnimationFrame(loop);
+})();
+
+/* ===================== The Oracle: community prediction poll =====================
+   Reads the live crowd from the hub: GET /poll for the anonymized votes,
+   POST /poll/vote to cast. Vote-to-reveal; one prophecy per browser (a voter_id
+   in localStorage; the crowd is fetched only when revealing). All render /
+   aggregation runs client-side over the fetched rows. */
+(function(){
+  const root=document.getElementById("oracle"); if(!root) return;
+
+  /* glossary: the Oracle -- so the dotted term in the lead pops like every other ref */
+  if(typeof REFS!=="undefined") REFS.oracle={t:"The Oracle",
+    d:"A dungeon feature in NetHack: for a fee in gold she answers one question with a (usually cryptic) truth. Here the crowd is the oracle &mdash; and it answers for free.",
+    s:[["NetHack Wiki",WIKI+"Oracle"]]};
+
+  /* ---- ballot vocabulary (value -> label), in fixed display order ---- */
+  const METHOD=[["programs","LLM-written programs"],["rl","End-to-end deep RL"],
+    ["llm","LLM agent, live play"],["symbolic","Hand-engineered bot"],
+    ["hybrid","Hybrid, neuro-symbolic"],["never","Never / decades away"]];
+  const TIME=[["2027","By 2027"],["2030","By 2030"],["2035","By 2035"],
+    ["2040","By 2040"],["after","After 2040"],["never","Never"]];
+  /* tribe is MULTI-select -- a person can be several of these at once */
+  const ROLE=[["mlr","AI/ML researcher"],["player","NetHack player"],["eng","Software engineer"],["enth","AI enthusiast"]];
+  const XP=[["never","Never played"],["casual","Casual"],["serious","Serious"],["ascended","Ascended"]];
+  const LABEL={}; [METHOD,TIME,ROLE,XP].forEach(a=>a.forEach(([k,v])=>{ if(LABEL[k]==null) LABEL[k]=v; }));
+  const RLABEL=Object.fromEntries(ROLE), XLABEL=Object.fromEntries(XP);
+  const TIME_ORD={"2027":0,"2030":1,"2035":2,"2040":3,"after":4,"never":5};
+
+  /* ---- one prophecy per browser: a stable voter id, the last cast, and the live crowd ---- */
+  const KEY="nh-oracle-vote", VKEY="nh-oracle-voter";
+  function readVote(){ try{ return JSON.parse(localStorage.getItem(KEY)||"null"); }catch(e){ return null; } }
+  function writeVote(v){ try{ localStorage.setItem(KEY,JSON.stringify(v)); }catch(e){} }
+  function voterId(){ let id=null; try{ id=localStorage.getItem(VKEY); }catch(e){}
+    if(!id){ id=(window.crypto&&crypto.randomUUID)?crypto.randomUUID():"v"+Date.now()+Math.random().toString(36).slice(2);
+      try{ localStorage.setItem(VKEY,id); }catch(e){} }
+    return id; }
+  let CORPUS=[];                                   // the live crowd, from GET /poll (was the synthetic corpus)
+  async function loadPoll(){ const d=await jget("/poll"); CORPUS=(d&&d.votes)||[]; }
+  async function postVote(vote){
+    const r=await fetch("/poll/vote",{method:"POST",headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({voter_id:voterId(),method:vote.method,timeline:vote.timeline,roles:vote.roles,xp:vote.xp})});
+    if(!r.ok) throw new Error("vote "+r.status);
+    const d=await r.json(); CORPUS=(d&&d.votes)||[];   // aggregate incl. this vote -- no second GET
+  }
+
+  /* ---- state (roles is a SET -- tribe is multi-select) ---- */
+  let sel={method:null,timeline:null,roles:[],xp:null};
+  let lens="all", segFilter=null;      // segFilter: null=everyone; "__cmp"=compare-all; a key=one segment
+
+  /* ---- helpers ---- */
+  function distrib(rows,order,key){ const c={}; order.forEach(([k])=>c[k]=0);
+    rows.forEach(r=>{ if(c[r[key]]!=null) c[r[key]]++; }); return c; }
+  function total(c){ let t=0; for(const k in c) t+=c[k]; return t; }
+  function medianTime(rows){ if(!rows.length) return null;
+    const ord=rows.map(r=>TIME_ORD[r.timeline]).sort((a,b)=>a-b);
+    return TIME[ord[Math.floor((ord.length-1)/2)]][0]; }
+  const allRows=()=>CORPUS;   // CORPUS already includes this browser's own vote after it POSTs
+  const inSeg=(r,field,k)=> field==="role" ? r.roles.includes(k) : r[field]===k;   // role membership is set-wise
+  function rowsFor(field,k){ return allRows().filter(r=>inSeg(r,field,k)); }
+
+  /* ---- build ballot controls (roles = multi toggle; everything else single) ---- */
+  const optRow=(k,v)=>`<button type="button" class="orc-opt" role="radio" aria-checked="false" data-v="${k}"><span class="mk">( )</span><span class="bl">${v}</span></button>`;
+  const chipMulti=(k,v)=>`<button type="button" class="bevel" aria-pressed="false" data-v="${k}">${v}</button>`;
+  const chipRadio=(k,v)=>`<button type="button" class="bevel" role="radio" aria-checked="false" data-v="${k}">${v}</button>`;
+  $("#orcQmethod").innerHTML=METHOD.map(([k,v])=>optRow(k,v)).join("");
+  $("#orcQtimeline").innerHTML=TIME.map(([k,v])=>optRow(k,v)).join("");
+  $("#orcRole").innerHTML=ROLE.map(([k,v])=>chipMulti(k,v)).join("");
+  $("#orcXp").innerHTML=XP.map(([k,v])=>chipRadio(k,v)).join("");
+
+  function markSingle(box,field,isOpt){ box.querySelectorAll("[data-v]").forEach(x=>{ const on=x.dataset.v===sel[field];
+    x.setAttribute("aria-checked",on); if(isOpt) x.querySelector(".mk").textContent=on?"(*)":"( )"; }); }
+  function markRoles(){ $("#orcRole").querySelectorAll("[data-v]").forEach(x=>x.setAttribute("aria-pressed", sel.roles.includes(x.dataset.v))); }
+  function wireSingle(id,field,isOpt){ const box=$(id);
+    box.addEventListener("click",e=>{ const b=e.target.closest("[data-v]"); if(!b) return; sel[field]=b.dataset.v; markSingle(box,field,isOpt); updateCast(); }); }
+  wireSingle("#orcQmethod","method",true); wireSingle("#orcQtimeline","timeline",true); wireSingle("#orcXp","xp",false);
+  $("#orcRole").addEventListener("click",e=>{ const b=e.target.closest("[data-v]"); if(!b) return;
+    const k=b.dataset.v, i=sel.roles.indexOf(k); if(i>=0) sel.roles.splice(i,1); else sel.roles.push(k); markRoles(); });
+
+  function updateCast(){ const ok=sel.method&&sel.timeline; $("#orcCast").disabled=!ok;
+    $("#orcHint").innerHTML= ok ? "the Oracle awaits &middot; one prophecy per browser"
+      : "answer Q1 &amp; Q2 to cast &middot; tribe is optional &mdash; pick any that fit"; }
+
+  /* ---- reveal rendering ---- */
+  function barChart(title,order,counts,youKey,dim,sort){ const n=total(counts), max=Math.max(1,...order.map(([k])=>counts[k]));
+    const seq = sort ? order.slice().sort((a,b)=>counts[b[0]]-counts[a[0]]) : order;   // stable: ties keep canonical order
+    const rows=seq.map(([k,label])=>{ const v=counts[k], p=n?Math.round(v/n*100):0, w=Math.round(v/max*100), you=k===youKey;
+      return `<div class="orc-bar ${you?'you':''} ${dim?'dim':''}">`
+        +`<div class="brow"><span class="bl">${label}${you?' <span class="yq">(you)</span>':''}</span>`
+        +`<span class="bv">${p}%<span class="cnt"> &middot;${v}</span></span></div>`
+        +`<span class="bt"><span class="bf" style="width:${w}%"></span></span></div>`; }).join("");
+    return `<div><div class="orc-cap">${title}</div><div class="orc-bars">${rows}</div></div>`; }
+
+  function renderCharts(){ const v=readVote()||{};
+    if((lens==="role"||lens==="xp") && segFilter==="__cmp"){ renderCompare(); return; }
+    let rows=allRows();
+    if(lens!=="all"&&segFilter) rows=rows.filter(r=>inSeg(r,lens,segFilter));
+    const n=rows.length, small=(lens!=="all"&&segFilter&&n<12);
+    const mC=distrib(rows,METHOD,"method"), tC=distrib(rows,TIME,"timeline"), med=medianTime(rows);
+    $("#orcCharts").innerHTML=`<div class="orc-two">
+      ${barChart("Q1 &middot; first ascending program",METHOD,mC,v.method,small,true)}
+      <div>${barChart("Q2 &middot; when it happens",TIME,tC,v.timeline,small,true)}
+        <div class="orc-median">median guess: <b>${med?LABEL[med]:'&mdash;'}</b></div></div>
+    </div>`;
+    $("#orcN").innerHTML = (lens!=="all"&&segFilter)
+      ? `showing <b>${(lens==="role"?RLABEL:XLABEL)[segFilter]}</b> &middot; n=${n} of ${allRows().length}`
+        +(small?` &middot; <span class="orc-small">small sample &mdash; read with salt</span>`:``)
+      : `n=${n} prophecies &middot; self-reported, one per browser`;
+  }
+
+  function renderCompare(){ const axis=lens==="role"?ROLE:XP, field=lens, v=readVote()||{}, mine=v.roles||[];
+    const cards=axis.map(([k,label])=>{ const rows=rowsFor(field,k), n=rows.length, med=medianTime(rows);
+      const mC=distrib(rows,METHOD,"method"), lead=METHOD.reduce((a,b)=>mC[b[0]]>mC[a[0]]?b:a)[0], lp=n?Math.round(mC[lead]/n*100):0;
+      const you = field==="role" ? mine.includes(k) : (v[field]===k);
+      return `<div class="orc-cmp-c ${you?'you':''}"><div class="nm">${label}${you?' <span class="yb">(you)</span>':''} <span class="n">n=${n}</span></div>`
+        +`<div class="md">median <b>${med?LABEL[med]:'&mdash;'}</b></div>`
+        +`<div class="ld">leans ${LABEL[lead]} ${lp}%</div></div>`; }).join("");
+    $("#orcCharts").innerHTML=`<div class="orc-cap">compare tribes &mdash; median date &amp; favored approach</div><div class="orc-cmp">${cards}</div>`;
+    $("#orcN").innerHTML = field==="role"
+      ? `tribes <b>overlap</b> &mdash; people can be more than one &middot; watch <b>NetHack players</b> against <b>AI enthusiasts</b>`
+      : `each tribe's own prophecy &middot; watch the <b>ascended</b> line up against the <b>never-played</b>`;
+  }
+
+  /* ---- lens controls ---- */
+  function setLens(l){ lens=l; segFilter=(l==="all")?null:"__cmp";
+    $("#orcLens").querySelectorAll("[data-lens]").forEach(b=>b.setAttribute("aria-pressed",b.dataset.lens===l));
+    const chips=$("#orcChips");
+    if(l==="all"){ chips.hidden=true; }
+    else{ const axis=l==="role"?ROLE:XP; chips.hidden=false;
+      chips.innerHTML=`<button type="button" class="bevel" data-seg="__cmp" aria-pressed="true">Compare all</button>`
+        +axis.map(([k,vv])=>`<button type="button" class="bevel" data-seg="${k}" aria-pressed="false">${vv}</button>`).join(""); }
+    renderCharts(); }
+  $("#orcLens").addEventListener("click",e=>{ const b=e.target.closest("[data-lens]"); if(b) setLens(b.dataset.lens); });
+  $("#orcChips").addEventListener("click",e=>{ const b=e.target.closest("[data-seg]"); if(!b) return; segFilter=b.dataset.seg;
+    $("#orcChips").querySelectorAll("[data-seg]").forEach(x=>x.setAttribute("aria-pressed",x.dataset.seg===segFilter));
+    renderCharts(); });
+
+  /* ---- cast / reveal / revote ---- */
+  /* the reveal reads as an oracular passage, not a data echo -- the pick woven into prose */
+  const OMETHOD={ programs:"the first win is a program's, written by a machine that can't play the game",
+    rl:"the first win belongs to a network, trained until it simply knows",
+    llm:"the first win goes to a language model, thinking a move at a time",
+    symbolic:"the first win is hand-built, by humans stubborn enough to keep at it",
+    hybrid:"the first win is a hybrid's &mdash; part learned, part written",
+    never:"no machine ever wins" };
+  const OTIME={ "2027":"before 2027 is out","2030":"by 2030","2035":"by 2035",
+    "2040":"by 2040","after":"no sooner than the 2040s","never":"if it ever comes at all" };
+  function reveal(vote){ $("#orcBallot").hidden=true; $("#orcResults").hidden=false;
+    const m=OMETHOD[vote.method]||("the first win is "+LABEL[vote.method]), t=OTIME[vote.timeline]||LABEL[vote.timeline];
+    $("#orcSpeak").innerHTML=`<b>The Oracle speaks.</b> You have seen it, then: ${m}, <b>${t}</b>. The dungeon has buried surer prophets than you &mdash; read on, and see who shares your vision.`;
+    setLens("all"); }
+  $("#orcCast").addEventListener("click",async ()=>{ if(!sel.method||!sel.timeline) return;
+    const vote={method:sel.method,timeline:sel.timeline,roles:sel.roles.slice(),xp:sel.xp};
+    $("#orcCast").disabled=true;
+    try{ await postVote(vote); writeVote(vote); reveal(vote); }
+    catch(e){ $("#orcHint").textContent="the Oracle is silent — try again"; $("#orcCast").disabled=false; }
+  });
+  $("#orcRevote").addEventListener("click",()=>{ $("#orcResults").hidden=true; $("#orcBallot").hidden=false; });
+
+  /* ---- restore a prior vote (already prophesied in this browser) ---- */
+  (async function(){ const v=readVote(); if(!v||!v.method||!v.timeline) return;   // no prior cast -> ballot, fetch nothing
+    sel={method:v.method,timeline:v.timeline,roles:Array.isArray(v.roles)?v.roles.slice():[],xp:v.xp||null};
+    markSingle($("#orcQmethod"),"method",true); markSingle($("#orcQtimeline"),"timeline",true);
+    markRoles(); markSingle($("#orcXp"),"xp",false);
+    updateCast();
+    try{ await loadPoll(); reveal(v); }
+    catch(e){ $("#orcResults").hidden=true; $("#orcBallot").hidden=false; }   // offline: leave the ballot pre-filled
+  })();
+
+  if(window.__refs) window.__refs();
 })();
 </script>

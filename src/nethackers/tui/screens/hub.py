@@ -1,24 +1,42 @@
 """Hub views for the TUI: BoardsView, MapView, ElitesView -- each a framed,
-titled panel that fetches from the hub on mount/show and renders via the
-existing rich renderers, degrading to a friendly message on a hub outage."""
+titled panel that fetches from the hub and renders via the existing rich
+renderers, degrading to a friendly message on a hub outage.
+
+The fetch runs on a **worker thread** (``@work(thread=True)``), never the UI
+event loop -- a synchronous hub round-trip there froze the terminal for the
+whole request (~0.3s on a fast hub, up to the timeout on a slow one), which is
+what made both startup and tab-switches feel laggy. Each view shows a plain
+``loading…`` line the instant it's shown and swaps in the real table when the
+worker returns. Fetching is also **lazy** -- driven by ``on_show``, not
+``on_mount`` -- so at startup only the visible section talks to the hub (the
+others stay silent until first opened), instead of every section firing a
+blocking request up front before the first frame could paint."""
 
 from __future__ import annotations
 
+from rich.console import RenderableType
 from rich.text import Text
+from textual import work
 from textual.app import ComposeResult
 from textual.containers import VerticalScroll
 from textual.widgets import Static, Tab, Tabs
+from textual.worker import get_current_worker
 
 from nethackers.hubclient.client import HubClient, _short_digest
 from nethackers.hubclient.frontier import champion, champion_scores, overall_mean, universe_scores
 from nethackers.hubclient.render import render_elites, render_frontier_grid
 from nethackers.tui.art import highscore_table
 
+# A slow hub must not leave the panel loading forever: the worker gives up after
+# this many seconds and the view degrades to "could not load".
+_HUB_TIMEOUT = 4.0
+
 
 class _HubView(VerticalScroll):
-    """Base view for hub-sourced content: a ``.panel``-framed scroll that
-    fetches on mount/show, renders via the existing rich renderers, and shows
-    a "could not load" line instead of crashing on a hub outage."""
+    """Base view for hub-sourced content: a ``.panel``-framed scroll that, when
+    shown, fetches on a worker thread (showing ``loading…`` meanwhile) and
+    renders via the existing rich renderers, degrading to a "could not load"
+    line instead of crashing on a hub outage -- without ever blocking the UI."""
 
     PANEL_TITLE = ""
     DEFAULT_CSS = """
@@ -30,6 +48,14 @@ class _HubView(VerticalScroll):
         self._hub = hub
         self._login = login
         self._body: Static | None = None
+        self._shown = False  # gates subclass refreshes (e.g. MapView subtabs) to when visible
+        # Session-scoped stale-while-revalidate cache: the last content we
+        # successfully rendered, so re-showing this view paints instantly (no
+        # "loading…" flicker) while a fresh fetch quietly updates it in place.
+        # Keyed by _cache_key() so a view with sub-modes (MapView's regimes)
+        # caches each independently. Lives on the instance, which the
+        # ContentSwitcher keeps mounted for the whole session.
+        self._cache: dict[str, RenderableType] = {}
         self.add_class("panel")
 
     def compose(self) -> ComposeResult:
@@ -38,17 +64,45 @@ class _HubView(VerticalScroll):
 
     def on_mount(self) -> None:
         self.border_title = self.PANEL_TITLE
-        self._refresh()
 
     def on_show(self) -> None:
-        self._refresh()
+        self._shown = True
+        self.refresh_hub()
 
-    def _refresh(self) -> None:
-        try:
-            renderable = self._render_hub(HubClient(self._hub))
-        except Exception as exc:
-            renderable = f"[dim]could not load — {exc}[/dim]"
+    def _cache_key(self) -> str:
+        """Distinguishes what ``_render_hub`` produces so each variant is cached
+        separately. A single view has one; MapView overrides it per regime."""
+        return ""
+
+    def refresh_hub(self) -> None:
+        """Paint the cached content if we have it (else a loading line), then
+        (re)fetch on a worker thread to refresh it in place."""
+        key = self._cache_key()
+        cached = self._cache.get(key)
         if self._body is not None:
+            self._body.update(cached if cached is not None else "[dim]loading…[/dim]")
+        self._fetch(key)
+
+    @work(thread=True, exclusive=True, exit_on_error=False)
+    def _fetch(self, key: str) -> None:
+        worker = get_current_worker()
+        try:
+            renderable = self._render_hub(HubClient(self._hub, timeout=_HUB_TIMEOUT))
+            err: Exception | None = None
+        except Exception as exc:  # a hub outage/timeout -> friendly line, never a crash
+            renderable, err = None, exc
+        if not worker.is_cancelled:
+            self.app.call_from_thread(self._apply, renderable, err, key)
+
+    def _apply(self, renderable, err: Exception | None, key: str) -> None:
+        if err is not None:
+            # Don't clobber good cached content on a background refresh failure;
+            # only surface the outage when this variant has nothing cached yet.
+            if key not in self._cache and self._body is not None and self._cache_key() == key:
+                self._body.update(f"[dim]could not load — {err}[/dim]")
+            return
+        self._cache[key] = renderable
+        if self._body is not None and self._cache_key() == key:  # still the shown variant
             self._body.update(renderable)
 
     def _render_hub(self, client: HubClient):
@@ -84,6 +138,9 @@ class MapView(_HubView):
         super().__init__(hub, login, **kw)
         self._regime = "universe"
 
+    def _cache_key(self) -> str:
+        return self._regime  # Universe and Program are cached independently
+
     def compose(self) -> ComposeResult:
         yield Tabs(
             Tab("◆ Universe", id="ft-universe"),
@@ -109,7 +166,12 @@ class MapView(_HubView):
         if event.tabs.id != "ftabs" or not event.tab.id:
             return
         self._regime = event.tab.id.removeprefix("ft-")
-        self._refresh()
+        # ftabs auto-activates its first tab at mount -- before this view is ever
+        # shown, and while it's still hidden in the ContentSwitcher. Only fetch
+        # (and animate) once we're actually visible; the first on_show picks up
+        # whatever regime is set by then.
+        if self._shown:
+            self.refresh_hub()
 
     def _render_hub(self, client: HubClient):
         if self._regime == "program":

@@ -237,3 +237,30 @@ def test_init_schema_provisions_but_does_not_populate_derived_view_tables(tmp_pa
     for table in ("attainment", "attainment_holders", "elite_pool"):
         count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
         assert count == 0
+
+
+def test_poll_upsert_is_one_row_per_voter_and_replaces(tmp_path):
+    store = Store(tmp_path / "poll.db")
+    store.init_schema()
+    store.upsert_poll_vote("v1", method="programs", timeline="2035",
+                           roles=["mlr", "player"], xp="ascended")
+    store.upsert_poll_vote("v1", method="hybrid", timeline="2040",
+                           roles=["player"], xp="serious")  # same voter -> replace
+    votes = store.iter_poll_votes()
+    assert votes == [{"method": "hybrid", "timeline": "2040",
+                      "roles": ["player"], "xp": "serious"}]  # one row, latest values
+
+
+def test_poll_iter_is_anonymized_and_roundtrips_roles(tmp_path):
+    store = Store(tmp_path / "poll.db")
+    store.init_schema()
+    store.upsert_poll_vote("a", method="llm", timeline="2030", roles=[], xp=None)
+    store.upsert_poll_vote("b", method="rl", timeline="never",
+                           roles=["eng", "enth"], xp="never")
+    votes = store.iter_poll_votes()
+    assert len(votes) == 2
+    assert all(set(v) == {"method", "timeline", "roles", "xp"} for v in votes)  # no voter_id/ts
+    b = next(v for v in votes if v["method"] == "rl")
+    assert b["roles"] == ["eng", "enth"] and b["xp"] == "never"
+    a = next(v for v in votes if v["method"] == "llm")
+    assert a["roles"] == [] and a["xp"] is None

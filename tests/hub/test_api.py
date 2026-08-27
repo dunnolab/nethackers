@@ -98,6 +98,22 @@ def test_root_serves_the_page(tmp_path: Any) -> None:
     assert "text/html" in resp.headers["content-type"]
     assert "NetHackers" in resp.text
     assert 'id="scBody"' in resp.text
+    # The marquee count and the freshness stamp are live (JS from /stats); the
+    # old hardcoded literals must never creep back into the served page. (The
+    # full behavior lives in the manual jsdom harness tests/hub/web/wire.test.mjs.)
+    assert "3 programs registered" not in resp.text
+    assert 'id="updated"' in resp.text
+
+
+def test_root_injects_the_real_package_version(tmp_path: Any) -> None:
+    # The masthead version is stamped from the installed package at serve time,
+    # so it never drifts from pyproject -- and no {{version}} token leaks through.
+    from importlib.metadata import version
+
+    client, _store = _app(tmp_path)
+    body = client.get("/").text
+    assert f"v{version('nethackers')}" in body
+    assert "{{version}}" not in body
 
 
 def test_stats_reads_empty(tmp_path: Any) -> None:
@@ -111,6 +127,7 @@ def test_stats_reads_empty(tmp_path: Any) -> None:
         "ascensions": 0,
         "identities_touched": 0,
         "best": 0.0,
+        "last_registered_at": None,
     }
 
 
@@ -329,6 +346,15 @@ def test_root_serves_the_dungeon_viz(tmp_path: Any) -> None:
     assert "/dictionary.mp3" in body
     # the dev-only window hook must be gone from the shipped page
     assert "__dictviz" not in body and "__dictSynth" not in body
+    # regression: the hero "@" must stay UNIQUE on the canvas. The descent-glyph
+    # ladder (DESC=[...]) must NOT contain "@" -- otherwise the wall renders many
+    # stray @s that read as the hero duplicating (reported while scrolling).
+    import re
+
+    desc = re.search(r"const DESC=\[(.*?)\];", body, re.S)
+    assert desc is not None, "DESC descent ladder not found in page"
+    assert '"@"' not in desc.group(1), "hero glyph @ leaked into the DESC descent ladder"
+    assert 'strokeText("@"' in body  # ...while the one true hero @ is still drawn
 
 
 # --- leaderboard rework: aggregate boards + /hackers (Task 6) ---------------
@@ -347,7 +373,7 @@ def _seed_atoms(store: Store, atoms: list[Any], specs: list[Any]) -> None:
 
 def _mk_atom(**kw: Any) -> Any:
     from nethackers.contracts.models import Atom
-    base = dict(solution_digest="sha256:s",
+    base: dict[str, Any] = dict(solution_digest="sha256:s",
                 owner="dun", tier="self-reported", identity="val-dwa-law-fem", seed=0,
                 progression=0.5, milestone=None, ascended=False, status="completed",
                 turns=1, steps=1, evaluator_image="img")
