@@ -153,15 +153,19 @@ def test_evolve_passes_seed_straight_through_and_records_parent_seed(tmp_path, m
 
 def test_evolve_rejects_removed_flags(tmp_path):
     # --islands / --reset-period were removed with the island search (MAP-Elites
-    # has no islands); --token-budget / --timeout were removed earlier. argparse
-    # must reject every one of them.
+    # has no islands); --select-k / --select-temp were removed with select_parent
+    # (MAP-Elites picks a random cell, not a SELECT sample); --validation-n was
+    # removed with the validation gate (MAP-Elites has no validation eval);
+    # --token-budget / --timeout were removed earlier. argparse must reject
+    # every one of them.
     seed = tmp_path / "seed"
     seed.mkdir()
     (seed / "nethackers.solution.json").write_text(
         '{"root":".","entrypoint":"bot.py","parents":[],"influences":[]}'
     )
     (seed / "bot.py").write_text("x=1\n")
-    for removed in ("--token-budget", "--timeout", "--islands", "--reset-period"):
+    for removed in ("--token-budget", "--timeout", "--islands", "--reset-period",
+                    "--select-k", "--select-temp", "--validation-n"):
         with pytest.raises(SystemExit):   # argparse rejects the deleted flag
             cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed), "--from-seed",
                       removed, "1", "--workdir", str(tmp_path / "w")])

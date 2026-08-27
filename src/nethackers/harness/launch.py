@@ -58,14 +58,6 @@ class EvolveParams:
     seed: str  # cold-start seed root (the MAP-Elites loop seeds cells from the hub itself)
     operator: str = "claude"
     iterations: int = 1
-    # islands/reset_period/validation_n/select_k/select_temp are retained as
-    # accepted-but-ignored fields so the existing CLI flags + in-app form keep
-    # constructing EvolveParams unchanged; the MAP-Elites loop no longer uses
-    # any of them (island search, the validation gate, and the pre-loop SELECT
-    # are all gone). The TUI form cleanup that drops the fields is a later task.
-    validation_n: int = 15
-    islands: int = 1
-    reset_period: int | None = None
     max_parallel_evals: int = 8
     image: str = "nethackers/arena:dev"
     hub: str = "http://localhost:8000"
@@ -74,8 +66,6 @@ class EvolveParams:
     workdir: str = field(default_factory=_default_workdir)
     run_name: str | None = None
     from_seed: bool = False  # skip SELECT; cold-start from `seed` directly
-    select_k: int = 1
-    select_temp: float = 1.0
     model: str | None = None   # pin the operator's model (None = harness default)
     effort: str | None = None  # reasoning effort level (None = harness default)
     mutator_image: str = "nethackers/mutator:latest"  # image the mutator always runs in

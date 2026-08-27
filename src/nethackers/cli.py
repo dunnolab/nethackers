@@ -290,14 +290,6 @@ def _build_parser() -> argparse.ArgumentParser:
     evolve.add_argument("objective")
     evolve.add_argument("--seed", required=True, help="seed solution root (e.g. roots/autoascend)")
     evolve.add_argument(
-        "--select-k", type=int, default=1,
-        help="Sample among the top-k trusted elites (1 = exploit/argmax, default: %(default)s).",
-    )
-    evolve.add_argument(
-        "--select-temp", type=float, default=1.0,
-        help="Softmax temperature for --select-k > 1 (default: %(default)s).",
-    )
-    evolve.add_argument(
         "--from-seed", action="store_true",
         help="Ignore the hub; cold-start every cell from --seed.",
     )
@@ -322,7 +314,6 @@ def _build_parser() -> argparse.ArgumentParser:
         "--iterations", type=int, default=1,
         help="Improvement rounds to run: each picks a random cell and mutates "
              "its elite (default: %(default)s).")
-    evolve.add_argument("--validation-n", type=int, default=15)
     evolve.add_argument(
         "--max-parallel-evals", type=int, default=8,
         help="Cap on episodes the arena runs concurrently per eval (default: %(default)s).",
@@ -547,12 +538,12 @@ def _run(argv: list[str] | None) -> int:
         # there's no pre-loop SELECT here anymore.
         params = EvolveParams(
             objective=args.objective, seed=str(args.seed), operator=args.operator,
-            iterations=args.iterations, validation_n=args.validation_n,
+            iterations=args.iterations,
             max_parallel_evals=args.max_parallel_evals,
             image=args.image, hub=args.hub, workdir=args.workdir, run_name=args.run_name,
             token=args.token or (_creds.access_token if _creds else "dev-token"),
             owner=args.owner or (_creds.login if _creds else "dev"),
-            from_seed=args.from_seed, select_k=args.select_k, select_temp=args.select_temp,
+            from_seed=args.from_seed,
             model=args.model, effort=args.effort, mutator_image=args.mutator_image,
         )
 

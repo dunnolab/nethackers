@@ -108,10 +108,10 @@ def test_prepare_evolve_iterations_pass_through_unchanged(tmp_path, monkeypatch)
     monkeypatch.setattr(launch, "run_loop", lambda **kw: captured.update(kw) or [])
     monkeypatch.setattr(launch, "_now", lambda: "2026-08-25T00:00:00+00:00")
     p = EvolveParams(objective="wiz-elf-cha-mal", seed="roots/autoascend",
-                     iterations=5, islands=3, from_seed=True,
+                     iterations=5, from_seed=True,
                      workdir=str(tmp_path), hub="http://h", token="t", owner="o")
     plan = prepare_evolve(p, git_sha="x")
-    assert plan.cfg.iterations == 5   # not 15 -- islands (still an accepted field) is ignored
+    assert plan.cfg.iterations == 5   # not 15 -- no ×islands multiplication
     plan.run({"on_state": lambda s: None,
               "on_episode": lambda label, ep: None, "on_log": lambda tag, line: None})
     assert captured["iterations"] == 5 and "islands" not in captured
