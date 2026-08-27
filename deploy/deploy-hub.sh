@@ -44,8 +44,77 @@ validate_ref() {
   esac
 }
 
+compose() { docker compose --env-file "$HUB_ENV_FILE" -f "$COMPOSE_FILE" "$@"; }
+
+current_ref() { awk -F= '/^NETHACKERS_HUB_IMAGE=/{print $2}' "$HUB_ENV_FILE"; }
+
+pin_ref() {  # rewrite NETHACKERS_HUB_IMAGE in place. In-place write (cat >), NOT mv: needs write on
+             # the FILE only, so the non-root nethacker deploy user can re-pin a hub.env that lives
+             # in a root-owned dir (it owns the file — see Contracts / Task 9).
+  local ref="$1" tmp; tmp="$(mktemp)"
+  awk -v r="$ref" '/^NETHACKERS_HUB_IMAGE=/{print "NETHACKERS_HUB_IMAGE=" r; next} {print}' \
+    "$HUB_ENV_FILE" > "$tmp"
+  grep -q '^NETHACKERS_HUB_IMAGE=' "$tmp" || printf 'NETHACKERS_HUB_IMAGE=%s\n' "$ref" >> "$tmp"
+  cat "$tmp" > "$HUB_ENV_FILE"; rm -f "$tmp"
+}
+
+boot_check() {  # start the pulled image on a throwaway port + scratch DB, curl /healthz, tear down
+  local ref="$1" name="hub-bootcheck-$$" port=18099
+  docker run -d --rm --name "$name" -e NETHACKERS_DB=/tmp/scratch.sqlite3 \
+    -e NETHACKERS_CLIENT_ID=bootcheck -p "127.0.0.1:${port}:8000" "$ref" >/dev/null \
+    || return 1
+  local ok=1 i=0
+  while [ "$i" -lt 15 ]; do
+    if curl -fsS "http://127.0.0.1:${port}/healthz" >/dev/null 2>&1; then ok=0; break; fi
+    i=$((i+1)); sleep "$HEALTH_INTERVAL"
+  done
+  docker rm -f "$name" >/dev/null 2>&1 || true
+  return "$ok"
+}
+
+wait_healthy() {  # poll the running hub container's health until healthy (portable: no xargs -r)
+  local i=0 cid status
+  while [ "$i" -lt "$HEALTH_RETRIES" ]; do
+    cid="$(compose ps -q hub 2>/dev/null || true)"
+    if [ -n "$cid" ]; then
+      status="$(docker inspect -f '{{.State.Health.Status}}' "$cid" 2>/dev/null || true)"
+      [ "$status" = "healthy" ] && return 0
+    fi
+    i=$((i+1)); sleep "$HEALTH_INTERVAL"
+  done
+  return 1
+}
+
+record_history() {  # ts | tag-or-ref | previous-ref | actor
+  printf '%s\t%s\t%s\t%s\n' "$(date -u +%FT%TZ)" "$1" "$2" "${GHCR_USER:-manual}" >> "$DEPLOY_HISTORY"
+}
+
+cmd_deploy() {
+  local ref="$1" token prev
+  token="$(cat)"                      # GHCR token on stdin (may be empty)
+  prev="$(current_ref)"
+  log "deploying $ref (was: ${prev:-none})"
+  if [ "$DRY_RUN" -eq 1 ]; then
+    log "[dry-run] would: login/pull, boot-check, pin $ref, up --no-deps hub, health+URL check, rollback-on-fail"
+    return 0
+  fi
+  if [ -n "$token" ]; then
+    printf '%s' "$token" | docker login ghcr.io -u "$GHCR_USER" --password-stdin >/dev/null
+    trap 'docker logout ghcr.io >/dev/null 2>&1 || true' EXIT
+  fi
+  docker pull "$ref" >/dev/null
+  log "boot-check…"
+  boot_check "$ref" || die "boot-check failed — image will not start; not flipping"
+  record_history "$ref" "${prev:-none}"
+  pin_ref "$ref"
+  compose up -d --no-deps hub          # --no-deps: never touch caddy (dodges depends_on hang)
+  # (health + URL verification and auto-rollback are added in Task 3)
+  wait_healthy || die "new hub did not become healthy"
+  curl -fsS "$PUBLIC_HEALTH_URL" >/dev/null || die "public URL unhealthy after flip"
+  log "deployed $ref"
+}
+
 # Placeholders filled in later tasks:
-cmd_deploy()   { die "deploy not implemented yet"; }
 cmd_rollback() { die "rollback not implemented yet"; }
 cmd_status()   { echo "status: not implemented yet"; }
 
