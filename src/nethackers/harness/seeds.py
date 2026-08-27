@@ -42,6 +42,8 @@ def validation_spec(
         batch=batch,
         max_steps=dev.max_steps if max_steps is None else max_steps,
         no_progress_timeout=dev.no_progress_timeout,
+        # Inherits the LOCAL 120s hang-guard (hub/objectives.py). The deferred
+        # held-out verifier (M2b) must set its OWN action_timeout, not this.
         action_timeout_seconds=dev.action_timeout_seconds,
         aggregation=dev.aggregation,
     )

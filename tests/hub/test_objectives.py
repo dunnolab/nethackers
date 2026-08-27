@@ -66,7 +66,9 @@ def test_every_objectivespec_uses_the_arena_standard_knobs():
     for spec in CATALOG.values():
         assert spec.max_steps == DEFAULT_MAX_STEPS
         assert spec.no_progress_timeout == DEFAULT_NO_PROGRESS_TIMEOUT
-        assert spec.action_timeout_seconds == 5.0
+        # 120s = the local arena's per-action hang-guard (was 5.0; at 5.0
+        # contention cut normal AutoAscend actions and corrupted the baseline).
+        assert spec.action_timeout_seconds == 120.0
 
 
 def test_batches_are_non_empty_int_str_pairs_except_all():

@@ -77,7 +77,15 @@ class ArenaEnvAdapter:
 
 
 class AutoAscendDriver:
-    def __init__(self, action_timeout: float = 4.5) -> None:
+    def __init__(self, action_timeout: float = 118.0) -> None:
+        # 118s: sit just under the arena's 120s sandbox action timeout so a slow
+        # AutoAscend thread gets an ESC fallback (episode continues) a hair
+        # before the sandbox would hard-kill the bot (episode zeroed). The ~2s
+        # margin covers the ESC action's pipe-send back to the parent. Was 4.5
+        # (under the old 5.0 sandbox); at 4.5 a normal first-action cold numba
+        # JIT compile was ESC'd and derailed AutoAscend, corrupting the baseline.
+        # This is independent of the arena's --action-timeout (bot.py builds this
+        # driver argless), so it must be kept just under the sandbox knob by hand.
         self._action_timeout = action_timeout
         self._env: ArenaEnvAdapter | None = None
         self._agent: autoascend_agent.Agent | None = None
