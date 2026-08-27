@@ -1,5 +1,16 @@
 # NetHackers -- dev convenience targets. Requires: uv, docker, curl.
-.PHONY: install uninstall nle-base arena mutator up down wait-hub hub hub-down hub-reset test check smoke
+.PHONY: install uninstall nle-base arena mutator stack up down wait-hub hub hub-down hub-reset test check smoke
+
+# Source this worktree's allocated stage vars (COMPOSE_PROJECT_NAME,
+# NETHACKERS_HUB_PORT, ...) into the current recipe shell, if .env.stack
+# exists; no-op otherwise (compose then falls back to its own defaults --
+# dirname project, :8000). Guarded with `[ -f ]` rather than the more obvious
+# `. ./.env.stack 2>/dev/null || true`: on a missing file, `.` is a POSIX
+# "special builtin" whose failure aborts a non-interactive shell outright --
+# `/bin/sh` on macOS and `dash` on Debian/Ubuntu both do this -- so `|| true`
+# never even runs. Must stay on the SAME shell line (via `\`) as the command
+# that needs the vars; each recipe line is its own subshell.
+SOURCE_STACK = set -a; [ -f ./.env.stack ] && . ./.env.stack; set +a
 
 # Shared base image tag: compiled NLE + deps, NO nethackers source.
 NLE_BASE_IMAGE ?= nethackers/nle-base:dev
@@ -19,12 +30,16 @@ install:
 uninstall:
 	uv tool uninstall nethackers
 
-# Local hub stack: http://localhost:8000, seeded with the fixture dataset.
+# Local hub stack: http://localhost:8000 (or this worktree's allocated port --
+# see `make stack`), seeded with the fixture dataset.
 hub:
+	$(SOURCE_STACK); \
 	docker compose up -d --build
 hub-down:
+	$(SOURCE_STACK); \
 	docker compose down
 hub-reset:
+	$(SOURCE_STACK); \
 	docker compose down -v && docker compose up -d --build
 
 # Build the shared base (compiles NLE from source -- slow the first time,
@@ -49,23 +64,30 @@ arena: nle-base
 mutator: nle-base
 	docker build -f Dockerfile.mutator --build-arg NLE_BASE=$(NLE_BASE_IMAGE) -t $(MUTATOR_IMAGE) .
 
-# ONE command to bring the whole local stack up: (re)build the arena image,
-# (re)build + start the hub, then wait until the hub answers. Run this before
-# `nethackers evolve`.
-up: arena hub wait-hub
-	@echo "✓ stack up  ·  hub http://localhost:8000  ·  arena image $(ARENA_IMAGE)"
+# Allocate/refresh this worktree's .env.stack (deterministic host port +
+# compose project name, so parallel worktrees never collide); gitignored,
+# reused verbatim after the first run. See scripts/stack.py.
+stack: ; @python scripts/stack.py >/dev/null
+
+# ONE command to bring the whole local stack up: allocate this worktree's
+# stage, (re)build the arena image, (re)build + start the hub, then wait
+# until the hub answers. Run this before `nethackers evolve`.
+up: stack arena hub wait-hub
+	@$(SOURCE_STACK); \
+	echo "✓ stack up  ·  hub $${NETHACKERS_HUB:-http://localhost:8000}  ·  arena image $(ARENA_IMAGE)"
 
 # Tear the whole stack down (stops the hub container; arena image is kept).
 down: hub-down
 
 # Poll the hub until it serves the objective catalog (uvicorn needs a beat).
 wait-hub:
-	@printf 'waiting for hub'; \
+	@$(SOURCE_STACK); \
+	printf 'waiting for hub'; \
 	for _ in $$(seq 1 60); do \
-		if curl -fsS http://localhost:8000/objectives >/dev/null 2>&1; then echo ' · ready'; exit 0; fi; \
+		if curl -fsS "http://localhost:$${NETHACKERS_HUB_PORT:-8000}/objectives" >/dev/null 2>&1; then echo ' · ready'; exit 0; fi; \
 		printf '.'; sleep 1; \
 	done; \
-	echo; echo 'hub not ready on :8000' >&2; exit 1
+	echo; echo "hub not ready on :$${NETHACKERS_HUB_PORT:-8000}" >&2; exit 1
 
 # Fast suite (no NLE/Docker/live-Claude), types+lint, and the isolated
 # docker-compose smoke.

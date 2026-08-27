@@ -22,6 +22,10 @@ htmlcov/
 *.env
 !*.env.example
 
+# Per-worktree local-stack allocation (scripts/stack.py) — generated, host-specific
+.env.stack
+.nethackers/
+
 # Implementation plans are working docs, not tracked artifacts
 docs/superpowers/plans/
 
