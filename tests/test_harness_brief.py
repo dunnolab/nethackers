@@ -116,3 +116,14 @@ def test_both_branches_frame_nethack_and_point_to_refs():
         assert "/refs/" in b                    # points at the provisioned folders
         assert "/workspace" in b                # names the editable base
         assert "hypothesis" in b.lower()        # still asks for the focused-change comment
+
+
+def test_brief_directs_synchronous_foreground_eval():
+    # The mutator sandbox is single-shot; a backgrounded eval's result is lost
+    # when the agent's turn ends (the claude-harness-in-mutator bug). The brief
+    # must steer the agent to a foreground, waited-on eval instead.
+    b = build_brief("ascend", "val-wiz", _evidence(mean=1.0, episodes=1, tally={}))
+    lo = b.lower()
+    assert "foreground" in lo
+    assert "run_in_background" in b        # names the thing NOT to do
+    assert "single-shot" in lo

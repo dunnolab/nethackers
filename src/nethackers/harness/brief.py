@@ -25,7 +25,12 @@ NETHACK_PREAMBLE = (
     "--batch '[[0,\"<build>\"], …]' --evaluation-id local --out /tmp/eval.json` "
     "— pass `--evaluation-id local` (the judge's seed namespace; any other id plays "
     "different, meaningless games) and read the per-episode results from the `/tmp/eval.json` "
-    "`--out` file. Put your edits in the strategy code (the `autoascend/` package), not the "
+    "`--out` file. **Run that eval as ONE foreground command and wait for it to finish** — give "
+    "Bash a long timeout (up to 600000 ms) and evaluate a SMALL sample of seeds so it completes "
+    "synchronously in that window. This sandbox is single-shot: do NOT background the eval "
+    "(`run_in_background`), `sleep`-wait for it, or rely on task notifications — a backgrounded "
+    "eval's result is lost when your turn ends, leaving you to decide the change blind. "
+    "Put your edits in the strategy code (the `autoascend/` package), not the "
     "`arena_adapter.py` glue."
 )
 
