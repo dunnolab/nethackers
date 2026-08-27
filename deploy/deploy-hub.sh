@@ -107,8 +107,9 @@ cmd_deploy() {
   boot_check "$ref" || die "boot-check failed — image will not start; not flipping"
   record_history "$ref" "${prev:-none}"
   pin_ref "$ref"
-  compose up -d --no-deps hub          # --no-deps: never touch caddy (dodges depends_on hang)
-  if ! { wait_healthy && curl -fsS "$PUBLIC_HEALTH_URL" >/dev/null; }; then
+  # --no-deps: never touch caddy (dodges depends_on hang). The flip is INSIDE the
+  # guard so a failed `up` triggers rollback too, not a set -e abort.
+  if ! { compose up -d --no-deps hub && wait_healthy && curl -fsS "$PUBLIC_HEALTH_URL" >/dev/null; }; then
     log "post-flip verification FAILED — rolling back to ${prev:-none}"
     if [ -n "${prev:-}" ]; then
       pin_ref "$prev"; compose up -d --no-deps hub || true

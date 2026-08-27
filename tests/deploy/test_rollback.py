@@ -15,6 +15,11 @@ def test_autorollback_when_new_container_unhealthy(env):
     assert r.returncode != 0
     assert OLD in env.hub_env.read_text()
 
+def test_autorollback_when_flip_command_fails(env):
+    r = env.run(["deploy", GOOD, "--yes"], stdin="tok", rc_env={"RC_UP": 1})
+    assert r.returncode != 0
+    assert OLD in env.hub_env.read_text()   # flip failed -> rolled back to previous digest
+
 def test_rollback_subcommand_repins_previous(env):
     # seed a history line: deployed GOOD, previous was OLD
     env.history.write_text(f"2026-08-27T00:00:00Z\t{GOOD}\t{OLD}\tci\n")
