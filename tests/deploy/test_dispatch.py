@@ -15,11 +15,12 @@ def test_deploy_rejects_non_digest_ref(env):
     assert r.returncode != 0
     assert "digest" in (r.stderr + r.stdout).lower()
 
-def test_deploy_rejects_injection_via_ssh_original_command(env):
+def test_deploy_rejects_injection_via_ssh_original_command(env, tmp_path):
     # forced-command: attacker controls SSH_ORIGINAL_COMMAND. Must be validated, never eval'd.
-    r = env.run([], ssh_original="deploy $(touch /tmp/pwned)")
+    canary = tmp_path / "pwned"
+    r = env.run([], ssh_original=f"deploy $(touch {canary})")
     assert r.returncode != 0
-    assert "$(touch" not in env.calls()  # never executed
+    assert not canary.exists()   # the payload never executed
 
 def test_ssh_original_command_parses_good_ref(env):
     r = env.run([], stdin="", ssh_original=f"status")
