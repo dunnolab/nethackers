@@ -23,7 +23,7 @@ def test_deploy_rejects_injection_via_ssh_original_command(env, tmp_path):
     assert not canary.exists()   # the payload never executed
 
 def test_ssh_original_command_parses_good_ref(env):
-    r = env.run([], stdin="", ssh_original=f"status")
+    r = env.run([], stdin="", ssh_original="status")
     assert r.returncode == 0  # status runs; proves SSH_ORIGINAL_COMMAND dispatch works
 
 def test_deploy_rejects_uppercase_hex_digest(env):

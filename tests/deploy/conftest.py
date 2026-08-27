@@ -1,5 +1,9 @@
-import os, subprocess, stat, textwrap
+import os
+import stat
+import subprocess
+import textwrap
 from pathlib import Path
+
 import pytest
 
 REPO = Path(__file__).resolve().parents[2]
@@ -37,11 +41,16 @@ def env(tmp_path):
           *)                       exit "${{RC_CURL_PUBLIC:-0}}" ;;
         esac
     """))
-    state = tmp_path / "state"; state.mkdir()
+    state = tmp_path / "state"
+    state.mkdir()
     hub_env = state / "hub.env"
-    hub_env.write_text("NETHACKERS_CLIENT_ID=pub\nNETHACKERS_HUB_IMAGE=ghcr.io/dunnolab/nethackers-hub@sha256:" + "a"*64 + "\n")
+    hub_env.write_text(
+        "NETHACKERS_CLIENT_ID=pub\n"
+        "NETHACKERS_HUB_IMAGE=ghcr.io/dunnolab/nethackers-hub@sha256:" + "a" * 64 + "\n"
+    )
     history = state / "history.log"
-    compose = state / "compose.yaml"; compose.write_text("services: {}\n")
+    compose = state / "compose.yaml"
+    compose.write_text("services: {}\n")
 
     def run(args, *, stdin="", rc_env=None, ssh_original=None):
         e = dict(os.environ)
@@ -58,6 +67,13 @@ def env(tmp_path):
         return subprocess.run(["bash", str(SCRIPT), *args], input=stdin,
                               capture_output=True, text=True, env=e)
 
-    return type("Env", (), {"run": staticmethod(run), "hub_env": hub_env,
-                            "history": history, "log": log,
-                            "calls": staticmethod(lambda: log.read_text() if log.exists() else "")})()
+    def calls():
+        return log.read_text() if log.exists() else ""
+
+    return type("Env", (), {
+        "run": staticmethod(run),
+        "hub_env": hub_env,
+        "history": history,
+        "log": log,
+        "calls": staticmethod(calls),
+    })()
