@@ -3,6 +3,7 @@
 # forced-command SSH or by a human/agent. See deploy/README.md.
 # Bash 3.2+; never eval untrusted input.
 set -euo pipefail
+export LC_ALL=C  # byte-wise (case-sensitive) glob/sort/collation regardless of caller's locale
 
 IMAGE_REPO="ghcr.io/dunnolab/nethackers-hub"
 HUB_ENV_FILE="${HUB_ENV_FILE:-/etc/nethackers/hub.env}"
