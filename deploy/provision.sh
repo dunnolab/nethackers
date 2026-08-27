@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 # Provision the NetHackers hub VM. Run ONCE, as root, passing the deploy public key:
 #   sudo ./provision.sh "ssh-ed25519 AAAA... deploy@nethackers"
-# Idempotent (safe to re-run). Installs Docker Engine + Compose v2, UFW, and
-# unattended-upgrades; creates the `nethacker` deploy user; adds 2 GiB swap if the
-# host has none; disables SSH password auth; lays out /srv/nethackers/{data,backups}.
+# Idempotent (safe to re-run). Installs Docker Engine + Compose v2, UFW,
+# unattended-upgrades, and Tailscale; creates the `nethacker` deploy user; adds
+# 2 GiB swap if the host has none; disables SSH password auth; lays out
+# /srv/nethackers/{data,backups}. UFW opens 80/443 to the world; SSH only over
+# the tailnet.
 set -euo pipefail
 
 if [[ ${EUID} -ne 0 ]]; then
@@ -23,6 +25,12 @@ apt-get install --yes ca-certificates curl docker.io docker-compose-v2 ufw unatt
 systemctl enable --now docker
 systemctl enable --now unattended-upgrades
 
+# Tailscale (private overlay; enrollment key via env, used once).
+curl -fsSL https://tailscale.com/install.sh | sh
+if [[ -n ${TS_AUTHKEY:-} ]]; then
+    tailscale up --ssh=false --authkey "${TS_AUTHKEY}" --hostname nethackers-hub
+fi
+
 # Deploy user (idempotent): docker group + key-only SSH.
 id nethacker >/dev/null 2>&1 || useradd --create-home --shell /bin/bash nethacker
 usermod --append --groups docker nethacker
@@ -39,6 +47,29 @@ chmod 0600 /home/nethacker/.ssh/authorized_keys
 install -d -m 0750 -o nethacker -g nethacker /srv/nethackers
 install -d -m 0750 -o root -g nethacker /srv/nethackers/data /srv/nethackers/backups
 install -d -m 0750 -o root -g nethacker /etc/nethackers
+
+# CI deploy public key (forced-command). Passed as $2.
+ci_deploy_key=${2:-}
+if [[ -n ${ci_deploy_key} && ! ${ci_deploy_key} =~ ^ssh-ed25519\ [A-Za-z0-9+/=]+ ]]; then
+    printf 'Second arg, if given, must be an ssh-ed25519 public key.\n' >&2
+    exit 1
+fi
+
+# Install the deploy script (repo copy sits next to this script during provisioning).
+install -m 0755 "$(dirname "$0")/deploy-hub.sh" /usr/local/bin/deploy-hub.sh
+install -d -m 0750 -o root -g nethacker /srv/nethackers
+touch /srv/nethackers/deploy-history.log
+chown root:nethacker /srv/nethackers/deploy-history.log
+chmod 0664 /srv/nethackers/deploy-history.log
+
+if [[ -n ${ci_deploy_key} ]]; then
+    authk=/home/nethacker/.ssh/authorized_keys
+    line="restrict,command=\"/usr/local/bin/deploy-hub.sh\" ${ci_deploy_key}"
+    touch "${authk}"; chown nethacker:nethacker "${authk}"; chmod 0600 "${authk}"
+    key_body=${ci_deploy_key#* }      # strip the "ssh-ed25519 " type prefix
+    key_body=${key_body%% *}          # strip any trailing " comment"
+    grep -qF "${key_body}" "${authk}" || printf '%s\n' "${line}" >> "${authk}"
+fi
 
 # 2 GiB swap only if the host has none.
 if ! swapon --show=NAME --noheadings | grep --quiet .; then
@@ -61,10 +92,10 @@ chmod 0644 "${hardening}"
 sshd -t
 systemctl reload ssh
 
-# Firewall: allow only SSH + HTTP(S) (incl. HTTP/3 over UDP 443).
+# Firewall: HTTP(S) (incl. HTTP/3 over UDP 443) public; SSH only over the tailnet.
 ufw default deny incoming
 ufw default allow outgoing
-ufw allow OpenSSH
+ufw allow in on tailscale0 to any port 22 proto tcp comment 'SSH over tailnet only'
 ufw allow 80/tcp comment 'NetHackers HTTP -> HTTPS redirect'
 ufw allow 443/tcp comment 'NetHackers HTTPS'
 ufw allow 443/udp comment 'NetHackers HTTP/3'

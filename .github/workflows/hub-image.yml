@@ -2,9 +2,15 @@ name: Hub image
 
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
   workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-deploy
+  cancel-in-progress: false
 
 jobs:
   build-push:
@@ -13,34 +19,26 @@ jobs:
     permissions:
       contents: read
       packages: write
+    outputs:
+      digest: ${{ steps.build.outputs.digest }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Log in to GHCR
-        uses: docker/login-action@v3
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683            # v4.2.2
+      - uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349  # v3.7.1
+      - uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567         # v3.3.0
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Derive image tags and labels
-        id: meta
-        uses: docker/metadata-action@v5
+      - id: meta
+        uses: docker/metadata-action@8e5442c4ef9f78752691e2d8f8d19755c6f78e81      # v5.5.1
         with:
           images: ghcr.io/dunnolab/nethackers-hub
-          flavor: |
-            latest=false
+          flavor: latest=false
           tags: |
             type=sha
             type=semver,pattern={{version}}
-
-      - name: Build and push hub image
-        id: build
-        uses: docker/build-push-action@v6
+      - id: build
+        uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75    # v6.9.0
         with:
           context: .
           file: hub/Dockerfile
@@ -48,8 +46,27 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
-      - name: Report pushed digest
+  deploy:
+    name: deploy to prod VM
+    needs: build-push
+    if: ${{ startsWith(github.ref, 'refs/tags/v') && !contains(github.event.head_commit.message, '[skip hub-deploy]') }}
+    runs-on: ubuntu-latest
+    environment: production
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: tailscale/github-action@6cae46e2d796f265265cfcf628b72a32b4d7cade     # v3
+        with:
+          oauth-client-id: ${{ secrets.TS_OAUTH_CLIENT_ID }}
+          oauth-secret: ${{ secrets.TS_OAUTH_SECRET }}
+          tags: tag:ci
+      - name: Flip the hub to the freshly built digest
+        env:
+          REF: ghcr.io/dunnolab/nethackers-hub@${{ needs.build-push.outputs.digest }}
+          HOST: ${{ secrets.HUB_TAILNET_HOST }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          echo "Pushed image digest: ${{ steps.build.outputs.digest }}"
-          echo "Tags applied:"
-          echo "${{ steps.meta.outputs.tags }}"
+          install -m 600 /dev/stdin key <<< "${{ secrets.HUB_DEPLOY_SSH_KEY }}"
+          printf '%s' "$GITHUB_TOKEN" | \
+            ssh -i key -o StrictHostKeyChecking=accept-new "nethacker@${HOST}" "deploy ${REF} --yes"
