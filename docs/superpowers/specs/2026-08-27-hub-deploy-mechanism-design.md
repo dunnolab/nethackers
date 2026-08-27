@@ -77,6 +77,7 @@ leaks are all operational, and this spec closes them.
 |---|---|
 | Image delivery | CI builds on `v*` tag → **private** GHCR (`@sha256` digest) → VM pulls by digest. No on-VM builds, ever. |
 | Trigger | **Release tag `v*` only.** Every prod deploy is a versioned release; one tag fans out to PyPI publish + hub image build + hub deploy. |
+| Client-only releases | Every `v*` deploys the hub **by default** (it advertises the running version); opt out per release with a `[skip hub-deploy]` commit marker. |
 | Automation | **Push-to-deploy CD** (GitHub Actions). Hands-off after `git push --tags`. |
 | Safety net | The deploy job health-checks the new container *and* the live URL; **auto-rollback** to the previous digest on any failure. |
 | Registry visibility | **Private.** The running image is production infrastructure; keep it a controlled artifact. |
@@ -249,6 +250,7 @@ jobs:
   build-push:  { ... , outputs: { digest: ${{ steps.build.outputs.digest }} } }
   deploy:
     needs: build-push
+    if: ${{ !contains(github.event.head_commit.message, '[skip hub-deploy]') }}
     environment: production        # the who/when gate (§4.8)
     permissions: { contents: read, packages: read }
     steps:
@@ -273,6 +275,23 @@ Public-repo hardening baked in (see §4.8 for the settings side):
   injection); pass through `env:` and quote.
 - **Pin every third-party action to a full commit SHA** — the only way to use an
   action as an immutable release.
+
+**Client-only releases (the monorepo question).** The `nethackers` package ships
+several deployables from one tag — the CLI/TUI (via PyPI) and the hub image. By
+default **every `v*` release also deploys the hub**, for two honest reasons: the
+hub serves its own package version in the masthead (`api.py` reads
+`_pkg_version`), so prod should run the tagged version to keep that truthful; and
+the public website *is* `src/nethackers/hub/web/index.html`, **served by the
+hub** — so a "website" change is a hub change, not a client-only one, and must
+ship. The flip is a few-second, auto-rolled-back 502, so redeploying a hub whose
+*logic* didn't change is cheap and safe. For the rare release you explicitly
+don't want touching prod (a pure client/cosmetic patch, or mid-incident), add
+**`[skip hub-deploy]`** to the release commit and the deploy job self-skips via
+its `if:` guard (an `if:` expression, not a `run:` block — no injection risk).
+This is **deploy-by-default with a loud, explicit opt-out**. The alternative —
+path/affected-based auto-skip (deploy only when hub paths changed), standard in
+large monorepos — is rejected here because a missed dependency path silently
+leaves prod stale, the more dangerous failure.
 
 ### 4.6 Network: a private box via Tailscale
 
@@ -335,8 +354,9 @@ documented upgrade (more work; out of scope now).
 - **Dedicated, rotatable ed25519 key** for CI, separate from human admin keys;
   revoke = delete one `authorized_keys` line. Human admins use their own keys,
   also reachable only over the tailnet.
-- **fail2ban/sshguard** — optional now that `:22` is closed to the internet;
-  keep for log hygiene if desired (low value once the port is tailnet-only).
+- **fail2ban/sshguard** — **dropped** as redundant: with `:22` closed to the
+  internet, sshd sees only tailnet traffic, so there is nothing internet-facing
+  to rate-limit. Trivially re-added if the threat model changes.
 
 ### 4.8 Repo / GitHub configuration (operator checklist, one-time)
 
@@ -438,16 +458,21 @@ digest (same Dockerfile, so it should be clean).
 - **The M2 evaluator host** (`72.56.24.170`, seed key) is untouched.
 - This is a **hub deploy mechanism**, not a general multi-service deploy tool.
 
-## 9. Open questions for spec review
+## 9. Review resolutions
 
-1. **Required reviewer on `production`** — keep OFF (hands-off, as chosen), or
-   turn ON for a one-click approval before each prod flip?
-2. **fail2ban** — keep it once `:22` is tailnet-only (log hygiene), or drop it as
-   redundant?
-3. **Workflow shape** — deploy as a second job in `hub-image.yml` (chosen), or a
-   separate `deploy.yml` triggered on the same tag?
-4. **Pre-flip boot check depth** — throwaway-DB boot check (chosen), or trust the
-   post-flip health check + auto-rollback alone for simplicity?
+Settled in the design read:
+
+1. **Required reviewer on `production`** — **OFF** (hands-off).
+2. **fail2ban** — **dropped** as redundant once `:22` is tailnet-only (§4.7).
+3. **Workflow shape** — **one workflow, two jobs** (`build-push` → `deploy`) in
+   `hub-image.yml`. Both fire on the same `v*` tag and the digest hand-off is a
+   trivial `needs` output; a separate `deploy.yml` would only buy independent
+   triggering we don't need — manual redeploy/rollback is the `deploy-hub.sh`
+   script over the tailnet, not a workflow.
+4. **Pre-flip boot check** — **throwaway-DB boot check** (§4.4).
+5. **Client-only releases** — **deploy on every `v*` by default**, with a
+   `[skip hub-deploy]` opt-out (§4.5). Flip to path/affected-based auto-skip only
+   if the occasional needless flip outweighs the silent-staleness risk.
 
 ---
 
