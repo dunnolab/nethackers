@@ -1161,7 +1161,6 @@ function statusCard(value,label,kind=""){ return `<div class="statuscard ${kind}
 function renderStatus(){
   const el=$("#statusgrid"); if(!el) return;
   const per=(BASELINE&&BASELINE.per_identity)||{}, entries=Object.entries(UNIVERSE);
-  const explored=entries.length;
   let best=null;
   for(const [id,x] of entries){ const aa=per[id]&&per[id].progression;
     if(aa!=null&&(!best||x.v-aa>best.delta)) best={id,owner:x.o,delta:x.v-aa}; }
@@ -1176,11 +1175,7 @@ function renderStatus(){
   const moved=COMPETITION_STATUS&&COMPETITION_STATUS.identities_improved_7d;
   const bestText=best?`+${(best.delta*100).toFixed(1)}%`:'&mdash;';
   const bestLabel=best?`largest lift vs AutoAscend &middot; ${esc(best.id)} by @${esc(best.owner)}`:'largest lift vs AutoAscend';
-  el.innerHTML=statusCard(String(curTier==="self-reported"&&STATS?STATS.ascensions:0),curTier==="verified"?"verified ascensions":"reported ascensions")
-    +statusCard(String((STATS&&STATS.programs)||0),"registered programs")
-    +statusCard(String((STATS&&STATS.hackers)||0),"contributing hackers")
-    +statusCard(`${explored}/73`,"identities evaluated by the community")
-    +statusCard(`${(frontier*100).toFixed(1)}%`,"community frontier &middot; all 73 identities","pulse")
+  el.innerHTML=statusCard(`${(frontier*100).toFixed(1)}%`,"community frontier progress &middot; all 73 identities","pulse")
     +statusCard(gain!=null?`${gain>=0?'+':''}${(gain*100).toFixed(1)} pp`:'&mdash;',"frontier gain &middot; last 7 days","pulse")
     +statusCard(moved!=null?String(moved):'&mdash;',"identities improved &middot; last 7 days","pulse")
     +statusCard(bestText,bestLabel,"wide");
