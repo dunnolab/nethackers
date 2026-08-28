@@ -272,18 +272,23 @@ def create_app(
             ) from e
         return hacker_board(store, ids, tier=tier)
 
-    @app.get("/solutions/{digest}")
+    # Real solution ids are ``github.com/owner/repo@commit`` and therefore
+    # contain slashes. The ``:path`` converter is required even when clients
+    # percent-encode those slashes: ASGI decodes the URL before route matching.
+    # Keep the more-specific /frontier route first so the detail route below
+    # does not consume its suffix as part of the digest.
+    @app.get("/solutions/{digest:path}/frontier")
+    def solution_frontier(digest: str) -> list[dict[str, Any]]:
+        if store.get_solution(digest) is None:
+            raise HTTPException(status_code=404, detail=f"unknown solution digest: {digest!r}")
+        return read_solution_frontier(store, digest)
+
+    @app.get("/solutions/{digest:path}")
     def get_solution(digest: str) -> dict[str, Any]:
         solution = store.get_solution(digest)
         if solution is None:
             raise HTTPException(status_code=404, detail=f"unknown solution digest: {digest!r}")
         return solution
-
-    @app.get("/solutions/{digest}/frontier")
-    def solution_frontier(digest: str) -> list[dict[str, Any]]:
-        if store.get_solution(digest) is None:
-            raise HTTPException(status_code=404, detail=f"unknown solution digest: {digest!r}")
-        return read_solution_frontier(store, digest)
 
     @app.get("/search")
     def search(owner: str | None = None, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:

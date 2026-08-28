@@ -119,6 +119,25 @@ def test_root_serves_the_page(tmp_path: Any) -> None:
     assert 'id="updated"' in resp.text
 
 
+def test_leaderboard_is_hacker_only_with_solution_details_in_popup(tmp_path: Any) -> None:
+    client, _store = _app(tmp_path)
+    body = client.get("/").text
+
+    assert 'data-view="programs"' not in body
+    assert 'class="hackerrow"' in body
+    assert "async function openHacker(owner)" in body
+    for detail in (
+        "registered solutions",
+        "roles evaluated",
+        "latest registration",
+        "deepest reach",
+        "ascensions",
+        "entrypoint",
+        "best identity",
+    ):
+        assert detail in body
+
+
 def test_root_injects_the_real_package_version(tmp_path: Any) -> None:
     # The masthead version is stamped from the installed package at serve time,
     # so it never drifts from pyproject -- and no {{version}} token leaks through.

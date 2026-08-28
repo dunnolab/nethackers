@@ -327,6 +327,20 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 .minigrid{ display:grid; grid-template-columns:1fr 1fr; gap:2px; }
 .minicell{ display:flex; justify-content:space-between; gap:8px; font-size:.74rem; padding:2px 6px; border:1px solid #e2e2e8; }
 .minicell .mn{ color:#55555c; } .minicell.asc .mv{ color:var(--red); font-weight:700; }
+.hackerrow{ cursor:pointer; }
+.hackerrow:hover td,.hackerrow:focus td{ background:#fff2a8; }
+.hackerrow:focus{ outline:2px solid var(--indigo); outline-offset:-2px; }
+.clickhint{ color:#777780; font-size:.72rem; margin:-5px 0 10px; }
+.solutionlist{ display:grid; gap:8px; }
+.solutioncard{ border:1px solid var(--rule-soft); background:#f7f7f2; padding:7px 9px; font-size:.76rem; }
+.solutioncard__head{ display:flex; justify-content:space-between; gap:10px; border-bottom:1px dotted #aaaab2; padding-bottom:4px; margin-bottom:5px; }
+.solutioncard__head a{ font-weight:700; }
+.solutioncard__date{ color:#66666e; white-space:nowrap; }
+.solutioncard__meta{ display:grid; grid-template-columns:max-content 1fr; gap:2px 10px; }
+.solutioncard__meta .k{ color:#66666e; }
+.rolechips{ display:flex; flex-wrap:wrap; gap:3px; }
+.rolechip{ border:1px solid #aaaab2; background:#fff; padding:0 4px; }
+.popupstatus{ color:#66666e; font-size:.8rem; }
 
 @media (prefers-reduced-motion: reduce){
   html{ scroll-behavior:auto; }
@@ -589,8 +603,8 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
       <!-- HIGH SCORES -->
       <section id="scores">
         <h2 class="sec"><span class="glyph">$</span> Leaderboard</h2>
-        <p class="lead">Every <b>hacker</b>, ranked by the union of their programs' best on the chosen objective &mdash; toggle
-          to <b>Programs</b> for the individual solutions behind them. Pick a single <span class="ref" data-k="identities"><b>identity</b></span>
+        <p class="lead">Every <b>hacker</b>, ranked by the union of their programs' best on the chosen objective. Click a hacker
+          to inspect the individual solutions behind their score, including roles, source links, and registration dates. Pick a single <span class="ref" data-k="identities"><b>identity</b></span>
           for a same-seeds specialist board, a <b>role</b> or the <b>generalist</b> for a macro-average across many identities. Each program
           was produced through the shared evolution, its author's own <span class="ref" data-k="harness">harness</span>, or any other means &mdash;
           the platform scores it and never asks how it was made. <span class="ref" data-k="challenge"><b>AutoAscend</b></span> is the yardstick
@@ -598,11 +612,6 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
         <div class="controls">
           <span class="lbl">objective:</span>
           <span class="grp"><select class="bevel" id="objSelect" aria-label="Objective"></select></span>
-          <span class="lbl">tally:</span>
-          <span class="grp">
-            <button class="bevel" data-view="people" aria-pressed="true">Hackers</button>
-            <button class="bevel" data-view="programs" aria-pressed="false">Programs</button>
-          </span>
           <span class="lbl">tier:</span>
           <span class="grp">
             <button class="bevel" data-tier="self-reported" aria-pressed="true">Self-reported</button>
@@ -861,13 +870,9 @@ __)/\_//(\/(/\)/\//\/\|_)__</pre>
    Where an endpoint does not carry a field the render wants, we render "—" /
    omit it -- never a fabricated value (honest standings is the whole point). */
 let PROGRAMS=[];                     // current objective's board rows (progRow shape, + fulldigest)
-let BOARD_BY_OBJ={};                 // {objective: PROGRAMS}
 let PEOPLE=[];                       // Hackers tally: {rank,owner,coverage,total,mean} from /hackers
 let BASELINE={owner:"autoascend",per_identity:{},overall:null};  // raw /baseline
 let OBJ_EP={};                       // {objective: episodes} from /objectives (honest ep for tooltips)
-/* AutoAscend baseline row -- rebuilt from /baseline in rebuildAutoascend(). Safe default
-   (blank, 0.000) so an early render before boot resolves is honest, not fabricated. */
-let AUTOASCEND={digest:"autoascend",owner:"autoascend",score:0,med:0,ep:0,asc:0,deepest:"—",fr:{},base:true};
 const ROLE_NAMES={arc:"Archeologist",bar:"Barbarian",cav:"Caveman",hea:"Healer",kni:"Knight",mon:"Monk",
  pri:"Priest",ran:"Ranger",rog:"Rogue",sam:"Samurai",tou:"Tourist",val:"Valkyrie",wiz:"Wizard"};
 /* the real 73 starting identities, straight from GET /objectives */
@@ -1171,7 +1176,7 @@ function odo(el,n,digits){ if(!el) return; el.innerHTML=String(n).padStart(digit
 })();
 
 /* ===================== leaderboard ===================== */
-let curObj="generalist", curView="people", curTier="self-reported", curRegime="universe", curMetric="frontier";
+let curObj="generalist", curTier="self-reported", curRegime="universe", curMetric="frontier";
 /* objective scope: the picker sends bare tokens -- "generalist", a role ("val"),
    or an identity ("val-dwa-law-fem"). Each maps to a set of identities + a caption;
    the board, the Hackers tally, and the AutoAscend floor all read it the same way. */
@@ -1185,10 +1190,9 @@ function scopeIds(obj){
 function objCap(obj){ const k=scopeKind(obj);
   return k==="generalist"?"GENERALIST":(k==="role"?ROLE_NAMES[obj].toUpperCase()+" (ROLE)":obj.toUpperCase()); }
 const EMPTY_VERIFIED='No verified programs yet &mdash; verification (M2b) is not live. Everything above the floor is self-reported.';
-const EMPTY_SELF='No programs ranked here yet &mdash; be the first to register one.';
 const EMPTY_HACKERS='No hackers ranked here yet &mdash; be the first to register.';
 function setCap(){
-  $("#scCap").innerHTML=`LEADERBOARD &mdash; ${objCap(curObj)} &mdash; ${curView==="people"?"hackers":"programs"} &middot; ${curTier}${curTier==="self-reported"?"*":""}`;
+  $("#scCap").innerHTML=`LEADERBOARD &mdash; ${objCap(curObj)} &mdash; hackers &middot; ${curTier}${curTier==="self-reported"?"*":""}`;
 }
 /* AutoAscend floor for the current scope, from /baseline's per-identity values:
    identity -> that identity; role/generalist -> mean over the scope's identities. */
@@ -1200,62 +1204,36 @@ function deltaCell(v){ const aa=aaScopeMean();
   const d=+(v-aa).toFixed(3), cls=d>0.0005?"dpos":(d<-0.0005?"dneg":"dz");
   return `<td class="num ${cls}">${(d>0?"+":"")+d.toFixed(3)}</td>`; }
 function covCell(n,t){ return `<td class="num cov">${n}<span class="tot">/${t}</span></td>`; }
-function progRow(p){
-  const agg = scopeKind(curObj)!=="identity";
-  const name=p.base?'autoascend <span class="tag">floor</span>':`nethacker@${p.digest} ${p.nu?'<span class="new">NEW!</span>':''}`;
-  const who=p.base?'<span class="dz">&mdash;</span>':`<span class="at">@</span>${esc(p.owner)}`;
-  const scoreCell = `<td class="num">${p.score!=null?p.score.toFixed(3):'&mdash;'}</td>`;
-  const metric = agg
-    ? `${covCell(p.coverage,p.total)}${scoreCell}`
-    : `<td class="l pend">${esc(p.deepest)}</td>${scoreCell}`;
-  const delta = p.base?'<td class="dz">&mdash;</td>':deltaCell(p.score);
-  return `<tr data-d="${p.digest}" class="${p.base?'base':''}">
-    <td class="l rk ${(!p.base&&p.rank<=3)?'top':''}">${p.base?'&middot;':p.rank}</td>
-    <td class="l nm">${name}</td>
-    <td class="l nm">${who}</td>
-    ${metric}
-    ${delta}
-    <td class="num star">${!p.base&&p.asc?p.asc+' &#9733;':'.'}</td></tr>`;
-}
-function renderBoard(view){
+function renderBoard(){
   const head=$("#scHead"), body=$("#scBody"), verified=curTier==="verified";
   const agg = scopeKind(curObj)!=="identity", n=scopeIds(curObj).length, aa=aaScopeMean();
-  if(view==="people"){
-    head.innerHTML = agg
-      ? `<tr><th class="l">#</th><th class="l">hacker</th><th>coverage</th><th>mean</th><th>&Delta; vs AA</th></tr>`
-      : `<tr><th class="l">#</th><th class="l">hacker</th><th>best mean</th><th>&Delta; vs AA</th></tr>`;
-    const rows=verified?[]:PEOPLE;
-    const cols=agg?5:4;
-    const rowsHTML=rows.length?rows.map(h=>`<tr>
+  head.innerHTML = agg
+    ? `<tr><th class="l">#</th><th class="l">hacker</th><th>coverage</th><th>mean</th><th>&Delta; vs AA</th></tr>`
+    : `<tr><th class="l">#</th><th class="l">hacker</th><th>best mean</th><th>&Delta; vs AA</th></tr>`;
+  const rows=verified?[]:PEOPLE;
+  const cols=agg?5:4;
+  const rowsHTML=rows.length?rows.map(h=>`<tr class="hackerrow" data-owner="${esc(h.owner)}" tabindex="0" role="button" aria-label="Open details for @${esc(h.owner)}">
       <td class="l rk ${h.rank<=3?'top':''}">${h.rank}</td>
       <td class="l nm"><span class="at">@</span>${esc(h.owner)}</td>
       ${agg?covCell(h.coverage,h.total):""}
       <td class="num">${h.mean.toFixed(3)}</td>
       ${deltaCell(h.mean)}</tr>`).join("")
-      :`<tr><td class="l pend" colspan="${cols}" style="padding:10px 8px">${verified?EMPTY_VERIFIED:EMPTY_HACKERS}</td></tr>`;
-    body.innerHTML=rowsHTML+`<tr class="base"><td class="l rk">&middot;</td>
-      <td class="l nm">autoascend <span class="tag">floor</span></td>
-      ${agg?covCell(n,n):""}<td class="num">${aa!=null?aa.toFixed(3):'&mdash;'}</td><td class="dz">&mdash;</td></tr>`;
-    return;
-  }
-  head.innerHTML = agg
-    ? `<tr><th class="l">#</th><th class="l">program</th><th class="l">hacker</th><th>coverage</th><th>mean</th><th>&Delta; vs AA</th><th>&#9733;</th></tr>`
-    : `<tr><th class="l">#</th><th class="l">program</th><th class="l">hacker</th><th class="l">deepest reach</th><th>score</th><th>&Delta; vs AA</th><th>&#9733;</th></tr>`;
-  const rows=verified?[]:(BOARD_BY_OBJ[curObj]||[]);
-  const rowsHTML=rows.length?rows.map(progRow).join("")
-    :`<tr><td class="l pend" colspan="7" style="padding:10px 8px">${verified?EMPTY_VERIFIED:EMPTY_SELF}</td></tr>`;
-  body.innerHTML=rowsHTML+progRow(AUTOASCEND);
-  body.querySelectorAll("tr[data-d]").forEach(tr=>tr.addEventListener("click",()=>openProgram(tr.dataset.d)));
+    :`<tr><td class="l pend" colspan="${cols}" style="padding:10px 8px">${verified?EMPTY_VERIFIED:EMPTY_HACKERS}</td></tr>`;
+  body.innerHTML=rowsHTML+`<tr class="base"><td class="l rk">&middot;</td>
+    <td class="l nm">autoascend <span class="tag">floor</span></td>
+    ${agg?covCell(n,n):""}<td class="num">${aa!=null?aa.toFixed(3):'&mdash;'}</td><td class="dz">&mdash;</td></tr>`;
+  body.querySelectorAll(".hackerrow").forEach(tr=>{
+    const open=()=>openHacker(tr.dataset.owner);
+    tr.addEventListener("click",open);
+    tr.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } });
+  });
 }
-document.querySelectorAll("[data-view]").forEach(b=>b.addEventListener("click",()=>{
-  document.querySelectorAll("[data-view]").forEach(x=>x.setAttribute("aria-pressed","false"));
-  b.setAttribute("aria-pressed","true"); curView=b.dataset.view; renderBoard(curView); }));
 document.querySelectorAll("[data-tier]").forEach(b=>b.addEventListener("click",async()=>{
   curTier=b.dataset.tier;
   document.querySelectorAll("[data-tier]").forEach(x=>x.setAttribute("aria-pressed", x.dataset.tier===curTier?"true":"false"));
   await loadObjective(curObj);
-  setCap(); renderBoard(curView); renderFrontier(curRegime); renderChart(curMetric); }));
-$("#objSelect").addEventListener("change",async e=>{ curObj=e.target.value; await loadObjective(curObj); setCap(); renderBoard(curView); renderChart(curMetric); });
+  setCap(); renderBoard(); renderFrontier(curRegime); renderChart(curMetric); }));
+$("#objSelect").addEventListener("change",async e=>{ curObj=e.target.value; await loadObjective(curObj); setCap(); renderBoard(); renderChart(curMetric); });
 $("#scMore").addEventListener("click",function(){
   this.textContent=this.textContent.indexOf("More")>=0?"[ that is everyone so far. yet another short list. ]":"[ --More-- ]"; });
 
@@ -1364,61 +1342,88 @@ document.querySelectorAll("[data-metric]").forEach(b=>b.addEventListener("click"
   document.querySelectorAll("[data-metric]").forEach(x=>x.setAttribute("aria-pressed","false"));
   b.setAttribute("aria-pressed","true"); curMetric=b.dataset.metric; renderChart(curMetric); }));
 
-/* ===================== popup ===================== */
-async function openProgram(d){
-  const p = d==="autoascend" ? AUTOASCEND : PROGRAMS.find(x=>x.digest===d); if(!p) return;
-  /* lazily load this program's per-identity frontier (mean progression per identity) */
-  if(!p.base && !p.fr && p.fulldigest){
-    try{ const fr = await jget("/solutions/"+encodeURIComponent(p.fulldigest)+"/frontier");
-      p.fr = Object.fromEntries(fr.map(r=>[r.identity, r.progression])); }
-    catch(e){ p.fr = {}; }
+/* ===================== hacker popup ===================== */
+function showModal(){ const mo=$("#modal"); mo.setAttribute("open",""); mo.setAttribute("aria-hidden","false"); }
+function fmtDate(iso){
+  const d=iso?new Date(iso):null;
+  if(!d||isNaN(d)) return "date unknown";
+  return `${d.getUTCDate()} ${_MON[d.getUTCMonth()]} ${d.getUTCFullYear()}, ${String(d.getUTCHours()).padStart(2,"0")}:${String(d.getUTCMinutes()).padStart(2,"0")} UTC`;
+}
+function sourceLink(s){
+  const raw=String(s.repo||"").replace(/^https?:\/\/github\.com\//i,"").replace(/^github\.com\//i,"").replace(/\.git$/i,"");
+  const bits=raw.split("/").filter(Boolean);
+  if(bits.length!==2||!bits.every(x=>/^[\w.-]+$/.test(x))) return esc(s.repo||"source unavailable");
+  const repo=bits.join("/"), commit=String(s.commit_sha||"");
+  const file=[s.root&&s.root!=="."?s.root:"",s.entrypoint||""].filter(Boolean).join("/");
+  const path=file?`/blob/${encodeURIComponent(commit)}/${file.split("/").map(encodeURIComponent).join("/")}`:`/tree/${encodeURIComponent(commit)}`;
+  return `<a href="https://github.com/${repo}${path}" target="_blank" rel="noopener">${esc(repo)}@${esc(commit.slice(0,7)||"commit")}</a>`;
+}
+function roleKeys(frontier){
+  return [...new Set(frontier.map(x=>String(x.identity||"").split("-")[0]).filter(r=>ROLE_NAMES[r]))]
+    .sort((a,b)=>ROLE_NAMES[a].localeCompare(ROLE_NAMES[b]));
+}
+function solutionCard(s){
+  const loaded=Array.isArray(s.frontier), fr=loaded?s.frontier:[], roles=roleKeys(fr), scope=new Set(scopeIds(curObj));
+  const scoped=fr.filter(x=>scope.has(x.identity));
+  const mean=scoped.length?scoped.reduce((sum,x)=>sum+x.progression,0)/scoped.length:null;
+  const episodes=fr.reduce((sum,x)=>sum+(x.episodes||0),0);
+  const best=fr.reduce((winner,x)=>!winner||x.progression>winner.progression?x:winner,null);
+  const board=PROGRAMS.find(p=>p.fulldigest===s.digest);
+  const score=board&&board.score!=null?board.score:mean;
+  const chips=!loaded?"unavailable":(roles.length?roles.map(r=>`<span class="rolechip">${esc(ROLE_NAMES[r])}</span>`).join(""):"&mdash;");
+  return `<div class="solutioncard">
+    <div class="solutioncard__head"><span>${sourceLink(s)}</span><span class="solutioncard__date">${esc(fmtDate(s.registered_at))}</span></div>
+    <div class="solutioncard__meta">
+      <span class="k">roles</span><span class="rolechips">${chips}</span>
+      <span class="k">evaluated identities</span><span>${loaded?`${fr.length} of 73`:'unavailable'}</span>
+      <span class="k">evaluation episodes</span><span>${loaded?episodes:'unavailable'}</span>
+      <span class="k">${esc(objCap(curObj).toLowerCase())}</span><span>${score!=null?score.toFixed(3):'not evaluated'}${scoped.length?` &middot; ${scoped.length}/${scope.size} identities`:''}</span>
+      <span class="k">deepest reach</span><span>${board?esc(board.deepest):'&mdash;'}</span>
+      <span class="k">ascensions</span><span${board&&board.asc?' style="color:#cc0000"':''}>${board?board.asc:'&mdash;'}</span>
+      <span class="k">best identity</span><span>${best?`${esc(best.identity)} &middot; mean ${best.progression.toFixed(3)}`:(loaded?'&mdash;':'unavailable')}</span>
+      <span class="k">entrypoint</span><span>${esc([s.root&&s.root!=="."?s.root:"",s.entrypoint||""].filter(Boolean).join("/")||"&mdash;")}</span>
+      <span class="k">tier</span><span>self-reported*</span>
+    </div></div>`;
+}
+let popupRequest=0;
+async function openHacker(owner){
+  const request=++popupRequest, standing=PEOPLE.find(h=>h.owner===owner);
+  $("#mTitle").textContent=`@${owner} - hacker details`;
+  $("#mBody").innerHTML=`<div class="popupstatus">Loading registered solutions and per-identity results&hellip;</div>`;
+  showModal();
+  try{
+    const solutions=await jget(`/search?owner=${encodeURIComponent(owner)}&limit=50`);
+    await Promise.all(solutions.map(async s=>{
+      try{ s.frontier=await jget("/solutions/"+encodeURIComponent(s.digest)+"/frontier"); }
+      catch(e){ s.frontier=null; }
+    }));
+    if(request!==popupRequest) return;
+    const loaded=solutions.filter(s=>Array.isArray(s.frontier));
+    const allIds=new Set(loaded.flatMap(s=>s.frontier.map(x=>x.identity)));
+    const allRoles=roleKeys(loaded.flatMap(s=>s.frontier));
+    const newest=solutions.length?fmtDate(solutions[0].registered_at):"&mdash;";
+    $("#mBody").innerHTML=`<div class="kv">
+      <span class="k">current standing</span><span class="v">${standing?`#${standing.rank} on ${esc(objCap(curObj).toLowerCase())}`:'&mdash;'}</span>
+      <span class="k">current score</span><span class="v">${standing?standing.mean.toFixed(3):'&mdash;'}</span>
+      <span class="k">registered solutions</span><span class="v">${solutions.length}</span>
+      <span class="k">roles evaluated</span><span class="v">${loaded.length?(allRoles.length?allRoles.map(r=>esc(ROLE_NAMES[r])).join(", "):'&mdash;'):'unavailable'}</span>
+      <span class="k">identities evaluated</span><span class="v">${loaded.length?`${allIds.size} of 73`:'unavailable'}</span>
+      <span class="k">latest registration</span><span class="v">${esc(newest)}</span>
+    </div>
+    <div class="clickhint">Episodes are individual seeded evaluations, summed across identities. Best identity is this solution's highest mean progression. Scores use the currently selected objective; source links open the exact registered commit.</div>
+    <div class="minihead">solutions -- newest first:</div>
+    <div class="solutionlist">${solutions.length?solutions.map(solutionCard).join(""):'No registered solutions found.'}</div>`;
+  }catch(e){
+    if(request===popupRequest) $("#mBody").innerHTML=`<div class="popupstatus">Could not load this hacker's solution details.</div>`;
   }
-  $("#mTitle").textContent=p.base?"autoascend - the baseline":`nethacker@${d} - @${p.owner}`;
-  const scores=p.fr||{};
-  const cells=Object.keys(scores).length?Object.entries(scores).map(([id,v])=>{
-    const a=v>=ASC; return `<div class="minicell ${a?'asc':''}" style="background:${tint(v)};color:${tintText(v)}">
-      <span class="mn" ${v>=0.5?'style="color:#dfe0ee"':''}>${esc(id)}</span><span class="mv">${a?'&#9733;':''}${v.toFixed(3)}</span></div>`;}).join("")
-    :`<div style="color:#6a6a72">No per-identity atoms yet.</div>`;
-  $("#mBody").innerHTML=`<div class="kv">
-    <span class="k">deepest reach</span><span class="v">${esc(p.deepest)}</span>
-    <span class="k">mean progression</span><span class="v">${p.score!=null?p.score.toFixed(3):'&mdash;'}</span>
-    <span class="k">median</span><span class="v">${p.med!=null?p.med.toFixed(3):'&mdash;'}</span>
-    <span class="k">episodes</span><span class="v">${p.ep!=null?p.ep:'&mdash;'}</span>
-    <span class="k">ascensions</span><span class="v" style="color:#cc0000">${p.asc}</span>
-    <span class="k">source</span><span class="v">${p.base?'the AutoAscend baseline &mdash; where this effort started':`<a href="#">github.com/${esc(p.owner)}/nethacker@${d}</a>`}</span>
-    <span class="k">tier</span><span class="v">${p.base?'baseline':'self-reported*'}</span></div>
-    <div class="minihead">program frontier -- mean progression per identity:</div>
-    <div class="minigrid">${cells}</div>`;
-  const mo=$("#modal"); mo.setAttribute("open",""); mo.setAttribute("aria-hidden","false");
 }
 $("#mX").addEventListener("click",closeModal);
 $("#modal").addEventListener("click",e=>{ if(e.target.id==="modal") closeModal(); });
 document.addEventListener("keydown",e=>{ if(e.key==="Escape") closeModal(); });
-function closeModal(){ const mo=$("#modal"); mo.removeAttribute("open"); mo.setAttribute("aria-hidden","true"); }
+function closeModal(){ popupRequest++; const mo=$("#modal"); mo.removeAttribute("open"); mo.setAttribute("aria-hidden","true"); }
 
 /* ===================== live data: fetch + adapt hub JSON into the render state ===================== */
 const jget = async p => { const r = await fetch(p); if(!r.ok) throw new Error(p+" "+r.status); return r.json(); };
-
-/* AutoAscend baseline row, rebuilt from /baseline for the current objective. GAPs:
-   /baseline has no median (overall stands in) and no cell-count. deepest is the raw
-   milestone string (e.g. "Dlvl:3") or "—" when the endpoint has none -- never invented. */
-function rebuildAutoascend(){
-  const per = (BASELINE && BASELINE.per_identity) || {};
-  const n = scopeIds(curObj).length;
-  const aa = aaScopeMean();                   // scope-aware floor (identity / role / generalist)
-  const c = per[curObj];                      // present only for an identity scope
-  AUTOASCEND = {
-    digest:"autoascend", owner:"autoascend",
-    score: aa!=null ? aa : null,              // null (not 0) when no baseline -> renders "—", never a fake floor
-    med:   aa!=null ? aa : null,              // GAP: /baseline has no median
-    coverage: n, total: n,                    // AA is the reference floor over the whole scope
-    ep: c && c.episodes!=null ? c.episodes : 0,
-    asc: 0,
-    deepest: (scopeKind(curObj)==="identity" && c && c.deepest) ? c.deepest : "—",
-    fr: Object.fromEntries(Object.entries(per).map(([id,x])=>[id, x.progression])),
-    base: true,
-  };
-}
 
 /* PEOPLE (the Hackers tally): the union-frontier standings for the current scope,
    from GET /hackers (coverage + mean, coverage-first). The server does the
@@ -1457,11 +1462,10 @@ async function loadChampion(){
   }catch(e){ CHAMPION = {digest:"", owner:"", scores:{}}; }
 }
 
-/* Per-objective + per-tier state: the board (its rows become PROGRAMS/BOARD_BY_OBJ),
+/* Per-objective + per-tier state: the program board (used by hacker details),
    PEOPLE, the baseline row, and the progress series. Called on load and on every
    objective/tier change. Each fetch degrades to an honest empty state on failure. */
 async function loadObjective(obj){
-  rebuildAutoascend();                                  // floor row reflects this objective's scope
   const agg = scopeKind(obj)!=="identity";
   let rows=[];
   try{ rows = await jget(`/board?objective=${encodeURIComponent(obj)}&tier=${encodeURIComponent(curTier)}`); }
@@ -1473,9 +1477,8 @@ async function loadObjective(obj){
     ep:  r.episodes!=null ? r.episodes : null,                       // identity board only
     coverage: agg ? r.coverage : null, total: agg ? r.total : null,  // aggregate board only
     asc:r.ascensions, deepest: r.deepest!=null ? r.deepest : "—",    // /board now carries deepest
-    fr:null,                                            // loaded lazily in openProgram
+    fr:null,
   }));
-  BOARD_BY_OBJ[obj] = PROGRAMS;
   await loadHackers(obj);                               // the Hackers tally (union frontier)
   let series=[];
   try{ const pr = await jget(`/progress?objective=val-dwa-law-fem&tier=${encodeURIComponent(curTier)}`); series = (pr && pr.series) || []; }
@@ -1517,7 +1520,7 @@ async function boot(){
   await Promise.all([statsP, baseP, objP, loadChampion()]);
   await loadUniverse();                 // needs OBJ_EP (per-identity episode counts)
   await loadObjective(curObj);          // needs BASELINE
-  setCap(); renderBoard(curView); renderFrontier(curRegime); renderChart(curMetric);
+  setCap(); renderBoard(); renderFrontier(curRegime); renderChart(curMetric);
 }
 boot();
 /* ===== The Nethack Dictionary: audio-reactive dungeon wall around the .page frame ===== */
