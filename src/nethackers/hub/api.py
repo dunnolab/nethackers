@@ -272,6 +272,13 @@ def create_app(
             ) from e
         return hacker_board(store, ids, tier=tier)
 
+    @app.get("/hackers/random")
+    def hackers_random(n: int = 20) -> list[str]:
+        """Up to ``n`` (clamped to 20) random registered hacker handles,
+        sampled server-side -- names for the dungeon-wall @username runners.
+        Cheaper than /hackers: no coverage/mean aggregation."""
+        return store.random_owners(max(0, min(20, n)))
+
     @app.get("/solutions/{digest}")
     def get_solution(digest: str) -> dict[str, Any]:
         solution = store.get_solution(digest)

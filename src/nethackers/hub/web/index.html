@@ -1644,7 +1644,20 @@ boot();
   }
   function hash(a,b){ const s=Math.sin(a*127.1+b*311.7)*43758.5453; return s-Math.floor(s); }
 
-  let t=0, bloom=0, energy=0, atK=0, atVel=0, atRide=0;
+  let t=0, bloom=0, energy=0;
+  // Up to MAX_RUNNERS @username runners -- real registered hackers, sampled server-side
+  // (GET /hackers/random). Cleared-floor look; the tuned feel is baked below.
+  const MAX_RUNNERS=20;
+  const TUNE={size:0.75, crawl:0.8, dart:0.3, ride:0.6};   // approved by live tuning
+  let RUNNERS=[];
+  function buildRunners(names){
+    // stratified start positions (evenly spread, small jitter) + distinct speeds -> always a
+    // few in view, no fixed pattern, no permanent clumping.
+    const m=(names||[]).slice(0,MAX_RUNNERS), L=Math.max(1,m.length);
+    RUNNERS=m.map(function(name,i){ return {name:name,
+      pos:(i+Math.random()*0.6)/L, vel:0, atRide:0, spd:0.75+0.5*(i/Math.max(1,L-1))}; });
+  }
+  jget("/hackers/random?n="+MAX_RUNNERS).then(buildRunners).catch(function(){ RUNNERS=[]; });
   function draw(){
     // Two regimes. At rest the wall breathes gently in ink -- restrained, monochrome, never silent-frozen.
     // On play, COLOUR blooms in (`bloom`); how hard it reacts -- reach, brightness, tempo -- tracks the
@@ -1697,20 +1710,45 @@ boot();
           g.fillStyle="rgba("+RED[0]+","+RED[1]+","+RED[2]+","+(0.6+0.4*energy).toFixed(2)+")";
           g.fillText("★", sx, sy); } }
     }
-    // @ hero: a slow wanderer at rest (muted), darting and gold once the music is on -> rides the spike
-    if(vis.length){
-      atK += 0.02*idleAmt;                                                           // gentle idle crawl
-      if(Math.random() < 0.05*energy) atVel += (Math.random()-0.5)*2.6*energy;       // dart rate tracks volume
-      atVel *= 0.86;                                                                 // friction -> pauses between darts
-      atK += atVel;
-      const ai=vis[((Math.floor(atK)%vis.length)+vis.length)%vis.length], a0=per[ai];
-      if(a0){ const ride=Math.min(MAXEXT*0.45,(sm[ai]||0)*MAXEXT*0.45); atRide+=(ride-atRide)*0.2;
-        let ax=a0[0]+a0[2]*cw*atRide, ay=a0[1]+a0[3]*ch*atRide;
+    // 20 @username heroes -- the original lone @'s exact crawl/dart/ride, cloned. They ride the FULL
+    // page perimeter (per, not just the visible slice), so they crawl the whole landing page and never
+    // stick to the viewport; each draws only while its cell is on-screen. @ kisses the wall, the name
+    // trails outward ("username@" on the left wall, "@username" on the right/top/bottom).
+    if(per.length){
+      const GR=hexRGB(GROUND);                                                       // parchment, for the cleared patch
+      const hch=Math.round(ch*TUNE.size), hcw=Math.max(1,Math.round(hch*0.6));
+      g.font="700 "+hch+'px "Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace';
+      g.textAlign="center";
+      const N=per.length;
+      for(let k=0;k<RUNNERS.length;k++){
+        const r=RUNNERS[k];
+        r.pos += 0.02*r.spd*idleAmt*TUNE.crawl/N;                                    // calm crawl at its own steady pace (normalized to perimeter length)
+        if(Math.random() < 0.05*energy) r.vel += (Math.random()-0.5)*2.6*energy*TUNE.dart/N; // darts kick in with the MUSIC; calm when off
+        r.vel *= 0.86;                                                               // friction -> pauses between darts
+        r.pos += r.vel; r.pos -= Math.floor(r.pos);                                  // advance, wrap to [0,1)
+        const ai=Math.floor(r.pos*N)%N, a0=per[ai];                                  // whole-page perimeter, stable index -> no scroll jump
+        if(!a0) continue;
+        const ride=Math.min(MAXEXT*0.45,(sm[ai]||0)*MAXEXT*0.45)*TUNE.ride; r.atRide+=(ride-r.atRide)*0.2;
+        let ax=a0[0]+a0[2]*cw*r.atRide, ay=a0[1]+a0[3]*ch*r.atRide;
+        if(ay<-ch||ay>H+ch) continue;                                               // scrolled off-screen -> keep crawling, just don't draw
         ax=Math.max(ch,Math.min(W-ch,ax)); ay=Math.max(ch,Math.min(H-ch,ay));
-        g.font="700 "+Math.round(ch*1.08)+'px "Courier New","Cousine",monospace';
-        g.lineJoin="round"; g.lineWidth=Math.max(3,ch*0.3); g.strokeStyle=GROUND; g.strokeText("@",ax,ay);
-        const fr=MONO[0]+(GOLD_RGB[0]-MONO[0])*bloom, fg=MONO[1]+(GOLD_RGB[1]-MONO[1])*bloom, fb=MONO[2]+(GOLD_RGB[2]-MONO[2])*bloom;
-        g.fillStyle="rgba("+(fr|0)+","+(fg|0)+","+(fb|0)+","+(0.55+0.45*bloom).toFixed(2)+")"; g.fillText("@",ax,ay); }
+        const dx=a0[2];
+        const label = dx<0 ? (r.name+"@") : ("@"+r.name);                           // left wall flips so the @ kisses the wall
+        const n=label.length;
+        const x0 = dx<0 ? ax-(n-1)*hcw : ax, x1 = dx<0 ? ax : ax+(n-1)*hcw;
+        // cleared floor: a parchment patch blooms in behind the handle so the descent parts for it;
+        // dark ink text on top. At rest (bloom 0) there's no patch -- muted ink reads on the wall.
+        if(bloom>0.01){
+          g.fillStyle="rgba("+GR[0]+","+GR[1]+","+GR[2]+","+(0.9*bloom).toFixed(3)+")";
+          g.fillRect(x0-hcw*0.72, ay-hch*0.72, (x1-x0)+hcw*1.44, hch*1.44);
+        }
+        g.fillStyle="rgba("+MONO[0]+","+MONO[1]+","+MONO[2]+",0.92)";
+        for(let j=0;j<n;j++){
+          const cx = dx<0 ? ax-(n-1-j)*hcw : ax+j*hcw;
+          if(cx<-cw||cx>W+cw) continue;
+          g.fillText(label[j],cx,ay);
+        }
+      }
     }
   }
   function loop(){ draw(); requestAnimationFrame(loop); }
