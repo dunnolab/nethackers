@@ -94,6 +94,10 @@ class HubClient:
         """``GET /attainment``, optionally narrowed to one ``?identity=``."""
         return self._get("/attainment", {"identity": identity} if identity else None)
 
+    def baseline(self) -> Any:
+        """``GET /baseline`` -- AutoAscend's per-identity reference floor."""
+        return self._get("/baseline")
+
     def elites(self, objective: str) -> Any:
         """``GET /elites?objective=...``."""
         return self._get("/elites", {"objective": objective})
