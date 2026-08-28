@@ -23,7 +23,14 @@ from textual.widgets import Static, Tab, Tabs
 from textual.worker import get_current_worker
 
 from nethackers.hubclient.client import HubClient, _short_digest
-from nethackers.hubclient.frontier import champion, champion_scores, overall_mean, universe_scores
+from nethackers.hubclient.frontier import (
+    baseline_scores,
+    champion,
+    champion_scores,
+    overall_mean,
+    universe_scores,
+    with_baseline_floor,
+)
 from nethackers.hubclient.render import render_elites, render_frontier_grid
 from nethackers.tui.art import highscore_table
 
@@ -174,6 +181,7 @@ class MapView(_HubView):
             self.refresh_hub()
 
     def _render_hub(self, client: HubClient):
+        aa = baseline_scores(client)
         if self._regime == "program":
             champ = champion(client)
             if champ is None:
@@ -183,14 +191,20 @@ class MapView(_HubView):
             note = f"@{owner}/{_short_digest(digest)} — this one program across all identities"
             om = overall_mean(scores)
             if om is not None:
-                note = f"{note} · overall {om:.2f}"
-            return render_frontier_grid(scores, note=note)
+                note = f"{note} · overall {om * 100:.1f}%"
+            aa_mean = overall_mean(aa)
+            if aa_mean is not None:
+                note = f"{note} · AutoAscend overall {aa_mean * 100:.1f}%"
+            return render_frontier_grid(scores, note=note, baseline_scores=aa)
         universe: dict[str, float | None] = dict(universe_scores(client))
-        note = "each number = the best program's mean on that identity"
-        om = overall_mean(universe)
+        best_of_all = with_baseline_floor(universe, aa)
+        note = "best result per identity · aa = AutoAscend floor · signed value = Δ vs AA"
+        om = overall_mean(best_of_all)
         if om is not None:
-            note = f"{note} · overall {om:.2f}"
-        return render_frontier_grid(universe, note=note)
+            note = f"{note} · overall {om * 100:.1f}%"
+        return render_frontier_grid(
+            universe, note=note, baseline_scores=aa, baseline_floor=True
+        )
 
 
 class ElitesView(_HubView):

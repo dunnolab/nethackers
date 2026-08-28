@@ -26,6 +26,7 @@ condition to special-case away.
 from __future__ import annotations
 
 from collections import defaultdict
+from collections.abc import Mapping
 from typing import Any
 
 from rich import box
@@ -138,6 +139,19 @@ def _gh_commit(repo: str, sha: str) -> Text:
     return Text(short, style=f"link {base}/commit/{sha}")
 
 
+def _gh_commit_url(repo: str, sha: str) -> Text:
+    """A full, visibly printed commit URL for surfaces where the source link
+    itself matters. Unlike ``_gh_commit``, no part of the label is shortened;
+    callers should put it in a folding table column for narrow terminals."""
+    sha, repo = str(sha), str(repo)
+    if not repo:
+        return Text(sha)
+    base = (repo.rstrip("/") if repo.startswith(("http://", "https://"))
+            else f"https://{repo.rstrip('/')}")
+    url = f"{base}/commit/{sha}" if sha else base
+    return Text(url, style=f"link {url}")
+
+
 def render_board(entries: list[dict[str, Any]], *, you: str | None = None) -> RenderableType:
     """A ``rich`` table of board entries, shape-aware over which metric
     produced them (mirrors the baseline ``plain`` ``render_board``'s shape
@@ -205,23 +219,33 @@ def render_board(entries: list[dict[str, Any]], *, you: str | None = None) -> Re
 
 
 def render_elites(entries: list[dict[str, Any]]) -> RenderableType:
-    """A ``rich`` table of elite-pool entries: ``rank | identity |
-    solution | score`` (``solution`` shortened via ``_short_digest``,
-    ``score`` colored via ``ramp``). Empty -> a friendly one-line message,
-    never a bare header."""
+    """A ``rich`` table of elite-pool entries.
+
+    Real hub rows include ``repo`` and ``commit_sha``; those render as a full,
+    clickable commit URL in a folding ``source`` column, so narrow TUI windows
+    wrap the link instead of truncating it. Older/short fixture rows without
+    source metadata retain the compact ``solution`` digest column. Empty -> a
+    friendly one-line message, never a bare header."""
     if not entries:
         return _empty("no elites recorded yet.")
 
+    has_sources = any(e.get("repo") for e in entries)
     table = Table(header_style="bold", row_styles=["", "on grey11"])
-    table.add_column("rank", justify="right")
-    table.add_column("identity")
-    table.add_column("solution")
-    table.add_column("score", justify="right")
+    table.add_column("rank", justify="right", no_wrap=True)
+    table.add_column("identity", no_wrap=True)
+    if has_sources:
+        table.add_column("source", overflow="fold", no_wrap=False, ratio=1)
+    else:
+        table.add_column("solution", overflow="fold", no_wrap=False)
+    table.add_column("score", justify="right", no_wrap=True)
     for e in entries:
+        source = (_gh_commit_url(e.get("repo", ""), e.get("commit_sha", ""))
+                  if has_sources and e.get("repo")
+                  else Text(str(e.get("solution_digest", ""))))
         table.add_row(
             str(e.get("rank", "")),
             str(e.get("identity", "")),
-            _short_digest(str(e.get("solution_digest", ""))),
+            source if has_sources else _short_digest(str(e.get("solution_digest", ""))),
             _colored_num(e.get("score", "")),
         )
     return table
@@ -273,10 +297,24 @@ def _mean(values: list[float]) -> float | None:
     return sum(values) / len(values) if values else None
 
 
-def render_frontier_grid(scores: dict[str, float | None], *, note: str = "") -> RenderableType:
-    """The frontier ``{identity: value}`` map as a 4-column grid, one cell
+def _frontier_pct(value: float) -> str:
+    """Contest-site frontier formatting: progression as a percentage."""
+    return f"{value * 100:.1f}%"
+
+
+def _frontier_delta(value: float) -> str:
+    """Contest-site delta formatting: signed percentage points."""
+    return f"{value * 100:+.1f}%"
+
+
+def render_frontier_grid(
+    scores: dict[str, float | None], *, note: str = "",
+    baseline_scores: Mapping[str, float | None] | None = None,
+    baseline_floor: bool = False,
+) -> RenderableType:
+    """The frontier ``{identity: value}`` map as a 3-column grid, one cell
     per role (all 13, in ``ROLE_ORDER``): the role's full name, its mean
-    progression across evaluated variations (``mean X.XX``, or ``"—"`` if
+    progression across evaluated variations (or ``"—"`` if
     none evaluated -- the aggregate is always a MEAN, never a max/best, see
     ``_mean``), then one line per variation -- its ``race-align-gender``
     label and its progression number, tinted via ``_frontier_numstyle`` as
@@ -292,6 +330,12 @@ def render_frontier_grid(scores: dict[str, float | None], *, note: str = "") -> 
     renderer, alone, doesn't collapse empty input down to a one-line
     message the way this module's other renderers do.
 
+    When ``baseline_scores`` is supplied, each evaluated program value also
+    shows its signed delta versus AutoAscend. With ``baseline_floor=True``,
+    AutoAscend participates in the Universe: a missing or non-beating program
+    cell displays the AA score followed by ``aa``, matching the contest-site
+    frontier table instead of falsely presenting that identity as unexplored.
+
     An optional ``note`` (e.g. ``"frozen -- parent gen 4"``) renders as a
     dim line above the grid via ``rich.console.Group``, for callers that
     want to caption the grid without the caption becoming part of the
@@ -303,24 +347,77 @@ def render_frontier_grid(scores: dict[str, float | None], *, note: str = "") -> 
     cells: list[Text] = []
     for role in ROLE_ORDER:
         idents = sorted(by_role.get(role, []))
-        present = [scores[i] for i in idents if scores.get(i) is not None]
+        displayed: dict[str, float | None] = {}
+        for ident in idents:
+            value = scores.get(ident)
+            aa = baseline_scores.get(ident) if baseline_scores is not None else None
+            if baseline_floor and aa is not None and (value is None or value <= aa + 0.0005):
+                value = aa
+            displayed[ident] = value
+        present = [displayed[i] for i in idents if displayed[i] is not None]
         agg = _mean([v for v in present if v is not None])
         head = Text(ROLE_FULL[role], style="bold #d2a24c")
-        head.append(f"   mean {agg:.2f}\n" if agg is not None else "   —\n", style="dim")
+        if baseline_scores is None:
+            head.append(f"   mean {agg:.2f}\n" if agg is not None else "   —\n", style="dim")
+        elif agg is None:
+            head.append("   —\n", style="dim")
+        else:
+            head.append(f"   {_frontier_pct(agg)}", style="bold")
+            role_deltas: list[float] = []
+            program_leads = False
+            for ident in idents:
+                shown_value = displayed[ident]
+                aa_value = baseline_scores.get(ident)
+                raw_value = scores.get(ident)
+                if shown_value is not None and aa_value is not None:
+                    role_deltas.append(shown_value - aa_value)
+                if (raw_value is not None
+                        and (aa_value is None or raw_value > aa_value + 0.0005)):
+                    program_leads = True
+            role_delta = _mean(role_deltas)
+            if baseline_floor and not program_leads:
+                head.append("  aa\n", style="dim #9a9aa6")
+            elif role_delta is not None:
+                delta_style = "#57c99a" if role_delta > 0.0005 else (
+                    "#d97979" if role_delta < -0.0005 else "dim")
+                head.append(f" {_frontier_delta(role_delta)}\n", style=delta_style)
+            else:
+                head.append("   —\n", style="dim")
         for ident in idents:
-            v = scores.get(ident)
+            raw = scores.get(ident)
+            aa = baseline_scores.get(ident) if baseline_scores is not None else None
+            v = displayed[ident]
             head.append(f"{ident.split('-', 1)[1]:<12} ", style="#8a8069")
-            head.append((f"{v:>4.2f}" if v is not None else "  — ") + "\n",
+            shown = (_frontier_pct(v) if baseline_scores is not None
+                     else f"{v:>4.2f}") if v is not None else "  — "
+            head.append(shown,
                         style=_frontier_numstyle(v))
+            if baseline_scores is not None:
+                is_floor = (baseline_floor and aa is not None
+                            and (raw is None or raw <= aa + 0.0005))
+                if is_floor:
+                    head.append("  aa", style="dim #9a9aa6")
+                elif raw is not None and aa is not None:
+                    delta = raw - aa
+                    delta_style = "#57c99a" if delta > 0.0005 else (
+                        "#d97979" if delta < -0.0005 else "dim")
+                    head.append(f" {_frontier_delta(delta)}", style=delta_style)
+                else:
+                    head.append("   —", style="dim")
+            head.append("\n")
         cells.append(head)
 
+    # Three cards fit a conventional 80-column terminal while leaving room
+    # for the contest table's AA/delta column. Four made even the old score-
+    # only rows wrap; with comparison data they became effectively unreadable.
+    columns = 3
     table = Table(box=box.SQUARE, show_header=False, pad_edge=False,
                   padding=(0, 1), border_style="#4a4436", expand=True)
-    for _ in range(4):
+    for _ in range(columns):
         table.add_column(ratio=1)
-    for i in range(0, len(cells), 4):
-        row = cells[i:i + 4]
-        row += [Text("")] * (4 - len(row))
+    for i in range(0, len(cells), columns):
+        row = cells[i:i + columns]
+        row += [Text("")] * (columns - len(row))
         table.add_row(*row)
 
     if note:

@@ -10,7 +10,14 @@ from __future__ import annotations
 
 import pytest
 
-from nethackers.hubclient.frontier import champion, champion_scores, overall_mean, universe_scores
+from nethackers.hubclient.frontier import (
+    baseline_scores,
+    champion,
+    champion_scores,
+    overall_mean,
+    universe_scores,
+    with_baseline_floor,
+)
 
 VAL_IDENTITY = "val-hum-neu-fem"
 WIZ_IDENTITY = "wiz-elf-cha-mal"
@@ -21,10 +28,11 @@ class _FakeClient:
     ``solution_frontier`` ignore whatever arguments the adapter passes them
     and return the canned list the test scripted."""
 
-    def __init__(self, *, elites=None, board=None, frontier=None):
+    def __init__(self, *, elites=None, board=None, frontier=None, baseline=None):
         self._elites = elites if elites is not None else []
         self._board = board if board is not None else []
         self._frontier = frontier if frontier is not None else []
+        self._baseline = baseline if baseline is not None else {}
 
     def elites(self, objective):
         return self._elites
@@ -34,6 +42,29 @@ class _FakeClient:
 
     def solution_frontier(self, digest):
         return self._frontier
+
+    def baseline(self):
+        return self._baseline
+
+
+def test_baseline_scores_extracts_per_identity_progression():
+    client = _FakeClient(baseline={
+        "owner": "autoascend",
+        "per_identity": {
+            VAL_IDENTITY: {"progression": 0.4, "episodes": 2},
+            WIZ_IDENTITY: {"progression": None, "episodes": 0},
+        },
+        "overall": 0.4,
+    })
+
+    assert baseline_scores(client) == {VAL_IDENTITY: 0.4}
+
+
+def test_with_baseline_floor_takes_best_value_per_identity():
+    assert with_baseline_floor(
+        {VAL_IDENTITY: 0.3, WIZ_IDENTITY: 0.7},
+        {VAL_IDENTITY: 0.5},
+    ) == {VAL_IDENTITY: 0.5, WIZ_IDENTITY: 0.7}
 
 
 # --- universe_scores: rank-1 elites spread ----------------------------------
