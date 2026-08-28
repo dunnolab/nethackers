@@ -183,8 +183,22 @@ def test_cli_pull_invokes_pull(monkeypatch, capsys, tmp_path):
 # --- default hub URL --------------------------------------------------
 
 
-def test_default_hub_is_prod(monkeypatch):
+# Every NETHACKERS_* key load_stage() reads -- cleared below, same isolation
+# tests/test_config.py's test_prod_flag_bypasses_discovery and
+# tests/test_cli_login.py's test_whoami_respects_o_json already use.
+_STAGE_ENV_KEYS = (
+    "NETHACKERS_STAGE", "NETHACKERS_STAGE_FILE", "NETHACKERS_HUB", "NETHACKERS_HUB_PORT",
+    "COMPOSE_PROJECT_NAME", "NETHACKERS_DATA_ROOT", "NETHACKERS_REPO_NAME",
+    "NETHACKERS_ARENA_IMAGE", "NETHACKERS_MUTATOR_IMAGE", "NETHACKERS_CLIENT_ID",
+)
+
+
+def test_default_hub_is_prod(tmp_path, monkeypatch):
+    # cwd=tmp_path (an empty dir, never an ancestor of a real .env.stack)
+    # plus every NETHACKERS_* key cleared -- load_stage() is called directly
+    # here, so the cwd seam is passed straight through rather than chdir'd.
     from nethackers import cli
-    monkeypatch.delenv("NETHACKERS_HUB", raising=False)
-    parser = cli._build_parser(load_stage())
+    for key in _STAGE_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    parser = cli._build_parser(load_stage(cwd=tmp_path))
     assert parser.parse_args([]).hub == "https://nethackers.dunnolab.ai"

@@ -48,6 +48,39 @@ async def test_shell_guest_when_logged_out():
         assert "@" not in text  # no stray "@"/"@None" when nobody is logged in
 
 
+# Every NETHACKERS_* key load_stage() reads -- cleared below, same isolation
+# tests/test_config.py's test_prod_flag_bypasses_discovery and
+# tests/test_cli_login.py's test_whoami_respects_o_json already use -- so an
+# ambient shell/worktree .env.stack/env can never leak into the idbar's own
+# ``self._stage = load_stage()`` seam (``NetHackersApp.__init__``).
+_STAGE_ENV_KEYS = (
+    "NETHACKERS_STAGE", "NETHACKERS_STAGE_FILE", "NETHACKERS_HUB", "NETHACKERS_HUB_PORT",
+    "COMPOSE_PROJECT_NAME", "NETHACKERS_DATA_ROOT", "NETHACKERS_REPO_NAME",
+    "NETHACKERS_ARENA_IMAGE", "NETHACKERS_MUTATOR_IMAGE", "NETHACKERS_CLIENT_ID",
+)
+
+
+async def test_idbar_shows_stage_tag_for_non_prod_and_omits_it_for_prod(monkeypatch, tmp_path):
+    # NetHackersApp.__init__ resolves its stage via a bare load_stage() --
+    # the same ambient-discovery seam cli._run's own startup line reads --
+    # so construction must be hermetic here too: an empty tmp_path cwd plus
+    # every NETHACKERS_* key cleared.
+    monkeypatch.chdir(tmp_path)
+    for key in _STAGE_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+
+    prod_app = NetHackersApp(hub=_DEAD_HUB, creds=None)
+    async with prod_app.run_test():
+        text = str(prod_app.query_one(".idbar").render())
+        assert "stage:" not in text  # prod stays silent -- no tag at all
+
+    monkeypatch.setenv("NETHACKERS_STAGE", "wt")
+    wt_app = NetHackersApp(hub=_DEAD_HUB, creds=None)
+    async with wt_app.run_test():
+        text = str(wt_app.query_one(".idbar").render())
+        assert "· stage:wt" in text  # a named stage gets its own idbar suffix
+
+
 async def test_escape_leaves_a_focused_field_so_q_can_quit():
     """A focused text ``Input`` swallows letters, so the advertised ``q`` quit
     is dead while you're typing in one of the Evolve form's text fields (e.g.

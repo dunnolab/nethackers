@@ -23,8 +23,18 @@ def test_dev_identity_constants():
     assert DEV_OWNER == "dev"
 
 
-def test_load_stage_no_inputs_equals_prod_defaults():
-    assert load_stage(environ={}) == Stage()
+def test_load_stage_no_inputs_equals_prod_defaults(tmp_path, monkeypatch):
+    # load_stage() with nothing meaningful supplied must resolve to Stage()'s
+    # own prod defaults regardless of where/how this suite runs from: pin
+    # `cwd` to an empty tmp_path (no ancestor there can ever hold a real
+    # .env.stack, unlike this repo's own checkout after a `make up`/`make
+    # stack`) and clear every NETHACKERS_* env key an ambient shell/worktree
+    # might carry -- the same isolation test_prod_flag_bypasses_discovery
+    # (below) and tests/test_cli_login.py's test_whoami_respects_o_json
+    # already use.
+    for key in _STAGE_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    assert load_stage(cwd=tmp_path) == Stage()
 
 
 def test_env_overrides_defaults_with_casts():

@@ -209,6 +209,39 @@ def test_whoami_respects_o_json(monkeypatch, tmp_path, capsys):
     assert "sekrit-tok" not in captured.out  # token never leaks into the JSON payload either
 
 
+# --- ambient stage indicator (the spec's HARD mitigation for silent
+# .env.stack discovery -- the ``_run`` startup dim line, right after
+# ``parse_args``) -----------------------------------------------------------
+
+
+def test_stage_indicator_is_stderr_only_and_silent_for_prod(monkeypatch, tmp_path, capsys):
+    # Same isolation as test_whoami_respects_o_json just above: an empty
+    # tmp_path cwd plus every NETHACKERS_* key cleared, so "prod" below means
+    # the real prod defaults, not whatever this checkout's ambient
+    # .env.stack/env happens to be. `logout` is used as the carrier command
+    # purely because it is the cheapest no-op verb -- unlike `whoami`, its own
+    # output never mentions "stage:" so it can't be confused with the
+    # indicator line under test.
+    monkeypatch.chdir(tmp_path)
+    for key in _STAGE_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(cred, "clear", lambda: None)
+
+    # prod resolution -> the ambient indicator never fires, on either stream.
+    assert cli.main(["logout"]) == 0
+    captured = capsys.readouterr()
+    assert "stage:" not in captured.err
+    assert captured.out == ""
+
+    # a named (non-prod) stage -> the indicator fires, and only on stderr --
+    # so a real command's `-o json` stdout stays machine-clean regardless.
+    monkeypatch.setenv("NETHACKERS_STAGE", "wt")
+    assert cli.main(["logout"]) == 0
+    captured = capsys.readouterr()
+    assert f"stage: wt · hub {Stage().hub_url}" in captured.err
+    assert captured.out == ""
+
+
 # --- logout ----------------------------------------------------------------
 
 

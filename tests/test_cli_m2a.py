@@ -943,10 +943,25 @@ def test_cli_show_output_plain_matches_baseline_table(monkeypatch, capsys):
 # --- Property 5: --hub default + override, before AND after the subcommand -
 
 
-def test_cli_hub_defaults_to_prod(monkeypatch):
+# Every NETHACKERS_* key load_stage() reads -- cleared below, same isolation
+# tests/test_config.py's test_prod_flag_bypasses_discovery and
+# tests/test_cli_login.py's test_whoami_respects_o_json already use.
+_STAGE_ENV_KEYS = (
+    "NETHACKERS_STAGE", "NETHACKERS_STAGE_FILE", "NETHACKERS_HUB", "NETHACKERS_HUB_PORT",
+    "COMPOSE_PROJECT_NAME", "NETHACKERS_DATA_ROOT", "NETHACKERS_REPO_NAME",
+    "NETHACKERS_ARENA_IMAGE", "NETHACKERS_MUTATOR_IMAGE", "NETHACKERS_CLIENT_ID",
+)
+
+
+def test_cli_hub_defaults_to_prod(tmp_path, monkeypatch):
+    # C.main goes through _run's ambient .env.stack discovery (no cwd= seam
+    # at this layer), so chdir to an empty tmp_path -- same isolation as
+    # test_config.py's test_prod_flag_bypasses_discovery.
     FakeHubClient, calls = _make_fake_hub_client({})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
-    monkeypatch.delenv("NETHACKERS_HUB", raising=False)
+    monkeypatch.chdir(tmp_path)
+    for key in _STAGE_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
 
     rc = C.main(["map"])
 
