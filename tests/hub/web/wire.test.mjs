@@ -91,14 +91,13 @@ function router(path) {
   if (route === "/stats") return { programs: 2, hackers: 2, ascensions: 0, last_registered_at: "2026-08-27T09:30:00+00:00" };
   if (route === "/competition-status") return { community_frontier: 0.081, frontier_gain_7d: 0.006, identities_improved_7d: 4 };
   if (route === "/wall-of-fame") return {
-    keepers: [
-      { owner: "dun", records: 7, identities: TOUCHED.slice(0, 7), roles: ["arc"], total_lift: 0.8 },
-      { owner: "ako", records: 3, identities: TOUCHED.slice(7), roles: ["bar"], total_lift: 0.3 },
-    ],
-    breakthroughs: [
-      { owner: "dun", identity: TOUCHED[0], gain: 0.12, score: 0.2, previous: 0.08, solution_digest: "sha256:aaa", at: "2026-08-27T09:30:00+00:00" },
-      { owner: "ako", identity: TOUCHED[1], gain: 0.08, score: 0.18, previous: 0.1, solution_digest: "sha256:bbb", at: "2026-08-26T09:30:00+00:00" },
-    ],
+    keepers: Array.from({ length: 6 }, (_, i) => ({
+      owner: `keeper${i + 1}`, records: 7 - i, identities: [TOUCHED[i]], roles: [i % 2 ? "bar" : "arc"], total_lift: 0.8 - i * 0.1,
+    })),
+    breakthroughs: Array.from({ length: 7 }, (_, i) => ({
+      owner: `breaker${i + 1}`, identity: TOUCHED[i], gain: 0.12 - i * 0.01, score: 0.2, previous: 0.08,
+      solution_digest: i % 2 ? "sha256:bbb" : "sha256:aaa", at: `2026-08-${String(27 - i).padStart(2, "0")}T09:30:00+00:00`,
+    })),
   };
   if (route === "/baseline") return BASELINE;
   if (route === "/objectives") return IDENTITIES.map((n) => ({ name: n, episodes: 15 }));
@@ -186,6 +185,16 @@ async function pass1() {
   ok(/none has ascended/.test(mq), "marquee: 'none has ascended' when ascensions=0");
   ok(!/3 programs registered/.test(mq), "marquee no longer hardcodes '3 programs'");
   ok(/27 Aug 2026/.test(q("#updated").textContent), "last-updated shows the formatted registered_at (UTC)");
+
+  // Recognition tables start compact and expand independently in five-row pages.
+  ok(qa("#recordholders tbody tr").length === 5, "frontier keepers initially shows the top 5");
+  ok(qa("#breakthroughs tbody tr").length === 5, "breakthrough log initially shows the latest 5");
+  ok(!/submission/i.test(q("#breakthroughs thead").textContent), "breakthrough table omits the redundant submission column");
+  q('[data-fame-more="keepers"]').click();
+  ok(qa("#recordholders tbody tr").length === 6, "keepers More control reveals the next page");
+  ok(qa("#breakthroughs tbody tr").length === 5, "keepers expansion does not alter breakthroughs");
+  q('[data-fame-more="breakthroughs"]').click();
+  ok(qa("#breakthroughs tbody tr").length === 7, "breakthroughs More control reveals the next page");
 
   ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
   dom.window.close();

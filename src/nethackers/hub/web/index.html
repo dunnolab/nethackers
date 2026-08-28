@@ -216,7 +216,6 @@ table.grid caption{ text-align:left; background:var(--indigo); color:#fff; font-
 .fametable .roles{ white-space:normal; text-align:left; min-width:190px; }
 .famelog{ font-size:.75rem !important; }
 .famelog td{ font-variant-numeric:tabular-nums; }
-.famelog .submission{ color:var(--indigo); text-decoration:underline; }
 .emptyblock{ color:#777780; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; }
 
 /* FRONTIER heatmap --------------------------------------------------------- */
@@ -489,7 +488,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
         <li><span class="k">[1]</span> <a href="#about">What it is?</a></li>
         <li><span class="k">[2]</span> <a href="#challenge">The challenge</a></li>
         <li><span class="k">[3]</span> <a href="#frontier">The Frontier</a></li>
-        <li><span class="k">[4]</span> <a href="#people">Contributors</a></li>
+        <li><span class="k">[4]</span> <a href="#hackers">Hackers</a></li>
         <li><span class="k">[5]</span> <a href="#oracle">The Oracle</a> <span class="new">NEW!</span></li>
         <li><span class="k">[6]</span> <a href="#why">Why care</a></li>
         <li><span class="k">[7]</span> <a href="#contribute">Contribute</a></li>
@@ -617,9 +616,9 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 
       <hr class="rule">
 
-      <!-- CONTRIBUTORS -->
-      <section id="people">
-        <h2 class="sec"><span class="glyph">&amp;</span> People moving the frontier</h2>
+      <!-- HACKERS -->
+      <section id="hackers">
+        <h2 class="sec"><span class="glyph">&amp;</span> Hackers moving the frontier</h2>
         <p class="lead">Recognition is attached to concrete records, roles, and source commits &mdash; not collapsed into one global score.</p>
         <div class="subh">Frontier Keepers</div>
         <p class="famedesc">Current self-reported identity leaders above AutoAscend. Click a row for the hacker's complete contribution history.</p>
@@ -855,6 +854,8 @@ __)/\_//(\/(/\)/\//\/\|_)__</pre>
 let STATS=null;                      // live platform totals from /stats
 let COMPETITION_STATUS=null;          // collective frontier and rolling 7-day movement
 let WALL_OF_FAME={keepers:[],breakthroughs:[]};
+const FAME_PAGE_SIZE=5;
+const FAME_LIMITS={keepers:FAME_PAGE_SIZE,breakthroughs:FAME_PAGE_SIZE};
 let SOLUTION_BY_DIGEST={};            // metadata cache for identity-board source/date cells
 let BASELINE={owner:"autoascend",per_identity:{},overall:null};  // raw /baseline
 let OBJ_EP={};                       // {objective: episodes} from /objectives (honest ep for tooltips)
@@ -1273,32 +1274,43 @@ function renderRecognition(){
   const holders=$("#recordholders"), breakthroughs=$("#breakthroughs");
   if(holders){
     const people=WALL_OF_FAME.keepers||[];
+    const visible=people.slice(0,FAME_LIMITS.keepers);
     holders.innerHTML=people.length?`<div class="tablewrap"><table class="grid fametable"><caption>FRONTIER KEEPERS &middot; SELF-REPORTED*</caption>
       <thead><tr><th>#</th><th class="l">hacker</th><th>frontiers</th><th class="l">roles represented</th><th>combined lift</th></tr></thead>
-      <tbody>${people.map((p,i)=>`<tr data-owner="${esc(p.owner)}" tabindex="0" role="button" aria-label="Open contributions by @${esc(p.owner)}">
+      <tbody>${visible.map((p,i)=>`<tr data-owner="${esc(p.owner)}" tabindex="0" role="button" aria-label="Open contributions by @${esc(p.owner)}">
         <td class="rk ${i<3?'top':''}">${i+1}</td><td class="l owner">@${esc(p.owner)}</td><td>${p.records}</td>
-        <td class="roles">${p.roles.map(r=>esc(ROLE_NAMES[r]||r)).join(', ')}</td><td class="dpos">+${(p.total_lift*100).toFixed(1)} pp</td></tr>`).join("")}</tbody></table></div>`
+        <td class="roles">${p.roles.map(r=>esc(ROLE_NAMES[r]||r)).join(', ')}</td><td class="dpos">+${(p.total_lift*100).toFixed(1)} pp</td></tr>`).join("")}</tbody></table></div>
+        ${visible.length<people.length?`<div class="more" data-fame-more="keepers" role="button" tabindex="0">[ --More-- ]</div>`:""}`
       :`<div class="emptyblock">No participant is above AutoAscend yet.</div>`;
     holders.querySelectorAll("tbody tr").forEach(row=>{
       const open=()=>openHacker(row.dataset.owner);
       row.addEventListener("click",open);
       row.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } });
     });
+    const more=holders.querySelector('[data-fame-more="keepers"]');
+    if(more){ const expand=()=>{ FAME_LIMITS.keepers+=FAME_PAGE_SIZE; renderRecognition(); };
+      more.addEventListener("click",expand);
+      more.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); expand(); } }); }
   }
   if(breakthroughs){
     const people=WALL_OF_FAME.breakthroughs||[];
+    const visible=people.slice(0,FAME_LIMITS.breakthroughs);
     breakthroughs.innerHTML=people.length?`<div class="tablewrap"><table class="grid fametable famelog"><caption>GREATEST BREAKTHROUGHS &middot; NEWEST FIRST</caption>
-      <thead><tr><th class="l">registered</th><th class="l">hacker</th><th class="l">identity</th><th>before</th><th>result</th><th>advance</th><th class="l">submission</th></tr></thead>
-      <tbody>${people.map((p,i)=>`<tr data-breakthrough="${i}" tabindex="0" role="button" aria-label="Open breakthrough submission by @${esc(p.owner)}">
+      <thead><tr><th class="l">registered</th><th class="l">hacker</th><th class="l">identity</th><th>before</th><th>result</th><th>advance</th></tr></thead>
+      <tbody>${visible.map((p,i)=>`<tr data-breakthrough="${i}" tabindex="0" role="button" aria-label="Open breakthrough submission by @${esc(p.owner)}">
         <td class="l">${esc(fmtDate(p.at))}</td><td class="l owner">@${esc(p.owner)}</td><td class="l">${esc(p.identity)}</td>
-        <td>${(p.previous*100).toFixed(1)}%</td><td>${(p.score*100).toFixed(1)}%</td><td class="dpos">+${(p.gain*100).toFixed(1)} pp</td>
-        <td class="l submission">${submissionLabel(p.solution_digest)}</td></tr>`).join("")}</tbody></table></div>`
+        <td>${(p.previous*100).toFixed(1)}%</td><td>${(p.score*100).toFixed(1)}%</td><td class="dpos">+${(p.gain*100).toFixed(1)} pp</td></tr>`).join("")}</tbody></table></div>
+        ${visible.length<people.length?`<div class="more" data-fame-more="breakthroughs" role="button" tabindex="0">[ --More-- ]</div>`:""}`
       :`<div class="emptyblock">No breakthroughs above AutoAscend yet.</div>`;
     breakthroughs.querySelectorAll("tbody tr").forEach(row=>{
       const open=()=>openBreakthrough(people[Number(row.dataset.breakthrough)]);
       row.addEventListener("click",open);
       row.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } });
     });
+    const more=breakthroughs.querySelector('[data-fame-more="breakthroughs"]');
+    if(more){ const expand=()=>{ FAME_LIMITS.breakthroughs+=FAME_PAGE_SIZE; renderRecognition(); };
+      more.addEventListener("click",expand);
+      more.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); expand(); } }); }
   }
 }
 
@@ -1349,15 +1361,6 @@ function sourceLink(s){
   const file=[s.root&&s.root!=="."?s.root:"",s.entrypoint||""].filter(Boolean).join("/");
   const path=file?`/blob/${encodeURIComponent(commit)}/${file.split("/").map(encodeURIComponent).join("/")}`:`/tree/${encodeURIComponent(commit)}`;
   return `<a href="https://github.com/${repo}${path}" target="_blank" rel="noopener">${esc(repo)}@${esc(commit.slice(0,7)||"commit")}</a>`;
-}
-function submissionLabel(digest){
-  const s=SOLUTION_BY_DIGEST[digest];
-  if(s){
-    const repo=String(s.repo||"").replace(/^https?:\/\/github\.com\//i,"").replace(/^github\.com\//i,"").replace(/\.git$/i,"");
-    return `${esc(repo)}@${esc(String(s.commit_sha||"").slice(0,7)||"commit")}`;
-  }
-  const raw=String(digest).replace(/^github\.com\//i,""), at=raw.lastIndexOf("@");
-  return esc(at>=0?raw.slice(0,at+1)+raw.slice(at+1,at+8):raw);
 }
 function roleKeys(frontier){
   return [...new Set(frontier.map(x=>String(x.identity||"").split("-")[0]).filter(r=>ROLE_NAMES[r]))]

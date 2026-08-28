@@ -128,6 +128,10 @@ def test_site_uses_identity_boards_and_concrete_contributor_recognition(tmp_path
     assert 'id="scBody"' not in body
     assert 'id="recordholders"' in body
     assert 'id="breakthroughs"' in body
+    assert 'id="hackers"' in body
+    assert 'id="people"' not in body
+    assert 'data-fame-more="keepers"' in body
+    assert 'data-fame-more="breakthroughs"' in body
     assert 'id="activityfeed"' not in body
     assert 'class="frontierrow"' in body
     assert "async function openIdentity(identity)" in body
