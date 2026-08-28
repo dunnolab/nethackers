@@ -740,3 +740,26 @@ def test_coldstart_baseline_when_every_cell_has_a_champion(tmp_path):
         workdir=tmp_path / "work", on_iteration=lambda i, r: baseline.append(r))
     assert baseline[0].reason == "baseline"
     assert baseline[0].dev_fitness == approx(0.8)   # (0.7 + 0.9) / 2, no seed eval
+
+
+def test_coldstart_warm_cell_mutates_without_error(tmp_path):
+    # The branch's headline scenario: a warm-started cell (seeded from a hub
+    # champion, so its dev_evidence spans ONLY that champion's identity) must
+    # mutate cleanly on iteration 1. The mutated cell's SUBSET per-identity means
+    # (parent_means) flow into aggregate.regressions and the brief against a
+    # FULL-union child eval -- a shape that couldn't arise under the old
+    # full-union cold-start. Proves the D2 subset doesn't trip the unchanged
+    # regression/brief path (no silent 'error:' iteration).
+    a, b = "wiz-elf-cha-mal", "wiz-orc-cha-mal"
+    champ_a = {"solution_digest": "github.com/t/a@11", "score": 0.99, "tier": "verified"}
+    champ_b = {"solution_digest": "github.com/t/b@22", "score": 0.99, "tier": "verified"}
+    results = run_loop(
+        objective=f"{a},{b}", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+        hub=_ElitesHub({a: champ_a, b: champ_b}), image="img:dev", token="t",
+        owner="dev", iterations=1, now_fn=lambda: "2026-08-28T00:00:00Z",
+        runner=_fitness_runner(lambda v: {0: 0.2, 5: 0.7, 9: 0.9}.get(v, 0.95)),
+        fetch=_champion_fetch({"github.com/t/a@11": 5, "github.com/t/b@22": 9}),
+        workdir=tmp_path / "work", rng=random.Random(0))
+    assert not results[0].reason.startswith("error")   # subset parent_means: regressions+brief ok
+    assert results[0].registered is True               # the warm cell mutated and improved a cell
