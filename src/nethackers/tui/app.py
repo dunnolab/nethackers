@@ -23,6 +23,7 @@ launch paths converge on the same pushed-screen mechanics right after this
 from __future__ import annotations
 
 import contextlib
+import re
 import subprocess
 from collections.abc import Callable
 
@@ -92,6 +93,9 @@ def _cap(s: str) -> str:
     return s if len(s) <= _TOAST_DETAIL_MAXLEN else s[: _TOAST_DETAIL_MAXLEN - 1] + "…"
 
 
+_DOCKER_HINT = re.compile(r"^See '.*--help'\.?$")  # docker's trailing "See '… --help'." boilerplate
+
+
 def failure_detail(error: BaseException) -> str:
     """One-line, human reason for a failed run, safe for a plain-text toast.
 
@@ -102,6 +106,9 @@ def failure_detail(error: BaseException) -> str:
     if stderr:
         text = stderr.decode() if isinstance(stderr, bytes) else str(stderr)
         lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        # docker appends a generic "See 'docker … --help'." hint after the real
+        # error line; drop it so the toast shows the actual cause, not the hint.
+        lines = [ln for ln in lines if not _DOCKER_HINT.match(ln)] or lines
         if lines:
             return _cap(lines[-1])
     if isinstance(error, subprocess.CalledProcessError):

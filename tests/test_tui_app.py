@@ -531,6 +531,21 @@ def test_failure_detail_plain_exception():
     assert failure_detail(RuntimeError("boom")) == "boom"
 
 
+def test_failure_detail_skips_docker_help_boilerplate():
+    # Real docker prints the cause, then a generic "See '... --help'." line;
+    # the toast should show the cause, not the hint (caught by the live TUI run).
+    err = subprocess.CalledProcessError(
+        125, ["docker", "run"],
+        stderr="Unable to find image 'nethackers/nope:dev' locally\n"
+               "docker: Error response from daemon: pull access denied for "
+               "nethackers/nope, repository does not exist or may require "
+               "'docker login'.\n"
+               "See 'docker run --help'.\n")
+    detail = failure_detail(err)
+    assert detail.startswith("docker: Error response from daemon: pull access denied")
+    assert "run --help" not in detail
+
+
 _QOL_CFG = EvolveConfig("wiz-elf-cha-mal", "claude", 3)
 
 
