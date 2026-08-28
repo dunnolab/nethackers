@@ -1,10 +1,18 @@
-# Local hub stack (M2a Task 14): `docker compose up -d --build` brings up
-# the hub API on http://localhost:8000, seeded with the shared fixture
-# dataset (nethackers.hub.fixtures.load_fixtures) and offline dev auth
-# (LocalStubAuth via NETHACKERS_STUB_IDENTITIES -- no GitHub App / network
-# auth needed locally). The sqlite file lives on the named `hubdata` volume
-# so it survives `docker compose restart` (but not `down -v`, used by
-# tests/test_compose_smoke.py to reset between runs).
+# Local hub stack (M2a Task 14; auth split in the stage-config-model design):
+# `docker compose up -d --build` brings up the hub API on
+# http://localhost:8000. This base file carries only the auth-agnostic
+# shape -- service, port, the sqlite-backed `hubdata` volume (survives
+# `docker compose restart` but not `down -v`, used by
+# tests/test_compose_smoke.py to reset between runs) -- and deliberately
+# has NO auth/fixtures env. Auth is picked by which overlay compose merges
+# in, per Make's `HUB_AUTH` switch (see Makefile, docs/local-stack.md):
+#   - compose.override.yaml (checked in): auto-merged whenever no `-f` is
+#     given, so bare `docker compose up` reproduces today's behavior --
+#     offline LocalStubAuth over a single dev identity + fixture-seeded
+#     catalog (nethackers.hub.fixtures.load_fixtures).
+#   - compose.github.yaml: explicit `-f compose.yaml -f compose.github.yaml`
+#     (which disables the auto-override merge) -- real GitHubAppAuth,
+#     empty DB. See "Real-auth local hub mode" in the design doc.
 services:
   api:
     build:
@@ -14,7 +22,5 @@ services:
     volumes: ["hubdata:/data"]
     environment:
       NETHACKERS_DB: /data/hub.db
-      NETHACKERS_LOAD_FIXTURES: "1"
-      NETHACKERS_STUB_IDENTITIES: '{"dev-token":"dev"}'
 volumes:
   hubdata:

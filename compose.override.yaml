@@ -1,0 +1,20 @@
+# Offline dev default (checked in). Compose auto-merges this over
+# compose.yaml whenever a command is run with NO explicit `-f` list --
+# `docker compose up`, `down`, `down -v`, etc. -- so this is exactly
+# today's hub behavior, unchanged: LocalStubAuth over a single dev
+# identity, plus the fixture-seeded demo catalog
+# (nethackers.hub.fixtures.load_fixtures). tests/test_compose_smoke.py
+# relies on both, via bare `docker compose up -d --build`.
+#
+# The stub map's token/login pair mirrors config.DEV_TOKEN/DEV_OWNER
+# ("dev-token"/"dev") -- pinned equal by
+# tests/test_compose_stage.py::test_override_stub_map_matches_constants.
+#
+# An explicit `-f` list (e.g. `-f compose.yaml -f compose.github.yaml`,
+# see compose.github.yaml) disables this auto-merge -- that's the whole
+# mechanism behind the Makefile's `HUB_AUTH` switch.
+services:
+  api:
+    environment:
+      NETHACKERS_STUB_IDENTITIES: '{"dev-token":"dev"}'
+      NETHACKERS_LOAD_FIXTURES: "1"

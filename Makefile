@@ -31,6 +31,15 @@ ARENA_IMAGE   ?= $(or $(NETHACKERS_ARENA_IMAGE),nethackers/arena:dev)
 # (no nethackers source in it -- no collision to isolate); override:
 # `make mutator MUTATOR_IMAGE=you/mutator:tag`.
 MUTATOR_IMAGE ?= $(or $(NETHACKERS_MUTATOR_IMAGE),nethackers/mutator:latest)
+# Local hub auth provider (see "Real-auth local hub mode",
+# docs/local-stack.md): `stub` (default) runs bare `docker compose up`,
+# letting the checked-in compose.override.yaml auto-merge -- offline
+# LocalStubAuth + fixtures, today's behavior; `github` runs an explicit
+# `-f compose.yaml -f compose.github.yaml`, which *disables* that
+# auto-merge, so NETHACKERS_STUB_IDENTITIES is unset and
+# create_default_app (hub/api.py) selects the real GitHubAppAuth instead.
+# `make up HUB_AUTH=github` is the whole flip.
+HUB_AUTH ?= stub
 
 # Install the `nethackers` CLI into an isolated uv tool env. The cache-clean is
 # required because the package version is pinned 0.0.0, so uv would otherwise
@@ -44,10 +53,16 @@ uninstall:
 	uv tool uninstall nethackers
 
 # Local hub stack: http://localhost:8000 (or this worktree's allocated port --
-# see `make stack`), seeded with the fixture dataset.
+# see `make stack`). HUB_AUTH=stub (default) seeds the fixture dataset behind
+# offline dev auth; HUB_AUTH=github runs real GitHubAppAuth against an empty
+# DB (`make hub HUB_AUTH=github` / `make up HUB_AUTH=github`).
 hub:
 	$(SOURCE_STACK); \
-	docker compose up -d --build
+	if [ "$(HUB_AUTH)" = "github" ]; then \
+		docker compose -f compose.yaml -f compose.github.yaml up -d --build; \
+	else \
+		docker compose up -d --build; \
+	fi
 hub-down:
 	$(SOURCE_STACK); \
 	docker compose down
