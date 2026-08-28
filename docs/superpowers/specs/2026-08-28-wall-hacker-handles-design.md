@@ -78,14 +78,14 @@ Arrived at by iterating a working prototype, ending on the `?tune=1` slider pane
   ride, and a distinct `spd`). The draw loop advances each independently, indexes
   the full perimeter, culls off-screen, and renders the cleared-floor label.
 - **New endpoint — `GET /hackers/random?n=<N≤20>`** → a JSON list of up to N random
-  **distinct registered hacker handles**, sampled **server-side**:
-  `SELECT DISTINCT owner FROM solutions … ORDER BY RANDOM() LIMIT n` (excluding
-  synthetic/baseline owners such as `autoascend`, and empty owners). This is far
-  cheaper than `GET /hackers`, whose `hacker_board` view aggregates coverage + mean
-  over every owner's atoms and returns all rows — we only need a handful of names.
-  It also **resolves the earlier open scope question**: "hackers that registered a
-  program with us" = distinct `owner`s in `solutions`, **not** objective-scoped.
-  Lives in `api.py` (route) + a small `Store` method.
+  **distinct hacker handles**, sampled **server-side**:
+  `SELECT DISTINCT owner FROM atoms … ORDER BY RANDOM() LIMIT n`. It reads the SAME
+  table as the leaderboard's `hacker_board` (real *scored* submissions), so it stays
+  honest with **no allowlist**: the AutoAscend baseline lives in the isolated
+  `baseline_atoms` table, and any seed/root that sits only in `solutions` (never
+  scored) can't appear — only real hackers do. Far cheaper than `GET /hackers`,
+  which additionally aggregates coverage + mean and returns all rows; we only need a
+  handful of names. Lives in `api.py` (route) + a small `Store` method.
 - **Data sourcing (real implementation):** the dictviz IIFE does a **one-time
   `GET /hackers/random?n=20`** on init and assigns the handles to `RUNNERS`.
   **Honest by construction:** only real handles; if fewer than 20 are registered,
@@ -98,10 +98,10 @@ The look and feel are done and live in the working tree, driven by `STUB_HANDLES
 and dev query hooks. The plan turns that prototype into a production feature:
 
 - **Add `GET /hackers/random`** — an `api.py` route + a small `Store` method
-  (distinct `owner`s from `solutions`, random-ordered, `LIMIT n` clamped to ≤20,
-  baseline/empty owners excluded) — and **replace `STUB_HANDLES`** with a one-time
-  fetch of it; degrade gracefully (empty / short / failed → fewer or no runners)
-  without errors.
+  (distinct `owner`s from `atoms` — the leaderboard's source, so baseline/roots are
+  excluded structurally — random-ordered, `LIMIT n` clamped to ≤20) — and **replace
+  `STUB_HANDLES`** with a one-time fetch of it; degrade gracefully (empty / short /
+  failed → fewer or no runners) without errors.
 - **Strip the dev-only hooks** from the shipped page, leaving the cleared-floor
   treatment and the tuned values as baked literals:
   - `?tune=1` slider panel, `?hc` (color picker), `?ht` (treatment picker),
@@ -110,8 +110,9 @@ and dev query hooks. The plan turns that prototype into a production feature:
     by the dictionary-audio-viz spec (dev harness), not new to this work.
 - **Tests** (the seams; a canvas + Web-Audio loop is not unit-testable):
   - **`GET /hackers/random?n=20`** (new, `TestClient` in `tests/hub/test_api.py`):
-    returns ≤20 **distinct** registered owners, **excludes** baseline owners
-    (`autoascend`), respects/clamps `n`, and returns `[]` when the registry is empty.
+    returns ≤20 **distinct** scored hacker owners, **excludes** a seed/root that lives
+    only in `solutions` (unscored), respects/clamps `n`, and returns `[]` when no
+    scored hackers exist.
   - `GET /` still serves the page and the viz markers; the jsdom
     `tests/hub/web/wire.test.mjs` stays green (canvas is stubbed there, so it
     guards the data layer — stub `/hackers/random` and ensure the dictviz read

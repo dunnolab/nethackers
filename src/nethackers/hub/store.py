@@ -245,19 +245,20 @@ class Store:
             return None
         return dict(zip(_SOLUTION_COLUMNS, row, strict=True))
 
-    def random_owners(self, n: int, *, exclude: tuple[str, ...] = ("autoascend",)) -> list[str]:
-        """Up to ``n`` random distinct registered hacker handles -- the
-        ``owner``s in ``solutions`` -- excluding ``exclude`` (baseline/synthetic)
-        and empty owners. Cheap: a distinct-owner sample, no board aggregation."""
+    def random_owners(self, n: int) -> list[str]:
+        """Up to ``n`` random distinct hacker handles -- the ``owner``s in
+        ``atoms`` (real *scored* submissions), the SAME source the leaderboard's
+        ``hacker_board`` reads. That is what keeps it honest without an allowlist:
+        the AutoAscend baseline lives in the isolated ``baseline_atoms`` table,
+        and any seed/root that sits only in ``solutions`` was never scored into
+        ``atoms`` -- so neither can appear. Cheap: a distinct-owner sample."""
         if n <= 0:
             return []
-        not_in = f"AND owner NOT IN ({','.join('?' * len(exclude))}) " if exclude else ""
-        sql = (
-            "SELECT DISTINCT owner FROM solutions "
-            "WHERE owner IS NOT NULL AND owner != '' " + not_in + "ORDER BY RANDOM() LIMIT ?"
-        )
-        params = (*exclude, n) if exclude else (n,)
-        return [row[0] for row in self._conn.execute(sql, params).fetchall()]
+        rows = self._conn.execute(
+            "SELECT DISTINCT owner FROM atoms WHERE owner != '' ORDER BY RANDOM() LIMIT ?",
+            (n,),
+        ).fetchall()
+        return [row[0] for row in rows]
 
     def add_lineage(self, child: str, parent: str, kind: str) -> None:
         """``kind`` must be ``"parent"`` or ``"influence"`` (DB CHECK

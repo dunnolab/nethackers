@@ -16,7 +16,7 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
-from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
+from nethackers.contracts.models import Atom, Evidence, Objective, TrajectoryResult
 from nethackers.hub.api import create_app
 from nethackers.hub.auth import LocalStubAuth
 from nethackers.hub.github import GitHubReadError
@@ -443,31 +443,54 @@ def test_hackers_returns_union_shape_and_defaults_to_generalist(tmp_path: Any) -
 # --- /hackers/random (dungeon-wall handle sampler) ---------------------------
 
 
-def _seed_owner(store: Store, owner: str, s: str) -> None:
-    """Register one solution for ``owner`` (direct store write, no network)."""
+def _seed_root(store: Store, owner: str, s: str) -> None:
+    """A solutions-only owner: a seed/root registered as a solution but never
+    scored into ``atoms`` -- the leaderboard and the wall must NOT show it."""
     store.upsert_solution(
         "sha256:" + s * 64, repo=f"github.com/{owner}/nh", commit_sha="c" * 40,
-        owner=owner, root="bot", entrypoint="bot.py",
+        owner=owner, root="roots/" + owner, entrypoint="bot.py",
         registered_at="2026-08-28T00:00:00+00:00",
     )
 
 
-def test_hackers_random_distinct_registered_owners(tmp_path: Any) -> None:
+def _atom(owner: str, s: str, **kw: Any) -> Atom:
+    base: dict[str, Any] = dict(
+        solution_digest="sha256:" + s * 64, owner=owner, tier="self-reported",
+        identity="val-dwa-law-fem", seed=1, progression=0.2, milestone="Dlvl:5",
+        ascended=False, status="completed", turns=10, steps=10, evaluator_image="img",
+    )
+    base.update(kw)
+    return Atom(**base)
+
+
+def _seed_hacker(store: Store, owner: str, s: str) -> None:
+    """A real hacker: a solution AND a scored atom, so ``owner`` lands in the
+    ``atoms`` table that the leaderboard and the wall sample from."""
+    _seed_root(store, owner, s)
+    store.insert_atoms([_atom(owner, s)])
+
+
+def test_hackers_random_samples_scored_hackers(tmp_path: Any) -> None:
     client, store = _app(tmp_path)
     for owner, s in [("alice", "1"), ("bob", "2"), ("cara", "3")]:
-        _seed_owner(store, owner, s)
+        _seed_hacker(store, owner, s)
     got = client.get("/hackers/random?n=20").json()
-    assert sorted(got) == ["alice", "bob", "cara"]          # distinct, ≤20
+    assert sorted(got) == ["alice", "bob", "cara"]          # distinct scored owners
     assert len(client.get("/hackers/random?n=2").json()) == 2  # respects n
 
 
-def test_hackers_random_excludes_baseline(tmp_path: Any) -> None:
+def test_hackers_random_excludes_solutions_only_roots(tmp_path: Any) -> None:
+    # A real hacker (scored into atoms) alongside seed/roots that live only in
+    # ``solutions`` (never scored). The wall reads ``atoms`` -> only the hacker.
     client, store = _app(tmp_path)
-    _seed_owner(store, "autoascend", "a")   # baseline/synthetic
-    _seed_owner(store, "dana", "d")
-    assert client.get("/hackers/random").json() == ["dana"]
+    _seed_hacker(store, "dana", "d")
+    _seed_root(store, "autoascend", "a")   # seed/root: solution only, no atoms
+    _seed_root(store, "rootbot", "r")      # another root
+    assert client.get("/hackers/random?n=20").json() == ["dana"]
 
 
-def test_hackers_random_empty_when_no_registrations(tmp_path: Any) -> None:
-    client, _ = _app(tmp_path)
+def test_hackers_random_empty_when_no_scored_hackers(tmp_path: Any) -> None:
+    # Solutions with no atoms (e.g. only roots) -> no hackers on the wall.
+    client, store = _app(tmp_path)
+    _seed_root(store, "rootbot", "r")
     assert client.get("/hackers/random").json() == []
