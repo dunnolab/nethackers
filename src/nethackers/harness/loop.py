@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from nethackers.contracts.models import Evidence
+from nethackers.contracts.models import TrajectoryResult
 from nethackers.harness import aggregate, refs, select
 from nethackers.harness.archive import CellArchive
 from nethackers.harness.brief import build_brief
@@ -29,6 +29,7 @@ from nethackers.harness.metering import TokenUsage
 from nethackers.harness.register import register_win
 from nethackers.harness.seeds import dev_spec, validation_spec
 from nethackers.harness.store import LocalTreeStore
+from nethackers.hub.objectives import build_union_spec
 from nethackers.hub.selector import resolve
 from nethackers.hubclient.auth import AuthError
 
@@ -180,34 +181,53 @@ def run_loop(
                 payload["parent_means"] = aggregate.per_identity_means(c.dev_evidence.results)
         on_state(payload)
 
-    # Cold start: score the seed on the union batch and slot it into every
-    # cell, then overlay the hub's per-identity elites (each adopted tree
-    # scored once). --from-seed is a deliberate, hub-independent cold start:
-    # every cell just keeps the seed.
-    report(f"cold-start · scoring seed on {len(dev.batch)}ep …")
+    # Cold start: seed each cell on ITS OWN identity's batch. The champions
+    # partition S (per_identity_elites returns one per identity), so score each
+    # distinct champion once on the sub-union of the identities it owns, and the
+    # seed once on the identities no champion covers. Every identity is scored
+    # exactly once -> N*b episodes total, whatever the champion count (the old
+    # overlay scored EVERY champion on the full union: (1+P)*N*b). --from-seed
+    # keeps the hub out: the seed owns all of S.
     seed_digest = tree_store.save(seed_tree)
-    _seed_fit, seed_ev = evaluate(
-        tree_store.path(seed_digest), dev, image, now=now_fn(), runner=runner,
-        on_episode=_episode_cb("cold-start · dev"), max_parallel_evals=max_parallel_evals)
-    archive.insert(seed_digest, tree_store.path(seed_digest), seed_ev)
     archive.mark_seed(seed_digest)
-    base_dev = seed_ev.mean_progress
-    if not from_seed:
-        scored: dict[str, Evidence] = {}
-        for ident, (entry, tree_path) in select.per_identity_elites(
-                hub, tuple(identities), owner, store=tree_store, fetch=fetch).items():
-            if entry["score"] <= archive.cell(ident).score:
-                continue                                    # seed already >= this elite here
-            d = entry["solution_digest"]
-            if d not in scored:
-                _f, scored[d] = evaluate(
-                    tree_path, dev, image, now=now_fn(), runner=runner,
-                    on_episode=_episode_cb(f"cold-start · dev [{d[:8]}]"),
-                    max_parallel_evals=max_parallel_evals)
-            archive.insert(d, tree_path, scored[d])
+    elites: dict[str, tuple[dict, Path]] = (
+        {} if from_seed
+        else select.per_identity_elites(hub, tuple(identities), owner,
+                                        store=tree_store, fetch=fetch))
+    owned: dict[str, tuple[Path, list[str]]] = {}
+    for ident, (entry, tree_path) in elites.items():
+        owned.setdefault(entry["solution_digest"], (tree_path, []))[1].append(ident)
+
+    frontier_results: list[TrajectoryResult] = []   # every cold-start episode -> baseline tally
+    for d, (tree_path, idents) in owned.items():
+        report(f"cold-start · scoring {d[:8]} on {len(idents)} cell(s) …")
+        spec = build_union_spec(sorted(idents), name=f"coldstart:{d[:8]}")
+        _f, ev = evaluate(
+            tree_path, spec, image, now=now_fn(), runner=runner,
+            on_episode=_episode_cb(f"cold-start · dev [{d[:8]}]"),
+            max_parallel_evals=max_parallel_evals)
+        archive.insert(d, tree_path, ev)
+        frontier_results.extend(ev.results)
+
+    seed_idents = [i for i in identities if i not in elites]
+    if seed_idents:
+        report(f"cold-start · scoring seed on {len(seed_idents)} cell(s) …")
+        spec = build_union_spec(sorted(seed_idents), name="coldstart:seed")
+        _f, seed_ev = evaluate(
+            tree_store.path(seed_digest), spec, image, now=now_fn(), runner=runner,
+            on_episode=_episode_cb("cold-start · dev [seed]"),
+            max_parallel_evals=max_parallel_evals)
+        archive.insert(seed_digest, tree_store.path(seed_digest), seed_ev)
+        frontier_results.extend(seed_ev.results)
+
+    # base_dev is the frontier the run departs from -- the mean of the cells'
+    # starting elite scores -- NOT a separate full-union seed eval (dropped). The
+    # AutoAscend reference lives in the hub's isolated baseline, not here.
+    base_dev = (sum(c.score for c in archive.cells.values()) / len(archive.cells)
+                if archive.cells else 0.0)
     _emit("cold-start", 0)
     on_iteration(0, IterationResult(False, "baseline", dev_fitness=base_dev,
-                                    causes=_causes(seed_ev.results)))
+                                    causes=_causes(frontier_results)))
     results: list[IterationResult] = []
     consecutive_errors = 0
 
