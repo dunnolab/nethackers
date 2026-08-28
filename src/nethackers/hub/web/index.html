@@ -212,16 +212,12 @@ table.grid caption{ text-align:left; background:var(--indigo); color:#fff; font-
 @media (max-width:640px){ .statuscard,.statuscard.pulse{ grid-column:span 6; } }
 @media (max-width:430px){ .statuscard,.statuscard.pulse{ grid-column:1/-1; } }
 .recognitiongrid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(245px,1fr)); gap:8px; }
-.personcard,.activitycard{ border:1px solid var(--silver-lo); background:#f7f7f2; padding:8px 10px; }
+.personcard{ border:1px solid var(--silver-lo); background:#f7f7f2; padding:8px 10px; }
 .personcard{ cursor:pointer; }
 .personcard:hover,.personcard:focus{ background:#fff3b0; outline:2px solid var(--indigo); outline-offset:-2px; }
 .personcard .ph{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; color:var(--indigo); font-weight:700; }
-.personcard .pa,.activitycard .pa{ color:#62626a; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace;
+.personcard .pa{ color:#62626a; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace;
   font-size:.72rem; line-height:1.45; margin-top:4px; }
-.activityfeed{ display:grid; gap:5px; margin-top:.6rem; }
-.activitycard{ display:grid; grid-template-columns:92px 1fr; gap:8px; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.76rem; }
-.activitycard .when{ color:#777780; }
-.activitycard .what b{ color:var(--indigo); cursor:pointer; }
 .emptyblock{ color:#777780; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; }
 
 /* FRONTIER heatmap --------------------------------------------------------- */
@@ -626,10 +622,10 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
       <section id="people">
         <h2 class="sec"><span class="glyph">&amp;</span> People moving the frontier</h2>
         <p class="lead">Recognition is attached to concrete records, roles, and source commits &mdash; not collapsed into one global score.</p>
-        <div class="subh">Current program record holders</div>
-        <div class="recognitiongrid" id="recordholders"><div class="emptyblock">Loading current holders&hellip;</div></div>
-        <div class="subh">Latest registered work</div>
-        <div class="activityfeed" id="activityfeed"><div class="emptyblock">Loading recent work&hellip;</div></div>
+        <div class="subh">Frontier Keepers</div>
+        <div class="recognitiongrid" id="recordholders"><div class="emptyblock">Loading frontier keepers&hellip;</div></div>
+        <div class="subh">Greatest Breakthroughs</div>
+        <div class="recognitiongrid" id="breakthroughs"><div class="emptyblock">Loading breakthroughs&hellip;</div></div>
       </section>
 
       <hr class="rule">
@@ -857,7 +853,7 @@ __)/\_//(\/(/\)/\//\/\|_)__</pre>
    omit it -- never a fabricated value (honest standings is the whole point). */
 let STATS=null;                      // live platform totals from /stats
 let COMPETITION_STATUS=null;          // collective frontier and rolling 7-day movement
-let RECENT_SOLUTIONS=[];             // newest registered work from /search
+let WALL_OF_FAME={keepers:[],breakthroughs:[]};
 let SOLUTION_BY_DIGEST={};            // metadata cache for identity-board source/date cells
 let BASELINE={owner:"autoascend",per_identity:{},overall:null};  // raw /baseline
 let OBJ_EP={};                       // {objective: episodes} from /objectives (honest ep for tooltips)
@@ -879,6 +875,7 @@ const ROLE_VARS={
  val:["dwa-law-fem","hum-law-fem","hum-neu-fem"],
  wiz:["elf-cha-fem","elf-cha-mal","gno-neu-fem","gno-neu-mal","hum-cha-fem","hum-cha-mal","hum-neu-fem","hum-neu-mal","orc-cha-fem","orc-cha-mal"]};
 let UNIVERSE={};                     // /elites?objective=all -> rank-1 per identity {id:{v,o,digest,ep}}
+let HONOR_UNIVERSE={};               // self-reported records, retained while viewing verified
 const ASC=0.8745866562925501;
 const MEMES=[
  "You enter the Dungeons of Doom.",
@@ -1272,35 +1269,28 @@ function renderFrontier(){
 
 /* ===================== recognition ===================== */
 function renderRecognition(){
-  const holders=$("#recordholders"), feed=$("#activityfeed");
+  const holders=$("#recordholders"), breakthroughs=$("#breakthroughs");
   if(holders){
-    const grouped={};
-    for(const [id,x] of Object.entries(UNIVERSE)){
-      const g=grouped[x.o]||(grouped[x.o]={owner:x.o,ids:[],roles:new Set(),best:null});
-      g.ids.push(id); g.roles.add(id.split("-")[0]);
-      if(!g.best||x.v>g.best.v) g.best={id,v:x.v};
-    }
-    const people=Object.values(grouped).sort((a,b)=>b.ids.length-a.ids.length||a.owner.localeCompare(b.owner));
+    const people=WALL_OF_FAME.keepers||[];
     holders.innerHTML=people.length?people.map(p=>`<div class="personcard" data-owner="${esc(p.owner)}" tabindex="0" role="button" aria-label="Open contributions by @${esc(p.owner)}">
       <div class="ph">@${esc(p.owner)}</div>
-      <div class="pa"><b>${p.ids.length}</b> current identity program record${p.ids.length===1?'':'s'} &middot; ${[...p.roles].map(r=>esc(ROLE_NAMES[r]||r)).join(', ')}<br>
-      best mean <b>${p.best.v.toFixed(3)}</b> on ${esc(p.best.id)}</div></div>`).join("")
-      :`<div class="emptyblock">No program records registered in this tier yet.</div>`;
-    holders.querySelectorAll(".personcard").forEach(card=>{
-      const open=()=>openHacker(card.dataset.owner);
-      card.addEventListener("click",open);
-      card.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } });
-    });
+      <div class="pa"><b>${p.records}</b> current frontier${p.records===1?'':'s'} above AutoAscend &middot; ${p.roles.map(r=>esc(ROLE_NAMES[r]||r)).join(', ')}<br>
+      combined lift <b>+${(p.total_lift*100).toFixed(1)} pp</b></div></div>`).join("")
+      :`<div class="emptyblock">No participant is above AutoAscend yet.</div>`;
   }
-  if(feed){
-    feed.innerHTML=RECENT_SOLUTIONS.length?RECENT_SOLUTIONS.slice(0,6).map(s=>{
-      const fr=Array.isArray(s.frontier)?s.frontier:[], roles=roleKeys(fr);
-      const scope=roles.length?roles.map(r=>ROLE_NAMES[r]).join(', '):'frontier data unavailable';
-      return `<div class="activitycard"><span class="when">${esc(fmtDate(s.registered_at).replace(', 00:00 UTC',' UTC'))}</span>
-        <span class="what"><b data-owner="${esc(s.owner)}">@${esc(s.owner)}</b> registered ${sourceLink(s)}<div class="pa">${esc(scope)}${fr.length?` &middot; ${fr.length} evaluated identit${fr.length===1?'y':'ies'}`:''}</div></span></div>`;
-    }).join(""):`<div class="emptyblock">No registered work yet.</div>`;
-    feed.querySelectorAll("[data-owner]").forEach(x=>x.addEventListener("click",()=>openHacker(x.dataset.owner)));
+  if(breakthroughs){
+    const people=WALL_OF_FAME.breakthroughs||[];
+    breakthroughs.innerHTML=people.length?people.map(p=>`<div class="personcard" data-owner="${esc(p.owner)}" tabindex="0" role="button" aria-label="Open contributions by @${esc(p.owner)}">
+      <div class="ph">@${esc(p.owner)}</div>
+      <div class="pa"><b>+${(p.gain*100).toFixed(1)} pp</b> one-step frontier advance<br>
+      ${esc(p.identity)} &middot; ${esc(fmtDate(p.at))}</div></div>`).join("")
+      :`<div class="emptyblock">No breakthroughs above AutoAscend yet.</div>`;
   }
+  document.querySelectorAll("#people .personcard").forEach(card=>{
+    const open=()=>openHacker(card.dataset.owner);
+    card.addEventListener("click",open);
+    card.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } });
+  });
 }
 
 /* ===================== identity + hacker popups ===================== */
@@ -1359,7 +1349,7 @@ function solutionCard(s){
   const loaded=Array.isArray(s.frontier), fr=loaded?s.frontier:[], roles=roleKeys(fr);
   const episodes=fr.reduce((sum,x)=>sum+(x.episodes||0),0);
   const best=fr.reduce((winner,x)=>!winner||x.progression>winner.progression?x:winner,null);
-  const records=Object.entries(UNIVERSE).filter(([,x])=>x.digest===s.digest).map(([id])=>id);
+  const records=Object.entries(HONOR_UNIVERSE).filter(([,x])=>x.digest===s.digest).map(([id])=>id);
   const chips=!loaded?"unavailable":(roles.length?roles.map(r=>`<span class="rolechip">${esc(ROLE_NAMES[r])}</span>`).join(""):"&mdash;");
   return `<div class="solutioncard">
     <div class="solutioncard__head"><span>${sourceLink(s)}</span><span class="solutioncard__date">${esc(fmtDate(s.registered_at))}</span></div>
@@ -1389,7 +1379,7 @@ async function openHacker(owner){
     const loaded=solutions.filter(s=>Array.isArray(s.frontier));
     const allIds=new Set(loaded.flatMap(s=>s.frontier.map(x=>x.identity)));
     const allRoles=roleKeys(loaded.flatMap(s=>s.frontier));
-    const records=Object.entries(UNIVERSE).filter(([,x])=>x.o===owner).map(([id])=>id);
+    const records=Object.entries(HONOR_UNIVERSE).filter(([,x])=>x.o===owner).map(([id])=>id);
     const newest=solutions.length?fmtDate(solutions[0].registered_at):"&mdash;";
     $("#mBody").innerHTML=`<div class="kv">
       <span class="k">current identity records</span><span class="v">${records.length}${records.length?` &middot; ${records.map(esc).join(', ')}`:''}</span>
@@ -1423,24 +1413,25 @@ async function loadUniverse(){
     const uni = {};
     for(const r of el){ if(r.rank===1) uni[r.identity] = {v:r.score, o:r.owner, digest:r.solution_digest, d:short(r.solution_digest), ep:OBJ_EP[r.identity]!=null?OBJ_EP[r.identity]:15}; }
     UNIVERSE = uni;
+    HONOR_UNIVERSE = uni;
   }catch(e){ UNIVERSE = {}; }
 }
 
-async function loadRecent(){
+async function loadSolutionIndex(){
   try{
     const rows=await jget("/search?limit=100");
     SOLUTION_BY_DIGEST=Object.fromEntries(rows.map(s=>[s.digest,s]));
-    RECENT_SOLUTIONS=rows.slice(0,6);
-    await Promise.all(RECENT_SOLUTIONS.map(async s=>{
-      try{ s.frontier=await jget("/solutions/"+encodeURIComponent(s.digest)+"/frontier"); }
-      catch(e){ s.frontier=null; }
-    }));
-  }catch(e){ RECENT_SOLUTIONS=[]; SOLUTION_BY_DIGEST={}; }
+  }catch(e){ SOLUTION_BY_DIGEST={}; }
 }
 
 async function loadCompetitionStatus(){
   try{ COMPETITION_STATUS=await jget(`/competition-status?tier=${encodeURIComponent(curTier)}`); }
   catch(e){ COMPETITION_STATUS=null; }
+}
+
+async function loadWallOfFame(){
+  try{ WALL_OF_FAME=await jget("/wall-of-fame"); }
+  catch(e){ WALL_OF_FAME={keepers:[],breakthroughs:[]}; }
 }
 
 /* Bootstrap: fetch everything, adapt into the render state, then do the first render.
@@ -1453,7 +1444,7 @@ async function boot(){
     .catch(()=>{ STATS=null; odo($("#odoProg"),0,5); odo($("#odoPlay"),0,5); });
   const baseP = jget("/baseline").then(b=>{ BASELINE = b; }).catch(()=>{ BASELINE = {owner:"autoascend", per_identity:{}, overall:null}; });
   const objP  = jget("/objectives").then(o=>{ OBJ_EP = Object.fromEntries(o.map(x=>[x.name, x.episodes])); }).catch(()=>{ OBJ_EP = {}; });
-  await Promise.all([statsP,baseP,objP,loadRecent()]);
+  await Promise.all([statsP,baseP,objP,loadSolutionIndex(),loadWallOfFame()]);
   await Promise.all([loadUniverse(),loadCompetitionStatus()]);
   renderStatus(); renderFrontier(); renderRecognition();
 }

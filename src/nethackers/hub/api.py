@@ -74,6 +74,7 @@ from nethackers.hub.views.hackers import hacker_board
 from nethackers.hub.views.progress import read_progress
 from nethackers.hub.views.solution import read_solution_frontier
 from nethackers.hub.views.stats import read_stats
+from nethackers.hub.views.wall_of_fame import read_wall_of_fame
 
 # The index.html file shipped in the wheel package data.
 _INDEX = Path(__file__).parent / "web" / "index.html"
@@ -202,6 +203,10 @@ def create_app(
     @app.get("/competition-status")
     def competition_status(tier: str = "self-reported") -> dict[str, Any]:
         return read_competition_status(store, tier=tier)
+
+    @app.get("/wall-of-fame")
+    def wall_of_fame() -> dict[str, list[dict[str, Any]]]:
+        return read_wall_of_fame(store)
 
     @app.get("/progress")
     def progress(objective: str | None = None, tier: str = "self-reported") -> dict[str, Any]:

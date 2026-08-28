@@ -127,7 +127,8 @@ def test_site_uses_identity_boards_and_concrete_contributor_recognition(tmp_path
     assert 'data-view="programs"' not in body
     assert 'id="scBody"' not in body
     assert 'id="recordholders"' in body
-    assert 'id="activityfeed"' in body
+    assert 'id="breakthroughs"' in body
+    assert 'id="activityfeed"' not in body
     assert 'class="frontierrow"' in body
     assert "async function openIdentity(identity)" in body
     assert "async function openHacker(owner)" in body
@@ -177,6 +178,13 @@ def test_competition_status_reads_empty(tmp_path: Any) -> None:
         "frontier_gain_7d": 0.0,
         "identities_improved_7d": 0,
     }
+
+
+def test_wall_of_fame_reads_empty(tmp_path: Any) -> None:
+    client, _store = _app(tmp_path)
+    response = client.get("/wall-of-fame")
+    assert response.status_code == 200
+    assert response.json() == {"keepers": [], "breakthroughs": []}
 
 
 def test_register_link_ok(tmp_path: Any) -> None:

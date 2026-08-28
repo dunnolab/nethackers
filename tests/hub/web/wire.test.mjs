@@ -90,6 +90,16 @@ function router(path) {
   const obj = params.get("objective");
   if (route === "/stats") return { programs: 2, hackers: 2, ascensions: 0, last_registered_at: "2026-08-27T09:30:00+00:00" };
   if (route === "/competition-status") return { community_frontier: 0.081, frontier_gain_7d: 0.006, identities_improved_7d: 4 };
+  if (route === "/wall-of-fame") return {
+    keepers: [
+      { owner: "dun", records: 7, identities: TOUCHED.slice(0, 7), roles: ["arc"], total_lift: 0.8 },
+      { owner: "ako", records: 3, identities: TOUCHED.slice(7), roles: ["bar"], total_lift: 0.3 },
+    ],
+    breakthroughs: [
+      { owner: "dun", identity: TOUCHED[0], gain: 0.12, score: 0.2, previous: 0.08, solution_digest: "sha256:aaa", at: "2026-08-27T09:30:00+00:00" },
+      { owner: "ako", identity: TOUCHED[1], gain: 0.08, score: 0.18, previous: 0.1, solution_digest: "sha256:bbb", at: "2026-08-26T09:30:00+00:00" },
+    ],
+  };
   if (route === "/baseline") return BASELINE;
   if (route === "/objectives") return IDENTITIES.map((n) => ({ name: n, episodes: 15 }));
   if (route === "/elites") return ELITES_ALL;
