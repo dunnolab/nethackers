@@ -204,6 +204,9 @@ table.grid caption{ text-align:left; background:var(--indigo); color:#fff; font-
   font-size:1.3rem; font-weight:700; font-variant-numeric:tabular-nums; }
 .statuscard .sl{ display:block; color:#62626a; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace;
   font-size:.7rem; line-height:1.3; margin-top:3px; }
+.statusowner{ appearance:none; border:0; padding:0; background:transparent; color:var(--indigo); font:inherit;
+  font-weight:700; text-decoration:underline; cursor:pointer; }
+.statusowner:hover,.statusowner:focus{ color:var(--red); outline:1px dotted var(--indigo); outline-offset:2px; }
 .statuscard.pulse{ grid-column:span 4; }
 .statuscard.wide{ grid-column:1/-1; }
 @media (max-width:640px){ .statuscard,.statuscard.pulse{ grid-column:span 6; } }
@@ -1174,11 +1177,13 @@ function renderStatus(){
   const gain=COMPETITION_STATUS&&COMPETITION_STATUS.frontier_gain_7d;
   const moved=COMPETITION_STATUS&&COMPETITION_STATUS.identities_improved_7d;
   const bestText=best?`+${(best.delta*100).toFixed(1)}%`:'&mdash;';
-  const bestLabel=best?`largest lift vs AutoAscend &middot; ${esc(best.id)} by @${esc(best.owner)}`:'largest lift vs AutoAscend';
+  const bestLabel=best?`largest lift vs AutoAscend &middot; ${esc(best.id)} by <button type="button" class="statusowner" data-owner="${esc(best.owner)}">@${esc(best.owner)}</button>`:'largest lift vs AutoAscend';
   el.innerHTML=statusCard(`${(frontier*100).toFixed(1)}%`,"community frontier progress &middot; all 73 identities","pulse")
     +statusCard(gain!=null?`${gain>=0?'+':''}${(gain*100).toFixed(1)} pp`:'&mdash;',"frontier gain &middot; last 7 days","pulse")
     +statusCard(moved!=null?String(moved):'&mdash;',"identities improved &middot; last 7 days","pulse")
     +statusCard(bestText,bestLabel,"wide");
+  const owner=el.querySelector(".statusowner");
+  if(owner) owner.addEventListener("click",()=>openHacker(owner.dataset.owner));
 }
 document.querySelectorAll("[data-tier]").forEach(b=>b.addEventListener("click",async()=>{
   curTier=b.dataset.tier;
