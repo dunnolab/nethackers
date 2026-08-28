@@ -248,17 +248,6 @@ table.fr{ width:100%; table-layout:fixed; border-collapse:collapse; font-family:
 .legend .ramp{ display:inline-flex; height:11px; width:120px; border:1px solid var(--silver-lo); }
 .legend .ramp i{ flex:1; } .legend .sw{ display:inline-block; width:11px; height:11px; border:1px solid #000; vertical-align:-1px; }
 
-/* PROGRESS ascii chart ----------------------------------------------------- */
-.chartbox{ background:var(--screen); border:1px solid #000; padding:12px 14px; overflow-x:auto; }
-.chartbox pre{ margin:0; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; line-height:1.35;
-  color:var(--screen-ink); white-space:pre; }
-.chartbox .bar{ color:var(--indigo-2); }
-.chartbox .barhi{ color:var(--gold); }
-.chartbox .base{ color:var(--scr-red); }
-.chartbox .lbl3{ color:var(--screen-dim); }
-.chartbox .val{ color:#fff; }
-.chartcap{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.74rem; color:#55555c; margin-top:8px; }
-
 /* CONTRIBUTE --------------------------------------------------------------- */
 .menu2{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.9rem; margin:.4rem 0 1rem; }
 .menu2 div{ margin:5px 0; }
@@ -498,13 +487,12 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
       <ol class="idx">
         <li><span class="k">[1]</span> <a href="#about">What it is?</a></li>
         <li><span class="k">[2]</span> <a href="#challenge">The challenge</a></li>
-        <li><span class="k">[3]</span> <a href="#why">Why care</a></li>
-        <li><span class="k">[4]</span> <a href="#frontier">The Frontier</a></li>
-        <li><span class="k">[5]</span> <a href="#people">Contributors</a></li>
-        <li><span class="k">[6]</span> <a href="#progress">Progress</a></li>
-        <li><span class="k">[7]</span> <a href="#oracle">The Oracle</a> <span class="new">NEW!</span></li>
-        <li><span class="k">[8]</span> <a href="#contribute">Contribute</a></li>
-        <li><span class="k">[9]</span> <a href="#faq">FAQ</a></li>
+        <li><span class="k">[3]</span> <a href="#frontier">The Frontier</a></li>
+        <li><span class="k">[4]</span> <a href="#people">Contributors</a></li>
+        <li><span class="k">[5]</span> <a href="#oracle">The Oracle</a> <span class="new">NEW!</span></li>
+        <li><span class="k">[6]</span> <a href="#why">Why care</a></li>
+        <li><span class="k">[7]</span> <a href="#contribute">Contribute</a></li>
+        <li><span class="k">[8]</span> <a href="#faq">FAQ</a></li>
       </ol>
 
       <h4>Registered</h4>
@@ -534,41 +522,13 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
         <p class="lead"><b>NetHackers is an open contest to build the first program that can
           reliably win NetHack&nbsp;3.6.6.</b> Write the bot by hand, evolve it with coding agents, improve the thing
           that improves it, or recurse until something interesting happens. Whatever path you take, the contest
-          evaluates the same result: the symbolic bot that comes out of the loop.</p>
+          evaluates the same result: the symbolic bot that comes out of the loop. The ultimate goal is an
+          <span class="ref" data-k="ascension"><b>ascension</b></span>; until then, the board measures how far each bot gets.</p>
 
-        <div class="subh" id="scores">Competition status</div>
         <p>No universal hacker rank: NetHack is <span class="ref" data-k="identities"><b>73 distinct identity contests</b></span>.
           This is the collective state of the solve. The Frontier below names the record holder for each identity and opens its same-seed leaderboard.</p>
         <div class="statusgrid" id="statusgrid"><div class="emptyblock">Loading the dungeon ledger&hellip;</div></div>
         <p class="note">A result appears immediately as <b>self-reported*</b>. Independent held-out verification arrives with M2b.</p>
-
-        <p>The ultimate goal is an <span class="ref" data-k="ascension"><b>ascension</b></span>; until then, the
-          board measures how far each bot gets.</p>
-
-        <div class="subh">Why now</div>
-        <p>In the last couple of years, coding agents that write and refine programs in a loop have started cracking
-          problems that resisted everything else. They push
-          <span class="ref" data-k="arcagi">abstract-reasoning puzzles</span> that stalled LLMs for years, beat the
-          human winners of <span class="ref" data-k="satlution">SAT-solver competitions</span>, and turn up
-          <span class="ref" data-k="alphaevolve">new, provably-correct algorithms</span>. The pattern is consistent:
-          <b>a model that cannot reliably do the task itself can write a program that does.</b></p>
-        <p>NetHack is where that pattern has never held. The researchers behind the
-          <span class="ref" data-k="nle">NetHack Learning Environment</span> put it forward as
-          <span class="ref" data-k="grandchallenge">a grand challenge for AI</span>, and it is still unsolved years
-          later; NLE co-author <span class="ref" data-k="rockt">Tim Rockt&auml;schel marks the anniversary</span> each year with "AI still
-          can't learn to play NetHack." It is the hardest game in the <span class="ref" data-k="balrog">BALROG</span>
-          suite, the one frontier models fail while saturating the rest. Whether the approach cracking everything
-          else can crack this one, <b>nobody knows</b>.</p>
-        <p>That is what NetHackers is for: an open attempt to find out <b>together</b>. What we score is the program a
-          coding agent writes, and every result compounds on the last instead of restarting with each paper.</p>
-
-        <div class="subh">How it works</div>
-        <p>The unit of evaluation is the <b>program</b> &mdash; a deterministic bot, cheap to run and exactly
-          replayable. Objectives grid over the <span class="ref" data-k="identities"><b>73 starting identities</b></span> and the milestone ladder, so
-          specialists and generalists all have somewhere to land. A thin hub keeps each objective's
-          best <span class="ref" data-k="elite"><b>elites</b></span>; anyone can pull one, improve it, and register the result &mdash; so <b>one
-          contributor's improvement becomes everyone's parent.</b> The hub never runs your search and assigns
-          no work; how you make bots is entirely up to you.</p>
 
       </section>
 
@@ -603,45 +563,31 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
         </table>
         <p class="dfn">Every machine line: <b>zero ascensions on NetHack&nbsp;3.6.6</b>, the NLE research
           standard. *BotHack's three wins were on the older 3.4.3, via an exploit the developers then removed.</p>
-      </section>
 
-      <hr class="rule">
+        <div class="subh">Why now</div>
+        <p>In the last couple of years, coding agents that write and refine programs in a loop have started cracking
+          problems that resisted everything else. They push
+          <span class="ref" data-k="arcagi">abstract-reasoning puzzles</span> that stalled LLMs for years, beat the
+          human winners of <span class="ref" data-k="satlution">SAT-solver competitions</span>, and turn up
+          <span class="ref" data-k="alphaevolve">new, provably-correct algorithms</span>. The pattern is consistent:
+          <b>a model that cannot reliably do the task itself can write a program that does.</b></p>
+        <p>NetHack is where that pattern has never held. The researchers behind the
+          <span class="ref" data-k="nle">NetHack Learning Environment</span> put it forward as
+          <span class="ref" data-k="grandchallenge">a grand challenge for AI</span>, and it is still unsolved years
+          later; NLE co-author <span class="ref" data-k="rockt">Tim Rockt&auml;schel marks the anniversary</span> each year with "AI still
+          can't learn to play NetHack." It is the hardest game in the <span class="ref" data-k="balrog">BALROG</span>
+          suite, the one frontier models fail while saturating the rest. Whether the approach cracking everything
+          else can crack this one, <b>nobody knows</b>.</p>
+        <p>That is what NetHackers is for: an open attempt to find out <b>together</b>. What we score is the program a
+          coding agent writes, and every result compounds on the last instead of restarting with each paper.</p>
 
-      <!-- WHY IT'S HARD -->
-      <section id="why">
-        <h2 class="sec"><span class="glyph">!</span> Why you should care</h2>
-        <p class="lead">There are at least three ways to fall into this dungeon.</p>
-
-        <div class="subh">If you cannot leave a loop alone</div>
-        <p>If <span class="ref" data-k="recursiveco">Recursive</span>,
-          <span class="ref" data-k="ricursive">Ricursive</span>,
-          <span class="ref" data-k="discoveryloop">Discovery Loop</span>,
-          <span class="ref" data-k="aide2">AIDE&sup2;</span>, and the
-          <span class="ref" data-k="dgm">Darwin G&ouml;del Machine</span> all appeared in your timeline before
-          breakfast; if every benchmark bump is <i>&ldquo;it&rsquo;s happening&rdquo;</i> and every plateau means
-          <i>&ldquo;add another outer loop&rdquo;</i>; if your honest answer to &ldquo;what improves the
-          improver?&rdquo; is &ldquo;another improver&rdquo; &mdash; welcome. Build the seed, mutate the harness,
-          fork the fork. The intelligence explosion can start with not dying to a grid bug.</p>
-
-        <div class="subh">If you do AI research</div>
-        <p>Winning NetHack is the headline; the research problem is <b>generalization</b>. A bot must turn wiki
-          knowledge into action, decompose a tens-of-thousands-of-steps objective, discover and compose reusable
-          skills, and recover when unfamiliar seeds or stochastic events break its plan.
-          <span class="ref" data-k="heldout">Held-out evaluation</span> tests whether those skills transfer rather
-          than whether one trajectory was memorized &mdash; and the result is a symbolic program you can inspect.</p>
-        <p>These are not game-only problems. <span class="ref" data-k="aspire">ASPIRE</span> applies a similar loop
-          to robotics, repairing code-as-policy programs after failed rollouts and saving skills for new tasks;
-          <span class="ref" data-k="codepolicies">Code as Policies</span> composes perception, control, and tools into
-          executable robot behavior. NetHack is a cheap, fast arena for studying long-horizon planning, skill
-          composition, tool creation, and generalization to unfamiliar seeds &mdash; without a robot lab.
-          <a href="#">&raquo; the paper &amp; hub API</a></p>
-
-        <div class="subh">If you just think it's cool</div>
-        <p>You don't need to be good at NetHack, or an ML researcher. A coding agent and a laptop will do.
-          Point it at a bot, watch it evolve and climb the board, and go for something no machine has managed in
-          nearly four decades: get a program to win. It runs locally, it is genuinely addictive (a slot machine of
-          stupid deaths and small breakthroughs), and every win you register becomes someone else's starting point
-          &mdash; your name on the frontier. <a href="#contribute">&raquo; start solving</a></p>
+        <div class="subh">How it works</div>
+        <p>The unit of evaluation is the <b>program</b> &mdash; a deterministic bot, cheap to run and exactly
+          replayable. Objectives grid over the <span class="ref" data-k="identities"><b>73 starting identities</b></span> and the milestone ladder, so
+          specialists and generalists all have somewhere to land. A thin hub keeps each objective's
+          best <span class="ref" data-k="elite"><b>elites</b></span>; anyone can pull one, improve it, and register the result &mdash; so <b>one
+          contributor's improvement becomes everyone's parent.</b> The hub never runs your search and assigns
+          no work; how you make bots is entirely up to you.</p>
       </section>
 
       <hr class="rule">
@@ -680,30 +626,6 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
         <div class="recognitiongrid" id="recordholders"><div class="emptyblock">Loading current holders&hellip;</div></div>
         <div class="subh">Latest registered work</div>
         <div class="activityfeed" id="activityfeed"><div class="emptyblock">Loading recent work&hellip;</div></div>
-      </section>
-
-      <hr class="rule">
-
-      <!-- PROGRESS -->
-      <section id="progress">
-        <h2 class="sec"><span class="glyph">^</span> Progress</h2>
-        <p class="lead">The community frontier, best-so-far, week by week since AutoAscend set us going.
-          The red <span class="mono">AA&gt;</span> line is where we started. Up and to the right is the whole job.</p>
-        <div class="controls">
-          <span class="lbl">plot:</span>
-          <span class="grp">
-            <button class="bevel" data-metric="frontier" aria-pressed="true">Frontier mean</button>
-            <button class="bevel" data-metric="ascensions" aria-pressed="false">Ascensions</button>
-            <button class="bevel" data-metric="coverage" aria-pressed="false">Coverage</button>
-          </span>
-          <span class="lbl">tier:</span>
-          <span class="grp">
-            <button class="bevel" data-tier="self-reported" aria-pressed="true">Self-reported</button>
-            <button class="bevel" data-tier="verified" aria-pressed="false">Verified</button>
-          </span>
-        </div>
-        <div class="chartbox"><pre id="chart"></pre></div>
-        <div class="chartcap" id="chartcap"></div>
       </section>
 
       <hr class="rule">
@@ -755,6 +677,45 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
             <div class="orc-revote"><a id="orcRevote">[ change my prophecy ]</a></div>
           </div>
         </div>
+      </section>
+
+      <hr class="rule">
+
+      <!-- WHY IT'S HARD -->
+      <section id="why">
+        <h2 class="sec"><span class="glyph">!</span> Why you should care</h2>
+        <p class="lead">There are at least three ways to fall into this dungeon.</p>
+
+        <div class="subh">If you cannot leave a loop alone</div>
+        <p>If <span class="ref" data-k="recursiveco">Recursive</span>,
+          <span class="ref" data-k="ricursive">Ricursive</span>,
+          <span class="ref" data-k="discoveryloop">Discovery Loop</span>,
+          <span class="ref" data-k="aide2">AIDE&sup2;</span>, and the
+          <span class="ref" data-k="dgm">Darwin G&ouml;del Machine</span> all appeared in your timeline before
+          breakfast; if every benchmark bump is <i>&ldquo;it&rsquo;s happening&rdquo;</i> and every plateau means
+          <i>&ldquo;add another outer loop&rdquo;</i>; if your honest answer to &ldquo;what improves the
+          improver?&rdquo; is &ldquo;another improver&rdquo; &mdash; welcome. Build the seed, mutate the harness,
+          fork the fork. The intelligence explosion can start with not dying to a grid bug.</p>
+
+        <div class="subh">If you do AI research</div>
+        <p>Winning NetHack is the headline; the research problem is <b>generalization</b>. A bot must turn wiki
+          knowledge into action, decompose a tens-of-thousands-of-steps objective, discover and compose reusable
+          skills, and recover when unfamiliar seeds or stochastic events break its plan.
+          <span class="ref" data-k="heldout">Held-out evaluation</span> tests whether those skills transfer rather
+          than whether one trajectory was memorized &mdash; and the result is a symbolic program you can inspect.</p>
+        <p>These are not game-only problems. <span class="ref" data-k="aspire">ASPIRE</span> applies a similar loop
+          to robotics, repairing code-as-policy programs after failed rollouts and saving skills for new tasks;
+          <span class="ref" data-k="codepolicies">Code as Policies</span> composes perception, control, and tools into
+          executable robot behavior. NetHack is a cheap, fast arena for studying long-horizon planning, skill
+          composition, tool creation, and generalization to unfamiliar seeds &mdash; without a robot lab.
+          <a href="#">&raquo; the paper &amp; hub API</a></p>
+
+        <div class="subh">If you just think it's cool</div>
+        <p>You don't need to be good at NetHack, or an ML researcher. A coding agent and a laptop will do.
+          Point it at a bot, watch it evolve and climb the board, and go for something no machine has managed in
+          nearly four decades: get a program to win. It runs locally, it is genuinely addictive (a slot machine of
+          stupid deaths and small breakthroughs), and every win you register becomes someone else's starting point
+          &mdash; your name on the frontier. <a href="#contribute">&raquo; start solving</a></p>
       </section>
 
       <hr class="rule">
@@ -914,12 +875,6 @@ const ROLE_VARS={
  wiz:["elf-cha-fem","elf-cha-mal","gno-neu-fem","gno-neu-mal","hum-cha-fem","hum-cha-mal","hum-neu-fem","hum-neu-mal","orc-cha-fem","orc-cha-mal"]};
 let UNIVERSE={};                     // /elites?objective=all -> rank-1 per identity {id:{v,o,digest,ep}}
 const ASC=0.8745866562925501;
-/* AutoAscend baseline bar first, then day-bucketed best-so-far from /progress */
-let PROGRESS=[];
-const METRICS={
- frontier:{label:"Best-so-far mean progression on val-dwa-law-fem (ascension sits at 0.875)",max:1.0,fmt:v=>v.toFixed(3)},
- ascensions:{label:"Ascensions -- still zero",max:1,fmt:v=>String(v)},
- coverage:{label:"Milestone cells lit on val-dwa-law-fem",max:40,fmt:v=>String(v)}};
 const MEMES=[
  "You enter the Dungeons of Doom.",
  "Yet Another Stupid Death: killed by a grid bug, while praying.","You hear someone counting money.",
@@ -1197,7 +1152,7 @@ function odo(el,n,digits){ if(!el) return; el.innerHTML=String(n).padStart(digit
 })();
 
 /* ===================== competition status ===================== */
-let curTier="self-reported", curMetric="frontier";
+let curTier="self-reported";
 const EMPTY_VERIFIED='No verified programs yet &mdash; verification (M2b) is not live. Everything above the floor is self-reported.';
 function allIdentityIds(){ return Object.keys(ROLE_VARS).flatMap(r=>ROLE_VARS[r].map(v=>r+"-"+v)); }
 function statusCard(value,label,wide=false){ return `<div class="statuscard ${wide?'wide':''}"><span class="sv">${value}</span><span class="sl">${label}</span></div>`; }
@@ -1223,8 +1178,8 @@ function renderStatus(){
 document.querySelectorAll("[data-tier]").forEach(b=>b.addEventListener("click",async()=>{
   curTier=b.dataset.tier;
   document.querySelectorAll("[data-tier]").forEach(x=>x.setAttribute("aria-pressed", x.dataset.tier===curTier?"true":"false"));
-  await Promise.all([loadUniverse(),loadProgress()]);
-  renderStatus(); renderRecognition(); renderFrontier(); renderChart(curMetric); }));
+  await loadUniverse();
+  renderStatus(); renderRecognition(); renderFrontier(); }));
 
 /* ===================== frontier heatmap ===================== */
 function renderFrontier(){
@@ -1304,29 +1259,6 @@ function renderFrontier(){
   if(window.__refs) window.__refs();
 }
 (function(){ const r=$("#ramp"); for(let i=0;i<22;i++){ const s=document.createElement("i"); s.style.background=tint(i/21); r.appendChild(s);} })();
-
-/* ===================== progress: ASCII horizontal bars ===================== */
-function renderChart(mk){
-  const m=METRICS[mk], W=42, verified=curTier==="verified";
-  const series=verified?PROGRESS.filter(d=>d.base):PROGRESS;
-  const rows=series.map((d,i)=>{
-    const v=d[mk], now=!d.base&&i===series.length-1;
-    const n=Math.round(v/m.max*W), cls=d.base?"base":(now?"barhi":"bar");
-    const bar=`<span class="${cls}">`+(d.base?"=":"#").repeat(n)+"</span>"+" ".repeat(Math.max(0,W-n));
-    const lbl=`<span class="${d.base?'base':'lbl3'}">${padr(d.t,10)}</span>`;
-    const val=`<span class="${now?'val':(d.base?'base':'lbl3')}">${m.fmt(v)}${now?'  &lt;-- now':(d.base?'  baseline':'')}</span>`;
-    return `${lbl} |${bar}| ${val}`;
-  });
-  const axis=`${" ".repeat(11)} 0${" ".repeat(W-4)}${m.fmt(m.max)}`;
-  $("#chart").innerHTML=rows.join("\n")+"\n"+`<span class="lbl3">${axis}</span>`;
-  $("#chartcap").textContent=verified
-    ? m.label+" -- verified tier: only the AutoAscend baseline so far (M2b isn't live)"
-    : m.label+" -- best-so-far -- self-reported (from the AutoAscend baseline)";
-}
-function padr(s,n){ s=String(s); return s.length>=n?s.slice(0,n):s+" ".repeat(n-s.length); }
-document.querySelectorAll("[data-metric]").forEach(b=>b.addEventListener("click",()=>{
-  document.querySelectorAll("[data-metric]").forEach(x=>x.setAttribute("aria-pressed","false"));
-  b.setAttribute("aria-pressed","true"); curMetric=b.dataset.metric; renderChart(curMetric); }));
 
 /* ===================== recognition ===================== */
 function renderRecognition(){
@@ -1496,16 +1428,6 @@ async function loadRecent(){
   }catch(e){ RECENT_SOLUTIONS=[]; SOLUTION_BY_DIGEST={}; }
 }
 
-async function loadProgress(){
-  let series=[];
-  try{ const pr = await jget(`/progress?objective=val-dwa-law-fem&tier=${encodeURIComponent(curTier)}`); series = (pr && pr.series) || []; }
-  catch(e){ series=[]; }
-  PROGRESS = [
-    {t:"autoascend", frontier: (BASELINE && BASELINE.overall!=null) ? BASELINE.overall : 0, ascensions:0, coverage:0 /*GAP: baseline cell-count not exposed*/, base:true},
-    ...series.map(p=>({t:p.t, frontier:p.frontier, ascensions:p.ascensions, coverage:p.coverage})),
-  ];
-}
-
 /* Bootstrap: fetch everything, adapt into the render state, then do the first render.
    Every fetch is guarded -- any failure keeps the page's friendly empty/error
    states; nothing ever throws to the console. */
@@ -1517,8 +1439,8 @@ async function boot(){
   const baseP = jget("/baseline").then(b=>{ BASELINE = b; }).catch(()=>{ BASELINE = {owner:"autoascend", per_identity:{}, overall:null}; });
   const objP  = jget("/objectives").then(o=>{ OBJ_EP = Object.fromEntries(o.map(x=>[x.name, x.episodes])); }).catch(()=>{ OBJ_EP = {}; });
   await Promise.all([statsP,baseP,objP,loadRecent()]);
-  await Promise.all([loadUniverse(),loadProgress()]);
-  renderStatus(); renderFrontier(); renderRecognition(); renderChart(curMetric);
+  await loadUniverse();
+  renderStatus(); renderFrontier(); renderRecognition();
 }
 boot();
 /* ===== The Nethack Dictionary: audio-reactive dungeon wall around the .page frame ===== */
