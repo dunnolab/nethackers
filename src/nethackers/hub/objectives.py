@@ -59,7 +59,7 @@ Every batch is HMAC-derived from ``PUBLIC_SECRET`` via
 ``nethackers.arena.seeds.trajectory_spec`` (the same mechanism
 ``arena/run.py`` uses for real evaluations), so batches are deterministic
 and reproducible: rebuilding the catalog always yields byte-identical
-``ObjectiveSpec``\\ s (see each spec's ``.digest()``).
+``ObjectiveSpec``\\ s.
 """
 
 from __future__ import annotations
@@ -80,7 +80,15 @@ from nethackers.contracts.models import (
 # PUBLIC_SECRET only pins the HMAC so seeds are deterministic, not hidden.
 PUBLIC_SECRET = "public"
 
-ACTION_TIMEOUT_SECONDS = 5.0  # the arena standard (M1).
+# 120s = the LOCAL arena's per-action wall-clock HANG-GUARD. Its job is to
+# catch a genuinely hung bot (NLE/AutoAscend can hang), NOT to enforce a
+# scoring budget -- so it is set generous enough that a normal action, including
+# a first-action cold numba JIT compile under parallel load, is never cut. Was
+# 5.0 (M1); at 5.0, host contention cut normal AutoAscend actions (ESC fallback
+# / bot_timeout) and corrupted the hub baseline. IMPORTANT: this is the LOCAL
+# default only -- the held-out validator/verifier must choose its OWN
+# action_timeout and must not inherit this value.
+ACTION_TIMEOUT_SECONDS = 120.0
 
 ROLES: tuple[str, ...] = (
     "arc", "bar", "cav", "hea", "kni", "mon", "pri",
@@ -214,8 +222,7 @@ def build_catalog(
 
     Deterministic: every batch is derived from ``PUBLIC_SECRET`` via
     ``trajectory_spec``, so calling this twice with the same arguments
-    always returns byte-identical ``ObjectiveSpec``\\ s (same
-    ``.digest()`` per name).
+    always returns byte-identical ``ObjectiveSpec``\\ s (equal per name).
     """
     catalog: dict[str, ObjectiveSpec] = {
         "random": ObjectiveSpec(

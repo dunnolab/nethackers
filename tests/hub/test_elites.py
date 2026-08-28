@@ -60,18 +60,15 @@ def _seed(
     store: Store, atoms: list[Atom], *, owner: str = "sam", repo: str = "r",
     commit_sha: str = "c",
 ) -> None:
-    """Upsert each atom's identity into the catalog (provenance only --
-    atoms no longer FK to ``objectives``, Task A3) and one ``solutions`` row
-    per distinct solution (``insert_atoms``' remaining FK) -- then insert the
-    atoms themselves. Safe to call more than once per test: both upserts and
-    ``insert_atoms`` are idempotent.
+    """Register one ``solutions`` row per distinct solution (``insert_atoms``'
+    remaining FK -- atoms no longer FK to ``objectives``, Task A3), then insert
+    the atoms themselves. Safe to call more than once per test: both
+    ``upsert_solution`` and ``insert_atoms`` are idempotent.
 
     ``owner``/``repo``/``commit_sha`` describe the *registered solution*
     row (default ``sam``/``r``/``c``, matching every pre-existing caller)
     -- distinct from an atom's own ``owner`` field, and the knob the
     owner/repo/commit_sha-enrichment tests override."""
-    for identity in {atom.identity for atom in atoms}:
-        store.objectives_upsert(CATALOG[identity])
     for digest in {atom.solution_digest for atom in atoms}:
         store.upsert_solution(
             digest,

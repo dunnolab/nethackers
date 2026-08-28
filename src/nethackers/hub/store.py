@@ -1,5 +1,5 @@
 """Hub SQLite store (M2a Task 5): the thin data layer over solutions,
-objectives, atoms, lineage (+ the derived-view tables Tasks 7-8 populate).
+atoms, lineage (+ the derived-view tables Tasks 7-8 populate).
 Pure stdlib ``sqlite3`` -- no NLE, no Docker, no network.
 
 Schema and method contracts are exactly per ``task-5-context.md``, as
@@ -7,12 +7,13 @@ amended by Task A3: the atoms table's dedup key is now
 ``UNIQUE(solution_digest, identity, seed)`` -- ``objective_digest`` is gone
 from both ``atoms`` and ``baseline_atoms`` (after random/all's retirement,
 Task A1, every identity has exactly one canonical objective, so ``identity``
-alone is the key; the ``objectives`` catalog table itself stays, for
-``WrongBatch``/provenance, but atoms stop referencing it).
-``evidence_digest``/``horizon`` (spec Sec5's atoms columns) are omitted
-entirely: they aren't on ``Atom``, and aren't needed for M2a reads
-(``horizon`` is derivable via ``objectives.max_steps``). Parked for M2b
-if provenance/verification ever needs them.
+alone is the key). The vestigial write-only ``objectives`` catalog table
+(nothing ever read it) is dropped too -- ``init_schema`` sheds it via
+``_migrate_drop_objectives_table``; the catalog now lives only in memory
+(``hub.objectives.CATALOG``). ``evidence_digest``/``horizon`` (spec Sec5's
+atoms columns) are omitted entirely: they aren't on ``Atom``, and aren't
+needed for M2a reads (``horizon`` is derivable via the catalog's
+``max_steps``). Parked for M2b if provenance/verification ever needs them.
 
 This module is a thin data layer only: ``init_schema()`` provisions the
 derived-view tables (``attainment``, ``attainment_holders``, ``elite_pool``)
@@ -31,7 +32,7 @@ import sqlite3
 from pathlib import Path
 from typing import Any
 
-from nethackers.contracts.models import Atom, ObjectiveSpec
+from nethackers.contracts.models import Atom
 
 # The whole DDL (task-5-context.md), verbatim. CREATE TABLE IF NOT EXISTS
 # throughout makes init_schema() idempotent.
@@ -40,13 +41,6 @@ CREATE TABLE IF NOT EXISTS solutions (
     digest TEXT PRIMARY KEY,
     repo TEXT, commit_sha TEXT, owner TEXT, root TEXT, entrypoint TEXT,
     registered_at TEXT
-);
-CREATE TABLE IF NOT EXISTS objectives (
-    objective_digest TEXT PRIMARY KEY,
-    name TEXT UNIQUE NOT NULL, kind TEXT NOT NULL, aggregation TEXT NOT NULL,
-    max_steps INTEGER NOT NULL, no_progress_timeout INTEGER NOT NULL,
-    action_timeout_seconds REAL NOT NULL,
-    batch TEXT NOT NULL                  -- JSON [[seed, character], ...]
 );
 CREATE TABLE IF NOT EXISTS atoms (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -172,6 +166,16 @@ def _migrate_drop_objective_digest(conn: sqlite3.Connection) -> None:
             conn.execute(f"DROP TABLE {table}_old")
 
 
+def _migrate_drop_objectives_table(conn: sqlite3.Connection) -> None:
+    """Drop the legacy write-only ``objectives`` table. After random/all's
+    retirement + identity-keying, every identity has exactly one canonical
+    objective (held in the in-memory ``CATALOG``), atoms key on ``identity``,
+    and nothing reads this table -- it is pure vestige. ``IF EXISTS`` makes
+    this a no-op on a fresh or already-migrated DB."""
+    conn.execute("DROP TABLE IF EXISTS objectives")
+    conn.commit()
+
+
 class Store:
     """A single-connection sqlite3 data layer over the hub's schema.
 
@@ -202,6 +206,7 @@ class Store:
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
         _migrate_drop_objective_digest(self._conn)
+        _migrate_drop_objectives_table(self._conn)
 
     def upsert_solution(
         self,
@@ -239,37 +244,6 @@ class Store:
         if row is None:
             return None
         return dict(zip(_SOLUTION_COLUMNS, row, strict=True))
-
-    def objectives_upsert(self, spec: ObjectiveSpec) -> None:
-        objective_digest = spec.digest()
-        batch = json.dumps([[seed, character] for seed, character in spec.batch])
-        self._conn.execute(
-            """
-            INSERT INTO objectives (
-                objective_digest, name, kind, aggregation, max_steps,
-                no_progress_timeout, action_timeout_seconds, batch
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            ON CONFLICT(objective_digest) DO UPDATE SET
-                name = excluded.name,
-                kind = excluded.kind,
-                aggregation = excluded.aggregation,
-                max_steps = excluded.max_steps,
-                no_progress_timeout = excluded.no_progress_timeout,
-                action_timeout_seconds = excluded.action_timeout_seconds,
-                batch = excluded.batch
-            """,
-            (
-                objective_digest,
-                spec.name,
-                spec.kind,
-                spec.aggregation,
-                spec.max_steps,
-                spec.no_progress_timeout,
-                spec.action_timeout_seconds,
-                batch,
-            ),
-        )
-        self._conn.commit()
 
     def add_lineage(self, child: str, parent: str, kind: str) -> None:
         """``kind`` must be ``"parent"`` or ``"influence"`` (DB CHECK

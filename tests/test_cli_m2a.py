@@ -682,6 +682,26 @@ def test_rich_render_elites_empty_is_friendly_not_bare_header():
     assert _render_text(rich_elites([])).strip() == "no elites recorded yet."
 
 
+def test_rich_render_elites_shows_full_source_link_without_truncating():
+    sha = "0123456789" * 4
+    entries = [{
+        "identity": "val-dwa-law-fem",
+        "solution_digest": "sha256:0123456789abcdef",
+        "repo": "github.com/sam/nethacker",
+        "commit_sha": sha,
+        "score": 0.5,
+        "rank": 1,
+    }]
+
+    narrow = _render_text(rich_elites(entries), width=70)
+    wide = _render_text(rich_elites(entries), width=160)
+
+    assert "source" in narrow
+    assert f"https://github.com/sam/nethacker/commit/{sha}" in wide
+    assert sha[-10:] in narrow  # the wrapped final chunk is still present
+    assert "…" not in narrow
+
+
 def test_rich_render_search_contains_expected_cells():
     results = [
         {"digest": "sha256:0123456789abcdef", "owner": "sam",

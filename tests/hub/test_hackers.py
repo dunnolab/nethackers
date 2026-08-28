@@ -6,7 +6,6 @@ Task A3). Coverage-first ranking, no ``firsts``."""
 from __future__ import annotations
 
 from nethackers.contracts.models import Atom
-from nethackers.hub.objectives import CATALOG
 from nethackers.hub.store import Store
 from nethackers.hub.views.hackers import hacker_board
 
@@ -30,9 +29,7 @@ def _atom(**overrides):
     return Atom(**fields)
 
 
-def _seed(store, atoms, specs):
-    for spec in specs:
-        store.objectives_upsert(spec)
+def _seed(store, atoms):
     for digest in {a.solution_digest for a in atoms}:
         store.upsert_solution(digest, repo="r", commit_sha="c", owner="sam",
                               root=".", entrypoint="bot.py", registered_at="t")
@@ -52,7 +49,7 @@ def test_hacker_board_unions_best_per_identity_across_a_persons_solutions(tmp_pa
         _atom(solution_digest="sha256:a1", owner="ako",
               identity=i0, seed=0, progression=0.3),
     ]
-    _seed(store, atoms, [CATALOG[i0], CATALOG[i1]])
+    _seed(store, atoms)
 
     rows = hacker_board(store, VAL_IDS)
 

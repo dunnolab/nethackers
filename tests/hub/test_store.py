@@ -14,30 +14,26 @@ import sqlite3
 
 import pytest
 
-from nethackers.contracts.models import Atom, ObjectiveSpec
+from nethackers.contracts.models import Atom
 from nethackers.hub.store import Store
 
 SOLUTION_DIGEST = "sha256:solution-a"
 
-OBJECTIVE = ObjectiveSpec(
-    name="val-dwa-law-fem",
-    kind="identity",
-    batch=((0, "val-dwa-law-fem"), (1, "val-dwa-law-fem")),
-    max_steps=1000,
-    no_progress_timeout=100,
-    action_timeout_seconds=5.0,
-    aggregation="mean",
-)
 
-OTHER_OBJECTIVE = ObjectiveSpec(
-    name="wiz-elf-cha-fem",
-    kind="identity",
-    batch=((0, "wiz-elf-cha-fem"),),
-    max_steps=1000,
-    no_progress_timeout=100,
-    action_timeout_seconds=5.0,
-    aggregation="mean",
-)
+def test_init_schema_drops_legacy_objectives_table(tmp_path):
+    # The vestigial write-only `objectives` table is dropped on init (nothing
+    # reads it post identity-keying). A legacy DB that still has it must shed it.
+    db = tmp_path / "legacy.db"
+    con = sqlite3.connect(db)
+    con.execute("CREATE TABLE objectives (objective_digest TEXT PRIMARY KEY, name TEXT UNIQUE)")
+    con.execute("INSERT INTO objectives VALUES ('sha256:x', 'val-dwa-law-fem')")
+    con.commit()
+    con.close()
+
+    store = Store(str(db))
+    store.init_schema()
+    tables = {r[0] for r in store.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "objectives" not in tables
 
 
 def _atom(**overrides):
@@ -78,17 +74,11 @@ def _seed_solution(store, digest=SOLUTION_DIGEST):
     )
 
 
-def _seed_solution_and_objectives(store):
-    _seed_solution(store)
-    store.objectives_upsert(OBJECTIVE)
-    store.objectives_upsert(OTHER_OBJECTIVE)
-
-
 def test_insert_atoms_dedups_and_returns_newly_inserted_count(tmp_path):
     # Property 1: init_schema -> insert_atoms twice with the same atoms ->
     # second call's count is 0 (idempotent dedup on the atom natural key).
     store, _ = _new_store(tmp_path)
-    _seed_solution_and_objectives(store)
+    _seed_solution(store)
     atoms = [_atom(seed=0), _atom(seed=1)]
 
     first = store.insert_atoms(atoms)
@@ -114,7 +104,7 @@ def test_iter_atoms_filters_narrow_and_reconstruct_atom_instances(tmp_path):
     # Property 2: iter_atoms(identity=...) filters; a second filter narrows
     # further; results are real Atom instances with a real bool ascended.
     store, _ = _new_store(tmp_path)
-    _seed_solution_and_objectives(store)
+    _seed_solution(store)
     store.insert_atoms(
         [
             _atom(seed=0, identity="val-dwa-law-fem"),
@@ -177,7 +167,6 @@ def test_insert_atoms_rolls_back_the_whole_call_on_a_mid_batch_fk_violation(tmp_
     # a later unrelated commit.
     store, _ = _new_store(tmp_path)
     _seed_solution(store)
-    store.objectives_upsert(OBJECTIVE)
     missing_solution = "sha256:never-registered"
     batch = [
         _atom(seed=0),
@@ -197,22 +186,14 @@ def test_insert_atoms_rolls_back_the_whole_call_on_a_mid_batch_fk_violation(tmp_
     assert len(store.iter_atoms(solution_digest=SOLUTION_DIGEST)) == 0
 
 
-def test_objectives_upsert_and_add_lineage_are_idempotent(tmp_path):
+def test_add_lineage_is_idempotent(tmp_path):
     # Property 5.
     store, db_path = _new_store(tmp_path)
-    store.objectives_upsert(OBJECTIVE)
-    store.objectives_upsert(OBJECTIVE)
-
-    conn = sqlite3.connect(db_path)
-    objective_count = conn.execute(
-        "SELECT COUNT(*) FROM objectives WHERE objective_digest = ?", (OBJECTIVE.digest(),)
-    ).fetchone()[0]
-    assert objective_count == 1
-
     _seed_solution(store)
     store.add_lineage(SOLUTION_DIGEST, "external-base-digest", "parent")
     store.add_lineage(SOLUTION_DIGEST, "external-base-digest", "parent")
 
+    conn = sqlite3.connect(db_path)
     lineage_count = conn.execute(
         "SELECT COUNT(*) FROM lineage WHERE child_digest = ? AND parent_digest = ? AND kind = ?",
         (SOLUTION_DIGEST, "external-base-digest", "parent"),

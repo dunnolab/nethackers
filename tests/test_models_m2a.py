@@ -5,42 +5,17 @@ per-episode ``character``/``milestone`` -- defaulted so M1's existing
 positional/keyword construction sites and ``from_dict(old_dict)`` still work
 unchanged (Task 2 will populate the new fields for real)."""
 
-from nethackers.contracts.models import Atom, ObjectiveSpec, TrajectoryResult
+from nethackers.contracts.models import Atom, Objective, TrajectoryResult
 
 
-def test_objectivespec_digest_depends_on_batch_and_aggregation():
-    a = ObjectiveSpec(
-        name="random",
-        kind="distribution",
-        batch=((1, "val-dwa-law-fem"), (2, "wiz-elf-cha-fem")),
-        max_steps=1000,
-        no_progress_timeout=100,
-        action_timeout_seconds=5.0,
-        aggregation="asc_median_mean",
-    )
-    diff_batch = ObjectiveSpec(
-        name="random",
-        kind="distribution",
-        batch=((1, "val-dwa-law-fem"), (2, "val-dwa-law-fem")),
-        max_steps=1000,
-        no_progress_timeout=100,
-        action_timeout_seconds=5.0,
-        aggregation="asc_median_mean",
-    )
-    diff_aggregation = ObjectiveSpec(
-        name="random",
-        kind="distribution",
-        batch=((1, "val-dwa-law-fem"), (2, "wiz-elf-cha-fem")),
-        max_steps=1000,
-        no_progress_timeout=100,
-        action_timeout_seconds=5.0,
-        aggregation="mean",
-    )
-
-    assert a.digest() == a.digest()
-    assert a.digest() != diff_batch.digest()
-    assert a.digest() != diff_aggregation.digest()
-    assert a.characters() == ("val-dwa-law-fem", "wiz-elf-cha-fem")
+def test_objective_action_timeout_default_is_the_local_hang_guard():
+    # Root cause ③, done right: the per-action wall-clock budget is a HANG-GUARD
+    # (NLE/AutoAscend can hang), not a scoring knob. It defaults to a generous
+    # 120s so a normal action -- including a first-action cold numba JIT compile
+    # under parallel load -- is never cut; only a genuinely hung bot times out.
+    # (Was 5.0, which cut normal AutoAscend actions under contention and
+    # corrupted the hub baseline.) The held-out validator sets its own value.
+    assert Objective(character="val-dwa-law-fem").action_timeout_seconds == 120.0
 
 
 def test_trajectoryresult_roundtrips_with_character_and_milestone():

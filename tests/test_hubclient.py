@@ -93,6 +93,15 @@ def test_attainment_with_identity_sends_identity_param():
     ]
 
 
+def test_baseline_gets_baseline_with_no_params():
+    payload = {"owner": "autoascend", "per_identity": {}, "overall": None}
+    http = _FakeHttp(response=payload)
+    client = HubClient("http://localhost:8000", http=http)
+
+    assert client.baseline() == payload
+    assert http.calls == [("GET", "http://localhost:8000/baseline", None)]
+
+
 def test_elites_sends_objective_param():
     http = _FakeHttp(response=[])
     client = HubClient("http://localhost:8000", http=http)

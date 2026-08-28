@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 from nethackers.contracts.models import Atom
 from nethackers.hub.api import create_app
 from nethackers.hub.auth import LocalStubAuth
-from nethackers.hub.objectives import CATALOG, IDENTITIES
+from nethackers.hub.objectives import IDENTITIES
 from nethackers.hub.store import Store
 from nethackers.hub.views.solution import read_solution_frontier
 
@@ -60,12 +60,9 @@ def _new_store(tmp_path):
 
 
 def _seed(store: Store, atoms: list[Atom]) -> None:
-    """Upsert each atom's identity into the catalog (provenance only --
-    atoms no longer FK to ``objectives``, Task A3) and one ``solutions`` row
-    per distinct solution (``insert_atoms``' remaining FK) -- then insert the
-    atoms themselves. Safe to call more than once per test."""
-    for identity in {atom.identity for atom in atoms}:
-        store.objectives_upsert(CATALOG[identity])
+    """Register one ``solutions`` row per distinct solution (``insert_atoms``'
+    remaining FK -- atoms no longer FK to ``objectives``, Task A3), then insert
+    the atoms themselves. Safe to call more than once per test."""
     for digest in {atom.solution_digest for atom in atoms}:
         store.upsert_solution(
             digest,

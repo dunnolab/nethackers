@@ -167,7 +167,7 @@ def register(
     resolved = _objective_and_batch(name, submitted)
     if resolved is None:
         raise UnknownObjective(f"{name!r} is not a published catalog objective or identity set")
-    spec, canonical_batch = resolved
+    _spec, canonical_batch = resolved
     if submitted != canonical_batch:
         raise WrongBatch(f"submitted batch does not match {name!r}'s canonical batch")
     if not all(math.isfinite(r.progress) for r in evidence.results):
@@ -179,7 +179,6 @@ def register(
 
     # 5. store & recompute -- reached only once every check above has passed.
     solution_id = f"{reference.repo}@{reference.commit}"
-    store.objectives_upsert(spec)
     store.upsert_solution(
         solution_id,
         repo=reference.repo,

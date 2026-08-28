@@ -376,9 +376,7 @@ def test_root_serves_the_dungeon_viz(tmp_path: Any) -> None:
 VAL_IDS = ["val-dwa-law-fem", "val-hum-law-fem", "val-hum-neu-fem"]
 
 
-def _seed_atoms(store: Store, atoms: list[Any], specs: list[Any]) -> None:
-    for spec in specs:
-        store.objectives_upsert(spec)
+def _seed_atoms(store: Store, atoms: list[Any]) -> None:
     for digest in {a.solution_digest for a in atoms}:
         store.upsert_solution(digest, repo="r", commit_sha="c", owner="sam",
                               root=".", entrypoint="bot.py", registered_at="t")
@@ -399,7 +397,7 @@ def test_board_generalist_returns_aggregate_shape(tmp_path: Any) -> None:
     client, store = _app(tmp_path)
     atoms = [_mk_atom(solution_digest="sha256:b", identity=i, seed=0, progression=0.2)
              for i in VAL_IDS]
-    _seed_atoms(store, atoms, [CATALOG[i] for i in VAL_IDS])
+    _seed_atoms(store, atoms)
     rows = client.get("/board?objective=generalist&tier=self-reported").json()
     assert rows and {"coverage", "total", "mean_progression"} <= set(rows[0])
     assert rows[0]["total"] == 73
@@ -409,7 +407,7 @@ def test_board_role_returns_aggregate_shape(tmp_path: Any) -> None:
     client, store = _app(tmp_path)
     atoms = [_mk_atom(solution_digest="sha256:b", identity=i, seed=0, progression=0.2)
              for i in VAL_IDS]
-    _seed_atoms(store, atoms, [CATALOG[i] for i in VAL_IDS])
+    _seed_atoms(store, atoms)
     rows = client.get("/board?objective=val").json()
     assert rows[0]["total"] == 3 and rows[0]["coverage"] == 3
 
@@ -419,7 +417,7 @@ def test_board_identity_includes_deepest(tmp_path: Any) -> None:
     from nethackers.arena.progress import ACHIEVEMENTS
     atoms = [_mk_atom(solution_digest="sha256:s", seed=0,
                       progression=ACHIEVEMENTS["Dlvl:5"], milestone="Dlvl:5")]
-    _seed_atoms(store, atoms, [CATALOG[IDENTITY]])
+    _seed_atoms(store, atoms)
     rows = client.get(f"/board?objective={IDENTITY}").json()
     assert rows[0]["deepest"] == "Dlvl:5"
 
@@ -436,7 +434,7 @@ def test_hackers_returns_union_shape_and_defaults_to_generalist(tmp_path: Any) -
                  identity=i, seed=0, progression=0.2)
         for i in VAL_IDS
     ]
-    _seed_atoms(store, atoms, [CATALOG[i] for i in VAL_IDS])
+    _seed_atoms(store, atoms)
     rows = client.get("/hackers").json()
     assert rows and {"owner", "coverage", "total", "mean_progression"} <= set(rows[0])
     assert rows[0]["total"] == 73 and rows[0]["owner"] == "dun"

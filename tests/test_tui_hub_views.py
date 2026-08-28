@@ -22,7 +22,12 @@ _DEAD_HUB = "http://127.0.0.1:1"
 def _render_to_str(renderable) -> str:
     """Render a rich renderable to plain text for assertion."""
     string_file: io.StringIO = io.StringIO()
-    console = Console(width=80, file=string_file, force_terminal=True)
+    # This helper is for structural text assertions, so do not emit terminal
+    # styling. With force_terminal=True Rich may place an ANSI reset between
+    # adjacent differently-styled spans (for example ``25.0%`` and ``aa``),
+    # making a visually contiguous string fail a raw substring assertion. The
+    # exact reset placement varies across Rich/Python environments.
+    console = Console(width=80, file=string_file, force_terminal=False, color_system=None)
     console.print(renderable)
     return string_file.getvalue()
 
@@ -378,6 +383,17 @@ def _fake_solution_frontier_for_champion(self, digest: str) -> list:
     return [{"identity": "val-dwa-law-fem", "progression": 0.91}]
 
 
+def _fake_baseline(self) -> dict:
+    return {
+        "owner": "autoascend",
+        "per_identity": {
+            "val-dwa-law-fem": {"progression": 0.30},
+            "wiz-elf-cha-mal": {"progression": 0.25},
+        },
+        "overall": 0.275,
+    }
+
+
 async def test_map_view_universe_default_shows_a_known_identity_number(monkeypatch):
     """MapView mounts into the Universe regime by default: the grid shows
     universe_scores' rank-1 numbers (never a rank-2 score) under the
@@ -385,19 +401,22 @@ async def test_map_view_universe_default_shows_a_known_identity_number(monkeypat
     import nethackers.tui.screens.hub as hub
 
     monkeypatch.setattr(hub.HubClient, "elites", _fake_elites_rank_spread)
+    monkeypatch.setattr(hub.HubClient, "baseline", _fake_baseline)
     app = _HostMap()
     async with app.run_test() as pilot:
         await _settle(app, pilot)
         body = app.query_one("#map_body")
         rendered = _render_to_str(body.content)
         assert "Valkyrie" in rendered
-        assert "0.42" in rendered
-        assert "0.15" in rendered
-        assert "0.99" not in rendered  # rank-2, must be filtered out
-        assert "each number = the best program's mean on that identity" in rendered
-        om = overall_mean({"val-dwa-law-fem": 0.42, "arc-hum-law-mal": 0.15})
+        assert "42.0%" in rendered
+        assert "15.0%" in rendered
+        assert "99.0%" not in rendered  # rank-2, must be filtered out
+        assert "aa = AutoAscend floor" in rendered
+        assert "25.0%  aa" in rendered
+        om = overall_mean({"val-dwa-law-fem": 0.42, "arc-hum-law-mal": 0.15,
+                           "wiz-elf-cha-mal": 0.25})
         assert om is not None
-        assert f"overall {om:.2f}" in rendered
+        assert f"overall {om * 100:.1f}%" in rendered
 
 
 async def test_map_view_activating_program_subtab_shows_champion_grid(monkeypatch):
@@ -411,6 +430,7 @@ async def test_map_view_activating_program_subtab_shows_champion_grid(monkeypatc
     monkeypatch.setattr(hub.HubClient, "board", _fake_board_with_champion)
     monkeypatch.setattr(hub.HubClient, "solution_frontier",
                          _fake_solution_frontier_for_champion)
+    monkeypatch.setattr(hub.HubClient, "baseline", _fake_baseline)
 
     app = _HostMap()
     async with app.run_test() as pilot:
@@ -418,19 +438,19 @@ async def test_map_view_activating_program_subtab_shows_champion_grid(monkeypatc
         body = app.query_one("#map_body")
 
         # Sanity: mounts into Universe first.
-        assert "0.42" in _render_to_str(body.content)
+        assert "42.0%" in _render_to_str(body.content)
 
         app.query_one("#ftabs", Tabs).active = "ft-program"
         await _settle(app, pilot)
 
         rendered = _render_to_str(body.content)
-        assert "0.91" in rendered  # the champion's number
-        assert "0.42" not in rendered  # the universe number is gone, not merged
+        assert "91.0%" in rendered  # the champion's number
+        assert "42.0%" not in rendered  # the universe number is gone, not merged
         assert f"@vale/{_short_digest('abc123def456')}" in rendered
         assert "this one program across all identities" in rendered
         om = overall_mean({"val-dwa-law-fem": 0.91})
         assert om is not None
-        assert f"overall {om:.2f}" in rendered
+        assert f"overall {om * 100:.1f}%" in rendered
 
 
 async def test_map_view_program_subtab_shows_friendly_line_when_no_champion(monkeypatch):
@@ -440,6 +460,7 @@ async def test_map_view_program_subtab_shows_friendly_line_when_no_champion(monk
 
     monkeypatch.setattr(hub.HubClient, "elites", lambda self, *a, **k: [])
     monkeypatch.setattr(hub.HubClient, "board", lambda self, *a, **k: [])
+    monkeypatch.setattr(hub.HubClient, "baseline", _fake_baseline)
 
     app = _HostMap()
     async with app.run_test() as pilot:

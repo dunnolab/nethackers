@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import asdict, dataclass, fields
 from statistics import mean
 from typing import Any, Literal
@@ -68,12 +66,8 @@ class Objective:
     character: str | None            # e.g. "val-dwa-law-fem"; None => NLE natural random draw
     max_steps: int = DEFAULT_MAX_STEPS
     no_progress_timeout: int = DEFAULT_NO_PROGRESS_TIMEOUT
-    action_timeout_seconds: float = 5.0
+    action_timeout_seconds: float = 120.0  # LOCAL hang-guard; see hub/objectives.py
     seed_set: str = "public-8"
-
-    def digest(self) -> str:
-        payload = json.dumps(asdict(self), sort_keys=True, separators=(",", ":"))
-        return "sha256:" + hashlib.sha256(payload.encode()).hexdigest()
 
 
 @dataclass(frozen=True)
@@ -93,10 +87,6 @@ class ObjectiveSpec:
     no_progress_timeout: int
     action_timeout_seconds: float
     aggregation: str
-
-    def digest(self) -> str:
-        payload = json.dumps(asdict(self), sort_keys=True, separators=(",", ":"))
-        return "sha256:" + hashlib.sha256(payload.encode()).hexdigest()
 
     def characters(self) -> tuple[str, ...]:
         """The batch's characters, in published batch order."""

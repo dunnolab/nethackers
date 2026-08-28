@@ -66,7 +66,9 @@ def test_every_objectivespec_uses_the_arena_standard_knobs():
     for spec in CATALOG.values():
         assert spec.max_steps == DEFAULT_MAX_STEPS
         assert spec.no_progress_timeout == DEFAULT_NO_PROGRESS_TIMEOUT
-        assert spec.action_timeout_seconds == 5.0
+        # 120s = the local arena's per-action hang-guard (was 5.0; at 5.0
+        # contention cut normal AutoAscend actions and corrupted the baseline).
+        assert spec.action_timeout_seconds == 120.0
 
 
 def test_batches_are_non_empty_int_str_pairs_except_all():
@@ -133,21 +135,15 @@ def test_all_is_functional_with_an_empty_batch():
 def test_build_catalog_is_deterministic():
     first = build_catalog()
     second = build_catalog()
-    assert {name: s.digest() for name, s in first.items()} == {
-        name: s.digest() for name, s in second.items()
-    }
+    assert first == second
 
     # Same non-default sizes, called twice, still agree.
     third = build_catalog(random_size=32, per_identity_size=8)
     fourth = build_catalog(random_size=32, per_identity_size=8)
-    assert {name: s.digest() for name, s in third.items()} == {
-        name: s.digest() for name, s in fourth.items()
-    }
+    assert third == fourth
 
     # The module-level CATALOG matches a fresh default build too.
-    assert {name: s.digest() for name, s in CATALOG.items()} == {
-        name: s.digest() for name, s in first.items()
-    }
+    assert first == CATALOG
 
 
 def test_build_catalog_respects_custom_sizes():

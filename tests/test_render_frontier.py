@@ -58,6 +58,37 @@ def test_render_frontier_grid_note_renders_above_the_grid():
     assert "Wizard" in out  # the grid itself still renders alongside the note
 
 
+def test_render_frontier_grid_shows_autoascend_floor_and_program_delta():
+    out = _render(render_frontier_grid(
+        {"wiz-elf-cha-mal": 0.61},
+        baseline_scores={"wiz-elf-cha-mal": 0.50, "wiz-elf-cha-fem": 0.20},
+        baseline_floor=True,
+    ))
+
+    assert "61.0% +11.0%" in out
+    assert "20.0%  aa" in out
+
+
+def test_render_frontier_grid_preserves_small_contest_site_deltas():
+    out = _render(render_frontier_grid(
+        {
+            "mon-hum-cha-fem": 0.134, "mon-hum-cha-mal": 0.134,
+            "mon-hum-law-fem": 0.100, "mon-hum-law-mal": 0.109,
+            "mon-hum-neu-fem": 0.104, "mon-hum-neu-mal": 0.104,
+        },
+        baseline_scores={
+            "mon-hum-cha-fem": 0.133, "mon-hum-cha-mal": 0.133,
+            "mon-hum-law-fem": 0.093, "mon-hum-law-mal": 0.099,
+            "mon-hum-neu-fem": 0.104, "mon-hum-neu-mal": 0.099,
+        },
+        baseline_floor=True,
+    ))
+
+    assert "Monk   11.4% +0.4%" in out
+    assert "hum-cha-fem  13.4% +0.1%" in out
+    assert "hum-neu-fem  10.4%  aa" in out
+
+
 # --- plain_frontier (pure Python baseline) ----------------------------------
 
 
