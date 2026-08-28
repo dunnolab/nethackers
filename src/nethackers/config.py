@@ -67,12 +67,47 @@ def _from_env(environ: Mapping[str, str]) -> dict[str, object]:
     return out
 
 
+def _find_stack_file(cwd: Path | None, environ: Mapping[str, str]) -> Path | None:
+    """Locate the ``.env.stack`` file layer. ``NETHACKERS_STAGE_FILE`` is an
+    explicit hatch: a path targets exactly that file, an empty string skips
+    discovery altogether (forced prod -- ``--prod``'s mechanism in cli.py).
+    Otherwise walk up from ``cwd`` (or the real process cwd) looking for
+    ``.env.stack``, the same file ``scripts/stack.py`` writes at a
+    worktree's root."""
+    override = environ.get("NETHACKERS_STAGE_FILE")
+    if override is not None:                    # explicit hatch: path targets it, "" ignores
+        return Path(override) if override else None
+    here = (cwd or Path.cwd()).resolve()
+    for d in (here, *here.parents):
+        f = d / ".env.stack"
+        if f.is_file():
+            return f
+    return None
+
+
+def _parse_env_file(path: Path | None) -> dict[str, object]:
+    """Parse a flat ``KEY=VALUE`` ``.env.stack`` file into Stage field
+    values, via the same ``_ENV_TO_FIELD`` map + ``_coerce`` the process-env
+    layer uses. A missing/absent path or an unknown key is silently
+    ignored -- this layer, like every layer above defaults, is optional."""
+    if path is None or not path.is_file():
+        return {}
+    out: dict[str, object] = {}
+    for line in path.read_text().splitlines():
+        line = line.strip()
+        if line and not line.startswith("#") and "=" in line:
+            k, _, v = line.partition("=")
+            field = _ENV_TO_FIELD.get(k.strip())
+            if field:
+                out[field] = _coerce(field, v.strip())
+    return out
+
+
 def load_stage(cwd: Path | None = None, environ: Mapping[str, str] = os.environ) -> Stage:
-    """Resolve the active Stage: prod defaults < .env.stack file < process env.
-    (The file layer lands in Task 5; today this is defaults < env.) CLI flags
-    are the 4th layer and win last -- they are applied by argparse using this
-    Stage's fields as its defaults, in cli.py."""
+    """Resolve the active Stage: prod defaults < .env.stack file < process
+    env. CLI flags are the 4th layer and win last -- they are applied by
+    argparse using this Stage's fields as its defaults, in cli.py."""
     values: dict[str, object] = {f.name: getattr(Stage(), f.name) for f in fields(Stage)}
-    # Task 5 inserts: values.update(_parse_env_file(_find_stack_file(cwd, environ)))
+    values.update(_parse_env_file(_find_stack_file(cwd, environ)))
     values.update(_from_env(environ))
     return Stage(**values)  # type: ignore[arg-type]

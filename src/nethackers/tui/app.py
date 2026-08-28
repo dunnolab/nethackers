@@ -39,6 +39,7 @@ from textual.widgets import (
     Tabs,
 )
 
+from nethackers.config import load_stage
 from nethackers.harness.launch import EvolvePlan
 from nethackers.hubclient.credentials import Credentials
 from nethackers.tui.nav import dedup_visible, nearest_in_direction
@@ -84,15 +85,20 @@ class NetHackersApp(App):
         self._creds = creds
         self._start = start
         self._evolve = evolve
+        self._stage = load_stage()  # for the idbar's non-prod indicator, computed once
         self._runs: dict[str, Run] = {}  # background evolution runs, this session
         self._nav_mode = "navigate"  # "navigate" (arrows move the cursor) | "interact"
         self._nav_cursor: Widget | None = None
         self._idbar_prefix = ""
 
-    def compose(self) -> ComposeResult:
+    def _idbar_text(self) -> str:
         who = f"@{self._creds.login}" if self._creds else "guest"
         host = self._hub.split("//")[-1]
-        self._idbar_prefix = f" {who} · hub:{host}"
+        stage_tag = "" if self._stage.name == "prod" else f" · stage:{self._stage.name}"
+        return f" {who} · hub:{host}{stage_tag}"
+
+    def compose(self) -> ComposeResult:
+        self._idbar_prefix = self._idbar_text()
         yield Static(f"{self._idbar_prefix}   —   ↑↓←→ move · enter use · 1–6 jump · q quit",
                      id="idbar", classes="idbar")
         yield Tabs(*(Tab(label, id=f"tab-{key}") for key, label in _SECTIONS), id="nav")
@@ -200,9 +206,7 @@ class NetHackersApp(App):
 
     def _refresh_identity(self) -> None:
         """Re-render the identity bar and Home after a login/logout."""
-        who = f"@{self._creds.login}" if self._creds else "guest"
-        host = self._hub.split("//")[-1]
-        self._idbar_prefix = f" {who} · hub:{host}"
+        self._idbar_prefix = self._idbar_text()
         self._nav_update_hint()  # repaints #idbar with the new prefix + current legend
         login = self._creds.login if self._creds else None
         with contextlib.suppress(Exception):

@@ -205,6 +205,37 @@ def _common_parser() -> argparse.ArgumentParser:
     return common
 
 
+def _stage_from_argv(argv: list[str] | None) -> Stage:
+    """Pre-scan argv for ``--prod`` before ``_build_parser`` exists -- that
+    parser needs a resolved ``Stage`` as input (for ``--hub``/
+    ``--mutator-image``/etc.'s own defaults), so this one flag has to be
+    read before argparse can run at all. ``--prod`` forces the prod stage
+    by disabling ``.env.stack`` discovery outright -- ``NETHACKERS_STAGE_
+    FILE=""``, the same explicit-empty hatch ``load_stage``'s file layer
+    already understands -- while real process env (and true CLI flags,
+    applied afterward by argparse) still win over it, same as any other
+    invocation."""
+    scan = sys.argv[1:] if argv is None else argv
+    if "--prod" in scan:
+        return load_stage(environ={**os.environ, "NETHACKERS_STAGE_FILE": ""})
+    return load_stage()
+
+
+def _where_line(stage: Stage, login: str | None) -> str:
+    """The ``whoami`` "where am I pointed" line: identity + stage + hub.
+    Unlike the ambient indicators (the ``_run`` startup dim line, the TUI
+    idbar), which stay silent for ``prod`` to avoid noise on every single
+    invocation, this always names the stage -- a user who explicitly asked
+    "whoami" wants the full picture, prod included."""
+    host = stage.hub_url.split("//")[-1]
+    if login is not None:
+        return f"[b]@{login}[/] · stage:{stage.name} · hub:{host}"
+    return (
+        f"[yellow]not logged in (guest)[/] · stage:{stage.name} · hub:{host} "
+        "— browse/offline only; `login` to publish"
+    )
+
+
 def _build_parser(stage: Stage) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="nethackers",
@@ -240,6 +271,12 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
         "--no-tui",
         action="store_true",
         help="Never open the interactive TUI; print help/plain output.",
+    )
+    parser.add_argument(
+        "--prod",
+        action="store_true",
+        help="Force the prod stage, ignoring any .env.stack (e.g. hitting the "
+        "global hub from a worktree).",
     )
     sub = parser.add_subparsers(dest="cmd")
     common = _common_parser()
@@ -432,9 +469,17 @@ def _run(argv: list[str] | None) -> int:
     """Parse args and dispatch one subcommand. May raise -- ``main`` is the
     single place that turns any failure into a clean message, so nothing here
     needs its own try/except for hub I/O."""
-    stage = load_stage()
+    stage = _stage_from_argv(argv)
     parser = _build_parser(stage)
     args = parser.parse_args(argv)
+
+    if stage.name != "prod":
+        # An ambient discovery visibility requirement: implicit .env.stack
+        # discovery must never be silent -- stderr, so `-o json` stays
+        # machine-clean; the *effective* hub (after any --hub flag), not
+        # just the stage's own default, since that's the one that actually
+        # matters for what this invocation is about to touch.
+        err.print(f"[dim]stage: {stage.name} · hub {args.hub}[/]")
 
     if args.cmd is None:
         # bare `nethackers`: on a TTY (and not --no-tui), open the dashboard
@@ -469,14 +514,17 @@ def _run(argv: list[str] | None) -> int:
 
     if args.cmd == "whoami":
         c = _load_creds()
-        if c is None:
-            err.print("[yellow]not logged in[/] — run `nethackers login`")
-            return 1
+        ident = c.login if c is not None else None
         if args.output == "json":
-            print(json.dumps({"login": c.login}))
+            print(json.dumps({
+                "login": ident,
+                "authenticated": c is not None,
+                "stage": stage.name,
+                "hub": stage.hub_url,
+            }))
         else:
-            err.print(f"[b]@{c.login}[/]")
-        return 0
+            err.print(_where_line(stage, ident))
+        return 0 if c is not None else 1
 
     if args.cmd == "eval":
         spec = CATALOG.get(args.objective)

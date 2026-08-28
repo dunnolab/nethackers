@@ -53,3 +53,19 @@ def test_env_overrides_defaults_with_casts():
 def test_unknown_env_keys_ignored():
     s = load_stage(environ={"NETHACKERS_HUB": "http://x", "FOO_BAR": "baz"})
     assert s.hub_url == "http://x"
+
+
+# --- cli's --prod pre-scan (Task 5): the argv-level bypass in front of the
+# .env.stack discovery this module implements -- exercised here since it's
+# the other half of "how a caller opts out of discovery" alongside
+# NETHACKERS_STAGE_FILE="" above.
+
+
+def test_prod_flag_bypasses_discovery(tmp_path, monkeypatch):
+    from nethackers.cli import _stage_from_argv
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env.stack").write_text("NETHACKERS_STAGE=wt\n")
+
+    assert _stage_from_argv([]).name == "wt"          # discovery finds the worktree stage...
+    assert _stage_from_argv(["--prod"]).name == "prod"  # ...but --prod forces prod regardless

@@ -11,6 +11,7 @@ import json
 import pytest
 
 from nethackers import cli
+from nethackers.config import Stage
 from nethackers.harness import launch
 from nethackers.hubclient import credentials as cred
 
@@ -178,12 +179,22 @@ def test_whoami_prints_login_to_stderr_by_default(monkeypatch, capsys):
 
 
 def test_whoami_respects_o_json(monkeypatch, capsys):
+    # No stage-related env/file is set up here -- the resolved stage is
+    # whatever `load_stage()` naturally discovers (prod defaults, absent a
+    # real .env.stack above this repo checkout); the "stage"/"hub" fields
+    # are asserted against Stage()'s own defaults rather than hardcoded so
+    # this doesn't silently drift from config.py's actual values.
     monkeypatch.setattr(cli, "_load_creds", lambda: cred.Credentials("castiel", "sekrit-tok"))
 
     assert cli.main(["whoami", "-o", "json"]) == 0
 
     captured = capsys.readouterr()
-    assert json.loads(captured.out) == {"login": "castiel"}
+    assert json.loads(captured.out) == {
+        "login": "castiel",
+        "authenticated": True,
+        "stage": Stage().name,
+        "hub": Stage().hub_url,
+    }
     assert "sekrit-tok" not in captured.out  # token never leaks into the JSON payload either
 
 
