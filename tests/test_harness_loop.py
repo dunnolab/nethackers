@@ -10,6 +10,8 @@ import json
 import random
 from pathlib import Path
 
+from pytest import approx
+
 from nethackers.harness import loop as loop_mod
 from nethackers.harness.loop import IterationResult, run_loop
 from nethackers.harness.metering import TokenUsage
@@ -123,6 +125,49 @@ def _fitness_runner_by_character(progress_fn):
              "error": None, "wall_seconds": 0.1, "character": c, "milestone": None}
             for s, c in batch]))
     return fake
+
+
+class _ElitesHub(_FakeHub):
+    """A hub that also serves per-identity elites for cold-start cell seeding.
+    `by_identity` maps identity -> a champion entry; tier='verified' so every
+    entry is trusted regardless of the run owner (select._trusted)."""
+    def __init__(self, by_identity):
+        super().__init__()
+        self._by = by_identity
+    def elites(self, identity):
+        e = self._by.get(identity)
+        return [e] if e is not None else []
+
+
+def _champion_fetch(version_by_digest):
+    """A cold-start `fetch` that materializes each champion's tree on demand:
+    the solution manifest plus a bot.py whose VERSION the fake fitness runner
+    scores. Digests are atom-style ('repo@commit', no ':'), so select._resolve
+    caches them via store.save_as and never hits a real git pull."""
+    def fetch(entry, dest):
+        dest = Path(dest)
+        dest.mkdir(parents=True, exist_ok=True)
+        (dest / "nethackers.solution.json").write_text(json.dumps(
+            {"schema": "nethackers.solution/v1", "name": "champ", "root": ".",
+             "parents": [], "influences": [], "entrypoint": "bot.py"}))
+        (dest / "bot.py").write_text(
+            f"VERSION = {version_by_digest[entry['solution_digest']]}\n")
+        return dest
+    return fetch
+
+
+def _spy_batches(monkeypatch):
+    """Record (mounted-tree, identity-set) for every evaluate() the loop makes,
+    delegating to the real evaluate. With iterations=0 the only calls are the
+    cold-start evals, so the identity-sets are exactly what each starting elite
+    was scored on."""
+    seen: list[tuple[str, frozenset[str]]] = []
+    real = loop_mod.evaluate
+    def spy(tree, spec, image, **kw):
+        seen.append((str(tree), frozenset(c for _s, c in spec.batch)))
+        return real(tree, spec, image, **kw)
+    monkeypatch.setattr(loop_mod, "evaluate", spy)
+    return seen
 
 
 def test_loop_registers_an_improvement(tmp_path):
@@ -583,3 +628,138 @@ def test_maplites_attempt_history_is_uncapped_across_the_run(tmp_path):
     brief5 = _brief_for("iter 5/5", logs)
     for i in range(1, 5):
         assert f"iter-{i}" in brief5   # all four earlier attempts, none dropped
+
+
+# -- cold start: each cell is seeded on ITS OWN identity, not the full union --
+
+def test_coldstart_scores_each_champion_on_its_own_identities(tmp_path, monkeypatch):
+    # 3-identity set, every identity covered by a champion. Champion A is the
+    # hub elite for TWO identities, champion B for the third. Each champion must
+    # be scored once on ONLY the identities it owns -- never on the full union
+    # (the old P*N blowup) -- and with every cell covered, the seed is not
+    # scored at all. So the ONLY evals are the two champion sub-unions.
+    a, b, c = "mon-hum-cha-mal", "mon-hum-law-mal", "mon-hum-neu-mal"
+    champ_a = {"solution_digest": "github.com/t/a@11", "score": 0.99, "tier": "verified"}
+    champ_b = {"solution_digest": "github.com/t/b@22", "score": 0.99, "tier": "verified"}
+    seen = _spy_batches(monkeypatch)
+    run_loop(
+        objective=f"{a},{b},{c}", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+        hub=_ElitesHub({a: champ_a, b: champ_a, c: champ_b}),
+        image="img:dev", token="t", owner="dev", iterations=0,
+        now_fn=lambda: "2026-08-28T00:00:00Z",
+        runner=_fitness_runner(lambda v: {0: 0.2, 5: 0.7, 9: 0.9}[v]),
+        fetch=_champion_fetch({"github.com/t/a@11": 5, "github.com/t/b@22": 9}),
+        workdir=tmp_path / "work")
+    identity_sets = sorted((s for _t, s in seen), key=len)
+    assert identity_sets == [
+        frozenset({c}),          # champion B on its one identity
+        frozenset({a, b}),       # champion A on its two -- NOT the full union
+    ]
+
+
+def test_coldstart_fills_each_cell_with_its_own_champion(tmp_path):
+    # champion A is the elite for id1, champion B for id2. Because each is scored
+    # ONLY on its own identity, A can't overwrite id2 (nor B id1): each cell ends
+    # up owned by its champion. (On the old full-union path both champions scored
+    # every identity, so the higher one took both cells.)
+    a, b = "wiz-elf-cha-mal", "wiz-orc-cha-mal"
+    champ_a = {"solution_digest": "github.com/t/a@11", "score": 0.99, "tier": "verified"}
+    champ_b = {"solution_digest": "github.com/t/b@22", "score": 0.99, "tier": "verified"}
+    states = []
+    run_loop(
+        objective=f"{a},{b}", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+        hub=_ElitesHub({a: champ_a, b: champ_b}), image="img:dev", token="t",
+        owner="dev", iterations=0, now_fn=lambda: "2026-08-28T00:00:00Z",
+        runner=_fitness_runner(lambda v: {0: 0.2, 5: 0.7, 9: 0.9}[v]),
+        fetch=_champion_fetch({"github.com/t/a@11": 5, "github.com/t/b@22": 9}),
+        workdir=tmp_path / "work", on_state=states.append)
+    cold = next(s for s in states if s["phase"] == "cold-start")
+    cells = {cell["identity"]: cell["digest"] for cell in cold["cells"]}
+    assert cells[a] == "github.com/t/a@11"   # champion A owns its cell
+    assert cells[b] == "github.com/t/b@22"   # champion B owns its cell
+
+
+def test_coldstart_seeds_only_championless_cells(tmp_path, monkeypatch):
+    # champion owns id1; id2 has NO hub elite -> the seed is scored on id2 ONLY,
+    # never the full union.
+    a, b = "wiz-elf-cha-mal", "wiz-orc-cha-mal"
+    champ = {"solution_digest": "github.com/t/a@11", "score": 0.99, "tier": "verified"}
+    store = LocalTreeStore(tmp_path / "store")
+    seed_tree = _seed_tree(tmp_path / "seed")
+    seed_path = store.path(store.save(seed_tree))
+    seen = _spy_batches(monkeypatch)
+    run_loop(
+        objective=f"{a},{b}", seed_tree=seed_tree, tree_store=store,
+        operator=_ImprovingOperator(), hub=_ElitesHub({a: champ}),
+        image="img:dev", token="t", owner="dev", iterations=0,
+        now_fn=lambda: "2026-08-28T00:00:00Z",
+        runner=_fitness_runner(lambda v: {0: 0.2, 5: 0.7}[v]),
+        fetch=_champion_fetch({"github.com/t/a@11": 5}), workdir=tmp_path / "work")
+    by_tree = {t: s for t, s in seen}
+    assert by_tree[str(seed_path)] == frozenset({b})          # seed scored on id2 ONLY
+    assert frozenset({a, b}) not in [s for _t, s in seen]     # never the full union
+
+
+def test_coldstart_base_dev_is_the_frontier_mean(tmp_path):
+    # champion owns id1 (scores 0.7); id2 is championless -> seeded at 0.2.
+    # base_dev is the frontier mean (0.7 + 0.2) / 2 = 0.45, NOT the seed's union
+    # mean (0.2, what the old full-union seed eval reported).
+    a, b = "wiz-elf-cha-mal", "wiz-orc-cha-mal"
+    champ = {"solution_digest": "github.com/t/a@11", "score": 0.99, "tier": "verified"}
+    baseline = []
+    run_loop(
+        objective=f"{a},{b}", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+        hub=_ElitesHub({a: champ}), image="img:dev", token="t", owner="dev",
+        iterations=0, now_fn=lambda: "2026-08-28T00:00:00Z",
+        runner=_fitness_runner(lambda v: {0: 0.2, 5: 0.7}[v]),
+        fetch=_champion_fetch({"github.com/t/a@11": 5}), workdir=tmp_path / "work",
+        on_iteration=lambda i, r: baseline.append(r))
+    assert baseline[0].reason == "baseline"
+    assert baseline[0].dev_fitness == approx(0.45)
+
+
+def test_coldstart_baseline_when_every_cell_has_a_champion(tmp_path):
+    # Every identity has a champion -> the seed eval is skipped entirely. The
+    # baseline must still be emitted (dev_fitness = frontier mean), never crash
+    # on a seed eval that didn't run (the old causes=_causes(seed_ev.results)
+    # would reference an unbound seed_ev here).
+    a, b = "wiz-elf-cha-mal", "wiz-orc-cha-mal"
+    champ_a = {"solution_digest": "github.com/t/a@11", "score": 0.99, "tier": "verified"}
+    champ_b = {"solution_digest": "github.com/t/b@22", "score": 0.99, "tier": "verified"}
+    baseline = []
+    run_loop(
+        objective=f"{a},{b}", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+        hub=_ElitesHub({a: champ_a, b: champ_b}), image="img:dev", token="t",
+        owner="dev", iterations=0, now_fn=lambda: "2026-08-28T00:00:00Z",
+        runner=_fitness_runner(lambda v: {0: 0.2, 5: 0.7, 9: 0.9}[v]),
+        fetch=_champion_fetch({"github.com/t/a@11": 5, "github.com/t/b@22": 9}),
+        workdir=tmp_path / "work", on_iteration=lambda i, r: baseline.append(r))
+    assert baseline[0].reason == "baseline"
+    assert baseline[0].dev_fitness == approx(0.8)   # (0.7 + 0.9) / 2, no seed eval
+
+
+def test_coldstart_warm_cell_mutates_without_error(tmp_path):
+    # The branch's headline scenario: a warm-started cell (seeded from a hub
+    # champion, so its dev_evidence spans ONLY that champion's identity) must
+    # mutate cleanly on iteration 1. The mutated cell's SUBSET per-identity means
+    # (parent_means) flow into aggregate.regressions and the brief against a
+    # FULL-union child eval -- a shape that couldn't arise under the old
+    # full-union cold-start. Proves the D2 subset doesn't trip the unchanged
+    # regression/brief path (no silent 'error:' iteration).
+    a, b = "wiz-elf-cha-mal", "wiz-orc-cha-mal"
+    champ_a = {"solution_digest": "github.com/t/a@11", "score": 0.99, "tier": "verified"}
+    champ_b = {"solution_digest": "github.com/t/b@22", "score": 0.99, "tier": "verified"}
+    results = run_loop(
+        objective=f"{a},{b}", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+        hub=_ElitesHub({a: champ_a, b: champ_b}), image="img:dev", token="t",
+        owner="dev", iterations=1, now_fn=lambda: "2026-08-28T00:00:00Z",
+        runner=_fitness_runner(lambda v: {0: 0.2, 5: 0.7, 9: 0.9}.get(v, 0.95)),
+        fetch=_champion_fetch({"github.com/t/a@11": 5, "github.com/t/b@22": 9}),
+        workdir=tmp_path / "work", rng=random.Random(0))
+    assert not results[0].reason.startswith("error")   # subset parent_means: regressions+brief ok
+    assert results[0].registered is True               # the warm cell mutated and improved a cell
