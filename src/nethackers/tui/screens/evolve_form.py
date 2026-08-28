@@ -28,6 +28,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Label, Select, Static
 
+from nethackers.config import OFFLINE_OWNER, OFFLINE_TOKEN, load_stage
 from nethackers.harness.discovery import CliInfo, ModelInfo, probe_operator
 from nethackers.harness.launch import EvolveParams, prepare_evolve
 from nethackers.harness.models import EFFORTS, MODELS
@@ -42,10 +43,6 @@ from nethackers.tui.identity_grid import IdentityGrid
 
 if TYPE_CHECKING:
     from nethackers.tui.app import NetHackersApp
-
-# The form doesn't expose an image picker, so live discovery probes the default
-# mutator image (matches launch.EvolveParams.mutator_image / the CLI default).
-_MUTATOR_IMAGE = "nethackers/mutator:latest"
 
 
 def _seed_roots() -> list[str]:
@@ -254,7 +251,7 @@ class EvolveForm(Vertical):
         # catalog match what a run actually uses, not the host's possibly-
         # different CLI. On a None catalog (image not built / offline / logged
         # out) the static list stays; the version line still reflects detection.
-        cli, models = probe_operator(backend, image=_MUTATOR_IMAGE)
+        cli, models = probe_operator(backend, image=load_stage().mutator_image)
         self.app.call_from_thread(self._cache_and_apply, backend, cli, models)
 
     def _cache_and_apply(self, backend: str, cli: CliInfo,
@@ -323,8 +320,8 @@ class EvolveForm(Vertical):
             model=self._model(),
             effort=self._effort(),
             hub=self._hub,
-            token=self._creds.access_token if self._creds else "dev-token",
-            owner=self._creds.login if self._creds else "dev",
+            token=self._creds.access_token if self._creds else OFFLINE_TOKEN,
+            owner=self._creds.login if self._creds else OFFLINE_OWNER,
         )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

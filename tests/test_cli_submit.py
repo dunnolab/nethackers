@@ -36,7 +36,7 @@ def _wire_gh(monkeypatch, *, gh="sam", sha="c" * 40):
     monkeypatch.setattr(cli, "eval_batch", lambda *a, **k: _FakeEvidence())
 
 
-def test_submit_publishes_and_registers(monkeypatch, tmp_path, capsys):
+def test_submit_publishes_and_registers(monkeypatch, tmp_path, capsys, clean_stage):
     _login(monkeypatch, tmp_path)
     _wire_gh(monkeypatch, gh="sam", sha="c" * 40)
     hubs: list[_FakeHub] = []

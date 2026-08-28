@@ -12,11 +12,13 @@ alongside the rest of the M2a hub-facing CLI coverage.
 import json
 
 import nethackers.cli as C
+from nethackers.config import load_stage
 from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
 from nethackers.hub.objectives import CATALOG
 
 
-def test_cli_eval_invokes_eval_batch_with_resolved_objective(monkeypatch, capsys, tmp_path):
+def test_cli_eval_invokes_eval_batch_with_resolved_objective(
+        monkeypatch, capsys, tmp_path, clean_stage):
     seen = {}
 
     def fake_eval_batch(solution, spec, image, *, now, max_parallel_evals=8):
@@ -137,7 +139,7 @@ def test_bare_tty_launches_app(monkeypatch):
     assert C.main([]) == 0
 
     assert launched.get("ran") is True
-    assert launched.get("hub") == C._default_hub()  # the resolved top-level --hub, not None
+    assert launched.get("hub") == load_stage().hub_url  # the resolved top-level --hub, not None
 
 
 def test_bare_no_tui_prints_help_and_never_constructs_the_app(monkeypatch, capsys):
@@ -182,7 +184,22 @@ def test_cli_pull_invokes_pull(monkeypatch, capsys, tmp_path):
 # --- default hub URL --------------------------------------------------
 
 
-def test_default_hub_is_prod(monkeypatch):
+# Every NETHACKERS_* key load_stage() reads -- cleared below, same isolation
+# tests/test_config.py's test_prod_flag_bypasses_discovery and
+# tests/test_cli_login.py's test_whoami_respects_o_json already use.
+_STAGE_ENV_KEYS = (
+    "NETHACKERS_STAGE", "NETHACKERS_STAGE_FILE", "NETHACKERS_HUB", "NETHACKERS_HUB_PORT",
+    "COMPOSE_PROJECT_NAME", "NETHACKERS_DATA_ROOT", "NETHACKERS_REPO_NAME",
+    "NETHACKERS_ARENA_IMAGE", "NETHACKERS_MUTATOR_IMAGE", "NETHACKERS_CLIENT_ID",
+)
+
+
+def test_default_hub_is_prod(tmp_path, monkeypatch):
+    # cwd=tmp_path (an empty dir, never an ancestor of a real .env.stack)
+    # plus every NETHACKERS_* key cleared -- load_stage() is called directly
+    # here, so the cwd seam is passed straight through rather than chdir'd.
     from nethackers import cli
-    monkeypatch.delenv("NETHACKERS_HUB", raising=False)
-    assert cli._default_hub() == "https://nethackers.dunnolab.ai"
+    for key in _STAGE_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    parser = cli._build_parser(load_stage(cwd=tmp_path))
+    assert parser.parse_args([]).hub == "https://nethackers.dunnolab.ai"

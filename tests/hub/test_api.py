@@ -87,8 +87,22 @@ def _auth_headers(token: str = TOKEN) -> dict[str, str]:
 
 
 def test_healthz(tmp_path: Any) -> None:
+    # `auth` reports the provider's mode -- an ADDITIVE field (Task: offline
+    # identity rename + effective-identity feature) so an old client that
+    # only checks "status" is unaffected.
     client, _store = _app(tmp_path)
-    assert client.get("/healthz").json() == {"status": "ok"}
+    assert client.get("/healthz").json() == {"status": "ok", "auth": "offline"}
+
+
+def test_healthz_reports_github_mode_for_a_real_auth_provider(tmp_path: Any) -> None:
+    from nethackers.hub.auth import GitHubAppAuth
+
+    store = Store(tmp_path / "h.db")
+    store.init_schema()
+    app = create_app(store, GitHubAppAuth("some-client-id"))
+    client = TestClient(app)
+
+    assert client.get("/healthz").json() == {"status": "ok", "auth": "github"}
 
 
 def test_root_serves_the_page(tmp_path: Any) -> None:

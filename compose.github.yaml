@@ -1,0 +1,23 @@
+# Real-auth local hub mode (design doc: "Real-auth local hub mode"). Use
+# with an EXPLICIT `-f` list, which disables compose's automatic
+# compose.override.yaml merge:
+#
+#   docker compose -f compose.yaml -f compose.github.yaml up -d --build
+#
+# (the Makefile's `make up HUB_AUTH=github` does exactly this). With no
+# NETHACKERS_STUB_IDENTITIES and no NETHACKERS_LOAD_FIXTURES set,
+# create_default_app (hub/api.py) selects the real
+# GitHubAppAuth(NETHACKERS_CLIENT_ID) and seeds nothing -- an empty DB,
+# same as prod. Only NETHACKERS_DB (a local sqlite volume, from the base
+# compose.yaml) differs from the real hub.
+#
+# The interpolation default below is the same public GitHub App client id
+# as Stage().github_client_id (config.py) -- one App on both sides of the
+# device flow -- pinned equal by
+# tests/test_compose_stage.py::test_github_overlay_default_client_id_matches_stage.
+# Override it for a self-hosted instance pointed at your own GitHub App:
+# NETHACKERS_CLIENT_ID=<your app id> make up HUB_AUTH=github
+services:
+  api:
+    environment:
+      NETHACKERS_CLIENT_ID: ${NETHACKERS_CLIENT_ID:-Iv23liWooDi2WlkrDAOw}

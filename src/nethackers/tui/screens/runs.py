@@ -13,12 +13,11 @@ from textual.containers import Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 
+from nethackers.config import load_stage
 from nethackers.tui.status import _clock, _compact
 
 if TYPE_CHECKING:
     from nethackers.tui.app import NetHackersApp
-
-_RUNS_DIR = Path.home() / ".nethackers" / "evolve" / "runs"
 
 
 def _summarize(run_dir: Path) -> dict | None:
@@ -179,7 +178,7 @@ class RunsView(VerticalScroll):
         from nethackers.tui.screens.home import recent_runs_panel
 
         ongoing = set(self._ongoing_ids)
-        past = [r for r in read_runs(_RUNS_DIR) if r["run_id"] not in ongoing]
+        past = [r for r in read_runs(load_stage().runs_dir) if r["run_id"] not in ongoing]
         self.query_one("#runs_past", Static).update(
             recent_runs_panel(past) if past else "[dim]No finished runs yet.[/]")
 

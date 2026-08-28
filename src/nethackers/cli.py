@@ -62,7 +62,8 @@ from rich.panel import Panel
 from rich.text import Text
 from rich_argparse import RichHelpFormatter
 
-from nethackers import clipboard
+from nethackers import clipboard, config
+from nethackers.config import Stage, load_stage
 from nethackers.eval.runner import eval_batch
 from nethackers.harness.discovery import ModelInfo, list_models, preflight_model
 from nethackers.harness.launch import EvolveParams, _now, prepare_evolve
@@ -77,6 +78,7 @@ from nethackers.hubclient import credentials as _cred
 from nethackers.hubclient.auth import AuthError, TokenSource
 from nethackers.hubclient.client import (
     HubClient,
+    HubUnreachable,
     _short_digest,
     plain_frontier,
     render_board as plain_board,
@@ -103,10 +105,6 @@ from nethackers.tui.app import NetHackersApp
 # Time seam: tests monkeypatch ``cli._time_now`` to make credential
 # expiry/refresh deterministic (avoids a wall-clock ``time.time()`` read).
 _time_now = time.time
-
-
-def _default_hub() -> str:
-    return os.environ.get("NETHACKERS_HUB", "https://nethackers.dunnolab.ai")
 
 
 def _login_prompt(verification_uri: str, user_code: str) -> None:
@@ -186,7 +184,7 @@ def _common_parser() -> argparse.ArgumentParser:
     itself never mentioned it. ``SUPPRESS`` means the subparser only ever
     contributes a ``hub``/``output`` key when the user actually typed the
     flag after the subcommand, so the top-level value (itself defaulted via
-    ``_default_hub()``/``"auto"`` on ``_build_parser``'s own flags) survives
+    ``stage.hub_url``/``"auto"`` on ``_build_parser``'s own flags) survives
     untouched otherwise -- giving exactly "subcommand-level wins if given,
     else the top-level value" without hand-rolling the merge.
     """
@@ -195,7 +193,7 @@ def _common_parser() -> argparse.ArgumentParser:
         "--hub",
         default=argparse.SUPPRESS,
         help="Hub API base URL (default: the top-level --hub, itself "
-        "http://localhost:8000 or $NETHACKERS_HUB).",
+        "$NETHACKERS_HUB or the active stage).",
     )
     common.add_argument(
         "-o",
@@ -208,7 +206,80 @@ def _common_parser() -> argparse.ArgumentParser:
     return common
 
 
-def _build_parser() -> argparse.ArgumentParser:
+def _stage_from_argv(argv: list[str] | None) -> Stage:
+    """Pre-scan argv for ``--prod`` before ``_build_parser`` exists -- that
+    parser needs a resolved ``Stage`` as input (for ``--hub``/
+    ``--mutator-image``/etc.'s own defaults), so this one flag has to be
+    read before argparse can run at all. ``--prod`` forces the prod stage
+    by disabling ``.env.stack`` discovery outright -- ``NETHACKERS_STAGE_
+    FILE=""``, the same explicit-empty hatch ``load_stage``'s file layer
+    already understands -- while real process env (and true CLI flags,
+    applied afterward by argparse) still win over it, same as any other
+    invocation."""
+    scan = sys.argv[1:] if argv is None else argv
+    if "--prod" in scan:
+        return load_stage(environ={**os.environ, "NETHACKERS_STAGE_FILE": ""})
+    return load_stage()
+
+
+# The offline-hub mismatch hint, shared verbatim between `_where_line`'s rich
+# line and `_effective_identity`'s plain (JSON) string -- a locally-logged-in
+# identity that a pointed-at offline/stub hub will never accept.
+_OFFLINE_MISMATCH_HINT = (
+    "OFFLINE hub — your login isn't accepted here (run the hub with HUB_AUTH=github)"
+)
+
+
+def _where_line(stage: Stage, login: str | None, hub_mode: str | None, *,
+                unreachable: bool = False) -> str:
+    """The ``whoami`` "where am I pointed" line: EFFECTIVE identity -- who
+    you are TO THE HUB you're pointed at, not just your local login state --
+    plus stage + hub. Unlike the ambient indicators (the ``_run`` startup dim
+    line, the TUI idbar), which stay silent for ``prod`` to avoid noise on
+    every single invocation, this always names the stage -- a user who
+    explicitly asked "whoami" wants the full picture, prod included.
+
+    ``hub_mode`` is the hub's reported ``/healthz`` ``auth`` field
+    (``"offline"``/``"github"``, or ``None`` when unknown -- an old hub
+    predating this feature, or a mode a future hub reports that this client
+    doesn't recognize -- treated the same as ``"github"``: no annotation,
+    today's plain login/guest line, since there's no positive evidence the
+    hub can't accept a real login). ``unreachable`` -- the hub couldn't be
+    reached at all -- takes precedence over everything else: there's no
+    identity to assert against a hub that isn't even there. This is the
+    motivating bug's fix: a real login pointed at a local offline/stub hub
+    used to get a bare 401 on register with no hint why, and whoami showed
+    the login as if it would work there."""
+    host = stage.hub_url.split("//")[-1]
+    if unreachable:
+        return f"[red]hub unreachable at {stage.hub_url}[/] · stage:{stage.name}"
+    if hub_mode == "offline":
+        if login is None:
+            return f"[b]OFFLINE[/] · stage:{stage.name} · hub:{host}"
+        return (f"[b]@{login}[/]  [yellow]⚠ {_OFFLINE_MISMATCH_HINT}[/] · "
+                f"stage:{stage.name} · hub:{host}")
+    if login is not None:
+        return f"[b]@{login}[/] · stage:{stage.name} · hub:{host}"
+    return (
+        f"[yellow]not logged in (guest)[/] · stage:{stage.name} · hub:{host} "
+        "— browse/offline only; `login` to publish"
+    )
+
+
+def _effective_identity(login: str | None, hub_mode: str | None, *,
+                        unreachable: bool = False) -> str:
+    """Plain (no rich markup) counterpart of ``_where_line``'s identity
+    segment, for ``whoami --output json``'s ``"effective"`` field. Never
+    includes a token -- only the login/mode/reachability are ever plumbed in
+    here."""
+    if unreachable:
+        return "hub unreachable"
+    if hub_mode == "offline":
+        return "OFFLINE" if login is None else f"@{login} ({_OFFLINE_MISMATCH_HINT})"
+    return f"@{login}" if login is not None else "not logged in"
+
+
+def _build_parser(stage: Stage) -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="nethackers",
         formatter_class=RichHelpFormatter,
@@ -227,7 +298,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--hub",
-        default=_default_hub(),
+        default=stage.hub_url,
         help="Hub API base URL (default: %(default)s; or $NETHACKERS_HUB).",
     )
     parser.add_argument(
@@ -243,6 +314,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--no-tui",
         action="store_true",
         help="Never open the interactive TUI; print help/plain output.",
+    )
+    parser.add_argument(
+        "--prod",
+        action="store_true",
+        help="Force the prod stage, ignoring any .env.stack (e.g. hitting the "
+        "global hub from a worktree).",
     )
     sub = parser.add_subparsers(dest="cmd")
     common = _common_parser()
@@ -266,7 +343,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     e.add_argument("solution", help="Path to the solution directory (mounted read-only).")
     e.add_argument("--objective", required=True, help="A catalog objective name.")
-    e.add_argument("--image", default="nethackers/arena:dev", help="Arena image to run.")
+    e.add_argument("--image", default=stage.arena_image, help="Arena image to run.")
     e.add_argument(
         "--max-parallel-evals", type=int, default=8,
         help="Cap on episodes the arena runs concurrently (default: %(default)s).",
@@ -278,7 +355,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     mo.add_argument("--operator", choices=["codex", "claude"], default="codex")
     mo.add_argument(
-        "--mutator-image", default="nethackers/mutator:latest",
+        "--mutator-image", default=stage.mutator_image,
         help="Probe this image's operator CLI (the one a run uses), not the host's "
         "(default: %(default)s).",
     )
@@ -293,6 +370,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--from-seed", action="store_true",
         help="Ignore the hub; cold-start every cell from --seed.",
     )
+    evolve.add_argument(
+        "--offline", action="store_true",
+        help="Evaluate locally without publishing or registering (still reads "
+        "the configured hub for cell-seeding).",
+    )
     evolve.add_argument("--operator", choices=["codex", "claude"], default="claude")
     evolve.add_argument(
         "--model", default=None,
@@ -305,7 +387,7 @@ def _build_parser() -> argparse.ArgumentParser:
         "default: the harness's own default.",
     )
     evolve.add_argument(
-        "--mutator-image", default="nethackers/mutator:latest",
+        "--mutator-image", default=stage.mutator_image,
         help="Container image the mutator runs in (default: %(default)s). The "
         "mutator always runs sandboxed in this image; a working container "
         "runtime and the selected --operator's host login are required.",
@@ -318,17 +400,18 @@ def _build_parser() -> argparse.ArgumentParser:
         "--max-parallel-evals", type=int, default=8,
         help="Cap on episodes the arena runs concurrently per eval (default: %(default)s).",
     )
-    evolve.add_argument("--image", default="nethackers/arena:dev")
+    evolve.add_argument("--image", default=stage.arena_image)
     evolve.add_argument(
         "--token", default=None,
         help="Attribution token (default: stored `nethackers login` credentials, "
-        "else 'dev-token').",
+        "else 'offline-token').",
     )
     evolve.add_argument(
         "--owner", default=None,
-        help="Attribution owner (default: stored `nethackers login` credentials, else 'dev').",
+        help="Attribution owner (default: stored `nethackers login` credentials, "
+        "else 'offline').",
     )
-    evolve.add_argument("--workdir", default=str(Path.home() / ".nethackers" / "evolve"))
+    evolve.add_argument("--workdir", default=str(stage.data_root))
     evolve.add_argument(
         "--run-name", default=None,
         help="Optional label appended to the run-id folder under runs/.",
@@ -402,8 +485,8 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sm.add_argument("solution_dir", help="Path to the solution directory to publish.")
     sm.add_argument(
-        "--repo-name", default="nethacker",
-        help="Repo under your account to publish into (default: nethacker).",
+        "--repo-name", default=stage.repo_name,
+        help="Repo under your account to publish into (default: %(default)s).",
     )
     sm.add_argument(
         "--message", default="nethackers submit",
@@ -411,7 +494,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     sm.add_argument("--objective", required=True,
                     help="A catalog objective name to evaluate on (self-reported score).")
-    sm.add_argument("--image", default="nethackers/arena:dev", help="Arena image to run.")
+    sm.add_argument("--image", default=stage.arena_image, help="Arena image to run.")
     sm.add_argument("--max-parallel-evals", type=int, default=8,
                     help="Cap on concurrent episodes (default: %(default)s).")
 
@@ -430,8 +513,17 @@ def _run(argv: list[str] | None) -> int:
     """Parse args and dispatch one subcommand. May raise -- ``main`` is the
     single place that turns any failure into a clean message, so nothing here
     needs its own try/except for hub I/O."""
-    parser = _build_parser()
+    stage = _stage_from_argv(argv)
+    parser = _build_parser(stage)
     args = parser.parse_args(argv)
+
+    if stage.name != "prod":
+        # An ambient discovery visibility requirement: implicit .env.stack
+        # discovery must never be silent -- stderr, so `-o json` stays
+        # machine-clean; the *effective* hub (after any --hub flag), not
+        # just the stage's own default, since that's the one that actually
+        # matters for what this invocation is about to touch.
+        err.print(f"[dim]stage: {stage.name} · hub {args.hub}[/]")
 
     if args.cmd is None:
         # bare `nethackers`: on a TTY (and not --no-tui), open the dashboard
@@ -448,7 +540,7 @@ def _run(argv: list[str] | None) -> int:
         return 0
 
     if args.cmd == "login":
-        tok = device_login(prompt=_login_prompt)
+        tok = device_login(prompt=_login_prompt, client_id=stage.github_client_id)
         login = whoami_from_token(tok["access_token"])
         _cred.save(Credentials(
             login=login,
@@ -466,14 +558,30 @@ def _run(argv: list[str] | None) -> int:
 
     if args.cmd == "whoami":
         c = _load_creds()
-        if c is None:
-            err.print("[yellow]not logged in[/] — run `nethackers login`")
-            return 1
+        ident = c.login if c is not None else None
+        # Effective identity is who you are TO THE HUB you're pointed at, not
+        # just your local login state -- fetch its reported auth mode so a
+        # mismatch (a real login against a local offline/stub hub) is
+        # surfaced here instead of as a bare 401 on register. Unreachable is
+        # handled locally (never a raw ConnectionError / traceback).
+        hub_mode: str | None = None
+        unreachable = False
+        try:
+            hub_mode = HubClient(args.hub).hub_mode()
+        except HubUnreachable:
+            unreachable = True
         if args.output == "json":
-            print(json.dumps({"login": c.login}))
+            print(json.dumps({
+                "login": ident,
+                "authenticated": c is not None,
+                "stage": stage.name,
+                "hub": stage.hub_url,
+                "hub_auth": hub_mode,
+                "effective": _effective_identity(ident, hub_mode, unreachable=unreachable),
+            }))
         else:
-            err.print(f"[b]@{c.login}[/]")
-        return 0
+            err.print(_where_line(stage, ident, hub_mode, unreachable=unreachable))
+        return 0 if c is not None else 1
 
     if args.cmd == "eval":
         spec = CATALOG.get(args.objective)
@@ -541,11 +649,21 @@ def _run(argv: list[str] | None) -> int:
             iterations=args.iterations,
             max_parallel_evals=args.max_parallel_evals,
             image=args.image, hub=args.hub, workdir=args.workdir, run_name=args.run_name,
-            token=args.token or (_creds.access_token if _creds else "dev-token"),
-            owner=args.owner or (_creds.login if _creds else "dev"),
-            from_seed=args.from_seed,
+            token=args.token or (_creds.access_token if _creds else config.OFFLINE_TOKEN),
+            owner=args.owner or (_creds.login if _creds else config.OFFLINE_OWNER),
+            from_seed=args.from_seed, offline=args.offline,
             model=args.model, effort=args.effort, mutator_image=args.mutator_image,
         )
+        # An anonymous run is offline by necessity (the owner==OFFLINE_OWNER
+        # backstop in _publisher_for), but --offline is the only case that says
+        # so up front -- without this note, a caller who forgot `nethackers
+        # login` would only find out several iterations in, as a silent
+        # per-iteration "local-only" outcome.
+        if not args.offline and params.owner == config.OFFLINE_OWNER:
+            err.print(
+                "[dim]not logged in — running offline "
+                "(publishing needs `nethackers login`)[/]"
+            )
 
         # Preflight only when a model is pinned: harness-default has nothing to
         # validate, and this keeps the model=None path (the common case + every
