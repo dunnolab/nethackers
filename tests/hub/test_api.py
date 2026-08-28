@@ -438,3 +438,36 @@ def test_hackers_returns_union_shape_and_defaults_to_generalist(tmp_path: Any) -
     rows = client.get("/hackers").json()
     assert rows and {"owner", "coverage", "total", "mean_progression"} <= set(rows[0])
     assert rows[0]["total"] == 73 and rows[0]["owner"] == "dun"
+
+
+# --- /hackers/random (dungeon-wall handle sampler) ---------------------------
+
+
+def _seed_owner(store: Store, owner: str, s: str) -> None:
+    """Register one solution for ``owner`` (direct store write, no network)."""
+    store.upsert_solution(
+        "sha256:" + s * 64, repo=f"github.com/{owner}/nh", commit_sha="c" * 40,
+        owner=owner, root="bot", entrypoint="bot.py",
+        registered_at="2026-08-28T00:00:00+00:00",
+    )
+
+
+def test_hackers_random_distinct_registered_owners(tmp_path: Any) -> None:
+    client, store = _app(tmp_path)
+    for owner, s in [("alice", "1"), ("bob", "2"), ("cara", "3")]:
+        _seed_owner(store, owner, s)
+    got = client.get("/hackers/random?n=20").json()
+    assert sorted(got) == ["alice", "bob", "cara"]          # distinct, ≤20
+    assert len(client.get("/hackers/random?n=2").json()) == 2  # respects n
+
+
+def test_hackers_random_excludes_baseline(tmp_path: Any) -> None:
+    client, store = _app(tmp_path)
+    _seed_owner(store, "autoascend", "a")   # baseline/synthetic
+    _seed_owner(store, "dana", "d")
+    assert client.get("/hackers/random").json() == ["dana"]
+
+
+def test_hackers_random_empty_when_no_registrations(tmp_path: Any) -> None:
+    client, _ = _app(tmp_path)
+    assert client.get("/hackers/random").json() == []
