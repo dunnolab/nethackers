@@ -157,9 +157,11 @@ class HubClient:
         try:
             response = self._http.get(self._base + "/healthz", **kwargs)
             response.raise_for_status()
-        except httpx.HTTPError as exc:
+            mode = response.json().get("auth")
+        except (httpx.HTTPError, ValueError) as exc:
+            # ValueError covers a non-JSON 200 (JSONDecodeError): treat a
+            # reachable-but-unparseable hub as unreachable, never a raw crash.
             raise HubUnreachable(self._base) from exc
-        mode = response.json().get("auth")
         return mode if isinstance(mode, str) else None
 
     def _auth_error_for_401(self, fallback: str) -> AuthError:

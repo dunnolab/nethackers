@@ -18,7 +18,7 @@ def test_cli_hub_default_is_stage_hub_url(monkeypatch):
     assert ns.hub == "https://nethackers.dunnolab.ai"
 
 
-def test_evolveparams_defaults_from_stage(monkeypatch):
+def test_evolveparams_defaults_from_stage(monkeypatch, clean_stage):
     monkeypatch.setenv("NETHACKERS_HUB", "http://localhost:8000")
     from nethackers.harness.launch import EvolveParams
     p = EvolveParams(objective="mon", seed="roots/autoascend")

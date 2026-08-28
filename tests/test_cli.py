@@ -17,7 +17,8 @@ from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
 from nethackers.hub.objectives import CATALOG
 
 
-def test_cli_eval_invokes_eval_batch_with_resolved_objective(monkeypatch, capsys, tmp_path):
+def test_cli_eval_invokes_eval_batch_with_resolved_objective(
+        monkeypatch, capsys, tmp_path, clean_stage):
     seen = {}
 
     def fake_eval_batch(solution, spec, image, *, now, max_parallel_evals=8):
