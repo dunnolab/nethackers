@@ -22,7 +22,12 @@ _DEAD_HUB = "http://127.0.0.1:1"
 def _render_to_str(renderable) -> str:
     """Render a rich renderable to plain text for assertion."""
     string_file: io.StringIO = io.StringIO()
-    console = Console(width=80, file=string_file, force_terminal=True)
+    # This helper is for structural text assertions, so do not emit terminal
+    # styling. With force_terminal=True Rich may place an ANSI reset between
+    # adjacent differently-styled spans (for example ``25.0%`` and ``aa``),
+    # making a visually contiguous string fail a raw substring assertion. The
+    # exact reset placement varies across Rich/Python environments.
+    console = Console(width=80, file=string_file, force_terminal=False, color_system=None)
     console.print(renderable)
     return string_file.getvalue()
 
