@@ -145,9 +145,16 @@ class RunMonitor(Screen):
 
     # ---- backfill (on open) -------------------------------------------------
     def _backfill(self) -> None:
+        try:
+            scroll = self.query_one("#tables", VerticalScroll)
+        except NoMatches:
+            # TabbedContent hasn't mounted its pane content yet; one
+            # call_after_refresh isn't a firm guarantee. Retry next frame.
+            # Guaranteed to terminate: #tables is unconditional in compose().
+            self.call_after_refresh(self._backfill)
+            return
         for tag in self.run.logs:
             self._ensure_log_item(tag)
-        scroll = self.query_one("#tables", VerticalScroll)
         for batch in self.run.batches:
             static = Static()
             scroll.mount(static)
