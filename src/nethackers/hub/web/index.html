@@ -1645,50 +1645,19 @@ boot();
   function hash(a,b){ const s=Math.sin(a*127.1+b*311.7)*43758.5453; return s-Math.floor(s); }
 
   let t=0, bloom=0, energy=0;
-  // Hero runners ride the wall, each with its own phase/velocity/ride. Up to MAX_RUNNERS
-  // of them; the actual count is min(registered hackers, MAX_RUNNERS).
-  // PROTOTYPE: handles are stubbed here; the real build samples that many random registered
-  // hackers (the /hackers `owner` field). Varied lengths on purpose, to stress the label
-  // orientation and margin fit. ?runners=N overrides the count (prototype only).
+  // Up to MAX_RUNNERS @username runners -- real registered hackers, sampled server-side
+  // (GET /hackers/random). Cleared-floor look; the tuned feel is baked below.
   const MAX_RUNNERS=20;
-  const STUB_HANDLES=["valkyrie","k2so","0xdeadbeef","grognard","mel","ada","rodney","yendor",
-    "gridbug","elbereth","magicbane","sokoban_sam","ascender","mjollnir","foocubus","pudding",
-    "cockatrice","dungeoneer","nethard","wizard_of_yendor"];
-  const _rq=parseInt(new URLSearchParams(location.search).get("runners"),10);
-  const _n=Math.max(1,Math.min(MAX_RUNNERS, Number.isNaN(_rq)?STUB_HANDLES.length:_rq));
-  // 20 runners, each independent: a random start phase plus its OWN distinct crawl speed (evenly spread,
-  // no two alike), so they slowly shuffle past each other -- no fixed pattern, no permanent clumping --
-  // while staying calm at rest. The darting excitement comes from the music (below), not idle jitter.
-  // Stratified start positions (evenly spread around the perimeter with a little jitter) so a few are
-  // ALWAYS in view -- never an empty screen -- while distinct per-runner speeds keep them drifting past
-  // each other, so no fixed pattern and no permanent clumping. pos is a fraction of the perimeter [0,1).
-  const RUNNERS=STUB_HANDLES.slice(0,_n).map((name,i)=>({name,
-    pos:(i+Math.random()*0.6)/_n, vel:0, atRide:0, spd:0.75+0.5*(i/Math.max(1,_n-1))}));
-  // ?hc=1..5 -- prototype handle-colour picker: 1 green / 2 amber / 3 white / 4 cyan / 5 magenta; default gold.
-  const HC_SCHEMES=[[87,242,135],[255,176,0],[240,240,240],[58,214,236],[255,106,193]];
-  const _hc=parseInt(new URLSearchParams(location.search).get("hc"),10);
-  const HCOL=(_hc>=1&&_hc<=5)?HC_SCHEMES[_hc-1]:null;
-  // ?ht -- how the handle text sits on the wall: 1 cleared-floor / 2 outline-only / 3 glow / 4 reverse-video
-  // (default 2). 0 keeps the old dark plate for comparison.
-  const _ht=parseInt(new URLSearchParams(location.search).get("ht"),10);
-  const HT=(_ht>=0&&_ht<=4)?_ht:1;
-  // Live tuning panel (?tune=1): sliders to dial the feel/look right in the browser. Dev-only, gated so
-  // the normal page stays clean; the draw loop reads these values live.
-  const TUNE={size:0.75, count:RUNNERS.length, crawl:0.8, dart:0.3, ride:0.6};
-  if(new URLSearchParams(location.search).has("tune")){
-    const P=document.createElement("div");
-    P.style.cssText="position:fixed;top:12px;left:12px;z-index:60;background:rgba(12,12,16,.92);color:#e9c15a;"+
-      "font:12px/1.4 'Courier New',monospace;padding:10px 12px;border:1px solid #555;pointer-events:auto;width:212px;";
-    const ROWS=[["Font size","size",0.4,1.1,0.05],["Runners","count",1,RUNNERS.length,1],
-      ["Crawl speed","crawl",0,3,0.1],["Dart / music kick","dart",0,2.5,0.1],["Spike reach","ride",0,2.5,0.1]];
-    P.innerHTML="<div style='font-weight:700;margin-bottom:6px'>@ runner tuning</div>"+
-      ROWS.map(function(r){return "<label style='display:block;margin:7px 0'>"+r[0]+": <b id=tv_"+r[1]+">"+TUNE[r[1]]+
-        "</b><br><input type=range id=ts_"+r[1]+" min="+r[2]+" max="+r[3]+" step="+r[4]+" value="+TUNE[r[1]]+
-        " style='width:100%'></label>";}).join("");
-    document.body.appendChild(P);
-    ROWS.forEach(function(r){ var s=P.querySelector("#ts_"+r[1]), v=P.querySelector("#tv_"+r[1]);
-      s.addEventListener("input",function(){ TUNE[r[1]]=parseFloat(s.value); v.textContent=s.value; }); });
+  const TUNE={size:0.75, crawl:0.8, dart:0.3, ride:0.6};   // approved by live tuning
+  let RUNNERS=[];
+  function buildRunners(names){
+    // stratified start positions (evenly spread, small jitter) + distinct speeds -> always a
+    // few in view, no fixed pattern, no permanent clumping.
+    const m=(names||[]).slice(0,MAX_RUNNERS), L=Math.max(1,m.length);
+    RUNNERS=m.map(function(name,i){ return {name:name,
+      pos:(i+Math.random()*0.6)/L, vel:0, atRide:0, spd:0.75+0.5*(i/Math.max(1,L-1))}; });
   }
+  jget("/hackers/random?n="+MAX_RUNNERS).then(buildRunners).catch(function(){ RUNNERS=[]; });
   function draw(){
     // Two regimes. At rest the wall breathes gently in ink -- restrained, monochrome, never silent-frozen.
     // On play, COLOUR blooms in (`bloom`); how hard it reacts -- reach, brightness, tempo -- tracks the
@@ -1746,17 +1715,13 @@ boot();
     // stick to the viewport; each draws only while its cell is on-screen. @ kisses the wall, the name
     // trails outward ("username@" on the left wall, "@username" on the right/top/bottom).
     if(per.length){
-      const HC=HCOL||GOLD_RGB;                                                       // ?hc override, else the theme gold
-      const br=(MONO[0]+(HC[0]-MONO[0])*bloom)|0, bg=(MONO[1]+(HC[1]-MONO[1])*bloom)|0, bb=(MONO[2]+(HC[2]-MONO[2])*bloom)|0;
-      const brightFill="rgba("+br+","+bg+","+bb+","+(0.6+0.4*bloom).toFixed(2)+")";  // ink at rest -> colour as the music blooms
-      const GR=hexRGB(GROUND);                                                       // parchment (cleared-floor / reverse looks)
-      // Grid-aligned terminal glyphs on the handle's OWN tight cell (hcw), smaller than the wall glyphs.
+      const GR=hexRGB(GROUND);                                                       // parchment, for the cleared patch
       const hch=Math.round(ch*TUNE.size), hcw=Math.max(1,Math.round(hch*0.6));
       g.font="700 "+hch+'px "Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace';
-      g.lineJoin="round"; g.textAlign="center";
-      const cnt=Math.max(1,Math.min(TUNE.count|0, RUNNERS.length)), N=per.length;
-      for(let k=0;k<cnt;k++){
-        const r=RUNNERS[Math.floor(k*RUNNERS.length/cnt)];                           // evenly-spaced subset -> stays spread as count changes
+      g.textAlign="center";
+      const N=per.length;
+      for(let k=0;k<RUNNERS.length;k++){
+        const r=RUNNERS[k];
         r.pos += 0.02*r.spd*idleAmt*TUNE.crawl/N;                                    // calm crawl at its own steady pace (normalized to perimeter length)
         if(Math.random() < 0.05*energy) r.vel += (Math.random()-0.5)*2.6*energy*TUNE.dart/N; // darts kick in with the MUSIC; calm when off
         r.vel *= 0.86;                                                               // friction -> pauses between darts
@@ -1771,29 +1736,18 @@ boot();
         const label = dx<0 ? (r.name+"@") : ("@"+r.name);                           // left wall flips so the @ kisses the wall
         const n=label.length;
         const x0 = dx<0 ? ax-(n-1)*hcw : ax, x1 = dx<0 ? ax : ax+(n-1)*hcw;
-        const rx=x0-hcw*0.72, ry=ay-hch*0.72, rw=(x1-x0)+hcw*1.44, rh=hch*1.44;
-        // Text look on the wall, chosen by ?ht -- backing (if any) + char colour + stroke differ per look.
-        let charFill=brightFill, stroke=1; g.shadowBlur=0;
-        if(HT===1){                                                                 // cleared floor: parchment patch (blooms in), dark ink text
-          if(bloom>0.01){ g.fillStyle="rgba("+GR[0]+","+GR[1]+","+GR[2]+","+(0.9*bloom).toFixed(3)+")"; g.fillRect(rx,ry,rw,rh); }
-          charFill="rgba("+MONO[0]+","+MONO[1]+","+MONO[2]+",0.92)"; stroke=0;
-        } else if(HT===3){                                                          // glow: soft coloured halo, no box
-          g.shadowColor="rgba("+br+","+bg+","+bb+",0.95)"; g.shadowBlur=Math.max(4,hch*0.7); stroke=0;
-        } else if(HT===4){                                                          // reverse-video: solid ink block, parchment text
-          g.fillStyle="rgba("+MONO[0]+","+MONO[1]+","+MONO[2]+",0.92)"; g.fillRect(rx,ry,rw,rh);
-          charFill="rgba("+GR[0]+","+GR[1]+","+GR[2]+",0.98)"; stroke=0;
-        } else if(HT===0){                                                          // (old) dark plate, for comparison
-          if(bloom>0.01){ g.fillStyle="rgba(10,10,14,"+(0.8*bloom).toFixed(3)+")"; g.fillRect(rx,ry,rw,rh); }
-        } else { stroke=2; }                                                        // HT 2 -- outline only, heavy double stroke, no box
+        // cleared floor: a parchment patch blooms in behind the handle so the descent parts for it;
+        // dark ink text on top. At rest (bloom 0) there's no patch -- muted ink reads on the wall.
+        if(bloom>0.01){
+          g.fillStyle="rgba("+GR[0]+","+GR[1]+","+GR[2]+","+(0.9*bloom).toFixed(3)+")";
+          g.fillRect(x0-hcw*0.72, ay-hch*0.72, (x1-x0)+hcw*1.44, hch*1.44);
+        }
+        g.fillStyle="rgba("+MONO[0]+","+MONO[1]+","+MONO[2]+",0.92)";
         for(let j=0;j<n;j++){
           const cx = dx<0 ? ax-(n-1-j)*hcw : ax+j*hcw;
           if(cx<-cw||cx>W+cw) continue;
-          if(stroke===2){ g.lineWidth=Math.max(2.4,hch*0.32); g.strokeStyle="rgba(18,16,12,0.92)"; g.strokeText(label[j],cx,ay);
-                          g.lineWidth=Math.max(1,hch*0.12); g.strokeStyle=GROUND; g.strokeText(label[j],cx,ay); }
-          else if(stroke===1){ g.lineWidth=Math.max(1.2,hch*0.16); g.strokeStyle=GROUND; g.strokeText(label[j],cx,ay); }
-          g.fillStyle=charFill; g.fillText(label[j],cx,ay);
+          g.fillText(label[j],cx,ay);
         }
-        g.shadowBlur=0;
       }
     }
   }

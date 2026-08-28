@@ -368,7 +368,7 @@ def test_root_serves_the_dungeon_viz(tmp_path: Any) -> None:
     desc = re.search(r"const DESC=\[(.*?)\];", body, re.S)
     assert desc is not None, "DESC descent ladder not found in page"
     assert '"@"' not in desc.group(1), "hero glyph @ leaked into the DESC descent ladder"
-    assert 'strokeText("@"' in body  # ...while the one true hero @ is still drawn
+    assert "/hackers/random" in body  # the wall names its @username runners from registered hackers
 
 
 # --- leaderboard rework: aggregate boards + /hackers (Task 6) ---------------
