@@ -60,11 +60,22 @@ def test_unknown_env_keys_ignored():
 # the other half of "how a caller opts out of discovery" alongside
 # NETHACKERS_STAGE_FILE="" above.
 
+# Every NETHACKERS_* key load_stage() reads (the _ENV_TO_FIELD map, plus the
+# NETHACKERS_STAGE_FILE discovery hatch) -- cleared below so an ambient
+# shell/worktree env can never leak into a "bare load_stage()" assertion.
+_STAGE_ENV_KEYS = (
+    "NETHACKERS_STAGE", "NETHACKERS_STAGE_FILE", "NETHACKERS_HUB", "NETHACKERS_HUB_PORT",
+    "COMPOSE_PROJECT_NAME", "NETHACKERS_DATA_ROOT", "NETHACKERS_REPO_NAME",
+    "NETHACKERS_ARENA_IMAGE", "NETHACKERS_MUTATOR_IMAGE", "NETHACKERS_CLIENT_ID",
+)
+
 
 def test_prod_flag_bypasses_discovery(tmp_path, monkeypatch):
     from nethackers.cli import _stage_from_argv
 
     monkeypatch.chdir(tmp_path)
+    for key in _STAGE_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
     (tmp_path / ".env.stack").write_text("NETHACKERS_STAGE=wt\n")
 
     assert _stage_from_argv([]).name == "wt"          # discovery finds the worktree stage...

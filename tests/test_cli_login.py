@@ -178,12 +178,23 @@ def test_whoami_prints_login_to_stderr_by_default(monkeypatch, capsys):
     assert "sekrit-tok" not in captured.err  # the token itself never gets printed
 
 
-def test_whoami_respects_o_json(monkeypatch, capsys):
-    # No stage-related env/file is set up here -- the resolved stage is
-    # whatever `load_stage()` naturally discovers (prod defaults, absent a
-    # real .env.stack above this repo checkout); the "stage"/"hub" fields
-    # are asserted against Stage()'s own defaults rather than hardcoded so
-    # this doesn't silently drift from config.py's actual values.
+_STAGE_ENV_KEYS = (
+    "NETHACKERS_STAGE", "NETHACKERS_STAGE_FILE", "NETHACKERS_HUB", "NETHACKERS_HUB_PORT",
+    "COMPOSE_PROJECT_NAME", "NETHACKERS_DATA_ROOT", "NETHACKERS_REPO_NAME",
+    "NETHACKERS_ARENA_IMAGE", "NETHACKERS_MUTATOR_IMAGE", "NETHACKERS_CLIENT_ID",
+)
+
+
+def test_whoami_respects_o_json(monkeypatch, tmp_path, capsys):
+    # This asserts "stage"/"hub" against Stage()'s own defaults, which only
+    # holds if `cli.main`'s bare `load_stage()` actually resolves to prod --
+    # so make that true by construction rather than by accident: chdir to an
+    # empty tmp_path (no ancestor there can ever hold a real .env.stack,
+    # unlike this repo's own checkout after a `make up`/`make stack`) and
+    # clear every NETHACKERS_* env key the ambient shell might carry.
+    monkeypatch.chdir(tmp_path)
+    for key in _STAGE_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(cli, "_load_creds", lambda: cred.Credentials("castiel", "sekrit-tok"))
 
     assert cli.main(["whoami", "-o", "json"]) == 0
