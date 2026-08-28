@@ -22,6 +22,11 @@ from nethackers.hub.views.solution import read_solution_frontier
 DIGEST = "sha256:solution-a"
 OTHER_DIGEST = "sha256:solution-b"
 EMPTY_DIGEST = "sha256:solution-empty"
+# A link-registered solution's digest is its ``github.com/owner/repo@commit``
+# reference -- it contains slashes, unlike a ``sha256:...`` content digest.
+# This is what the live board's champion carries, so it's what the TUI's
+# Program-regime frontier fetch hits; the route must accept those slashes.
+LINK_DIGEST = "github.com/vkurenkov/nethacker@503686e9ec14e098912850c2587dfab3123e759b"
 
 # Two real identities the target digest has atoms on ("val-..." sorts
 # before "wiz-..." -- exercises the view's ORDER BY identity for real).
@@ -134,6 +139,38 @@ def test_get_solution_frontier_200_for_known_digest_404_for_unknown(tmp_path):
 
     assert unknown.status_code == 404
     assert unknown.json()["detail"] == "unknown solution digest: 'sha256:does-not-exist'"
+
+
+def test_get_solution_and_frontier_200_for_slash_bearing_link_digest(tmp_path):
+    # Regression: a link-registered champion's digest
+    # (github.com/owner/repo@commit) has slashes, so the default {digest}
+    # path converter can't match /solutions/<digest>[/frontier] -- the request
+    # 404s at routing (generic "Not Found") before reaching the handler, which
+    # is what broke the TUI's Frontier "Program" tab. Both routes must accept a
+    # slash-bearing digest and return the same payloads as for a sha256 digest.
+    client, store = _client(tmp_path)
+    _seed(
+        store,
+        [
+            _atom(solution_digest=LINK_DIGEST, identity=WIZ_IDENTITY, seed=0, progression=0.4),
+            _atom(solution_digest=LINK_DIGEST, identity=WIZ_IDENTITY, seed=1, progression=0.6),
+            _atom(solution_digest=LINK_DIGEST, identity=VAL_IDENTITY, seed=0, progression=0.2),
+        ],
+    )
+
+    frontier = client.get(f"/solutions/{LINK_DIGEST}/frontier")
+    assert frontier.status_code == 200
+    entries = frontier.json()
+    assert [e["identity"] for e in entries] == [VAL_IDENTITY, WIZ_IDENTITY]
+    assert entries[0]["progression"] == pytest.approx(0.2)
+    assert entries[1]["progression"] == pytest.approx(0.5)
+    assert entries[1]["episodes"] == 2
+
+    # The sibling show route shares the same converter fix; a slash digest must
+    # reach the handler there too (not be swallowed as an unknown digest).
+    show = client.get(f"/solutions/{LINK_DIGEST}")
+    assert show.status_code == 200
+    assert show.json()["digest"] == LINK_DIGEST
 
 
 def test_get_solution_frontier_200_empty_list_for_known_solution_with_no_atoms(tmp_path):

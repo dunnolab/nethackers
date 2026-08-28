@@ -272,18 +272,24 @@ def create_app(
             ) from e
         return hacker_board(store, ids, tier=tier)
 
-    @app.get("/solutions/{digest}")
+    # ``:path`` (not the default converter) so a link-registered digest --
+    # ``github.com/owner/repo@commit``, which carries slashes -- matches; the
+    # default one only spans a single path segment, 404ing such a digest at
+    # routing before the handler runs (this is what broke the Frontier
+    # "Program" tab). The greedy ``:path`` means the ``/frontier`` route must be
+    # registered BEFORE the bare one, else it swallows the ``/frontier`` suffix.
+    @app.get("/solutions/{digest:path}/frontier")
+    def solution_frontier(digest: str) -> list[dict[str, Any]]:
+        if store.get_solution(digest) is None:
+            raise HTTPException(status_code=404, detail=f"unknown solution digest: {digest!r}")
+        return read_solution_frontier(store, digest)
+
+    @app.get("/solutions/{digest:path}")
     def get_solution(digest: str) -> dict[str, Any]:
         solution = store.get_solution(digest)
         if solution is None:
             raise HTTPException(status_code=404, detail=f"unknown solution digest: {digest!r}")
         return solution
-
-    @app.get("/solutions/{digest}/frontier")
-    def solution_frontier(digest: str) -> list[dict[str, Any]]:
-        if store.get_solution(digest) is None:
-            raise HTTPException(status_code=404, detail=f"unknown solution digest: {digest!r}")
-        return read_solution_frontier(store, digest)
 
     @app.get("/search")
     def search(owner: str | None = None, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
