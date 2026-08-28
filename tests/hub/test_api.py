@@ -111,7 +111,8 @@ def test_root_serves_the_page(tmp_path: Any) -> None:
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
     assert "NetHackers" in resp.text
-    assert 'id="scBody"' in resp.text
+    assert 'id="statusgrid"' in resp.text
+    assert 'id="rolegrid"' in resp.text
     # The marquee count and the freshness stamp are live (JS from /stats); the
     # old hardcoded literals must never creep back into the served page. (The
     # full behavior lives in the manual jsdom harness tests/hub/web/wire.test.mjs.)
@@ -119,19 +120,22 @@ def test_root_serves_the_page(tmp_path: Any) -> None:
     assert 'id="updated"' in resp.text
 
 
-def test_leaderboard_is_hacker_only_with_solution_details_in_popup(tmp_path: Any) -> None:
+def test_site_uses_identity_boards_and_concrete_contributor_recognition(tmp_path: Any) -> None:
     client, _store = _app(tmp_path)
     body = client.get("/").text
 
     assert 'data-view="programs"' not in body
-    assert 'class="hackerrow"' in body
+    assert 'id="scBody"' not in body
+    assert 'id="recordholders"' in body
+    assert 'id="activityfeed"' in body
+    assert 'class="frontierrow"' in body
+    assert "async function openIdentity(identity)" in body
     assert "async function openHacker(owner)" in body
     for detail in (
+        "same canonical seed batch",
         "registered solutions",
         "roles evaluated",
         "latest registration",
-        "deepest reach",
-        "ascensions",
         "entrypoint",
         "best identity",
     ):

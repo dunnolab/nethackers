@@ -197,6 +197,27 @@ table.grid caption{ text-align:left; background:var(--indigo); color:#fff; font-
   cursor:pointer; padding:6px; user-select:none; background:#f0f0f4; border:1px solid var(--silver-lo); border-top:0; }
 .more:hover{ background:#fff3b0; color:var(--red); }
 
+/* COMPETITION STATUS + RECOGNITION ---------------------------------------- */
+.statusgrid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; margin:.8rem 0 1rem; }
+.statuscard{ border:1px solid var(--silver-lo); background:#f7f7f2; padding:9px 11px; min-height:70px; }
+.statuscard .sv{ display:block; color:var(--indigo); font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace;
+  font-size:1.3rem; font-weight:700; font-variant-numeric:tabular-nums; }
+.statuscard .sl{ display:block; color:#62626a; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace;
+  font-size:.7rem; line-height:1.3; margin-top:3px; }
+.statuscard.wide{ grid-column:1/-1; }
+.recognitiongrid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(245px,1fr)); gap:8px; }
+.personcard,.activitycard{ border:1px solid var(--silver-lo); background:#f7f7f2; padding:8px 10px; }
+.personcard{ cursor:pointer; }
+.personcard:hover,.personcard:focus{ background:#fff3b0; outline:2px solid var(--indigo); outline-offset:-2px; }
+.personcard .ph{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; color:var(--indigo); font-weight:700; }
+.personcard .pa,.activitycard .pa{ color:#62626a; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace;
+  font-size:.72rem; line-height:1.45; margin-top:4px; }
+.activityfeed{ display:grid; gap:5px; margin-top:.6rem; }
+.activitycard{ display:grid; grid-template-columns:92px 1fr; gap:8px; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.76rem; }
+.activitycard .when{ color:#777780; }
+.activitycard .what b{ color:var(--indigo); cursor:pointer; }
+.emptyblock{ color:#777780; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; }
+
 /* FRONTIER heatmap --------------------------------------------------------- */
 .frtop{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:.3rem 0 .7rem; }
 .regime{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; }
@@ -211,6 +232,9 @@ table.fr{ width:100%; table-layout:fixed; border-collapse:collapse; font-family:
 .fr tr.frhead td.rn{ color:var(--indigo); font-weight:700; }
 .fr tr.frhead td.hval{ font-weight:700; color:#2a2a30; }
 .fr td{ border:1px solid #e2e2e8; padding:2px 6px; }
+.fr tr.frontierrow{ cursor:pointer; }
+.fr tr.frontierrow:hover td,.fr tr.frontierrow:focus td{ background:#fff3b0 !important; color:#111 !important; }
+.fr tr.frontierrow:focus{ outline:2px solid var(--indigo); outline-offset:-2px; }
 .fr td.vn{ color:#55555c; } .fr td.vv{ text-align:right; font-variant-numeric:tabular-nums; color:#111; }
 .fr td.empty{ color:#c2c2c8; }
 .fr td.floor{ color:#9a9aa6; font-style:italic; }
@@ -316,6 +340,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 .win{ width:min(560px,96vw); max-height:88vh; overflow:hidden; background:var(--silver);
   border:2px solid; border-color:var(--silver-hi) #000 #000 var(--silver-hi); box-shadow:5px 5px 0 rgba(0,0,0,.4);
   display:flex; flex-direction:column; }
+.win.identitydetail{ width:min(980px,96vw); }
 .win__title{ display:flex; align-items:center; gap:8px; background:var(--indigo); color:#fff;
   font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; font-weight:700; padding:3px 6px; }
 .win__title .x{ margin-left:auto; width:18px; height:18px; line-height:16px; text-align:center; cursor:pointer;
@@ -341,6 +366,14 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 .rolechips{ display:flex; flex-wrap:wrap; gap:3px; }
 .rolechip{ border:1px solid #aaaab2; background:#fff; padding:0 4px; }
 .popupstatus{ color:#66666e; font-size:.8rem; }
+.identitysummary{ font-size:.78rem; color:#55555c; margin-bottom:9px; }
+.identitysummary b{ color:var(--indigo); }
+.identityboard{ width:100%; border-collapse:collapse; font-size:.74rem; }
+.identityboard th{ text-align:left; background:var(--silver); border:1px solid var(--silver-lo); padding:3px 6px; }
+.identityboard th.num,.identityboard td.num{ text-align:right; }
+.identityboard td{ border:1px solid #dddde2; padding:3px 6px; white-space:nowrap; }
+.identityboard tbody tr:nth-child(even) td{ background:#f5f5f8; }
+.identityboard .ownerlink{ color:var(--indigo); text-decoration:underline; cursor:pointer; }
 
 @media (prefers-reduced-motion: reduce){
   html{ scroll-behavior:auto; }
@@ -465,12 +498,13 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
       <ol class="idx">
         <li><span class="k">[1]</span> <a href="#about">What it is?</a></li>
         <li><span class="k">[2]</span> <a href="#why">Why care</a></li>
-        <li><span class="k">[3]</span> <a href="#scores">Leaderboard</a></li>
+        <li><span class="k">[3]</span> <a href="#scores">Competition status</a></li>
         <li><span class="k">[4]</span> <a href="#frontier">The Frontier</a></li>
-        <li><span class="k">[5]</span> <a href="#progress">Progress</a></li>
-        <li><span class="k">[6]</span> <a href="#oracle">The Oracle</a> <span class="new">NEW!</span></li>
-        <li><span class="k">[7]</span> <a href="#contribute">Contribute</a></li>
-        <li><span class="k">[8]</span> <a href="#faq">FAQ</a></li>
+        <li><span class="k">[5]</span> <a href="#people">Contributors</a></li>
+        <li><span class="k">[6]</span> <a href="#progress">Progress</a></li>
+        <li><span class="k">[7]</span> <a href="#oracle">The Oracle</a> <span class="new">NEW!</span></li>
+        <li><span class="k">[8]</span> <a href="#contribute">Contribute</a></li>
+        <li><span class="k">[9]</span> <a href="#faq">FAQ</a></li>
       </ol>
 
       <h4>Registered</h4>
@@ -600,34 +634,13 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 
       <hr class="rule">
 
-      <!-- HIGH SCORES -->
+      <!-- COMPETITION STATUS -->
       <section id="scores">
-        <h2 class="sec"><span class="glyph">$</span> Leaderboard</h2>
-        <p class="lead">Every <b>hacker</b>, ranked by the union of their programs' best on the chosen objective. Click a hacker
-          to inspect the individual solutions behind their score, including roles, source links, and registration dates. Pick a single <span class="ref" data-k="identities"><b>identity</b></span>
-          for a same-seeds specialist board, a <b>role</b> or the <b>generalist</b> for a macro-average across many identities. Each program
-          was produced through the shared evolution, its author's own <span class="ref" data-k="harness">harness</span>, or any other means &mdash;
-          the platform scores it and never asks how it was made. <span class="ref" data-k="challenge"><b>AutoAscend</b></span> is the yardstick
-          floor in every table &mdash; the &Delta; column is how far past it we've gotten.</p>
-        <div class="controls">
-          <span class="lbl">objective:</span>
-          <span class="grp"><select class="bevel" id="objSelect" aria-label="Objective"></select></span>
-          <span class="lbl">tier:</span>
-          <span class="grp">
-            <button class="bevel" data-tier="self-reported" aria-pressed="true">Self-reported</button>
-            <button class="bevel" data-tier="verified" aria-pressed="false">Verified</button>
-          </span>
-        </div>
-        <p class="note" style="margin:0 0 .7rem">Two tiers, by design: <b>self-reported</b> lands the instant you register,
-          so search is never bottlenecked on our compute; <b>verified</b> is the trusted tier &mdash; the hub re-runs the
-          program on <span class="ref" data-k="heldout">held-out seeds</span>. Verification (M2b) isn't live yet, so today every result is self-reported.</p>
-        <div class="tablewrap">
-          <table class="grid">
-            <caption id="scCap">LEADERBOARD &mdash; VALKYRIE DWA-LAW-FEM &mdash; self-reported*</caption>
-            <thead id="scHead"></thead><tbody id="scBody"></tbody>
-          </table>
-        </div>
-        <div class="more" id="scMore">[ --More-- ]</div>
+        <h2 class="sec"><span class="glyph">$</span> Competition status</h2>
+        <p class="lead">No universal hacker rank: NetHack is <span class="ref" data-k="identities"><b>73 distinct identity contests</b></span>.
+          This is the collective state of the solve. The Frontier below names the record holder for each identity and opens its same-seed leaderboard.</p>
+        <div class="statusgrid" id="statusgrid"><div class="emptyblock">Loading the dungeon ledger&hellip;</div></div>
+        <p class="note">A result appears immediately as <b>self-reported*</b>. Independent held-out verification arrives with M2b.</p>
       </section>
 
       <hr class="rule">
@@ -636,13 +649,8 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
       <section id="frontier">
         <h2 class="sec"><span class="glyph">&lt;</span> The Frontier</h2>
         <p class="lead">Mean <span class="ref" data-k="progression">progression</span> (0&ndash;100%) across all <span class="ref" data-k="identities">73 identities</span>, and how far each sits above the
-          <span class="ref" data-k="autoascend"><b>AutoAscend floor</b></span>. Touched cells are a program's best; the rest show the dim floor.</p>
+          <span class="ref" data-k="autoascend"><b>AutoAscend floor</b></span>. Click any identity for its directly comparable leaderboard, sources, episodes, dates, and current holder.</p>
         <div class="controls">
-          <span class="lbl">regime:</span>
-          <span class="grp regime" role="radiogroup" aria-label="Frontier regime">
-            <label><input type="radio" name="regime" value="universe" checked> <b>Universe</b> (best of all)</label>
-            <label><input type="radio" name="regime" value="program"> <b>Program</b> (champion)</label>
-          </span>
           <span class="lbl">tier:</span>
           <span class="grp">
             <button class="bevel" data-tier="self-reported" aria-pressed="true">Self-reported</button>
@@ -659,6 +667,18 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           <span><span class="sw" style="background:#1a7a2e"></span> &Delta; above floor &middot; <span style="color:var(--red)">below</span></span>
           <span><span class="sw" style="background:var(--red)"></span> &#9733; ascended &ge; 87.5%</span>
         </div>
+      </section>
+
+      <hr class="rule">
+
+      <!-- CONTRIBUTORS -->
+      <section id="people">
+        <h2 class="sec"><span class="glyph">&amp;</span> People moving the frontier</h2>
+        <p class="lead">Recognition is attached to concrete records, roles, and source commits &mdash; not collapsed into one global score.</p>
+        <div class="subh">Current program record holders</div>
+        <div class="recognitiongrid" id="recordholders"><div class="emptyblock">Loading current holders&hellip;</div></div>
+        <div class="subh">Latest registered work</div>
+        <div class="activityfeed" id="activityfeed"><div class="emptyblock">Loading recent work&hellip;</div></div>
       </section>
 
       <hr class="rule">
@@ -869,8 +889,9 @@ __)/\_//(\/(/\)/\//\/\|_)__</pre>
    These start empty and are populated from the hub's JSON endpoints on load.
    Where an endpoint does not carry a field the render wants, we render "—" /
    omit it -- never a fabricated value (honest standings is the whole point). */
-let PROGRAMS=[];                     // current objective's board rows (progRow shape, + fulldigest)
-let PEOPLE=[];                       // Hackers tally: {rank,owner,coverage,total,mean} from /hackers
+let STATS=null;                      // live platform totals from /stats
+let RECENT_SOLUTIONS=[];             // newest registered work from /search
+let SOLUTION_BY_DIGEST={};            // metadata cache for identity-board source/date cells
 let BASELINE={owner:"autoascend",per_identity:{},overall:null};  // raw /baseline
 let OBJ_EP={};                       // {objective: episodes} from /objectives (honest ep for tooltips)
 const ROLE_NAMES={arc:"Archeologist",bar:"Barbarian",cav:"Caveman",hea:"Healer",kni:"Knight",mon:"Monk",
@@ -890,8 +911,7 @@ const ROLE_VARS={
  tou:["hum-neu-fem","hum-neu-mal"],
  val:["dwa-law-fem","hum-law-fem","hum-neu-fem"],
  wiz:["elf-cha-fem","elf-cha-mal","gno-neu-fem","gno-neu-mal","hum-cha-fem","hum-cha-mal","hum-neu-fem","hum-neu-mal","orc-cha-fem","orc-cha-mal"]};
-let UNIVERSE={};                     // /elites?objective=all -> rank-1 per identity {id:{v,o,d,ep}}
-let CHAMPION={digest:"",owner:"",scores:{}};  // /board?objective=generalist [0] + its /frontier
+let UNIVERSE={};                     // /elites?objective=all -> rank-1 per identity {id:{v,o,digest,ep}}
 const ASC=0.8745866562925501;
 /* AutoAscend baseline bar first, then day-bucketed best-so-far from /progress */
 let PROGRESS=[];
@@ -1175,70 +1195,38 @@ function odo(el,n,digits){ if(!el) return; el.innerHTML=String(n).padStart(digit
   odo($("#odoPlay"), 0, 5);   /* hackers  -- set live from /stats in boot() */
 })();
 
-/* ===================== leaderboard ===================== */
-let curObj="generalist", curTier="self-reported", curRegime="universe", curMetric="frontier";
-/* objective scope: the picker sends bare tokens -- "generalist", a role ("val"),
-   or an identity ("val-dwa-law-fem"). Each maps to a set of identities + a caption;
-   the board, the Hackers tally, and the AutoAscend floor all read it the same way. */
-function scopeKind(obj){ return obj==="generalist"?"generalist":(obj in ROLE_NAMES?"role":"identity"); }
-function scopeIds(obj){
-  const k=scopeKind(obj);
-  if(k==="generalist") return Object.keys(ROLE_VARS).flatMap(r=>ROLE_VARS[r].map(v=>r+"-"+v));
-  if(k==="role") return ROLE_VARS[obj].map(v=>obj+"-"+v);
-  return [obj];
-}
-function objCap(obj){ const k=scopeKind(obj);
-  return k==="generalist"?"GENERALIST":(k==="role"?ROLE_NAMES[obj].toUpperCase()+" (ROLE)":obj.toUpperCase()); }
+/* ===================== competition status ===================== */
+let curTier="self-reported", curMetric="frontier";
 const EMPTY_VERIFIED='No verified programs yet &mdash; verification (M2b) is not live. Everything above the floor is self-reported.';
-const EMPTY_HACKERS='No hackers ranked here yet &mdash; be the first to register.';
-function setCap(){
-  $("#scCap").innerHTML=`LEADERBOARD &mdash; ${objCap(curObj)} &mdash; hackers &middot; ${curTier}${curTier==="self-reported"?"*":""}`;
-}
-/* AutoAscend floor for the current scope, from /baseline's per-identity values:
-   identity -> that identity; role/generalist -> mean over the scope's identities. */
-function aaScopeMean(){ const per=(BASELINE&&BASELINE.per_identity)||{};
-  const vals=scopeIds(curObj).map(id=>per[id]&&per[id].progression).filter(v=>v!=null);
-  return vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:null; }
-function deltaCell(v){ const aa=aaScopeMean();
-  if(aa==null||v==null) return `<td class="dz">&mdash;</td>`;
-  const d=+(v-aa).toFixed(3), cls=d>0.0005?"dpos":(d<-0.0005?"dneg":"dz");
-  return `<td class="num ${cls}">${(d>0?"+":"")+d.toFixed(3)}</td>`; }
-function covCell(n,t){ return `<td class="num cov">${n}<span class="tot">/${t}</span></td>`; }
-function renderBoard(){
-  const head=$("#scHead"), body=$("#scBody"), verified=curTier==="verified";
-  const agg = scopeKind(curObj)!=="identity", n=scopeIds(curObj).length, aa=aaScopeMean();
-  head.innerHTML = agg
-    ? `<tr><th class="l">#</th><th class="l">hacker</th><th>coverage</th><th>mean</th><th>&Delta; vs AA</th></tr>`
-    : `<tr><th class="l">#</th><th class="l">hacker</th><th>best mean</th><th>&Delta; vs AA</th></tr>`;
-  const rows=verified?[]:PEOPLE;
-  const cols=agg?5:4;
-  const rowsHTML=rows.length?rows.map(h=>`<tr class="hackerrow" data-owner="${esc(h.owner)}" tabindex="0" role="button" aria-label="Open details for @${esc(h.owner)}">
-      <td class="l rk ${h.rank<=3?'top':''}">${h.rank}</td>
-      <td class="l nm"><span class="at">@</span>${esc(h.owner)}</td>
-      ${agg?covCell(h.coverage,h.total):""}
-      <td class="num">${h.mean.toFixed(3)}</td>
-      ${deltaCell(h.mean)}</tr>`).join("")
-    :`<tr><td class="l pend" colspan="${cols}" style="padding:10px 8px">${verified?EMPTY_VERIFIED:EMPTY_HACKERS}</td></tr>`;
-  body.innerHTML=rowsHTML+`<tr class="base"><td class="l rk">&middot;</td>
-    <td class="l nm">autoascend <span class="tag">floor</span></td>
-    ${agg?covCell(n,n):""}<td class="num">${aa!=null?aa.toFixed(3):'&mdash;'}</td><td class="dz">&mdash;</td></tr>`;
-  body.querySelectorAll(".hackerrow").forEach(tr=>{
-    const open=()=>openHacker(tr.dataset.owner);
-    tr.addEventListener("click",open);
-    tr.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } });
-  });
+function allIdentityIds(){ return Object.keys(ROLE_VARS).flatMap(r=>ROLE_VARS[r].map(v=>r+"-"+v)); }
+function statusCard(value,label,wide=false){ return `<div class="statuscard ${wide?'wide':''}"><span class="sv">${value}</span><span class="sl">${label}</span></div>`; }
+function renderStatus(){
+  const el=$("#statusgrid"); if(!el) return;
+  const per=(BASELINE&&BASELINE.per_identity)||{}, entries=Object.entries(UNIVERSE);
+  const explored=entries.length;
+  const above=entries.filter(([id,x])=>per[id]&&per[id].progression!=null&&x.v-per[id].progression>0.0005).length;
+  const roles=new Set(entries.map(([id])=>id.split("-")[0]));
+  let best=null;
+  for(const [id,x] of entries){ const aa=per[id]&&per[id].progression;
+    if(aa!=null&&(!best||x.v-aa>best.delta)) best={id,owner:x.o,delta:x.v-aa}; }
+  const bestText=best?`+${(best.delta*100).toFixed(1)}%`:'&mdash;';
+  const bestLabel=best?`largest lift vs AutoAscend &middot; ${esc(best.id)} by @${esc(best.owner)}`:'largest lift vs AutoAscend';
+  el.innerHTML=statusCard(String(curTier==="self-reported"&&STATS?STATS.ascensions:0),curTier==="verified"?"verified ascensions":"reported ascensions")
+    +statusCard(String((STATS&&STATS.programs)||0),"registered programs")
+    +statusCard(String((STATS&&STATS.hackers)||0),"contributing hackers")
+    +statusCard(`${explored}/73`,"identities evaluated by the community")
+    +statusCard(`${above}/73`,"identities currently above AutoAscend")
+    +statusCard(`${roles.size}/13`,"roles with evaluated identities")
+    +statusCard(bestText,bestLabel,true);
 }
 document.querySelectorAll("[data-tier]").forEach(b=>b.addEventListener("click",async()=>{
   curTier=b.dataset.tier;
   document.querySelectorAll("[data-tier]").forEach(x=>x.setAttribute("aria-pressed", x.dataset.tier===curTier?"true":"false"));
-  await loadObjective(curObj);
-  setCap(); renderBoard(); renderFrontier(curRegime); renderChart(curMetric); }));
-$("#objSelect").addEventListener("change",async e=>{ curObj=e.target.value; await loadObjective(curObj); setCap(); renderBoard(); renderChart(curMetric); });
-$("#scMore").addEventListener("click",function(){
-  this.textContent=this.textContent.indexOf("More")>=0?"[ that is everyone so far. yet another short list. ]":"[ --More-- ]"; });
+  await Promise.all([loadUniverse(),loadProgress()]);
+  renderStatus(); renderRecognition(); renderFrontier(); renderChart(curMetric); }));
 
 /* ===================== frontier heatmap ===================== */
-function renderFrontier(regime){
+function renderFrontier(){
   const grid=$("#rolegrid"), note=$("#gridnote"), verified=curTier==="verified";
   const per=(BASELINE&&BASELINE.per_identity)||{};
   /* per-identity datum: state 'prog' (a program's best, heat-tinted), 'floor' (the dim
@@ -1248,16 +1236,11 @@ function renderFrontier(regime){
     const aa=(per[id]&&per[id].progression!=null)?per[id].progression:null;
     if(verified) return {state:'none',v:null,aa};
     let v=null,floor=false;
-    if(regime==="program"){
-      if(id in CHAMPION.scores) v=CHAMPION.scores[id];   // the champion's own cell -- honest, may sit below AA
-    } else {
-      /* Universe = best of ALL, and AutoAscend is one of the competitors: take
-         max(best program, AA floor). A program shows only where it actually beats
-         the floor; otherwise AutoAscend leads and the cell reads as the floor. */
-      const pv=(id in UNIVERSE)?UNIVERSE[id].v:null;
-      if(pv!=null&&(aa==null||pv-aa>0.0005)) v=pv;
-      else if(aa!=null){ v=aa; floor=true; }
-    }
+    /* Community Frontier = best program for this identity, with AutoAscend as
+       the visible floor when no registered program beats it. */
+    const pv=(id in UNIVERSE)?UNIVERSE[id].v:null;
+    if(pv!=null&&(aa==null||pv-aa>0.0005)) v=pv;
+    else if(aa!=null){ v=aa; floor=true; }
     if(v==null) return {state:'none',v:null,aa};
     if(floor) return {state:'floor',v,aa};
     return {state:'prog',v,aa,delta:aa!=null?+(v-aa).toFixed(3):null};
@@ -1265,7 +1248,7 @@ function renderFrontier(regime){
   function rowTitle(id,d){
     if(d.v==null) return `${id} :: ${verified?'no verified result':'unexplored'}`;
     if(d.state==='floor') return `${id} :: AutoAscend floor ${pct(d.v)} -- best of all here`;
-    const who=(regime==="universe"&&UNIVERSE[id])?` :: @${UNIVERSE[id].o}, ${UNIVERSE[id].ep} ep`:"";
+    const who=UNIVERSE[id]?` :: program record @${UNIVERSE[id].o}, ${UNIVERSE[id].ep} ep`:"";
     const dl=d.delta!=null?` :: Δ ${fmtP(d.delta)} vs AutoAscend`:"";
     return `${id} :: ${pct(d.v)}${dl}${who}`;
   }
@@ -1301,7 +1284,7 @@ function renderFrontier(regime){
       +(roleLift!=null?dSigned(roleLift):(roleAvg!=null?aaTd:noTd))+`</tr>`;
     const body=ids.map(({v,id,d})=>{
       const dtd=d.state==='prog'?dSigned(d.delta):(d.state==='floor'?aaTd:noTd);
-      return `<tr title="${esc(rowTitle(id,d))}"><td class="vn">${esc(v)}</td>${valTd(d)}${dtd}</tr>`;
+      return `<tr class="frontierrow" data-identity="${esc(id)}" tabindex="0" role="button" aria-label="Open leaderboard for ${esc(id)}" title="${esc(rowTitle(id,d))}"><td class="vn">${esc(v)}</td>${valTd(d)}${dtd}</tr>`;
     }).join("");
     return `<table class="fr"><colgroup><col class="c1"><col class="c2"><col class="c3"></colgroup>${head}${body}</table>`;
   }).join("");
@@ -1311,12 +1294,14 @@ function renderFrontier(regime){
   const baseLine=bv?` &middot; AutoAscend overall <b>${bv}</b>`:` &middot; AutoAscend not computed yet`;
   note.innerHTML=(verified
     ? `<b>verified</b> tier &mdash; no verified results yet (M2b isn't live), so every cell is blank`
-    : (regime==="program"
-      ? `champion <b>nethacker@${esc(CHAMPION.digest)}</b> (<b>@${esc(CHAMPION.owner)}</b>) &mdash; overall <b>${overall}</b> over <b>${prog}</b> explored`
-      : `each cell = the <b>best result yet</b> &mdash; a program's mean where it beats <b>AutoAscend</b>, else the dim floor &middot; <b>${prog}</b> of <b>${total}</b> led by a program, <b>${floor}</b> at the AutoAscend floor`))+baseLine;
+    : `each cell = the <b>best result yet</b> for one identity &mdash; a program's mean where it beats <b>AutoAscend</b>, else the dim floor &middot; <b>${prog}</b> of <b>${total}</b> led by a program, <b>${floor}</b> at the AutoAscend floor`)+baseLine;
+  grid.querySelectorAll(".frontierrow").forEach(tr=>{
+    const open=()=>openIdentity(tr.dataset.identity);
+    tr.addEventListener("click",open);
+    tr.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } });
+  });
   if(window.__refs) window.__refs();
 }
-document.querySelectorAll('input[name="regime"]').forEach(r=>r.addEventListener("change",()=>{ curRegime=r.value; renderFrontier(curRegime); }));
 (function(){ const r=$("#ramp"); for(let i=0;i<22;i++){ const s=document.createElement("i"); s.style.background=tint(i/21); r.appendChild(s);} })();
 
 /* ===================== progress: ASCII horizontal bars ===================== */
@@ -1342,8 +1327,73 @@ document.querySelectorAll("[data-metric]").forEach(b=>b.addEventListener("click"
   document.querySelectorAll("[data-metric]").forEach(x=>x.setAttribute("aria-pressed","false"));
   b.setAttribute("aria-pressed","true"); curMetric=b.dataset.metric; renderChart(curMetric); }));
 
-/* ===================== hacker popup ===================== */
-function showModal(){ const mo=$("#modal"); mo.setAttribute("open",""); mo.setAttribute("aria-hidden","false"); }
+/* ===================== recognition ===================== */
+function renderRecognition(){
+  const holders=$("#recordholders"), feed=$("#activityfeed");
+  if(holders){
+    const grouped={};
+    for(const [id,x] of Object.entries(UNIVERSE)){
+      const g=grouped[x.o]||(grouped[x.o]={owner:x.o,ids:[],roles:new Set(),best:null});
+      g.ids.push(id); g.roles.add(id.split("-")[0]);
+      if(!g.best||x.v>g.best.v) g.best={id,v:x.v};
+    }
+    const people=Object.values(grouped).sort((a,b)=>b.ids.length-a.ids.length||a.owner.localeCompare(b.owner));
+    holders.innerHTML=people.length?people.map(p=>`<div class="personcard" data-owner="${esc(p.owner)}" tabindex="0" role="button" aria-label="Open contributions by @${esc(p.owner)}">
+      <div class="ph">@${esc(p.owner)}</div>
+      <div class="pa"><b>${p.ids.length}</b> current identity program record${p.ids.length===1?'':'s'} &middot; ${[...p.roles].map(r=>esc(ROLE_NAMES[r]||r)).join(', ')}<br>
+      best mean <b>${p.best.v.toFixed(3)}</b> on ${esc(p.best.id)}</div></div>`).join("")
+      :`<div class="emptyblock">No program records registered in this tier yet.</div>`;
+    holders.querySelectorAll(".personcard").forEach(card=>{
+      const open=()=>openHacker(card.dataset.owner);
+      card.addEventListener("click",open);
+      card.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } });
+    });
+  }
+  if(feed){
+    feed.innerHTML=RECENT_SOLUTIONS.length?RECENT_SOLUTIONS.slice(0,6).map(s=>{
+      const fr=Array.isArray(s.frontier)?s.frontier:[], roles=roleKeys(fr);
+      const scope=roles.length?roles.map(r=>ROLE_NAMES[r]).join(', '):'frontier data unavailable';
+      return `<div class="activitycard"><span class="when">${esc(fmtDate(s.registered_at).replace(', 00:00 UTC',' UTC'))}</span>
+        <span class="what"><b data-owner="${esc(s.owner)}">@${esc(s.owner)}</b> registered ${sourceLink(s)}<div class="pa">${esc(scope)}${fr.length?` &middot; ${fr.length} evaluated identit${fr.length===1?'y':'ies'}`:''}</div></span></div>`;
+    }).join(""):`<div class="emptyblock">No registered work yet.</div>`;
+    feed.querySelectorAll("[data-owner]").forEach(x=>x.addEventListener("click",()=>openHacker(x.dataset.owner)));
+  }
+}
+
+/* ===================== identity + hacker popups ===================== */
+function showModal(kind="hacker"){
+  const win=$("#modal .win"); win.classList.toggle("identitydetail",kind==="identity");
+  const mo=$("#modal"); mo.setAttribute("open",""); mo.setAttribute("aria-hidden","false");
+}
+function identityDelta(v,aa){
+  if(v==null||aa==null) return {text:"—",cls:"dz"};
+  const d=v-aa; return {text:(d>0?"+":"")+d.toFixed(3),cls:d>0.0005?"dpos":(d<-0.0005?"dneg":"dz")};
+}
+async function openIdentity(identity){
+  const request=++popupRequest, aa=BASELINE&&BASELINE.per_identity&&BASELINE.per_identity[identity];
+  $("#mTitle").textContent=`${identity} - identity leaderboard`;
+  $("#mBody").innerHTML=`<div class="popupstatus">Loading same-seed results&hellip;</div>`;
+  showModal("identity");
+  try{
+    const rows=curTier==="verified"?[]:await jget(`/board?objective=${encodeURIComponent(identity)}&tier=${encodeURIComponent(curTier)}`);
+    if(request!==popupRequest) return;
+    const baseline=aa&&aa.progression!=null?aa.progression:null;
+    const body=rows.length?rows.map(r=>{
+      const meta=SOLUTION_BY_DIGEST[r.solution_digest]||{digest:r.solution_digest,repo:"",commit_sha:"",owner:r.owner};
+      const delta=identityDelta(r.mean_progression,baseline);
+      return `<tr><td class="num ${r.rank<=3?'top':''}">${r.rank}</td>
+        <td><span class="ownerlink" data-owner="${esc(r.owner)}">@${esc(r.owner)}</span></td>
+        <td>${sourceLink(meta)}</td><td class="num">${r.mean_progression.toFixed(3)}</td>
+        <td class="num">${r.median_progression.toFixed(3)}</td><td class="num">${r.episodes}</td>
+        <td>${esc(r.deepest||'—')}</td><td class="num ${delta.cls}">${delta.text}</td>
+        <td class="num ${r.ascensions?'star':''}">${r.ascensions||'·'}</td><td>${esc(fmtDate(meta.registered_at))}</td></tr>`;
+    }).join(""):`<tr><td colspan="10" class="pend">${curTier==="verified"?EMPTY_VERIFIED:'No program has evaluated this identity yet.'}</td></tr>`;
+    const aaRow=baseline!=null?`<tr class="base"><td class="num">&middot;</td><td>autoascend</td><td>reference floor</td><td class="num">${baseline.toFixed(3)}</td><td class="num">&mdash;</td><td class="num">${aa.episodes||'—'}</td><td>${esc(aa.deepest||'—')}</td><td class="num dz">&mdash;</td><td class="num">&middot;</td><td>&mdash;</td></tr>`:"";
+    $("#mBody").innerHTML=`<div class="identitysummary"><b>${esc(identity)}</b> &middot; every program below ran the same canonical seed batch &middot; tier <b>${esc(curTier)}${curTier==="self-reported"?'*':''}</b></div>
+      <div class="tablewrap"><table class="identityboard"><thead><tr><th class="num">#</th><th>hacker</th><th>solution</th><th class="num">mean</th><th class="num">median</th><th class="num">ep</th><th>deepest</th><th class="num">&Delta; AA</th><th class="num">&#9733;</th><th>registered</th></tr></thead><tbody>${body}${aaRow}</tbody></table></div>`;
+    $("#mBody").querySelectorAll(".ownerlink").forEach(x=>x.addEventListener("click",()=>openHacker(x.dataset.owner)));
+  }catch(e){ if(request===popupRequest) $("#mBody").innerHTML=`<div class="popupstatus">Could not load this identity leaderboard.</div>`; }
+}
 function fmtDate(iso){
   const d=iso?new Date(iso):null;
   if(!d||isNaN(d)) return "date unknown";
@@ -1363,13 +1413,10 @@ function roleKeys(frontier){
     .sort((a,b)=>ROLE_NAMES[a].localeCompare(ROLE_NAMES[b]));
 }
 function solutionCard(s){
-  const loaded=Array.isArray(s.frontier), fr=loaded?s.frontier:[], roles=roleKeys(fr), scope=new Set(scopeIds(curObj));
-  const scoped=fr.filter(x=>scope.has(x.identity));
-  const mean=scoped.length?scoped.reduce((sum,x)=>sum+x.progression,0)/scoped.length:null;
+  const loaded=Array.isArray(s.frontier), fr=loaded?s.frontier:[], roles=roleKeys(fr);
   const episodes=fr.reduce((sum,x)=>sum+(x.episodes||0),0);
   const best=fr.reduce((winner,x)=>!winner||x.progression>winner.progression?x:winner,null);
-  const board=PROGRAMS.find(p=>p.fulldigest===s.digest);
-  const score=board&&board.score!=null?board.score:mean;
+  const records=Object.entries(UNIVERSE).filter(([,x])=>x.digest===s.digest).map(([id])=>id);
   const chips=!loaded?"unavailable":(roles.length?roles.map(r=>`<span class="rolechip">${esc(ROLE_NAMES[r])}</span>`).join(""):"&mdash;");
   return `<div class="solutioncard">
     <div class="solutioncard__head"><span>${sourceLink(s)}</span><span class="solutioncard__date">${esc(fmtDate(s.registered_at))}</span></div>
@@ -1377,9 +1424,7 @@ function solutionCard(s){
       <span class="k">roles</span><span class="rolechips">${chips}</span>
       <span class="k">evaluated identities</span><span>${loaded?`${fr.length} of 73`:'unavailable'}</span>
       <span class="k">evaluation episodes</span><span>${loaded?episodes:'unavailable'}</span>
-      <span class="k">${esc(objCap(curObj).toLowerCase())}</span><span>${score!=null?score.toFixed(3):'not evaluated'}${scoped.length?` &middot; ${scoped.length}/${scope.size} identities`:''}</span>
-      <span class="k">deepest reach</span><span>${board?esc(board.deepest):'&mdash;'}</span>
-      <span class="k">ascensions</span><span${board&&board.asc?' style="color:#cc0000"':''}>${board?board.asc:'&mdash;'}</span>
+      <span class="k">current records</span><span>${records.length?`${records.length} identit${records.length===1?'y':'ies'}`:'&mdash;'}</span>
       <span class="k">best identity</span><span>${best?`${esc(best.identity)} &middot; mean ${best.progression.toFixed(3)}`:(loaded?'&mdash;':'unavailable')}</span>
       <span class="k">entrypoint</span><span>${esc([s.root&&s.root!=="."?s.root:"",s.entrypoint||""].filter(Boolean).join("/")||"&mdash;")}</span>
       <span class="k">tier</span><span>self-reported*</span>
@@ -1387,8 +1432,8 @@ function solutionCard(s){
 }
 let popupRequest=0;
 async function openHacker(owner){
-  const request=++popupRequest, standing=PEOPLE.find(h=>h.owner===owner);
-  $("#mTitle").textContent=`@${owner} - hacker details`;
+  const request=++popupRequest;
+  $("#mTitle").textContent=`@${owner} - contributions`;
   $("#mBody").innerHTML=`<div class="popupstatus">Loading registered solutions and per-identity results&hellip;</div>`;
   showModal();
   try{
@@ -1401,16 +1446,16 @@ async function openHacker(owner){
     const loaded=solutions.filter(s=>Array.isArray(s.frontier));
     const allIds=new Set(loaded.flatMap(s=>s.frontier.map(x=>x.identity)));
     const allRoles=roleKeys(loaded.flatMap(s=>s.frontier));
+    const records=Object.entries(UNIVERSE).filter(([,x])=>x.o===owner).map(([id])=>id);
     const newest=solutions.length?fmtDate(solutions[0].registered_at):"&mdash;";
     $("#mBody").innerHTML=`<div class="kv">
-      <span class="k">current standing</span><span class="v">${standing?`#${standing.rank} on ${esc(objCap(curObj).toLowerCase())}`:'&mdash;'}</span>
-      <span class="k">current score</span><span class="v">${standing?standing.mean.toFixed(3):'&mdash;'}</span>
+      <span class="k">current identity records</span><span class="v">${records.length}${records.length?` &middot; ${records.map(esc).join(', ')}`:''}</span>
       <span class="k">registered solutions</span><span class="v">${solutions.length}</span>
       <span class="k">roles evaluated</span><span class="v">${loaded.length?(allRoles.length?allRoles.map(r=>esc(ROLE_NAMES[r])).join(", "):'&mdash;'):'unavailable'}</span>
       <span class="k">identities evaluated</span><span class="v">${loaded.length?`${allIds.size} of 73`:'unavailable'}</span>
       <span class="k">latest registration</span><span class="v">${esc(newest)}</span>
     </div>
-    <div class="clickhint">Episodes are individual seeded evaluations, summed across identities. Best identity is this solution's highest mean progression. Scores use the currently selected objective; source links open the exact registered commit.</div>
+    <div class="clickhint">Episodes are individual seeded evaluations, summed across identities. Best identity is this solution's highest mean progression. Source links open the exact registered commit.</div>
     <div class="minihead">solutions -- newest first:</div>
     <div class="solutionlist">${solutions.length?solutions.map(solutionCard).join(""):'No registered solutions found.'}</div>`;
   }catch(e){
@@ -1425,61 +1470,32 @@ function closeModal(){ popupRequest++; const mo=$("#modal"); mo.removeAttribute(
 /* ===================== live data: fetch + adapt hub JSON into the render state ===================== */
 const jget = async p => { const r = await fetch(p); if(!r.ok) throw new Error(p+" "+r.status); return r.json(); };
 
-/* PEOPLE (the Hackers tally): the union-frontier standings for the current scope,
-   from GET /hackers (coverage + mean, coverage-first). The server does the
-   aggregation across each owner's programs. Degrades to [] on failure. */
-async function loadHackers(obj){
-  try{
-    const rows = await jget(`/hackers?objective=${encodeURIComponent(obj)}&tier=${encodeURIComponent(curTier)}`);
-    PEOPLE = rows.map(r=>({rank:r.rank, owner:r.owner, coverage:r.coverage, total:r.total, mean:r.mean_progression}));
-  }catch(e){ PEOPLE = []; }
-}
-
 /* Frontier "universe": each identity's rank-1 elite. /elites has no episodes, so ep comes
    from /objectives (the honest per-identity batch size) -- falls back to the 15-episode
    identity batch if /objectives was unavailable. */
 async function loadUniverse(){
+  if(curTier==="verified"){ UNIVERSE={}; return; }
   try{
     const el = await jget("/elites?objective=all");
     const uni = {};
-    for(const r of el){ if(r.rank===1) uni[r.identity] = {v:r.score, o:r.owner, d:short(r.solution_digest), ep: OBJ_EP[r.identity]!=null ? OBJ_EP[r.identity] : 15}; }
+    for(const r of el){ if(r.rank===1) uni[r.identity] = {v:r.score, o:r.owner, digest:r.solution_digest, d:short(r.solution_digest), ep:OBJ_EP[r.identity]!=null?OBJ_EP[r.identity]:15}; }
     UNIVERSE = uni;
   }catch(e){ UNIVERSE = {}; }
 }
 
-/* Frontier "program" regime champion: the #1 solution on the generalist board
-   (coverage-first), with its per-identity frontier. Empty board -> CHAMPION stays
-   blank and the program regime honestly shows every cell "·". */
-async function loadChampion(){
+async function loadRecent(){
   try{
-    const rnd = await jget(`/board?objective=generalist&tier=${encodeURIComponent(curTier)}`);
-    if(rnd.length){
-      const top = rnd[0]; let scores = {};
-      try{ const fr = await jget("/solutions/"+encodeURIComponent(top.solution_digest)+"/frontier");
-        scores = Object.fromEntries(fr.map(r=>[r.identity, r.progression])); }catch(e){ scores = {}; }
-      CHAMPION = {digest:short(top.solution_digest), owner:top.owner, scores};
-    } else { CHAMPION = {digest:"", owner:"", scores:{}}; }
-  }catch(e){ CHAMPION = {digest:"", owner:"", scores:{}}; }
+    const rows=await jget("/search?limit=100");
+    SOLUTION_BY_DIGEST=Object.fromEntries(rows.map(s=>[s.digest,s]));
+    RECENT_SOLUTIONS=rows.slice(0,6);
+    await Promise.all(RECENT_SOLUTIONS.map(async s=>{
+      try{ s.frontier=await jget("/solutions/"+encodeURIComponent(s.digest)+"/frontier"); }
+      catch(e){ s.frontier=null; }
+    }));
+  }catch(e){ RECENT_SOLUTIONS=[]; SOLUTION_BY_DIGEST={}; }
 }
 
-/* Per-objective + per-tier state: the program board (used by hacker details),
-   PEOPLE, the baseline row, and the progress series. Called on load and on every
-   objective/tier change. Each fetch degrades to an honest empty state on failure. */
-async function loadObjective(obj){
-  const agg = scopeKind(obj)!=="identity";
-  let rows=[];
-  try{ rows = await jget(`/board?objective=${encodeURIComponent(obj)}&tier=${encodeURIComponent(curTier)}`); }
-  catch(e){ rows=[]; }                                  // unknown obj (404) / offline -> "be the first" empty state
-  PROGRAMS = rows.map(r=>({
-    rank:r.rank, digest:short(r.solution_digest), fulldigest:r.solution_digest,
-    owner:r.owner, score:r.mean_progression,
-    med: r.median_progression!=null ? r.median_progression : null,   // identity board only
-    ep:  r.episodes!=null ? r.episodes : null,                       // identity board only
-    coverage: agg ? r.coverage : null, total: agg ? r.total : null,  // aggregate board only
-    asc:r.ascensions, deepest: r.deepest!=null ? r.deepest : "—",    // /board now carries deepest
-    fr:null,
-  }));
-  await loadHackers(obj);                               // the Hackers tally (union frontier)
+async function loadProgress(){
   let series=[];
   try{ const pr = await jget(`/progress?objective=val-dwa-law-fem&tier=${encodeURIComponent(curTier)}`); series = (pr && pr.series) || []; }
   catch(e){ series=[]; }
@@ -1489,38 +1505,19 @@ async function loadObjective(obj){
   ];
 }
 
-/* Grouped objective picker: Generalist / Roles / Identities, built from the
-   identity tables so all 73 identities are pickable. Option values are the bare
-   backend tokens ("generalist", a role like "val", an identity). */
-function buildPicker(){
-  const sel=$("#objSelect"); if(!sel) return;
-  let html=`<optgroup label="Generalist"><option value="generalist">Generalist &mdash; all 73 identities</option></optgroup>`;
-  html+=`<optgroup label="Roles (macro-average)">`;
-  for(const r of Object.keys(ROLE_NAMES)) html+=`<option value="${r}">${ROLE_NAMES[r]} &mdash; all ${ROLE_VARS[r].length}</option>`;
-  html+=`</optgroup><optgroup label="Identities (same-seeds)">`;
-  for(const r of Object.keys(ROLE_VARS)) for(const v of ROLE_VARS[r]) html+=`<option value="${r}-${v}">${r}-${v}</option>`;
-  html+=`</optgroup>`;
-  sel.innerHTML=html; sel.value=curObj;
-}
-
 /* Bootstrap: fetch everything, adapt into the render state, then do the first render.
    Every fetch is guarded -- any failure keeps the page's friendly empty/error
    states; nothing ever throws to the console. */
 async function boot(){
-  buildPicker();                        // fill the objective menu before the first render
-  /* independent setup fetches run concurrently; the real dependencies are
-     awaited after (UNIVERSE needs OBJ_EP; the board/hackers need BASELINE).
-     Each is guarded, so any failure keeps a friendly state. */
   const statsP = jget("/stats")
-    .then(s=>{ odo($("#odoProg"), s.programs, 5); odo($("#odoPlay"), s.hackers, 5);
+    .then(s=>{ STATS=s; odo($("#odoProg"), s.programs, 5); odo($("#odoPlay"), s.hackers, 5);
                renderMarquee(marqueeStatsLine(s)); setUpdated(s.last_registered_at); })
-    .catch(()=>{ odo($("#odoProg"),0,5); odo($("#odoPlay"),0,5); });
+    .catch(()=>{ STATS=null; odo($("#odoProg"),0,5); odo($("#odoPlay"),0,5); });
   const baseP = jget("/baseline").then(b=>{ BASELINE = b; }).catch(()=>{ BASELINE = {owner:"autoascend", per_identity:{}, overall:null}; });
   const objP  = jget("/objectives").then(o=>{ OBJ_EP = Object.fromEntries(o.map(x=>[x.name, x.episodes])); }).catch(()=>{ OBJ_EP = {}; });
-  await Promise.all([statsP, baseP, objP, loadChampion()]);
-  await loadUniverse();                 // needs OBJ_EP (per-identity episode counts)
-  await loadObjective(curObj);          // needs BASELINE
-  setCap(); renderBoard(); renderFrontier(curRegime); renderChart(curMetric);
+  await Promise.all([statsP,baseP,objP,loadRecent()]);
+  await Promise.all([loadUniverse(),loadProgress()]);
+  renderStatus(); renderFrontier(); renderRecognition(); renderChart(curMetric);
 }
 boot();
 /* ===== The Nethack Dictionary: audio-reactive dungeon wall around the .page frame ===== */
