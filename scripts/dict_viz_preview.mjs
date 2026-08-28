@@ -31,4 +31,11 @@ await shot(U + "0.35", "2-vol35", 1500, 0);
 await shot(U + "0.9", "3-vol90", 1700, 0);
 await shot(U + "0.9", "4-vol90-scrolled", 1200, 1200);
 console.log("preview errors:", errs.length ? errs.slice(0, 6) : "none");
+
+// Dev-only visual check (NOT wired into CI, which is pytest-only): confirm the wall
+// actually names registered hackers, not just abstract glyphs.
+const handles = await p.evaluate(async () => {
+  const r = await fetch("/hackers/random?n=20"); return r.ok ? await r.json() : [];
+});
+console.log("registered handles on the wall:", handles.length ? handles.join(", ") : "(none — empty registry?)");
 await b.close();
