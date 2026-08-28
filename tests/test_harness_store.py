@@ -1,5 +1,4 @@
 # tests/test_harness_store.py
-import os
 from pathlib import Path
 
 from nethackers.eval.runner import _solution_digest

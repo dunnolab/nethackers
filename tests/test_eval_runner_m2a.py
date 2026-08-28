@@ -225,7 +225,9 @@ def test_eval_batch_streams_per_episode_when_on_episode_given(tmp_path):
 
 
 def test_eval_batch_attaches_docker_stderr_on_nonzero_exit(tmp_path):
-    sol = tmp_path / "sol"; sol.mkdir(); (sol / "bot.py").write_text("x")
+    sol = tmp_path / "sol"
+    sol.mkdir()
+    (sol / "bot.py").write_text("x")
     lines = [
         "arena · running 2 episode(s)…\n",
         "Unable to find image 'img:dev' locally\n",

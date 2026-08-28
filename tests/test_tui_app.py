@@ -23,7 +23,7 @@ import threading
 from textual.widgets import ContentSwitcher, Input, Tabs
 
 from nethackers.hubclient.credentials import Credentials
-from nethackers.tui.app import NetHackersApp, _TOAST_DETAIL_MAXLEN, failure_detail
+from nethackers.tui.app import _TOAST_DETAIL_MAXLEN, NetHackersApp, failure_detail
 from nethackers.tui.run import Run
 from nethackers.tui.screens.monitor import RunMonitor
 from nethackers.tui.status import EvolveConfig
