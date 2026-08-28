@@ -97,10 +97,13 @@ mutator: nle-base
 # reused verbatim after the first run. See scripts/stack.py.
 stack: ; @uv run python scripts/stack.py >/dev/null
 
-# ONE command to bring the whole local stack up: allocate this worktree's
-# stage, (re)build the arena image, (re)build + start the hub, then wait
-# until the hub answers. Run this before `nethackers evolve`.
-up: stack arena hub wait-hub
+# Bring up this worktree's local stack. Order matters: allocate the stage,
+# then start + wait for the HUB FIRST -- that alone is everything you need to
+# browse boards / drive the TUI -- and only THEN build the arena eval image
+# (needed solely for `nethackers evolve`). A slow or failing arena build can
+# no longer gate the hub. To browse only, `make hub` on its own (no arena
+# build) is enough.
+up: stack hub wait-hub arena
 	@$(SOURCE_STACK); \
 	echo "✓ stack up  ·  hub $${NETHACKERS_HUB:-http://localhost:8000}  ·  arena image $(ARENA_IMAGE)"
 

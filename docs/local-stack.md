@@ -7,22 +7,38 @@ runnable form of the stage-config-model design
 (`docs/superpowers/specs/2026-08-27-stage-config-model-design.md`) --
 read that doc for the *why*, this one for the *how*.
 
-## Quickstart: the full loop, one worktree
+## Quickstart
 
-`make up`'s prerequisite chain (`stack arena hub wait-hub`) allocates
-`.env.stack` and builds the arena image *inside the same `make`
-invocation*. But Make's `-include .env.stack` only reads that file as it
-existed **before** parsing started -- so on a brand-new worktree, the very
-first `make up` still resolves `ARENA_IMAGE` to the shared
-`nethackers/arena:dev` fallback, not this worktree's own tag (it
-self-heals on the second invocation, once the file already exists at
-parse time). Run `make stack` by itself first, as its own step, so the
-tag is already allocated by the time `make up` parses:
+### Just browse the hub / drive the TUI
+
+You don't need the arena eval image to look at boards, so skip `make up`
+(which builds arena) and start the hub on its own -- it comes up in
+seconds:
+
+```console
+cd <worktree>
+make hub                        # stub auth + fixtures (offline), on this worktree's port
+# or:  make hub HUB_AUTH=github  # real GitHub auth, empty DB
+nethackers whoami               # sanity check: reports the active stage + hub URL
+```
+
+The TUI's boards/frontier/elites then connect to *this worktree's* hub. To
+browse the global hub from inside a worktree instead, `nethackers --prod`.
+
+### The full evolve loop
+
+Running evolutions additionally needs the arena eval image. `make up`
+brings the hub up **first** -- so a slow or failing arena build can never
+gate it -- and only then builds this worktree's `arena:<slug>`. Run `make
+stack` by itself first so the per-worktree arena tag is already allocated
+when `make up` parses its `-include .env.stack` (otherwise the very first
+`make up` builds the shared `nethackers/arena:dev` fallback instead; it
+self-heals on the second run):
 
 ```console
 cd <worktree>
 make stack                              # allocate .env.stack first (own port/project/tags)
-make up HUB_AUTH=github                 # build arena:<slug> · hub on the stage port, real auth, empty DB
+make up HUB_AUTH=github                 # hub up first (real auth, empty DB), THEN builds arena:<slug>
 make mutator                            # once per machine -- the operator sandbox image
 nethackers login                        # once per machine -- GitHub device flow
 nethackers evolve val-dwa-law-fem --seed roots/autoascend --operator claude --iterations 2
