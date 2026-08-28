@@ -40,3 +40,18 @@ def test_allocate_scans_past_occupied_seed(tmp_path):
 def test_render_parse_roundtrip():
     v = {"NETHACKERS_STAGE": "wt", "NETHACKERS_HUB_PORT": "28001"}
     assert stack.parse(stack.render(v)) == v
+
+
+def test_allocate_writes_throwaway_names(tmp_path):
+    # Fresh tmp_path dir (no pre-existing .env.stack): allocate()'s
+    # reuse-verbatim rule returns an existing file unchanged, which would
+    # mask these new keys if this test shared a dir with another test's
+    # generated .env.stack. Real dir, not the brief's literal `/x/tripletail`
+    # -- see test_allocate_scans_past_occupied_seed above for why (`/x` is
+    # read-only on this machine).
+    wt = tmp_path / "tripletail"
+    wt.mkdir()
+    v = stack.allocate(wt, is_free=lambda p: True)
+    assert v["NETHACKERS_REPO_NAME"] == "nh-dev-tripletail"
+    assert v["NETHACKERS_ARENA_IMAGE"] == "nethackers/arena:tripletail"
+    assert v["NETHACKERS_MUTATOR_IMAGE"] == "nethackers/mutator:latest"

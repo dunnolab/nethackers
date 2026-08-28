@@ -13,7 +13,8 @@ from pathlib import Path
 
 PORT_LO, PORT_SPAN = 28000, 1000
 KEYS = ("NETHACKERS_STAGE", "NETHACKERS_HUB", "NETHACKERS_HUB_PORT",
-        "COMPOSE_PROJECT_NAME", "NETHACKERS_DATA_ROOT")
+        "COMPOSE_PROJECT_NAME", "NETHACKERS_DATA_ROOT", "NETHACKERS_REPO_NAME",
+        "NETHACKERS_ARENA_IMAGE", "NETHACKERS_MUTATOR_IMAGE")
 
 
 def slug(worktree: Path) -> str:
@@ -71,6 +72,13 @@ def allocate(worktree: Path, is_free=port_free) -> dict[str, str]:
         "NETHACKERS_HUB_PORT": str(port),
         "COMPOSE_PROJECT_NAME": f"nethackers-{s}",
         "NETHACKERS_DATA_ROOT": str(worktree.resolve() / ".nethackers"),
+        "NETHACKERS_REPO_NAME": f"nh-dev-{s}",
+        "NETHACKERS_ARENA_IMAGE": f"nethackers/arena:{s}",
+        # Mutator stays the SHARED :latest tag by design -- NOT per-slug: it
+        # has no nethackers source (info-diet wall), so per-worktree tags
+        # would just rebuild the same image under N names for no isolation
+        # benefit.
+        "NETHACKERS_MUTATOR_IMAGE": "nethackers/mutator:latest",
     }
     env_stack.write_text(render(vars))
     return vars

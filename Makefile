@@ -1,6 +1,15 @@
 # NetHackers -- dev convenience targets. Requires: uv, docker, curl.
 .PHONY: install uninstall nle-base arena mutator stack up down wait-hub hub hub-down hub-reset test check smoke
 
+# Load this worktree's allocated stage vars as MAKE variables (not just shell
+# env), so `?=`/`$(or ...)` defaults below (ARENA_IMAGE, MUTATOR_IMAGE) can
+# see e.g. NETHACKERS_ARENA_IMAGE at parse time; no-op if the file doesn't
+# exist yet (leading `-`). Each `KEY=value` line in .env.stack is also valid
+# Makefile variable-assignment syntax, so `include` parses it directly.
+# Distinct from SOURCE_STACK below, which sources the same file into a
+# recipe's *shell* for `$$VARNAME` use inside commands (e.g. compose).
+-include .env.stack
+
 # Source this worktree's allocated stage vars (COMPOSE_PROJECT_NAME,
 # NETHACKERS_HUB_PORT, ...) into the current recipe shell, if .env.stack
 # exists; no-op otherwise (compose then falls back to its own defaults --
@@ -14,10 +23,14 @@ SOURCE_STACK = set -a; [ -f ./.env.stack ] && . ./.env.stack; set +a
 
 # Shared base image tag: compiled NLE + deps, NO nethackers source.
 NLE_BASE_IMAGE ?= nethackers/nle-base:dev
-# Arena eval image tag (override: `make up ARENA_IMAGE=you/arena:tag`).
-ARENA_IMAGE ?= nethackers/arena:dev
-# Mutator sandbox image tag (override: `make mutator MUTATOR_IMAGE=you/mutator:tag`).
-MUTATOR_IMAGE ?= nethackers/mutator:latest
+# Arena eval image tag: this worktree's own throwaway tag from .env.stack
+# (nethackers/arena:<slug>) when allocated, else the shared dev fallback;
+# explicit override always wins: `make up ARENA_IMAGE=you/arena:tag`.
+ARENA_IMAGE   ?= $(or $(NETHACKERS_ARENA_IMAGE),nethackers/arena:dev)
+# Mutator sandbox image tag: SHARED :latest by design, even across worktrees
+# (no nethackers source in it -- no collision to isolate); override:
+# `make mutator MUTATOR_IMAGE=you/mutator:tag`.
+MUTATOR_IMAGE ?= $(or $(NETHACKERS_MUTATOR_IMAGE),nethackers/mutator:latest)
 
 # Install the `nethackers` CLI into an isolated uv tool env. The cache-clean is
 # required because the package version is pinned 0.0.0, so uv would otherwise
@@ -67,7 +80,7 @@ mutator: nle-base
 # Allocate/refresh this worktree's .env.stack (deterministic host port +
 # compose project name, so parallel worktrees never collide); gitignored,
 # reused verbatim after the first run. See scripts/stack.py.
-stack: ; @python scripts/stack.py >/dev/null
+stack: ; @uv run python scripts/stack.py >/dev/null
 
 # ONE command to bring the whole local stack up: allocate this worktree's
 # stage, (re)build the arena image, (re)build + start the hub, then wait
