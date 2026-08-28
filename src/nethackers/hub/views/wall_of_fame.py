@@ -33,11 +33,11 @@ def read_wall_of_fame(store: Store, *, limit: int = 100) -> dict[str, list[dict[
     }
 
     rows = store.conn.execute(
-        "SELECT solution_digest, owner, identity, progression, created_at "
+        "SELECT solution_digest, owner, identity, progression, ascended, created_at "
         "FROM atoms WHERE tier = 'self-reported'"
     ).fetchall()
     grouped: dict[tuple[str, str], dict[str, Any]] = {}
-    for digest, owner, identity, progression, created_at in rows:
+    for digest, owner, identity, progression, ascended, created_at in rows:
         key = (digest, identity)
         item = grouped.setdefault(
             key,
@@ -46,11 +46,15 @@ def read_wall_of_fame(store: Store, *, limit: int = 100) -> dict[str, list[dict[
                 "owner": owner,
                 "identity": identity,
                 "values": [],
+                "ascensions": 0,
                 "at": _timestamp(created_at),
+                "earliest": _timestamp(created_at),
             },
         )
         item["values"].append(float(progression))
+        item["ascensions"] += int(ascended)
         item["at"] = max(item["at"], _timestamp(created_at))
+        item["earliest"] = min(item["earliest"], _timestamp(created_at))
 
     results: list[dict[str, Any]] = []
     for item in grouped.values():
@@ -67,7 +71,9 @@ def read_wall_of_fame(store: Store, *, limit: int = 100) -> dict[str, list[dict[
     for identity, candidates in by_identity.items():
         winner = sorted(
             candidates,
-            key=lambda row: (-row["score"], row["at"], row["digest"]),
+            key=lambda row: (
+                -row["score"], -row["ascensions"], row["earliest"], row["digest"]
+            ),
         )[0]
         floor = baseline.get(identity, 0.0)
         if winner["score"] <= floor + _MIN_LIFT:

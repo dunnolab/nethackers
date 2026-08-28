@@ -8,7 +8,14 @@ from nethackers.hub.store import Store
 from nethackers.hub.views.wall_of_fame import read_wall_of_fame
 
 
-def _atom(digest: str, owner: str, identity: str, progression: float) -> Atom:
+def _atom(
+    digest: str,
+    owner: str,
+    identity: str,
+    progression: float,
+    *,
+    ascended: bool = False,
+) -> Atom:
     return Atom(
         solution_digest=digest,
         owner=owner,
@@ -17,7 +24,7 @@ def _atom(digest: str, owner: str, identity: str, progression: float) -> Atom:
         seed=1,
         progression=progression,
         milestone="Dlvl:3",
-        ascended=False,
+        ascended=ascended,
         status="completed",
         turns=1,
         steps=1,
@@ -79,3 +86,34 @@ def test_wall_is_empty_without_results(tmp_path):
     store = Store(str(tmp_path / "hub.db"))
     store.init_schema()
     assert read_wall_of_fame(store) == {"keepers": [], "breakthroughs": []}
+
+
+def test_keeper_ties_follow_the_identity_leaderboard_rules(tmp_path):
+    store = Store(str(tmp_path / "hub.db"))
+    store.init_schema()
+    identity = IDENTITIES[0]
+    store.insert_baseline_atoms([_atom("autoascend", "autoascend", identity, 0.1)])
+
+    for digest, owner, ascended, registered_at in (
+        ("older", "alice", False, "2026-08-01T00:00:00+00:00"),
+        ("ascended", "bob", True, "2026-08-02T00:00:00+00:00"),
+    ):
+        store.upsert_solution(
+            digest=digest,
+            repo=f"github.com/{owner}/bot",
+            commit_sha=digest,
+            owner=owner,
+            root=".",
+            entrypoint="bot.py",
+            registered_at=registered_at,
+        )
+        store.insert_atoms([_atom(digest, owner, identity, 0.4, ascended=ascended)])
+        store.conn.execute(
+            "UPDATE atoms SET created_at = ? WHERE solution_digest = ?",
+            (registered_at, digest),
+        )
+    store.conn.commit()
+
+    wall = read_wall_of_fame(store)
+
+    assert [(row["owner"], row["records"]) for row in wall["keepers"]] == [("bob", 1)]

@@ -89,7 +89,10 @@ function router(path) {
   const params = new URLSearchParams(query || "");
   const obj = params.get("objective");
   if (route === "/stats") return { programs: 2, hackers: 2, ascensions: 0, last_registered_at: "2026-08-27T09:30:00+00:00" };
-  if (route === "/competition-status") return { community_frontier: 0.081, frontier_gain_7d: 0.006, identities_improved_7d: 4 };
+  if (route === "/competition-status") return {
+    community_frontier: 0.081, frontier_gain_7d: 0.006, identities_improved_7d: 4,
+    largest_lift: { identity: TOUCHED[0], owner: "dun", solution_digest: "sha256:aaa", score: 0.2, baseline: 0.08, lift: 0.12 },
+  };
   if (route === "/wall-of-fame") return {
     keepers: Array.from({ length: 6 }, (_, i) => ({
       owner: `keeper${i + 1}`, records: 7 - i, identities: [TOUCHED[i]], roles: [i % 2 ? "bar" : "arc"], total_lift: 0.8 - i * 0.1,

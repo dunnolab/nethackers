@@ -183,6 +183,7 @@ def test_competition_status_reads_empty(tmp_path: Any) -> None:
         "community_frontier": 0.0,
         "frontier_gain_7d": 0.0,
         "identities_improved_7d": 0,
+        "largest_lift": None,
     }
 
 

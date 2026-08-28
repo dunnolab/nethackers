@@ -1162,10 +1162,8 @@ function allIdentityIds(){ return Object.keys(ROLE_VARS).flatMap(r=>ROLE_VARS[r]
 function statusCard(value,label,kind=""){ return `<div class="statuscard ${kind}"><span class="sv">${value}</span><span class="sl">${label}</span></div>`; }
 function renderStatus(){
   const el=$("#statusgrid"); if(!el) return;
-  const per=(BASELINE&&BASELINE.per_identity)||{}, entries=Object.entries(UNIVERSE);
-  let best=null;
-  for(const [id,x] of entries){ const aa=per[id]&&per[id].progression;
-    if(aa!=null&&(!best||x.v-aa>best.delta)) best={id,owner:x.o,delta:x.v-aa}; }
+  const per=(BASELINE&&BASELINE.per_identity)||{};
+  const best=COMPETITION_STATUS&&COMPETITION_STATUS.largest_lift;
   const fallbackFrontier=allIdentityIds().reduce((sum,id)=>{
     const aa=per[id]&&per[id].progression!=null?per[id].progression:0;
     const community=UNIVERSE[id]&&UNIVERSE[id].v!=null?UNIVERSE[id].v:0;
@@ -1175,8 +1173,8 @@ function renderStatus(){
     ?COMPETITION_STATUS.community_frontier:fallbackFrontier;
   const gain=COMPETITION_STATUS&&COMPETITION_STATUS.frontier_gain_7d;
   const moved=COMPETITION_STATUS&&COMPETITION_STATUS.identities_improved_7d;
-  const bestText=best?`+${(best.delta*100).toFixed(1)}%`:'&mdash;';
-  const bestLabel=best?`largest lift vs AutoAscend &middot; ${esc(best.id)} by <button type="button" class="statusowner" data-owner="${esc(best.owner)}">@${esc(best.owner)}</button>`:'largest lift vs AutoAscend';
+  const bestText=best?`+${(best.lift*100).toFixed(1)}%`:'&mdash;';
+  const bestLabel=best?`largest lift vs AutoAscend &middot; ${esc(best.identity)} by <button type="button" class="statusowner" data-owner="${esc(best.owner)}">@${esc(best.owner)}</button>`:'largest lift vs AutoAscend';
   el.innerHTML=statusCard(`${(frontier*100).toFixed(1)}%`,"community frontier progress &middot; all 73 identities","pulse")
     +statusCard(gain!=null?`${gain>=0?'+':''}${(gain*100).toFixed(1)} pp`:'&mdash;',"frontier gain &middot; last 7 days","pulse")
     +statusCard(moved!=null?String(moved):'&mdash;',"identities improved &middot; last 7 days","pulse")

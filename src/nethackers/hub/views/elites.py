@@ -40,7 +40,7 @@ SELECT solution_digest,
 FROM atoms
 WHERE identity = ?
 GROUP BY solution_digest
-ORDER BY score DESC, ascensions DESC, earliest ASC
+ORDER BY score DESC, ascensions DESC, earliest ASC, solution_digest ASC
 LIMIT ?
 """
 
