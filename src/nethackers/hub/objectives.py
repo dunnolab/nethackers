@@ -59,7 +59,7 @@ Every batch is HMAC-derived from ``PUBLIC_SECRET`` via
 ``nethackers.arena.seeds.trajectory_spec`` (the same mechanism
 ``arena/run.py`` uses for real evaluations), so batches are deterministic
 and reproducible: rebuilding the catalog always yields byte-identical
-``ObjectiveSpec``\\ s (see each spec's ``.digest()``).
+``ObjectiveSpec``\\ s.
 """
 
 from __future__ import annotations
@@ -222,8 +222,7 @@ def build_catalog(
 
     Deterministic: every batch is derived from ``PUBLIC_SECRET`` via
     ``trajectory_spec``, so calling this twice with the same arguments
-    always returns byte-identical ``ObjectiveSpec``\\ s (same
-    ``.digest()`` per name).
+    always returns byte-identical ``ObjectiveSpec``\\ s (equal per name).
     """
     catalog: dict[str, ObjectiveSpec] = {
         "random": ObjectiveSpec(

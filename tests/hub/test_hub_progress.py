@@ -6,7 +6,6 @@ time); `ascensions`/`coverage` are cumulative."""
 from __future__ import annotations
 
 from nethackers.contracts.models import Atom
-from nethackers.hub.objectives import CATALOG
 from nethackers.hub.store import Store
 from nethackers.hub.views.progress import read_progress
 
@@ -20,10 +19,6 @@ def _atom(digest, seed, prog, asc=False, ident=IDENT, milestone="Dlvl:5"):
                 status="completed", turns=1, steps=1, evaluator_image="img")
 
 
-def _seed_objective(store, ident=IDENT):
-    store.objectives_upsert(CATALOG[ident])
-
-
 def _backdate(store, day_by_seed):
     for seed, day in day_by_seed.items():
         store.conn.execute("UPDATE atoms SET created_at=? WHERE seed=?",
@@ -34,7 +29,6 @@ def _backdate(store, day_by_seed):
 def test_progress_frontier_is_top_program_mean_best_so_far(tmp_path):
     store = Store(str(tmp_path / "h.db"))
     store.init_schema()
-    _seed_objective(store)
     store.upsert_solution(digest="s1", repo="github.com/a/b", commit_sha="c1",
                           owner="a", root=".", entrypoint="bot.py", registered_at="t")
     store.upsert_solution(digest="s2", repo="github.com/a/b", commit_sha="c2",
@@ -57,7 +51,6 @@ def test_progress_frontier_is_top_program_mean_best_so_far(tmp_path):
 def test_progress_frontier_never_drops(tmp_path):
     store = Store(str(tmp_path / "h.db"))
     store.init_schema()
-    _seed_objective(store)
     store.upsert_solution(digest="s1", repo="github.com/a/b", commit_sha="c1",
                           owner="a", root=".", entrypoint="bot.py", registered_at="t")
     store.upsert_solution(digest="s2", repo="github.com/a/b", commit_sha="c2",
@@ -73,7 +66,6 @@ def test_progress_frontier_never_drops(tmp_path):
 def test_progress_counts_ascensions_cumulatively(tmp_path):
     store = Store(str(tmp_path / "h.db"))
     store.init_schema()
-    _seed_objective(store)
     store.upsert_solution(digest="s1", repo="github.com/a/b", commit_sha="c1",
                           owner="a", root=".", entrypoint="bot.py", registered_at="t")
     store.insert_atoms([_atom("s1", seed=1, prog=0.90, asc=True),
@@ -86,7 +78,6 @@ def test_progress_counts_ascensions_cumulatively(tmp_path):
 def test_progress_filters_by_objective_identity(tmp_path):
     store = Store(str(tmp_path / "h.db"))
     store.init_schema()
-    _seed_objective(store)
     store.upsert_solution(digest="s1", repo="github.com/a/b", commit_sha="c1",
                           owner="a", root=".", entrypoint="bot.py", registered_at="t")
     store.insert_atoms([_atom("s1", seed=1, prog=0.20)])
@@ -100,7 +91,6 @@ def test_progress_ignores_none_milestone_in_coverage(tmp_path):
     # program's mean, but contributes no coverage cell.
     store = Store(str(tmp_path / "h.db"))
     store.init_schema()
-    _seed_objective(store)
     store.upsert_solution(digest="s1", repo="github.com/a/b", commit_sha="c1",
                           owner="a", root=".", entrypoint="bot.py", registered_at="t")
     store.insert_atoms([_atom("s1", seed=1, prog=0.10, milestone="Dlvl:5"),
