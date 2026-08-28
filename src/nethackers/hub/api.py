@@ -272,6 +272,13 @@ def create_app(
             ) from e
         return hacker_board(store, ids, tier=tier)
 
+    @app.get("/hackers/random")
+    def hackers_random(n: int = 20) -> list[str]:
+        """Up to ``n`` (clamped to 20) random registered hacker handles,
+        sampled server-side -- names for the dungeon-wall @username runners.
+        Cheaper than /hackers: no coverage/mean aggregation."""
+        return store.random_owners(max(0, min(20, n)))
+
     # ``:path`` (not the default converter) so a link-registered digest --
     # ``github.com/owner/repo@commit``, which carries slashes -- matches; the
     # default one only spans a single path segment, 404ing such a digest at
