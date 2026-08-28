@@ -41,6 +41,7 @@ from textual.widgets import (
 
 from nethackers.config import load_stage
 from nethackers.harness.launch import EvolvePlan
+from nethackers.hubclient.client import HubClient, HubUnreachable
 from nethackers.hubclient.credentials import Credentials
 from nethackers.tui.nav import dedup_visible, nearest_in_direction
 from nethackers.tui.run import Run
@@ -56,6 +57,30 @@ _SECTIONS = [
     ("home", "⌂ Home"), ("boards", "♛ Leaderboard"), ("map", "⇩ Frontier"),
     ("elites", "⚑ Elites"), ("runs", "▶ Runs"), ("evolve", "⚔ Evolve"),
 ]
+
+# Give up on the hub-mode probe fast so the idbar never lingers on it; the
+# ambient bar just stays at its baseline @login/guest text if the hub is
+# slow (mirrors tui.screens.home._HUB_TIMEOUT).
+_HUB_MODE_TIMEOUT = 4.0
+
+
+def _idbar_who(login: str | None, hub_mode: str | None, *, unreachable: bool) -> str:
+    """The idbar's identity segment -- EFFECTIVE identity (who you are TO
+    THE HUB you're pointed at), condensed for a one-line ambient bar: the
+    same model ``cli.py``'s ``whoami`` renders in full (``_where_line``),
+    here without the parenthetical fix-it hint (no room on a persistent
+    status line) and with the unreachable case APPENDED rather than
+    replacing the baseline text -- so an in-flight probe can never make an
+    idbar assertion racy: whatever this returns always still contains
+    plain ``_idbar_text``'s own baseline "@login"/"guest" substring."""
+    base = f"@{login}" if login else "guest"
+    if unreachable:
+        return f"{base}  [yellow]⚠ hub unreachable[/]"
+    if hub_mode == "offline":
+        if login is None:
+            return "[b]OFFLINE[/]"
+        return f"{base}  [yellow]⚠ OFFLINE hub[/]"
+    return base
 
 
 class NetHackersApp(App):
@@ -90,9 +115,15 @@ class NetHackersApp(App):
         self._nav_mode = "navigate"  # "navigate" (arrows move the cursor) | "interact"
         self._nav_cursor: Widget | None = None
         self._idbar_prefix = ""
+        # The hub's reported auth mode (effective-identity feature): None
+        # until the background probe (_fetch_hub_mode) resolves, so the idbar
+        # renders its plain baseline immediately and never blocks first paint.
+        self._hub_mode: str | None = None
+        self._hub_unreachable = False
 
     def _idbar_text(self) -> str:
-        who = f"@{self._creds.login}" if self._creds else "guest"
+        login = self._creds.login if self._creds else None
+        who = _idbar_who(login, self._hub_mode, unreachable=self._hub_unreachable)
         host = self._hub.split("//")[-1]
         stage_tag = "" if self._stage.name == "prod" else f" · stage:{self._stage.name}"
         return f" {who} · hub:{host}{stage_tag}"
@@ -114,11 +145,34 @@ class NetHackersApp(App):
     def on_mount(self) -> None:
         self.query_one("#nav", Tabs).active = f"tab-{self._start}"
         self.call_after_refresh(self._nav_start)  # dashboard nav is always ready underneath
+        self._fetch_hub_mode()  # off-thread; repaints the idbar once it lands
         if self._evolve is not None:
             # auto-start the run + open its monitor over the dashboard; esc
             # detaches to the dashboard (Runs tab) with the run still going.
             plan = self._evolve
             self.call_after_refresh(lambda: self.start_run(plan))
+
+    @work(thread=True, exclusive=True, exit_on_error=False)
+    def _fetch_hub_mode(self) -> None:
+        # Same off-thread + call_from_thread pattern as HomeView._fetch_programs:
+        # the idbar paints its baseline immediately (self._hub_mode starts
+        # None) and this fills in OFFLINE/mismatch once the probe lands,
+        # never blocking the dashboard's first paint on a slow/dead hub.
+        try:
+            mode = HubClient(self._hub, timeout=_HUB_MODE_TIMEOUT).hub_mode()
+        except HubUnreachable:
+            self.call_from_thread(self._apply_hub_mode, None, True)
+            return
+        self.call_from_thread(self._apply_hub_mode, mode, False)
+
+    def _apply_hub_mode(self, mode: str | None, unreachable: bool) -> None:
+        self._hub_mode = mode
+        self._hub_unreachable = unreachable
+        # A narrow idbar-only repaint (not the full _refresh_identity(), which
+        # also cascades into HomeView.set_login -> another hub round-trip) --
+        # the hub's mode doesn't change Home's own standing/login state.
+        self._idbar_prefix = self._idbar_text()
+        self._nav_update_hint()
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         """Clicking a tab or moving with ← → (Textual's Tabs) switches the

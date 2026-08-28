@@ -346,6 +346,40 @@ def test_cli_auth_error_is_caught_as_a_friendly_hint_not_a_raw_traceback(monkeyp
     assert "Traceback" not in err
 
 
+def test_cli_register_401_against_an_offline_hub_gets_a_clear_hint(monkeypatch, capsys, tmp_path):
+    # The actual reported bug: a real, logged-in GitHub identity pointed at a
+    # local offline (stub) hub got a bare 401 on register with no hint why.
+    # HubClient.register() (hubclient/client.py, tested directly in
+    # test_hubclient.py) now raises an AuthError naming the cause and the
+    # fix; this proves it reaches the user cleanly through main()'s existing
+    # top-level AuthError guard.
+    from nethackers.hubclient.auth import AuthError
+
+    monkeypatch.setattr(C, "_authed_token", lambda: "a-real-github-token")
+
+    class FakeHub:
+        def __init__(self, base_url):
+            pass
+
+        def register(self, **kwargs):
+            raise AuthError(
+                "hub rejected your token — it's an OFFLINE (stub) hub and only accepts "
+                "the built-in offline identity; run the hub with HUB_AUTH=github for "
+                "real registration.")
+    monkeypatch.setattr(C, "HubClient", FakeHub)
+
+    evidence = tmp_path / "ev.json"
+    evidence.write_text("{}")
+
+    rc = C.main(["register", "--repo", "github.com/x/y", "--commit", "a" * 40,
+                 "--evidence", str(evidence)])
+
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "OFFLINE" in err and "HUB_AUTH=github" in err
+    assert "Traceback" not in err
+
+
 def test_cli_elites_dispatches_with_objective(monkeypatch, capsys):
     FakeHubClient, calls = _make_fake_hub_client({"elites": [{"identity": "x"}]})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)

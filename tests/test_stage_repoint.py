@@ -1,7 +1,7 @@
 # tests/test_stage_repoint.py
 from pathlib import Path
 
-from nethackers.config import DEV_OWNER, DEV_TOKEN, Stage
+from nethackers.config import OFFLINE_OWNER, OFFLINE_TOKEN, Stage
 
 
 def test_cli_hub_default_is_stage_hub_url(monkeypatch):
@@ -25,7 +25,7 @@ def test_evolveparams_defaults_from_stage(monkeypatch):
     assert p.hub == "http://localhost:8000"          # from stage (env override here)
     assert p.image == "nethackers/arena:dev"
     assert p.mutator_image == "nethackers/mutator:latest"
-    assert p.token == DEV_TOKEN and p.owner == DEV_OWNER
+    assert p.token == OFFLINE_TOKEN and p.owner == OFFLINE_OWNER
     assert p.workdir == str(Path.home() / ".nethackers" / "evolve")
     assert p.repo_name == "nethacker"                # NEW field, default from stage
 

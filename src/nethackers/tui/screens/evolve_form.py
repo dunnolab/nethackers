@@ -28,7 +28,7 @@ from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Label, Select, Static
 
-from nethackers.config import DEV_OWNER, DEV_TOKEN, load_stage
+from nethackers.config import OFFLINE_OWNER, OFFLINE_TOKEN, load_stage
 from nethackers.harness.discovery import CliInfo, ModelInfo, probe_operator
 from nethackers.harness.launch import EvolveParams, prepare_evolve
 from nethackers.harness.models import EFFORTS, MODELS
@@ -320,8 +320,8 @@ class EvolveForm(Vertical):
             model=self._model(),
             effort=self._effort(),
             hub=self._hub,
-            token=self._creds.access_token if self._creds else DEV_TOKEN,
-            owner=self._creds.login if self._creds else DEV_OWNER,
+            token=self._creds.access_token if self._creds else OFFLINE_TOKEN,
+            owner=self._creds.login if self._creds else OFFLINE_OWNER,
         )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

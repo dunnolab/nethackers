@@ -14,8 +14,12 @@ Bearer token, builds a commit-checker from it via ``git_factory`` (a real
 ``validate.register`` -- the clone-free identity+ownership+commit-exists
 ladder -- mapping its exceptions to HTTP status codes (``AuthError`` -> 401,
 ``WrongOwner`` -> 403, ``RegisterError`` -> 400, ``GitHubReadError`` -> 502).
-``GET /healthz`` is an unauthenticated liveness probe. The hub holds no
-GitHub secret: every GitHub read uses the caller's own token.
+``GET /healthz`` is an unauthenticated liveness probe that also reports the
+hub's ``auth`` mode (``"offline"``/``"github"``, from the ``AuthProvider``'s
+own ``.mode``) -- an additive field a client uses to show effective identity
+(``hubclient.client.HubClient.hub_mode``) instead of a bare 401 on register.
+The hub holds no GitHub secret: every GitHub read uses the caller's own
+token.
 
 **Catalog-injection scope:** the injected ``catalog`` drives only this
 module's own listing/resolution endpoints -- ``GET /objectives``,
@@ -142,7 +146,11 @@ def create_app(
 
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
-        return {"status": "ok"}
+        # `auth` is additive (offline-identity/effective-identity feature): an
+        # old client that only reads "status" is unaffected; a new client
+        # reads it to show the hub's effective identity instead of a bare 401
+        # on register with no hint why (see hubclient.client.HubClient.hub_mode).
+        return {"status": "ok", "auth": auth.mode}
 
     @app.get("/", response_class=HTMLResponse)
     def index() -> str:

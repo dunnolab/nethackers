@@ -1,13 +1,13 @@
 # tests/test_offline_flag.py
 """``--offline``: an explicit, always-honest no-publish gate that sits ON TOP
-OF (not instead of) the existing ``owner == DEV_OWNER`` backstop in
+OF (not instead of) the existing ``owner == OFFLINE_OWNER`` backstop in
 ``_publisher_for``. The brief's four unit tests below pin that gate directly;
 the CLI-level tests exercise ``evolve``'s ``--offline`` flag threading into
 ``EvolveParams`` (and from there into the loop's ``publish`` hook) plus the
 one-line dim stderr note printed when a run is anonymous and NOT told to go
 offline explicitly -- so a silent ``local-only`` outcome never happens."""
 from nethackers import cli
-from nethackers.config import DEV_OWNER
+from nethackers.config import OFFLINE_OWNER
 from nethackers.harness import launch
 from nethackers.harness.launch import EvolveParams, _publisher_for
 from nethackers.hubclient import credentials as cred
@@ -23,8 +23,8 @@ def test_publisher_none_when_offline():
 
 
 def test_publisher_none_for_anonymous_owner():
-    # anonymous (dev) still can't publish -- the backstop remains
-    assert _publisher_for(DEV_OWNER, "run1", repo_name="nethacker", offline=False) is None
+    # anonymous (offline) still can't publish -- the backstop remains
+    assert _publisher_for(OFFLINE_OWNER, "run1", repo_name="nethacker", offline=False) is None
 
 
 def test_publisher_live_when_online_and_real_owner():

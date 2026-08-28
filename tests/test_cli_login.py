@@ -155,10 +155,35 @@ def test_authed_token_raises_autherror_when_refresh_fails(monkeypatch, tmp_path)
 
 
 # --- whoami --------------------------------------------------------------
+#
+# whoami's identity line is EFFECTIVE identity -- who you are TO THE HUB
+# you're pointed at, not just your local login state (see the offline-hub
+# effective-identity spec: a real github login pointed at a local offline/
+# stub hub used to get a bare 401 on register with no hint why, and whoami
+# showed the login as if it would work there). `HubClient` is monkeypatched
+# throughout so no real HTTP/network call is ever made -- mirroring
+# test_cli_m2a.py's convention.
+
+
+def _fake_hub_client(mode: str | None = "github", *, unreachable: bool = False):
+    """A minimal ``HubClient`` stand-in reporting a fixed ``hub_mode()`` --
+    or raising ``HubUnreachable`` when ``unreachable`` -- for whoami's hub
+    round-trip. No real HubClient/network involved."""
+    class _Fake:
+        def __init__(self, base_url):
+            self.base_url = base_url
+
+        def hub_mode(self):
+            if unreachable:
+                from nethackers.hubclient.client import HubUnreachable
+                raise HubUnreachable(self.base_url)
+            return mode
+    return _Fake
 
 
 def test_whoami_reports_and_exits_nonzero_when_absent(monkeypatch, capsys):
     monkeypatch.setattr(cli, "_load_creds", lambda: None)
+    monkeypatch.setattr(cli, "HubClient", _fake_hub_client("github"))
 
     assert cli.main(["whoami"]) == 1
     assert "not logged in" in capsys.readouterr().err
@@ -169,6 +194,7 @@ def test_whoami_reports_and_exits_nonzero_when_absent(monkeypatch, capsys):
 
 def test_whoami_prints_login_to_stderr_by_default(monkeypatch, capsys):
     monkeypatch.setattr(cli, "_load_creds", lambda: cred.Credentials("castiel", "sekrit-tok"))
+    monkeypatch.setattr(cli, "HubClient", _fake_hub_client("github"))
 
     assert cli.main(["whoami"]) == 0
 
@@ -176,6 +202,58 @@ def test_whoami_prints_login_to_stderr_by_default(monkeypatch, capsys):
     assert "castiel" in captured.err
     assert captured.out == ""  # nothing on stdout unless -o json is asked for
     assert "sekrit-tok" not in captured.err  # the token itself never gets printed
+
+
+def test_whoami_offline_hub_not_logged_in_shows_offline_in_caps(monkeypatch, capsys):
+    # The motivating bug's other half: an offline (stub) hub only ever knows
+    # its one built-in identity -- whoami must say so plainly, in caps.
+    monkeypatch.setattr(cli, "_load_creds", lambda: None)
+    monkeypatch.setattr(cli, "HubClient", _fake_hub_client("offline"))
+
+    assert cli.main(["whoami"]) == 1
+
+    err = capsys.readouterr().err
+    assert "OFFLINE" in err
+    assert "@" not in err  # nobody is locally logged in -- no stray identity
+
+
+def test_whoami_offline_hub_logged_in_shows_mismatch_warning(monkeypatch, capsys):
+    # The actual motivating bug: @vkurenkov logged in locally, pointed at a
+    # local offline/stub hub -- whoami must surface that the hub can't
+    # accept that identity, not just echo the local login back.
+    monkeypatch.setattr(cli, "_load_creds", lambda: cred.Credentials("vkurenkov", "tok"))
+    monkeypatch.setattr(cli, "HubClient", _fake_hub_client("offline"))
+
+    assert cli.main(["whoami"]) == 0
+
+    err = capsys.readouterr().err
+    assert "@vkurenkov" in err
+    assert "OFFLINE" in err
+    assert "HUB_AUTH=github" in err  # the actionable fix, not just a bare warning
+    assert "tok" not in err  # the token itself never leaks
+
+
+def test_whoami_github_hub_logged_in_shows_plain_login(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_load_creds", lambda: cred.Credentials("vkurenkov", "tok"))
+    monkeypatch.setattr(cli, "HubClient", _fake_hub_client("github"))
+
+    assert cli.main(["whoami"]) == 0
+
+    err = capsys.readouterr().err
+    assert "@vkurenkov" in err
+    assert "OFFLINE" not in err
+
+
+def test_whoami_unreachable_hub_prints_a_clean_line_no_traceback(monkeypatch, capsys):
+    monkeypatch.setattr(cli, "_load_creds", lambda: None)
+    monkeypatch.setattr(cli, "HubClient", _fake_hub_client(unreachable=True))
+
+    rc = cli.main(["whoami"])
+
+    err = capsys.readouterr().err
+    assert "hub unreachable" in err
+    assert "Traceback" not in err
+    assert rc == 1
 
 
 _STAGE_ENV_KEYS = (
@@ -196,6 +274,7 @@ def test_whoami_respects_o_json(monkeypatch, tmp_path, capsys):
     for key in _STAGE_ENV_KEYS:
         monkeypatch.delenv(key, raising=False)
     monkeypatch.setattr(cli, "_load_creds", lambda: cred.Credentials("castiel", "sekrit-tok"))
+    monkeypatch.setattr(cli, "HubClient", _fake_hub_client("github"))
 
     assert cli.main(["whoami", "-o", "json"]) == 0
 
@@ -205,8 +284,40 @@ def test_whoami_respects_o_json(monkeypatch, tmp_path, capsys):
         "authenticated": True,
         "stage": Stage().name,
         "hub": Stage().hub_url,
+        "hub_auth": "github",
+        "effective": "@castiel",
     }
     assert "sekrit-tok" not in captured.out  # token never leaks into the JSON payload either
+
+
+def test_whoami_json_reports_offline_mismatch(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    for key in _STAGE_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(cli, "_load_creds", lambda: cred.Credentials("vkurenkov", "sekrit-tok"))
+    monkeypatch.setattr(cli, "HubClient", _fake_hub_client("offline"))
+
+    assert cli.main(["whoami", "-o", "json"]) == 0
+
+    data = json.loads(capsys.readouterr().out)
+    assert data["login"] == "vkurenkov"
+    assert data["hub_auth"] == "offline"
+    assert "OFFLINE" in data["effective"]
+    assert "sekrit-tok" not in data["effective"]
+
+
+def test_whoami_json_hub_auth_is_null_when_unreachable(monkeypatch, tmp_path, capsys):
+    monkeypatch.chdir(tmp_path)
+    for key in _STAGE_ENV_KEYS:
+        monkeypatch.delenv(key, raising=False)
+    monkeypatch.setattr(cli, "_load_creds", lambda: None)
+    monkeypatch.setattr(cli, "HubClient", _fake_hub_client(unreachable=True))
+
+    assert cli.main(["whoami", "-o", "json"]) == 1
+
+    data = json.loads(capsys.readouterr().out)
+    assert data["hub_auth"] is None
+    assert "unreachable" in data["effective"]
 
 
 # --- ambient stage indicator (the spec's HARD mitigation for silent
@@ -280,7 +391,7 @@ def test_evolve_defaults_owner_token_to_stored_creds_when_flags_absent(tmp_path,
     assert captured["token"] == "stored-tok"
 
 
-def test_evolve_falls_back_to_dev_when_no_creds_and_no_flags(tmp_path, monkeypatch):
+def test_evolve_falls_back_to_offline_when_no_creds_and_no_flags(tmp_path, monkeypatch):
     seed = _seed(tmp_path)
     captured = {}
 
@@ -298,8 +409,8 @@ def test_evolve_falls_back_to_dev_when_no_creds_and_no_flags(tmp_path, monkeypat
                    "--workdir", str(tmp_path / "w")])
 
     assert rc == 0
-    assert captured["owner"] == "dev"
-    assert captured["token"] == "dev-token"
+    assert captured["owner"] == "offline"
+    assert captured["token"] == "offline-token"
 
 
 def test_evolve_explicit_flags_win_over_stored_creds(tmp_path, monkeypatch):

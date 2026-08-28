@@ -11,8 +11,8 @@ from pathlib import Path
 # Client-side stub-identity fallbacks, used when no one is logged in (the
 # offline stub hub's identity). A protocol pair with compose's stub map, NOT
 # per-stage values -- see the spec's Core model / Identity display.
-DEV_TOKEN = "dev-token"
-DEV_OWNER = "dev"
+OFFLINE_TOKEN = "offline-token"
+OFFLINE_OWNER = "offline"
 
 
 @dataclass(frozen=True)

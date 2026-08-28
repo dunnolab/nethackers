@@ -14,7 +14,7 @@ import pytest
 
 from nethackers.hubclient import register as r
 from nethackers.hubclient.auth import AuthError
-from nethackers.hubclient.client import HubClient
+from nethackers.hubclient.client import HubClient, HubUnreachable
 from nethackers.hubclient.register import device_login
 
 
@@ -190,6 +190,44 @@ def test_client_register_body():
     assert sent["headers"]["Authorization"] == "Bearer t"
 
 
+# --- HubClient.hub_mode(): the hub's reported auth mode --------------------
+#
+# GET /healthz (unauthenticated) and surface its "auth" field so a caller can
+# show effective identity (offline stub vs real github hub) instead of a bare
+# 401 on register. None means "reachable, but no such field" (an old hub);
+# HubUnreachable -- never a raw httpx transport error -- means "couldn't
+# reach the hub at all", so callers can tell the two apart.
+
+
+def test_hub_mode_returns_the_reported_auth_field():
+    http = _FakeHttp(response={"status": "ok", "auth": "offline"})
+    client = HubClient("http://localhost:8000", http=http)
+
+    assert client.hub_mode() == "offline"
+    assert http.calls == [("GET", "http://localhost:8000/healthz", None)]
+
+
+def test_hub_mode_returns_none_when_the_field_is_absent():
+    # An old hub, from before this feature -- purely additive, no crash.
+    http = _FakeHttp(response={"status": "ok"})
+    client = HubClient("http://localhost:8000", http=http)
+
+    assert client.hub_mode() is None
+
+
+def test_hub_mode_raises_hub_unreachable_on_a_connection_error():
+    request = httpx.Request("GET", "http://localhost:8000/healthz")
+
+    class _DeadHttp:
+        def get(self, url, params=None):
+            raise httpx.ConnectError("Connection refused", request=request)
+
+    client = HubClient("http://localhost:8000", http=_DeadHttp())
+
+    with pytest.raises(HubUnreachable):
+        client.hub_mode()
+
+
 # --- register() self-healing via an injected TokenSource -------------------
 #
 # No real network call in any of these -- ``httpx.Request``/``Response`` are
@@ -227,25 +265,60 @@ def _register_response(status: int, payload: dict | None = None) -> httpx.Respon
 
 class _ScriptedHttp:
     """Answers one queued ``httpx.Response`` per ``post()`` call; records the
-    bearer token sent each time."""
+    bearer token sent each time. ``healthz`` is returned verbatim from any
+    ``get()`` (default: a ``"github"``-mode hub -- today's real-hub case, so
+    tests that don't care about the hub's mode see the ORIGINAL, un-hinted
+    AuthError wording) -- ``register()``'s 401 handling calls ``hub_mode()``
+    to decide whether to add the OFFLINE-hub hint."""
 
-    def __init__(self, responses: list[httpx.Response]):
+    def __init__(self, responses: list[httpx.Response], *, healthz: dict | None = None):
         self._responses = list(responses)
         self.tokens_used: list[str] = []
+        self._healthz = healthz if healthz is not None else {"auth": "github"}
 
     def post(self, url, *, json=None, headers=None):
         self.tokens_used.append(headers["Authorization"].removeprefix("Bearer "))
         return self._responses.pop(0)
 
+    def get(self, url, params=None):
+        return _FakeResponse(self._healthz)
+
 
 def test_register_without_token_source_uses_the_passed_token_with_no_retry():
     # Exactly today's behavior when no token_source is wired in: the passed
-    # token= is used as-is, and a 401 is NOT retried -- it just raises.
+    # token= is used as-is, and a 401 is NOT retried. It now raises a clear
+    # AuthError (never a bare httpx.HTTPStatusError with no hint) -- see
+    # test_register_without_token_source_401_against_offline_hub_gets_a_hint
+    # below for the motivating bug this closes.
     http = _ScriptedHttp([_register_response(401)])
     client = HubClient("https://hub", http=http)
-    with pytest.raises(httpx.HTTPStatusError):
+    with pytest.raises(AuthError):
         client.register(token="stale", reference={}, manifest={}, evidence={})
     assert http.tokens_used == ["stale"]
+
+
+def test_register_without_token_source_401_against_offline_hub_gets_a_hint():
+    # The actual motivating bug: a real GitHub login pointed at a local
+    # offline (stub) hub got a bare 401 with no clue why. Now the message
+    # names the cause and the fix.
+    http = _ScriptedHttp([_register_response(401)], healthz={"auth": "offline"})
+    client = HubClient("https://hub", http=http)
+    with pytest.raises(AuthError) as exc_info:
+        client.register(token="a-real-github-token", reference={}, manifest={}, evidence={})
+    message = str(exc_info.value)
+    assert "OFFLINE" in message
+    assert "HUB_AUTH=github" in message
+
+
+def test_register_without_token_source_401_with_unknown_hub_mode_also_gets_the_hint():
+    # An old hub (pre-dating this feature) reports no "auth" field at all --
+    # hub_mode() is None, and register() treats "unknown" the same as
+    # "offline" for this hint (the common case for the motivating bug: a
+    # local dev hub almost never confirms "github").
+    http = _ScriptedHttp([_register_response(401)], healthz={"status": "ok"})
+    client = HubClient("https://hub", http=http)
+    with pytest.raises(AuthError, match="OFFLINE"):
+        client.register(token="tok", reference={}, manifest={}, evidence={})
 
 
 def test_register_with_token_source_uses_current_token_on_success():
@@ -281,6 +354,21 @@ def test_register_raises_autherror_when_still_401_after_refresh():
         client.register(reference={}, manifest={}, evidence={})
     assert http.tokens_used == ["stale", "also-stale"]
     assert source.refresh_calls == 1  # exactly one retry, never a loop
+
+
+def test_register_retry_exhausted_against_offline_hub_gets_the_offline_hint():
+    # Even a genuinely logged-in user (a token_source is wired in) hits this:
+    # refreshing never helps against a stub hub that only ever knows its one
+    # built-in offline identity, so the message should say so rather than the
+    # generic "rejected... after refresh" (which reads like the token itself
+    # is the problem).
+    http = _ScriptedHttp(
+        [_register_response(401), _register_response(401)], healthz={"auth": "offline"})
+    source = _FakeTokenSource(current="stale", after_refresh="also-stale")
+    client = HubClient("https://hub", http=http, token_source=source)
+
+    with pytest.raises(AuthError, match="OFFLINE"):
+        client.register(reference={}, manifest={}, evidence={})
 
 
 def test_register_propagates_non_401_errors_without_touching_the_source():

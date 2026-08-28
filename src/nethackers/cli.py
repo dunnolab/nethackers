@@ -78,6 +78,7 @@ from nethackers.hubclient import credentials as _cred
 from nethackers.hubclient.auth import AuthError, TokenSource
 from nethackers.hubclient.client import (
     HubClient,
+    HubUnreachable,
     _short_digest,
     plain_frontier,
     render_board as plain_board,
@@ -221,19 +222,61 @@ def _stage_from_argv(argv: list[str] | None) -> Stage:
     return load_stage()
 
 
-def _where_line(stage: Stage, login: str | None) -> str:
-    """The ``whoami`` "where am I pointed" line: identity + stage + hub.
-    Unlike the ambient indicators (the ``_run`` startup dim line, the TUI
-    idbar), which stay silent for ``prod`` to avoid noise on every single
-    invocation, this always names the stage -- a user who explicitly asked
-    "whoami" wants the full picture, prod included."""
+# The offline-hub mismatch hint, shared verbatim between `_where_line`'s rich
+# line and `_effective_identity`'s plain (JSON) string -- a locally-logged-in
+# identity that a pointed-at offline/stub hub will never accept.
+_OFFLINE_MISMATCH_HINT = (
+    "OFFLINE hub — your login isn't accepted here (run the hub with HUB_AUTH=github)"
+)
+
+
+def _where_line(stage: Stage, login: str | None, hub_mode: str | None, *,
+                unreachable: bool = False) -> str:
+    """The ``whoami`` "where am I pointed" line: EFFECTIVE identity -- who
+    you are TO THE HUB you're pointed at, not just your local login state --
+    plus stage + hub. Unlike the ambient indicators (the ``_run`` startup dim
+    line, the TUI idbar), which stay silent for ``prod`` to avoid noise on
+    every single invocation, this always names the stage -- a user who
+    explicitly asked "whoami" wants the full picture, prod included.
+
+    ``hub_mode`` is the hub's reported ``/healthz`` ``auth`` field
+    (``"offline"``/``"github"``, or ``None`` when unknown -- an old hub
+    predating this feature, or a mode a future hub reports that this client
+    doesn't recognize -- treated the same as ``"github"``: no annotation,
+    today's plain login/guest line, since there's no positive evidence the
+    hub can't accept a real login). ``unreachable`` -- the hub couldn't be
+    reached at all -- takes precedence over everything else: there's no
+    identity to assert against a hub that isn't even there. This is the
+    motivating bug's fix: a real login pointed at a local offline/stub hub
+    used to get a bare 401 on register with no hint why, and whoami showed
+    the login as if it would work there."""
     host = stage.hub_url.split("//")[-1]
+    if unreachable:
+        return f"[red]hub unreachable at {stage.hub_url}[/] · stage:{stage.name}"
+    if hub_mode == "offline":
+        if login is None:
+            return f"[b]OFFLINE[/] · stage:{stage.name} · hub:{host}"
+        return (f"[b]@{login}[/]  [yellow]⚠ {_OFFLINE_MISMATCH_HINT}[/] · "
+                f"stage:{stage.name} · hub:{host}")
     if login is not None:
         return f"[b]@{login}[/] · stage:{stage.name} · hub:{host}"
     return (
         f"[yellow]not logged in (guest)[/] · stage:{stage.name} · hub:{host} "
         "— browse/offline only; `login` to publish"
     )
+
+
+def _effective_identity(login: str | None, hub_mode: str | None, *,
+                        unreachable: bool = False) -> str:
+    """Plain (no rich markup) counterpart of ``_where_line``'s identity
+    segment, for ``whoami --output json``'s ``"effective"`` field. Never
+    includes a token -- only the login/mode/reachability are ever plumbed in
+    here."""
+    if unreachable:
+        return "hub unreachable"
+    if hub_mode == "offline":
+        return "OFFLINE" if login is None else f"@{login} ({_OFFLINE_MISMATCH_HINT})"
+    return f"@{login}" if login is not None else "not logged in"
 
 
 def _build_parser(stage: Stage) -> argparse.ArgumentParser:
@@ -361,11 +404,12 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
     evolve.add_argument(
         "--token", default=None,
         help="Attribution token (default: stored `nethackers login` credentials, "
-        "else 'dev-token').",
+        "else 'offline-token').",
     )
     evolve.add_argument(
         "--owner", default=None,
-        help="Attribution owner (default: stored `nethackers login` credentials, else 'dev').",
+        help="Attribution owner (default: stored `nethackers login` credentials, "
+        "else 'offline').",
     )
     evolve.add_argument("--workdir", default=str(stage.data_root))
     evolve.add_argument(
@@ -515,15 +559,28 @@ def _run(argv: list[str] | None) -> int:
     if args.cmd == "whoami":
         c = _load_creds()
         ident = c.login if c is not None else None
+        # Effective identity is who you are TO THE HUB you're pointed at, not
+        # just your local login state -- fetch its reported auth mode so a
+        # mismatch (a real login against a local offline/stub hub) is
+        # surfaced here instead of as a bare 401 on register. Unreachable is
+        # handled locally (never a raw ConnectionError / traceback).
+        hub_mode: str | None = None
+        unreachable = False
+        try:
+            hub_mode = HubClient(args.hub).hub_mode()
+        except HubUnreachable:
+            unreachable = True
         if args.output == "json":
             print(json.dumps({
                 "login": ident,
                 "authenticated": c is not None,
                 "stage": stage.name,
                 "hub": stage.hub_url,
+                "hub_auth": hub_mode,
+                "effective": _effective_identity(ident, hub_mode, unreachable=unreachable),
             }))
         else:
-            err.print(_where_line(stage, ident))
+            err.print(_where_line(stage, ident, hub_mode, unreachable=unreachable))
         return 0 if c is not None else 1
 
     if args.cmd == "eval":
@@ -592,17 +649,17 @@ def _run(argv: list[str] | None) -> int:
             iterations=args.iterations,
             max_parallel_evals=args.max_parallel_evals,
             image=args.image, hub=args.hub, workdir=args.workdir, run_name=args.run_name,
-            token=args.token or (_creds.access_token if _creds else config.DEV_TOKEN),
-            owner=args.owner or (_creds.login if _creds else config.DEV_OWNER),
+            token=args.token or (_creds.access_token if _creds else config.OFFLINE_TOKEN),
+            owner=args.owner or (_creds.login if _creds else config.OFFLINE_OWNER),
             from_seed=args.from_seed, offline=args.offline,
             model=args.model, effort=args.effort, mutator_image=args.mutator_image,
         )
-        # An anonymous run is offline by necessity (the owner==DEV_OWNER backstop
-        # in _publisher_for), but --offline is the only case that says so up
-        # front -- without this note, a caller who forgot `nethackers login`
-        # would only find out several iterations in, as a silent per-iteration
-        # "local-only" outcome.
-        if not args.offline and params.owner == config.DEV_OWNER:
+        # An anonymous run is offline by necessity (the owner==OFFLINE_OWNER
+        # backstop in _publisher_for), but --offline is the only case that says
+        # so up front -- without this note, a caller who forgot `nethackers
+        # login` would only find out several iterations in, as a silent
+        # per-iteration "local-only" outcome.
+        if not args.offline and params.owner == config.OFFLINE_OWNER:
             err.print(
                 "[dim]not logged in — running offline "
                 "(publishing needs `nethackers login`)[/]"

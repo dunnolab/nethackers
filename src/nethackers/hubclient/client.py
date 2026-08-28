@@ -45,6 +45,25 @@ import httpx
 
 from nethackers.hubclient.auth import AuthError, TokenSource
 
+# The register-401 hint shown whenever the pointed-at hub isn't confirmed to
+# be a real github-backed one (a confirmed offline/stub hub, OR an old hub
+# that doesn't report a mode at all -- the common local-dev case): the
+# motivating bug was a real GitHub login getting a bare 401 from a local
+# stub hub with no clue why.
+_OFFLINE_401_HINT = (
+    "hub rejected your token — it's an OFFLINE (stub) hub and only accepts "
+    "the built-in offline identity; run the hub with HUB_AUTH=github for "
+    "real registration."
+)
+
+
+class HubUnreachable(Exception):
+    """Raised by ``HubClient.hub_mode`` when the hub can't be reached at all
+    (connection refused, timeout, DNS failure, ...) -- never a raw httpx
+    transport error. Distinguishes "can't reach the hub" from a reachable
+    hub whose response simply has no ``auth`` field (``hub_mode`` returns
+    ``None`` for that -- an older hub, from before this feature)."""
+
 
 class HubClient:
     """Thin HTTP wrapper over the hub API. Every method mirrors one
@@ -124,6 +143,39 @@ class HubClient:
         """``GET /solutions/{digest}/frontier``."""
         return self._get(f"/solutions/{digest}/frontier")
 
+    def hub_mode(self) -> str | None:
+        """``GET /healthz`` (unauthenticated) and return the pointed-at hub's
+        reported ``auth`` mode (``"offline"``/``"github"``), or ``None`` when
+        the hub is reachable but its response has no ``auth`` field -- an
+        older hub, from before this feature (a purely additive field: no
+        hub upgrade is forced). Raises ``HubUnreachable`` -- never a raw
+        httpx transport error -- when the hub can't be reached at all, so a
+        caller can tell "unreachable" apart from "reachable, mode unknown"."""
+        kwargs: dict[str, Any] = {}
+        if self._timeout is not None:
+            kwargs["timeout"] = self._timeout
+        try:
+            response = self._http.get(self._base + "/healthz", **kwargs)
+            response.raise_for_status()
+        except httpx.HTTPError as exc:
+            raise HubUnreachable(self._base) from exc
+        mode = response.json().get("auth")
+        return mode if isinstance(mode, str) else None
+
+    def _auth_error_for_401(self, fallback: str) -> AuthError:
+        """Build the ``AuthError`` for a register 401: the OFFLINE-hub hint
+        (``_OFFLINE_401_HINT``) when the pointed-at hub isn't confirmed
+        ``"github"`` mode -- covers both a confirmed offline/stub hub and an
+        old hub that reports no mode at all (``hub_mode`` raising
+        ``HubUnreachable`` at this diagnostic step counts as "not confirmed"
+        too, best-effort) -- else ``fallback``, unchanged from before this
+        hint existed."""
+        try:
+            mode = self.hub_mode()
+        except HubUnreachable:
+            mode = None
+        return AuthError(_OFFLINE_401_HINT) if mode != "github" else AuthError(fallback)
+
     def _post_register(self, token: str, reference: dict[str, Any],
                        manifest: dict[str, Any], evidence: dict[str, Any]) -> Any:
         kwargs: dict[str, Any] = {
@@ -154,12 +206,24 @@ class HubClient:
         ``token`` is used as-is only when this client has no
         ``token_source`` -- see the class docstring for the self-healing
         401 -> refresh -> retry path taken when one is set (``token`` is
-        then ignored)."""
+        then ignored).
+
+        A 401 always surfaces as a clear ``AuthError`` -- never a bare
+        ``httpx.HTTPStatusError`` with no hint why (the motivating bug: a
+        real GitHub login pointed at a local offline/stub hub, which only
+        ever knows its one built-in identity) -- whether or not a
+        ``token_source`` is set; see ``_auth_error_for_401``."""
         if self._token_source is None:
             if token is None:
                 raise ValueError(
                     "HubClient.register requires token= when no token_source is set")
-            return self._post_register(token, reference, manifest, evidence)
+            try:
+                return self._post_register(token, reference, manifest, evidence)
+            except httpx.HTTPStatusError as exc:
+                if exc.response.status_code != 401:
+                    raise
+                raise self._auth_error_for_401("hub rejected your token (401) — run "
+                                               "`nethackers login` to refresh it") from exc
         tok = self._token_source.current()
         try:
             return self._post_register(tok, reference, manifest, evidence)
@@ -171,7 +235,7 @@ class HubClient:
                 return self._post_register(tok, reference, manifest, evidence)
             except httpx.HTTPStatusError as exc2:
                 if exc2.response.status_code == 401:
-                    raise AuthError(
+                    raise self._auth_error_for_401(
                         "the hub rejected the token even after refresh") from exc2
                 raise
 

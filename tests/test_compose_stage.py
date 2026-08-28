@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from nethackers.config import DEV_OWNER, DEV_TOKEN, Stage
+from nethackers.config import OFFLINE_OWNER, OFFLINE_TOKEN, Stage
 
 
 def _read(name):
@@ -9,7 +9,7 @@ def _read(name):
 
 def test_override_stub_map_matches_constants():
     text = _read("compose.override.yaml")
-    assert f'"{DEV_TOKEN}":"{DEV_OWNER}"' in text.replace(" ", "")
+    assert f'"{OFFLINE_TOKEN}":"{OFFLINE_OWNER}"' in text.replace(" ", "")
 
 
 def test_github_overlay_default_client_id_matches_stage():

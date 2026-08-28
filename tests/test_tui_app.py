@@ -81,6 +81,91 @@ async def test_idbar_shows_stage_tag_for_non_prod_and_omits_it_for_prod(monkeypa
         assert "· stage:wt" in text  # a named stage gets its own idbar suffix
 
 
+# --- idbar effective identity: who you are TO THE HUB you're pointed at,
+# not just your local login state (mirrors cli.py's `whoami`). `HubClient` is
+# monkeypatched on the `tui.app` module so the offline/github branches are
+# deterministic; the unreachable case reuses `_DEAD_HUB` for real, like every
+# other idbar test in this file. The fetch runs on a background worker (the
+# same off-thread + call_from_thread pattern `HomeView._fetch_programs`
+# uses) so it never blocks the dashboard's first paint.
+
+
+def _fake_hub_client_cls(mode: str):
+    class _Fake:
+        def __init__(self, base_url, *, timeout=None):
+            pass
+
+        def hub_mode(self):
+            return mode
+    return _Fake
+
+
+async def test_idbar_shows_offline_in_caps_when_logged_out_against_an_offline_hub(monkeypatch):
+    from nethackers.tui import app as app_module
+    monkeypatch.setattr(app_module, "HubClient", _fake_hub_client_cls("offline"))
+
+    app = NetHackersApp(hub=_DEAD_HUB, creds=None)
+    async with app.run_test():
+        for _ in range(200):
+            if app._hub_mode is not None:
+                break
+            await asyncio.sleep(0.01)
+        text = str(app.query_one(".idbar").render())
+        assert "OFFLINE" in text
+
+
+async def test_idbar_shows_mismatch_warning_when_logged_in_against_an_offline_hub(monkeypatch):
+    # The motivating bug: @vkurenkov logged in locally, pointed at a local
+    # offline/stub hub -- the idbar must say the hub won't accept it, not
+    # just echo the local login back as if it would work there.
+    from nethackers.tui import app as app_module
+    monkeypatch.setattr(app_module, "HubClient", _fake_hub_client_cls("offline"))
+
+    app = NetHackersApp(hub=_DEAD_HUB, creds=Credentials("vkurenkov", "sekrit-tok"))
+    async with app.run_test():
+        for _ in range(200):
+            if app._hub_mode is not None:
+                break
+            await asyncio.sleep(0.01)
+        text = str(app.query_one(".idbar").render())
+        assert "@vkurenkov" in text
+        assert "OFFLINE" in text
+        assert "sekrit-tok" not in text  # the token itself never leaks
+
+
+async def test_idbar_stays_plain_for_a_github_hub(monkeypatch):
+    from nethackers.tui import app as app_module
+    monkeypatch.setattr(app_module, "HubClient", _fake_hub_client_cls("github"))
+
+    app = NetHackersApp(hub=_DEAD_HUB, creds=Credentials("vkurenkov", "t"))
+    async with app.run_test():
+        for _ in range(200):
+            if app._hub_mode is not None:
+                break
+            await asyncio.sleep(0.01)
+        text = str(app.query_one(".idbar").render())
+        assert "@vkurenkov" in text
+        assert "OFFLINE" not in text
+
+
+async def test_idbar_marks_an_unreachable_hub_without_losing_the_baseline_identity():
+    # A genuinely dead hub: the async fetch must never crash the app, and the
+    # eventual unreachable marker is APPENDED, never replacing the baseline
+    # "@login"/"guest" text -- so it can't race the earlier, baseline-only
+    # idbar assertions in this same file (test_shell_shows_identity_and_...,
+    # test_shell_guest_when_logged_out) into flakiness, whichever finishes
+    # first.
+    app = NetHackersApp(hub=_DEAD_HUB, creds=Credentials("vkurenkov", "t"))
+    async with app.run_test():
+        for _ in range(200):
+            if app._hub_unreachable:
+                break
+            await asyncio.sleep(0.01)
+        text = str(app.query_one(".idbar").render())
+        assert "@vkurenkov" in text
+        assert "unreachable" in text
+
+
 async def test_escape_leaves_a_focused_field_so_q_can_quit():
     """A focused text ``Input`` swallows letters, so the advertised ``q`` quit
     is dead while you're typing in one of the Evolve form's text fields (e.g.

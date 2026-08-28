@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from nethackers.config import DEV_OWNER, DEV_TOKEN, Stage, load_stage
+from nethackers.config import OFFLINE_OWNER, OFFLINE_TOKEN, Stage, load_stage
 
 
 def test_stage_defaults_are_prod():
@@ -18,9 +18,9 @@ def test_stage_defaults_are_prod():
     assert s.github_client_id == "Iv23liWooDi2WlkrDAOw"
 
 
-def test_dev_identity_constants():
-    assert DEV_TOKEN == "dev-token"
-    assert DEV_OWNER == "dev"
+def test_offline_identity_constants():
+    assert OFFLINE_TOKEN == "offline-token"
+    assert OFFLINE_OWNER == "offline"
 
 
 def test_load_stage_no_inputs_equals_prod_defaults(tmp_path, monkeypatch):

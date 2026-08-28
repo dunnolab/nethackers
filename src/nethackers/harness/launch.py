@@ -67,8 +67,8 @@ class EvolveParams:
     # module load.
     image: str = field(default_factory=lambda: load_stage().arena_image)
     hub: str = field(default_factory=lambda: load_stage().hub_url)
-    token: str = field(default_factory=lambda: config.DEV_TOKEN)
-    owner: str = field(default_factory=lambda: config.DEV_OWNER)
+    token: str = field(default_factory=lambda: config.OFFLINE_TOKEN)
+    owner: str = field(default_factory=lambda: config.OFFLINE_OWNER)
     workdir: str = field(default_factory=_default_workdir)
     run_name: str | None = None
     from_seed: bool = False  # skip SELECT; cold-start from `seed` directly
@@ -98,12 +98,12 @@ def _publisher_for(
     branch, so parallel runs never race on the same fast-forward. Returns
     ``None`` (loop keeps the win as a local elite, unpublished) when
     publishing can't work: an explicit ``--offline`` (checked first, wins
-    regardless of identity), no real owner (dev/test -- the backstop, kept
+    regardless of identity), no real owner (offline/test -- the backstop, kept
     for when a caller forgets to gate offline itself), or ``gh`` unavailable
     / not authed (a ``PublishError`` at push time)."""
     if offline:
         return None
-    if not owner or owner == config.DEV_OWNER:
+    if not owner or owner == config.OFFLINE_OWNER:
         return None
     from nethackers.hubclient.publish import PublishError, ensure_repo, publish_solution
 
