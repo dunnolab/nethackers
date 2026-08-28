@@ -28,6 +28,7 @@ import json
 import re
 import subprocess
 import tempfile
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 
@@ -36,6 +37,9 @@ from nethackers.contracts.models import Evidence, Objective, ObjectiveSpec, Traj
 _ARENA_EPISODE = re.compile(
     r"episode (\d+)/(\d+) \((.*?)\): progress=([0-9.]+) (\S+) turns=(\d+) depth=(\d+)"
 )
+
+_STDERR_TAIL_LINES = 40  # a docker/arena failure is a handful of lines; keep enough
+                         # for context, bounded so a chatty run can't grow memory
 
 
 def _stream_episodes(
@@ -47,7 +51,9 @@ def _stream_episodes(
     non-zero exit; unparseable lines (warnings, the 'running N' banner) are
     ignored, so the seed comes from ``spec.batch`` order, not the text."""
     proc = popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True, bufsize=1)
+    tail: deque[str] = deque(maxlen=_STDERR_TAIL_LINES)
     for line in proc.stderr:
+        tail.append(line)
         m = _ARENA_EPISODE.search(line)
         if m is None:
             continue
@@ -67,7 +73,7 @@ def _stream_episodes(
         )
     returncode = proc.wait()
     if returncode != 0:
-        raise subprocess.CalledProcessError(returncode, cmd)
+        raise subprocess.CalledProcessError(returncode, cmd, stderr="".join(tail))
 
 
 def _solution_digest(solution_path: Path) -> str:
