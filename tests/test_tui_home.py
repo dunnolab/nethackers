@@ -22,7 +22,6 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Static
 
 from nethackers.tui.art import NETHACKERS_BANNER
-from nethackers.tui.screens import home as home_mod
 from nethackers.tui.screens.home import (
     HomeView,
     _identity_text,
@@ -114,7 +113,7 @@ class _Host(App):
 
 async def test_home_view_logged_out_renders_banner_and_login_button(monkeypatch, tmp_path):
     # keep the standing read hermetic (never touch the user's real runs dir)
-    monkeypatch.setattr(home_mod, "_RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setenv("NETHACKERS_DATA_ROOT", str(tmp_path))
     host = _Host(None)
     async with host.run_test() as pilot:
         await pilot.pause()
@@ -129,7 +128,7 @@ async def test_home_view_logged_out_renders_banner_and_login_button(monkeypatch,
 
 
 async def test_home_view_logged_in_renders_status_line(monkeypatch, tmp_path):
-    monkeypatch.setattr(home_mod, "_RUNS_DIR", tmp_path / "runs")
+    monkeypatch.setenv("NETHACKERS_DATA_ROOT", str(tmp_path))
     host = _Host("castiel")
     async with host.run_test() as pilot:
         await pilot.pause()

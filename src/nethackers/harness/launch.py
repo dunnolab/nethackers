@@ -13,6 +13,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from nethackers import config
+from nethackers.config import load_stage
 from nethackers.harness import runlog
 from nethackers.harness.container_operator import ContainerOperator
 from nethackers.harness.loop import run_loop
@@ -49,7 +51,7 @@ def _point_latest(runs_dir: Path, rid: str) -> None:
 
 
 def _default_workdir() -> str:
-    return str(Path.home() / ".nethackers" / "evolve")
+    return str(load_stage().data_root)
 
 
 @dataclass
@@ -59,16 +61,22 @@ class EvolveParams:
     operator: str = "claude"
     iterations: int = 1
     max_parallel_evals: int = 8
-    image: str = "nethackers/arena:dev"
-    hub: str = "http://localhost:8000"
-    token: str = "dev-token"
-    owner: str = "dev"
+    # All of the below are late-bound to the active Stage via default_factory
+    # -- never read at import time -- so a test's env/monkeypatch (or a future
+    # .env.stack) is picked up on every fresh EvolveParams(), not frozen at
+    # module load.
+    image: str = field(default_factory=lambda: load_stage().arena_image)
+    hub: str = field(default_factory=lambda: load_stage().hub_url)
+    token: str = field(default_factory=lambda: config.OFFLINE_TOKEN)
+    owner: str = field(default_factory=lambda: config.OFFLINE_OWNER)
     workdir: str = field(default_factory=_default_workdir)
     run_name: str | None = None
     from_seed: bool = False  # skip SELECT; cold-start from `seed` directly
+    offline: bool = False  # explicit no-publish/no-register gate (hub is still read for seeding)
     model: str | None = None   # pin the operator's model (None = harness default)
     effort: str | None = None  # reasoning effort level (None = harness default)
-    mutator_image: str = "nethackers/mutator:latest"  # image the mutator always runs in
+    mutator_image: str = field(default_factory=lambda: load_stage().mutator_image)
+    repo_name: str = field(default_factory=lambda: load_stage().repo_name)  # <owner>/<repo_name>
 
 
 @dataclass
@@ -80,7 +88,7 @@ class EvolvePlan:
 
 
 def _publisher_for(
-    owner: str, run_id: str, repo_name: str = "nethacker"
+    owner: str, run_id: str, repo_name: str = "nethacker", *, offline: bool = False
 ) -> Callable[[Path], dict[str, str] | None] | None:
     """A ``publish`` hook for ``run_loop``: push a winning worktree to the
     owner's public ``<owner>/<repo_name>`` repo via ``gh`` and return its
@@ -89,9 +97,13 @@ def _publisher_for(
     (``evo-harness-<HARNESS_VERSION>/<run_id>``), not the repo's default
     branch, so parallel runs never race on the same fast-forward. Returns
     ``None`` (loop keeps the win as a local elite, unpublished) when
-    publishing can't work: no real owner (dev/test), or ``gh`` unavailable /
-    not authed (a ``PublishError`` at push time)."""
-    if not owner or owner == "dev":
+    publishing can't work: an explicit ``--offline`` (checked first, wins
+    regardless of identity), no real owner (offline/test -- the backstop, kept
+    for when a caller forgets to gate offline itself), or ``gh`` unavailable
+    / not authed (a ``PublishError`` at push time)."""
+    if offline:
+        return None
+    if not owner or owner == config.OFFLINE_OWNER:
         return None
     from nethackers.hubclient.publish import PublishError, ensure_repo, publish_solution
 
@@ -182,7 +194,8 @@ def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
             on_state=callbacks["on_state"], on_log=_on_log, workdir=run_dir / "work",
             on_iteration=lambda it, res: runlog.append_metric(
                 run_dir, runlog.metric_record(it, res)),
-            publish=_publisher_for(params.owner, rid),
+            publish=_publisher_for(params.owner, rid, repo_name=params.repo_name,
+                                    offline=params.offline),
         ) or []
 
     return EvolvePlan(cfg=cfg, run=run, run_dir=run_dir, rid=rid)

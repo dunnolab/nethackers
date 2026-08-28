@@ -23,6 +23,13 @@ class AuthError(Exception):
 class AuthProvider(Protocol):
     """Resolves a presented token to the caller's login."""
 
+    #: This provider's auth mode, reported verbatim by ``GET /healthz``'s
+    #: ``auth`` field (an additive field -- see api.py's module docstring)
+    #: so a client pointed at a local hub can tell an offline stub hub
+    #: (``"offline"``) from a real GitHub-backed one (``"github"``) instead
+    #: of discovering the mismatch as a bare 401 on register.
+    mode: str
+
     def resolve(self, token: str) -> str:
         """Return the login for ``token``, or raise ``AuthError``."""
 
@@ -33,6 +40,8 @@ class LocalStubAuth:
     No network. Drives local/API tests: construct with the tokens a test
     needs (e.g. ``{"tok-sam": "sam"}``) and resolve against them.
     """
+
+    mode = "offline"
 
     def __init__(self, identities: dict[str, str]):
         self._identities = identities
@@ -53,6 +62,8 @@ class GitHubAppAuth:
     ``httpx`` module and is injectable so tests can supply a fake with a
     ``.get(url, headers=...)`` method instead of hitting the network.
     """
+
+    mode = "github"
 
     def __init__(self, client_id: str, *, http: Any = httpx):
         self.client_id = client_id
