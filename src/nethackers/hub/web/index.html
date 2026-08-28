@@ -1277,20 +1277,25 @@ function renderRecognition(){
       <div class="pa"><b>${p.records}</b> current frontier${p.records===1?'':'s'} above AutoAscend &middot; ${p.roles.map(r=>esc(ROLE_NAMES[r]||r)).join(', ')}<br>
       combined lift <b>+${(p.total_lift*100).toFixed(1)} pp</b></div></div>`).join("")
       :`<div class="emptyblock">No participant is above AutoAscend yet.</div>`;
+    holders.querySelectorAll(".personcard").forEach(card=>{
+      const open=()=>openHacker(card.dataset.owner);
+      card.addEventListener("click",open);
+      card.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } });
+    });
   }
   if(breakthroughs){
     const people=WALL_OF_FAME.breakthroughs||[];
-    breakthroughs.innerHTML=people.length?people.map(p=>`<div class="personcard" data-owner="${esc(p.owner)}" tabindex="0" role="button" aria-label="Open contributions by @${esc(p.owner)}">
+    breakthroughs.innerHTML=people.length?people.map((p,i)=>`<div class="personcard" data-breakthrough="${i}" tabindex="0" role="button" aria-label="Open breakthrough submission by @${esc(p.owner)}">
       <div class="ph">@${esc(p.owner)}</div>
       <div class="pa"><b>+${(p.gain*100).toFixed(1)} pp</b> one-step frontier advance<br>
       ${esc(p.identity)} &middot; ${esc(fmtDate(p.at))}</div></div>`).join("")
       :`<div class="emptyblock">No breakthroughs above AutoAscend yet.</div>`;
+    breakthroughs.querySelectorAll(".personcard").forEach(card=>{
+      const open=()=>openBreakthrough(people[Number(card.dataset.breakthrough)]);
+      card.addEventListener("click",open);
+      card.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } });
+    });
   }
-  document.querySelectorAll("#people .personcard").forEach(card=>{
-    const open=()=>openHacker(card.dataset.owner);
-    card.addEventListener("click",open);
-    card.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } });
-  });
 }
 
 /* ===================== identity + hacker popups ===================== */
@@ -1364,6 +1369,37 @@ function solutionCard(s){
     </div></div>`;
 }
 let popupRequest=0;
+async function openBreakthrough(event){
+  const request=++popupRequest;
+  $("#mTitle").textContent=`${event.identity} - breakthrough submission`;
+  $("#mBody").innerHTML=`<div class="popupstatus">Loading the exact registered submission&hellip;</div>`;
+  showModal();
+  try{
+    const cached=SOLUTION_BY_DIGEST[event.solution_digest];
+    const solution=cached||await jget("/solutions/"+encodeURIComponent(event.solution_digest));
+    const frontier=await jget("/solutions/"+encodeURIComponent(event.solution_digest)+"/frontier");
+    if(request!==popupRequest) return;
+    const roles=roleKeys(frontier), episodes=frontier.reduce((sum,x)=>sum+(x.episodes||0),0);
+    const entry=[solution.root&&solution.root!=="."?solution.root:"",solution.entrypoint||""].filter(Boolean).join("/")||"—";
+    $("#mBody").innerHTML=`<div class="kv">
+      <span class="k">hacker</span><span class="v">@${esc(event.owner)}</span>
+      <span class="k">source</span><span class="v">${sourceLink(solution)}</span>
+      <span class="k">registered</span><span class="v">${esc(fmtDate(solution.registered_at||event.at))}</span>
+      <span class="k">breakthrough identity</span><span class="v">${esc(event.identity)}</span>
+      <span class="k">frontier before</span><span class="v">${(event.previous*100).toFixed(1)}%</span>
+      <span class="k">submission result</span><span class="v">${(event.score*100).toFixed(1)}%</span>
+      <span class="k">frontier advance</span><span class="v dpos">+${(event.gain*100).toFixed(1)} pp</span>
+      <span class="k">roles evaluated</span><span class="v">${roles.length?roles.map(r=>esc(ROLE_NAMES[r]||r)).join(", "):"—"}</span>
+      <span class="k">identities evaluated</span><span class="v">${frontier.length} of 73</span>
+      <span class="k">evaluation episodes</span><span class="v">${episodes}</span>
+      <span class="k">entrypoint</span><span class="v">${esc(entry)}</span>
+      <span class="k">tier</span><span class="v">self-reported*</span>
+    </div>
+    <div class="clickhint">This submission moved ${esc(event.identity)} from ${(event.previous*100).toFixed(1)}% to ${(event.score*100).toFixed(1)}%, measured against the community frontier that existed when it was registered.</div>`;
+  }catch(e){
+    if(request===popupRequest) $("#mBody").innerHTML=`<div class="popupstatus">Could not load this breakthrough submission.</div>`;
+  }
+}
 async function openHacker(owner){
   const request=++popupRequest;
   $("#mTitle").textContent=`@${owner} - contributions`;

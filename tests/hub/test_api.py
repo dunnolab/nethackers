@@ -132,6 +132,8 @@ def test_site_uses_identity_boards_and_concrete_contributor_recognition(tmp_path
     assert 'class="frontierrow"' in body
     assert "async function openIdentity(identity)" in body
     assert "async function openHacker(owner)" in body
+    assert "async function openBreakthrough(event)" in body
+    assert 'data-breakthrough="${i}"' in body
     for detail in (
         "same canonical seed batch",
         "registered solutions",
