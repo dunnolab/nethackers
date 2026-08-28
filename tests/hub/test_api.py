@@ -168,6 +168,17 @@ def test_stats_reads_empty(tmp_path: Any) -> None:
     }
 
 
+def test_competition_status_reads_empty(tmp_path: Any) -> None:
+    client, _store = _app(tmp_path)
+    response = client.get("/competition-status")
+    assert response.status_code == 200
+    assert response.json() == {
+        "community_frontier": 0.0,
+        "frontier_gain_7d": 0.0,
+        "identities_improved_7d": 0,
+    }
+
+
 def test_register_link_ok(tmp_path: Any) -> None:
     # A valid link from its owner -> 200; the repo@commit link is stored.
     client, store = _app(tmp_path)

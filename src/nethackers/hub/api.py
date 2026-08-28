@@ -68,6 +68,7 @@ from nethackers.hub.views.boards import (
     firsts_board,
     resolve_scope,
 )
+from nethackers.hub.views.competition_status import read_competition_status
 from nethackers.hub.views.elites import read_elites
 from nethackers.hub.views.hackers import hacker_board
 from nethackers.hub.views.progress import read_progress
@@ -197,6 +198,10 @@ def create_app(
     @app.get("/baseline")
     def baseline() -> dict[str, Any]:
         return read_baseline(store)
+
+    @app.get("/competition-status")
+    def competition_status(tier: str = "self-reported") -> dict[str, Any]:
+        return read_competition_status(store, tier=tier)
 
     @app.get("/progress")
     def progress(objective: str | None = None, tier: str = "self-reported") -> dict[str, Any]:

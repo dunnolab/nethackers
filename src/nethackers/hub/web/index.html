@@ -198,13 +198,16 @@ table.grid caption{ text-align:left; background:var(--indigo); color:#fff; font-
 .more:hover{ background:#fff3b0; color:var(--red); }
 
 /* COMPETITION STATUS + RECOGNITION ---------------------------------------- */
-.statusgrid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:8px; margin:.8rem 0 1rem; }
-.statuscard{ border:1px solid var(--silver-lo); background:#f7f7f2; padding:9px 11px; min-height:70px; }
+.statusgrid{ display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:8px; margin:.8rem 0 1rem; }
+.statuscard{ grid-column:span 3; border:1px solid var(--silver-lo); background:#f7f7f2; padding:9px 11px; min-height:70px; }
 .statuscard .sv{ display:block; color:var(--indigo); font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace;
   font-size:1.3rem; font-weight:700; font-variant-numeric:tabular-nums; }
 .statuscard .sl{ display:block; color:#62626a; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace;
   font-size:.7rem; line-height:1.3; margin-top:3px; }
+.statuscard.pulse{ grid-column:span 4; }
 .statuscard.wide{ grid-column:1/-1; }
+@media (max-width:640px){ .statuscard,.statuscard.pulse{ grid-column:span 6; } }
+@media (max-width:430px){ .statuscard,.statuscard.pulse{ grid-column:1/-1; } }
 .recognitiongrid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(245px,1fr)); gap:8px; }
 .personcard,.activitycard{ border:1px solid var(--silver-lo); background:#f7f7f2; padding:8px 10px; }
 .personcard{ cursor:pointer; }
@@ -850,6 +853,7 @@ __)/\_//(\/(/\)/\//\/\|_)__</pre>
    Where an endpoint does not carry a field the render wants, we render "—" /
    omit it -- never a fabricated value (honest standings is the whole point). */
 let STATS=null;                      // live platform totals from /stats
+let COMPETITION_STATUS=null;          // collective frontier and rolling 7-day movement
 let RECENT_SOLUTIONS=[];             // newest registered work from /search
 let SOLUTION_BY_DIGEST={};            // metadata cache for identity-board source/date cells
 let BASELINE={owner:"autoascend",per_identity:{},overall:null};  // raw /baseline
@@ -1153,30 +1157,38 @@ function odo(el,n,digits){ if(!el) return; el.innerHTML=String(n).padStart(digit
 let curTier="self-reported";
 const EMPTY_VERIFIED='No verified programs yet &mdash; verification (M2b) is not live. Everything above the floor is self-reported.';
 function allIdentityIds(){ return Object.keys(ROLE_VARS).flatMap(r=>ROLE_VARS[r].map(v=>r+"-"+v)); }
-function statusCard(value,label,wide=false){ return `<div class="statuscard ${wide?'wide':''}"><span class="sv">${value}</span><span class="sl">${label}</span></div>`; }
+function statusCard(value,label,kind=""){ return `<div class="statuscard ${kind}"><span class="sv">${value}</span><span class="sl">${label}</span></div>`; }
 function renderStatus(){
   const el=$("#statusgrid"); if(!el) return;
   const per=(BASELINE&&BASELINE.per_identity)||{}, entries=Object.entries(UNIVERSE);
   const explored=entries.length;
-  const above=entries.filter(([id,x])=>per[id]&&per[id].progression!=null&&x.v-per[id].progression>0.0005).length;
-  const roles=new Set(entries.map(([id])=>id.split("-")[0]));
   let best=null;
   for(const [id,x] of entries){ const aa=per[id]&&per[id].progression;
     if(aa!=null&&(!best||x.v-aa>best.delta)) best={id,owner:x.o,delta:x.v-aa}; }
+  const fallbackFrontier=allIdentityIds().reduce((sum,id)=>{
+    const aa=per[id]&&per[id].progression!=null?per[id].progression:0;
+    const community=UNIVERSE[id]&&UNIVERSE[id].v!=null?UNIVERSE[id].v:0;
+    return sum+Math.max(aa,community);
+  },0)/73;
+  const frontier=COMPETITION_STATUS&&COMPETITION_STATUS.community_frontier!=null
+    ?COMPETITION_STATUS.community_frontier:fallbackFrontier;
+  const gain=COMPETITION_STATUS&&COMPETITION_STATUS.frontier_gain_7d;
+  const moved=COMPETITION_STATUS&&COMPETITION_STATUS.identities_improved_7d;
   const bestText=best?`+${(best.delta*100).toFixed(1)}%`:'&mdash;';
   const bestLabel=best?`largest lift vs AutoAscend &middot; ${esc(best.id)} by @${esc(best.owner)}`:'largest lift vs AutoAscend';
   el.innerHTML=statusCard(String(curTier==="self-reported"&&STATS?STATS.ascensions:0),curTier==="verified"?"verified ascensions":"reported ascensions")
     +statusCard(String((STATS&&STATS.programs)||0),"registered programs")
     +statusCard(String((STATS&&STATS.hackers)||0),"contributing hackers")
     +statusCard(`${explored}/73`,"identities evaluated by the community")
-    +statusCard(`${above}/73`,"identities currently above AutoAscend")
-    +statusCard(`${roles.size}/13`,"roles with evaluated identities")
-    +statusCard(bestText,bestLabel,true);
+    +statusCard(`${(frontier*100).toFixed(1)}%`,"community frontier &middot; all 73 identities","pulse")
+    +statusCard(gain!=null?`${gain>=0?'+':''}${(gain*100).toFixed(1)} pp`:'&mdash;',"frontier gain &middot; last 7 days","pulse")
+    +statusCard(moved!=null?String(moved):'&mdash;',"identities improved &middot; last 7 days","pulse")
+    +statusCard(bestText,bestLabel,"wide");
 }
 document.querySelectorAll("[data-tier]").forEach(b=>b.addEventListener("click",async()=>{
   curTier=b.dataset.tier;
   document.querySelectorAll("[data-tier]").forEach(x=>x.setAttribute("aria-pressed", x.dataset.tier===curTier?"true":"false"));
-  await loadUniverse();
+  await Promise.all([loadUniverse(),loadCompetitionStatus()]);
   renderStatus(); renderRecognition(); renderFrontier(); }));
 
 /* ===================== frontier heatmap ===================== */
@@ -1426,6 +1438,11 @@ async function loadRecent(){
   }catch(e){ RECENT_SOLUTIONS=[]; SOLUTION_BY_DIGEST={}; }
 }
 
+async function loadCompetitionStatus(){
+  try{ COMPETITION_STATUS=await jget(`/competition-status?tier=${encodeURIComponent(curTier)}`); }
+  catch(e){ COMPETITION_STATUS=null; }
+}
+
 /* Bootstrap: fetch everything, adapt into the render state, then do the first render.
    Every fetch is guarded -- any failure keeps the page's friendly empty/error
    states; nothing ever throws to the console. */
@@ -1437,7 +1454,7 @@ async function boot(){
   const baseP = jget("/baseline").then(b=>{ BASELINE = b; }).catch(()=>{ BASELINE = {owner:"autoascend", per_identity:{}, overall:null}; });
   const objP  = jget("/objectives").then(o=>{ OBJ_EP = Object.fromEntries(o.map(x=>[x.name, x.episodes])); }).catch(()=>{ OBJ_EP = {}; });
   await Promise.all([statsP,baseP,objP,loadRecent()]);
-  await loadUniverse();
+  await Promise.all([loadUniverse(),loadCompetitionStatus()]);
   renderStatus(); renderFrontier(); renderRecognition();
 }
 boot();

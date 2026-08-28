@@ -89,6 +89,7 @@ function router(path) {
   const params = new URLSearchParams(query || "");
   const obj = params.get("objective");
   if (route === "/stats") return { programs: 2, hackers: 2, ascensions: 0, last_registered_at: "2026-08-27T09:30:00+00:00" };
+  if (route === "/competition-status") return { community_frontier: 0.081, frontier_gain_7d: 0.006, identities_improved_7d: 4 };
   if (route === "/baseline") return BASELINE;
   if (route === "/objectives") return IDENTITIES.map((n) => ({ name: n, episodes: 15 }));
   if (route === "/elites") return ELITES_ALL;
