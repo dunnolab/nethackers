@@ -45,7 +45,6 @@ from __future__ import annotations
 
 from nethackers.arena.progress import ACHIEVEMENTS
 from nethackers.contracts.models import Atom, ResultStatus
-from nethackers.hub.objectives import CATALOG
 from nethackers.hub.store import Store
 from nethackers.hub.views.attainment import update_attainment
 from nethackers.hub.views.elites import recompute_elites
@@ -72,16 +71,11 @@ _EVALUATOR_IMAGE = "nethackers/arena@sha256:" + "f" * 64
 
 def load_fixtures(store: Store, *, now: str = "2026-01-01T00:00:00Z") -> None:
     """Populate ``store`` with the fixture dataset described in this
-    module's docstring. Every underlying write (``objectives_upsert``,
-    ``upsert_solution``, ``add_lineage``, ``insert_atoms``,
+    module's docstring. Every underlying write (``upsert_solution``,
+    ``add_lineage``, ``insert_atoms``,
     ``update_attainment``, ``recompute_elites``) is already idempotent, so
     re-running this against the same store is safe. Pure side effect on
     ``store`` -- importing this module does nothing."""
-    objective_a = CATALOG[IDENTITY_A]
-    objective_b = CATALOG[IDENTITY_B]
-    for spec in (objective_a, objective_b):
-        store.objectives_upsert(spec)
-
     for digest in (ALPHA, BETA, GAMMA):
         owner = _OWNER_BY_DIGEST[digest]
         store.upsert_solution(

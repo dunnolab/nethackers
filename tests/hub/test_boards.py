@@ -72,12 +72,10 @@ def _new_store(tmp_path):
     return store
 
 
-def _seed(store: Store, atoms: list[Atom], specs: list[ObjectiveSpec]) -> None:
-    """Upsert each catalog ``spec`` (provenance only -- atoms no longer FK to
-    ``objectives``, Task A3) and one ``solutions`` row per distinct solution
-    (``insert_atoms``' remaining FK) -- then insert the atoms themselves."""
-    for spec in specs:
-        store.objectives_upsert(spec)
+def _seed(store: Store, atoms: list[Atom]) -> None:
+    """Register one ``solutions`` row per distinct solution (``insert_atoms``'
+    remaining FK -- atoms no longer FK to ``objectives``, Task A3), then insert
+    the atoms themselves."""
     for digest in {atom.solution_digest for atom in atoms}:
         store.upsert_solution(
             digest,
@@ -105,7 +103,7 @@ def test_asc_median_mean_ranks_by_ascensions_then_median_then_mean_not_by_mean_a
         _atom(solution_digest="sha256:b", seed=0, ascended=False, progression=0.9),
         _atom(solution_digest="sha256:b", seed=1, ascended=False, progression=0.9),
     ]
-    _seed(store, atoms, [spec])
+    _seed(store, atoms)
 
     entries = board(store, spec)
 
@@ -133,7 +131,7 @@ def test_mean_aggregation_ranks_purely_by_mean_progression(tmp_path):
         _atom(solution_digest="sha256:high", seed=0, progression=0.9, ascended=False),
         _atom(solution_digest="sha256:low", seed=0, progression=0.2, ascended=True),
     ]
-    _seed(store, atoms, [spec])
+    _seed(store, atoms)
 
     entries = board(store, spec)
 
@@ -147,13 +145,11 @@ def test_board_groups_atoms_by_identity_not_objective_digest(tmp_path):
     # Two atoms on the same identity under DIFFERENT objective digests now
     # BOTH count on that identity's board -- the rekey's defining behavior.
     store = _new_store(tmp_path)
-    spec_a = _spec(name="obj-a", batch=((0, IDENTITY),))
-    spec_b = _spec(name="obj-b", batch=((1, IDENTITY),))
     atoms = [
         _atom(solution_digest="sha256:s", seed=0, progression=0.4),
         _atom(solution_digest="sha256:s", seed=1, progression=0.6),
     ]
-    _seed(store, atoms, [spec_a, spec_b])
+    _seed(store, atoms)
     (entry,) = board(store, CATALOG[IDENTITY])
     assert entry["episodes"] == 2
     assert abs(entry["mean_progression"] - 0.5) < 1e-9
@@ -162,7 +158,7 @@ def test_board_groups_atoms_by_identity_not_objective_digest(tmp_path):
 # NOTE: test_all_rollup_aggregates_across_every_objectives_atoms was removed
 # with random/all's retirement (Task A1) -- board() no longer has a
 # functional breadth-rollup branch; every objective now scores only its own
-# atoms (`store.iter_atoms(objective_digest=objective.digest(), tier=tier)`).
+# atoms (`store.iter_atoms(identity=objective.characters()[0], tier=tier)`).
 
 
 def test_coverage_board_counts_cells_held_per_solution(tmp_path):
@@ -172,7 +168,6 @@ def test_coverage_board_counts_cells_held_per_solution(tmp_path):
     # update_attainment uses), not hardcoded, so the test can't silently
     # drift if the achievement ladder gains/loses labels.
     store = _new_store(tmp_path)
-    spec = _spec()
     atom_a = _atom(
         solution_digest="sha256:a", seed=0,
         progression=ACHIEVEMENTS["Dlvl:5"], milestone="Dlvl:5",
@@ -181,7 +176,7 @@ def test_coverage_board_counts_cells_held_per_solution(tmp_path):
         solution_digest="sha256:b", seed=1,
         progression=ACHIEVEMENTS["Dlvl:2"], milestone="Dlvl:2",
     )
-    _seed(store, [atom_a, atom_b], [spec])
+    _seed(store, [atom_a, atom_b])
     update_attainment(store, [atom_a, atom_b], now="2026-01-01T00:00:00Z")
 
     expected_a = sum(1 for v in ACHIEVEMENTS.values() if v <= ACHIEVEMENTS["Dlvl:5"])
@@ -203,7 +198,6 @@ def test_firsts_board_counts_only_the_earliest_holder_per_cell(tmp_path):
     # a later reacher of the SAME cell must not count toward its firsts, and
     # must not appear in the board at all (it was never anyone's first).
     store = _new_store(tmp_path)
-    spec = _spec()
     milestone = "Dlvl:3"
     progression = ACHIEVEMENTS[milestone]
     early = _atom(
@@ -214,7 +208,7 @@ def test_firsts_board_counts_only_the_earliest_holder_per_cell(tmp_path):
         solution_digest="sha256:late", owner="late-owner", seed=1,
         progression=progression, milestone=milestone,
     )
-    _seed(store, [early, late], [spec])
+    _seed(store, [early, late])
     update_attainment(store, [early], now="2026-01-01T00:00:00Z")
     update_attainment(store, [late], now="2026-01-02T00:00:00Z")
 
@@ -287,7 +281,7 @@ def test_board_row_includes_deepest_milestone(tmp_path):
         _atom(solution_digest="sha256:s", seed=1,
               progression=ACHIEVEMENTS["Dlvl:2"], milestone="Dlvl:2"),
     ]
-    _seed(store, atoms, [spec])
+    _seed(store, atoms)
     (entry,) = board(store, spec)
     assert entry["deepest"] == "Dlvl:5"
 
@@ -305,7 +299,6 @@ VAL_IDS = ["val-dwa-law-fem", "val-hum-law-fem", "val-hum-neu-fem"]  # the 3 Val
 def test_aggregate_board_is_coverage_first_then_mean(tmp_path):
     # broad-shallow (covers 3 ids @0.2) must outrank narrow-deep (1 id @0.9)
     store = _new_store(tmp_path)
-    specs = [CATALOG[i] for i in VAL_IDS]
     atoms = [
         _atom(solution_digest="sha256:broad", identity=i, seed=0, progression=0.2)
         for i in VAL_IDS
@@ -314,7 +307,7 @@ def test_aggregate_board_is_coverage_first_then_mean(tmp_path):
         _atom(solution_digest="sha256:narrow",
               identity=VAL_IDS[0], seed=0, progression=0.9)
     )
-    _seed(store, atoms, specs)
+    _seed(store, atoms)
 
     rows = aggregate_board(store, VAL_IDS)
 

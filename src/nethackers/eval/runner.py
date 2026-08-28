@@ -145,7 +145,7 @@ def eval_batch(
     ``spec.name``. This descriptor is *not* the authoritative record of
     per-episode identity -- that lives in ``results[*].character`` -- nor is
     it how the objective is later re-derived (register/store tooling does
-    that from the published catalog via ``spec.digest()``).
+    that from the published catalog by ``spec.name``).
     """
     # Absolutize before the -v mount: docker rejects a relative bind-mount
     # source (it reads it as an invalid named volume). Callers in the evolve

@@ -6,7 +6,6 @@ best progression)."""
 from __future__ import annotations
 
 from nethackers.contracts.models import Atom
-from nethackers.hub.objectives import CATALOG
 from nethackers.hub.store import Store
 from nethackers.hub.views.stats import read_stats
 
@@ -28,8 +27,6 @@ def test_read_stats_counts(tmp_path):
                           owner="alice", root="autoascend", entrypoint="bot.py", registered_at="t")
     store.upsert_solution(digest="s2", repo="github.com/bob/nethacker", commit_sha="c2",
                           owner="bob", root="autoascend", entrypoint="bot.py", registered_at="t")
-    for identity in ("val-dwa-law-fem", "wiz-elf-cha-mal"):
-        store.objectives_upsert(CATALOG[identity])
     store.insert_atoms([_atom(solution_digest="s1", owner="alice", progression=0.3),
                         _atom(solution_digest="s2", owner="bob", progression=0.6, ascended=True),
                         _atom(solution_digest="s2", owner="bob", identity="wiz-elf-cha-mal",

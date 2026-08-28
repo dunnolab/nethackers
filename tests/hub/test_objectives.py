@@ -135,21 +135,15 @@ def test_all_is_functional_with_an_empty_batch():
 def test_build_catalog_is_deterministic():
     first = build_catalog()
     second = build_catalog()
-    assert {name: s.digest() for name, s in first.items()} == {
-        name: s.digest() for name, s in second.items()
-    }
+    assert first == second
 
     # Same non-default sizes, called twice, still agree.
     third = build_catalog(random_size=32, per_identity_size=8)
     fourth = build_catalog(random_size=32, per_identity_size=8)
-    assert {name: s.digest() for name, s in third.items()} == {
-        name: s.digest() for name, s in fourth.items()
-    }
+    assert third == fourth
 
     # The module-level CATALOG matches a fresh default build too.
-    assert {name: s.digest() for name, s in CATALOG.items()} == {
-        name: s.digest() for name, s in first.items()
-    }
+    assert first == CATALOG
 
 
 def test_build_catalog_respects_custom_sizes():
