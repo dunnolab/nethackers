@@ -497,8 +497,8 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
       <h4>Contents</h4>
       <ol class="idx">
         <li><span class="k">[1]</span> <a href="#about">What it is?</a></li>
-        <li><span class="k">[2]</span> <a href="#why">Why care</a></li>
-        <li><span class="k">[3]</span> <a href="#scores">Competition status</a></li>
+        <li><span class="k">[2]</span> <a href="#challenge">The challenge</a></li>
+        <li><span class="k">[3]</span> <a href="#why">Why care</a></li>
         <li><span class="k">[4]</span> <a href="#frontier">The Frontier</a></li>
         <li><span class="k">[5]</span> <a href="#people">Contributors</a></li>
         <li><span class="k">[6]</span> <a href="#progress">Progress</a></li>
@@ -535,36 +535,15 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           reliably win NetHack&nbsp;3.6.6.</b> Write the bot by hand, evolve it with coding agents, improve the thing
           that improves it, or recurse until something interesting happens. Whatever path you take, the contest
           evaluates the same result: the symbolic bot that comes out of the loop.</p>
+
+        <div class="subh" id="scores">Competition status</div>
+        <p>No universal hacker rank: NetHack is <span class="ref" data-k="identities"><b>73 distinct identity contests</b></span>.
+          This is the collective state of the solve. The Frontier below names the record holder for each identity and opens its same-seed leaderboard.</p>
+        <div class="statusgrid" id="statusgrid"><div class="emptyblock">Loading the dungeon ledger&hellip;</div></div>
+        <p class="note">A result appears immediately as <b>self-reported*</b>. Independent held-out verification arrives with M2b.</p>
+
         <p>The ultimate goal is an <span class="ref" data-k="ascension"><b>ascension</b></span>; until then, the
           board measures how far each bot gets.</p>
-
-        <div class="subh">The challenge</div>
-        <p><b>NetHack</b> (1987) is among the oldest <b>unsolved</b> challenges in games.
-          Winning &mdash; an <span class="ref" data-k="ascension"><i>ascension</i></span> &mdash; means descending some fifty procedurally
-          generated levels, seizing the <span class="ref" data-k="amulet">Amulet of Yendor</span>, and escaping through five final planes: tens of
-          thousands of turns under <span class="ref" data-k="permadeath">permadeath</span>, randomized item identity, and a knowledge burden its own developers
-          say takes years to master.</p>
-        <p>Humans win rarely overall, but expert play is <b>repeatable</b>: only 0.4% of 8.6&nbsp;million public
-          games ascend, yet the record streak is <b>61 wins in a row</b> and the strongest players ascend in
-          70&ndash;90% of their recorded games. Autonomous play remains far behind. The <b>entire</b> history of
-          autonomous wins is three games, in 2015, by one
-          hand-coded bot, on a version whose winning exploit was patched out that same year. On modern
-          NetHack, <b>no program has ever won.</b></p>
-
-        <table class="dtable">
-          <caption>THE STATE OF THE DUNGEON &mdash; every line of attack, ascensions on NLE's NetHack 3.6.6</caption>
-          <thead><tr><th>Line of attack</th><th>Best known result</th><th style="text-align:center">Asc.</th></tr></thead>
-          <tbody>
-            <tr><td>Humans, all logged games</td><td>median score 836 ("Beginner"); ascension is death-cause #15</td><td class="a">0.4%</td></tr>
-            <tr><td>Humans, experts</td><td>15.9% win rate, 47&ndash;71% in form; record streak 61</td><td class="a">reliable</td></tr>
-            <tr><td>Symbolic &mdash; <span class="ref" data-k="bothack">BotHack</span> (2015)</td><td>won on v3.4.3 via a <span class="ref" data-k="pudding">pudding-farming</span> exploit, removed in 3.6</td><td class="a">3*</td></tr>
-            <tr><td>Symbolic &mdash; <span class="ref" data-k="challenge">AutoAscend</span> (2021)</td><td>challenge median 5,300; no successor in 5 years; <span class="ref" data-k="medusa">Medusa</span> in 0 of 109,545 games</td><td class="a z">0</td></tr>
-            <tr><td>Learned &mdash; <span class="ref" data-k="ilscaling">imitation + RL</span> (2021&ndash;)</td><td>plateaus below the very bot it imitates</td><td class="a z">0</td></tr>
-            <tr><td>LLM direct play (2026)</td><td>6.8% progression while saturating every other game in <span class="ref" data-k="balrog">BALROG</span></td><td class="a z">0</td></tr>
-          </tbody>
-        </table>
-        <p class="dfn">Every machine line: <b>zero ascensions on NetHack&nbsp;3.6.6</b>, the NLE research
-          standard. *BotHack's three wins were on the older 3.4.3, via an exploit the developers then removed.</p>
 
         <div class="subh">Why now</div>
         <p>In the last couple of years, coding agents that write and refine programs in a loop have started cracking
@@ -591,6 +570,39 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           contributor's improvement becomes everyone's parent.</b> The hub never runs your search and assigns
           no work; how you make bots is entirely up to you.</p>
 
+      </section>
+
+      <hr class="rule">
+
+      <!-- THE CHALLENGE -->
+      <section id="challenge">
+        <h2 class="sec"><span class="glyph">%</span> The challenge</h2>
+        <p class="lead"><b>NetHack</b> (1987) is among the oldest <b>unsolved</b> challenges in games.
+          Winning &mdash; an <span class="ref" data-k="ascension"><i>ascension</i></span> &mdash; means descending some fifty procedurally
+          generated levels, seizing the <span class="ref" data-k="amulet">Amulet of Yendor</span>, and escaping through five final planes: tens of
+          thousands of turns under <span class="ref" data-k="permadeath">permadeath</span>, randomized item identity, and a knowledge burden its own developers
+          say takes years to master.</p>
+        <p>Humans win rarely overall, but expert play is <b>repeatable</b>: only 0.4% of 8.6&nbsp;million public
+          games ascend, yet the record streak is <b>61 wins in a row</b> and the strongest players ascend in
+          70&ndash;90% of their recorded games. Autonomous play remains far behind. The <b>entire</b> history of
+          autonomous wins is three games, in 2015, by one
+          hand-coded bot, on a version whose winning exploit was patched out that same year. On modern
+          NetHack, <b>no program has ever won.</b></p>
+
+        <table class="dtable">
+          <caption>THE STATE OF THE DUNGEON &mdash; every line of attack, ascensions on NLE's NetHack 3.6.6</caption>
+          <thead><tr><th>Line of attack</th><th>Best known result</th><th style="text-align:center">Asc.</th></tr></thead>
+          <tbody>
+            <tr><td>Humans, all logged games</td><td>median score 836 ("Beginner"); ascension is death-cause #15</td><td class="a">0.4%</td></tr>
+            <tr><td>Humans, experts</td><td>15.9% win rate, 47&ndash;71% in form; record streak 61</td><td class="a">reliable</td></tr>
+            <tr><td>Symbolic &mdash; <span class="ref" data-k="bothack">BotHack</span> (2015)</td><td>won on v3.4.3 via a <span class="ref" data-k="pudding">pudding-farming</span> exploit, removed in 3.6</td><td class="a">3*</td></tr>
+            <tr><td>Symbolic &mdash; <span class="ref" data-k="challenge">AutoAscend</span> (2021)</td><td>challenge median 5,300; no successor in 5 years; <span class="ref" data-k="medusa">Medusa</span> in 0 of 109,545 games</td><td class="a z">0</td></tr>
+            <tr><td>Learned &mdash; <span class="ref" data-k="ilscaling">imitation + RL</span> (2021&ndash;)</td><td>plateaus below the very bot it imitates</td><td class="a z">0</td></tr>
+            <tr><td>LLM direct play (2026)</td><td>6.8% progression while saturating every other game in <span class="ref" data-k="balrog">BALROG</span></td><td class="a z">0</td></tr>
+          </tbody>
+        </table>
+        <p class="dfn">Every machine line: <b>zero ascensions on NetHack&nbsp;3.6.6</b>, the NLE research
+          standard. *BotHack's three wins were on the older 3.4.3, via an exploit the developers then removed.</p>
       </section>
 
       <hr class="rule">
@@ -630,17 +642,6 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           nearly four decades: get a program to win. It runs locally, it is genuinely addictive (a slot machine of
           stupid deaths and small breakthroughs), and every win you register becomes someone else's starting point
           &mdash; your name on the frontier. <a href="#contribute">&raquo; start solving</a></p>
-      </section>
-
-      <hr class="rule">
-
-      <!-- COMPETITION STATUS -->
-      <section id="scores">
-        <h2 class="sec"><span class="glyph">$</span> Competition status</h2>
-        <p class="lead">No universal hacker rank: NetHack is <span class="ref" data-k="identities"><b>73 distinct identity contests</b></span>.
-          This is the collective state of the solve. The Frontier below names the record holder for each identity and opens its same-seed leaderboard.</p>
-        <div class="statusgrid" id="statusgrid"><div class="emptyblock">Loading the dungeon ledger&hellip;</div></div>
-        <p class="note">A result appears immediately as <b>self-reported*</b>. Independent held-out verification arrives with M2b.</p>
       </section>
 
       <hr class="rule">
