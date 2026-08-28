@@ -1,4 +1,5 @@
 # tests/test_harness_store.py
+import os
 from pathlib import Path
 
 from nethackers.eval.runner import _solution_digest
@@ -37,3 +38,47 @@ def test_path_has_saveas_handle_atom_repo_commit_digest(tmp_path):
     assert store.has(atom)
     assert (store.path(atom) / "bot.py").read_text() == "code\n"
     assert "/" not in store.path(atom).name           # flattened to one safe segment
+
+
+def test_save_is_idempotent_when_dest_exists(tmp_path):
+    src = _tree(tmp_path / "src", "x = 1\n")
+    store = LocalTreeStore(tmp_path / "store")
+    d1 = store.save(src)
+    d2 = store.save(src)                                   # dest already there
+    assert d1 == d2
+    assert (store.path(d1) / "bot.py").read_text() == "x = 1\n"
+    assert not list((tmp_path / "store").glob(".tmp-*"))  # no temp leaked
+
+def test_save_leaves_a_preexisting_dest_untouched(tmp_path):
+    src = _tree(tmp_path / "src", "new\n")
+    store = LocalTreeStore(tmp_path / "store")
+    digest = _solution_digest(src)
+    dest = store.path(digest)
+    dest.mkdir(parents=True)
+    (dest / "bot.py").write_text("winner\n")              # concurrent winner already published
+    assert store.save(src) == digest
+    assert (dest / "bot.py").read_text() == "winner\n"    # not overwritten
+    assert not list((tmp_path / "store").glob(".tmp-*"))
+
+def test_save_swallows_rename_race_and_cleans_temp(tmp_path, monkeypatch):
+    src = _tree(tmp_path / "src", "x\n")
+    store = LocalTreeStore(tmp_path / "store")
+    digest = _solution_digest(src)
+
+    def racing_rename(a, b):
+        Path(b).mkdir(parents=True, exist_ok=True)        # winner appears between check and rename
+        raise OSError("Directory not empty")
+    monkeypatch.setattr("nethackers.harness.store.os.rename", racing_rename)
+
+    store.save(src)                                        # must not raise
+    assert store.path(digest).is_dir()                    # dest present (winner's)
+    assert not list((tmp_path / "store").glob(".tmp-*"))  # our temp cleaned
+
+def test_save_as_idempotent_when_dest_exists(tmp_path):
+    src = _tree(tmp_path / "src", "code\n")
+    store = LocalTreeStore(tmp_path / "store")
+    atom = "github.com/o/r@abc123"
+    store.save_as(atom, src)
+    store.save_as(atom, src)                              # second: dest exists, no raise
+    assert (store.path(atom) / "bot.py").read_text() == "code\n"
+    assert not list((tmp_path / "store").glob(".tmp-*"))

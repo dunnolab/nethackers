@@ -6,9 +6,11 @@ single-contributor local loop keeps its own trees here, keyed by the same
 """
 from __future__ import annotations
 
+import os
 import re
 import shutil
 from pathlib import Path
+from uuid import uuid4
 
 from nethackers.eval.runner import _solution_digest
 
@@ -41,9 +43,7 @@ class LocalTreeStore:
     def save(self, src: str | Path) -> str:
         src = Path(src)
         digest = _solution_digest(src)
-        dest = self.path(digest)
-        if not dest.is_dir():
-            shutil.copytree(src, dest)
+        self._publish(src, self.path(digest))
         return digest
 
     def save_as(self, digest: str, src: str | Path) -> None:
@@ -51,6 +51,17 @@ class LocalTreeStore:
         ``repo@commit`` identities, whose key is the git commit (not the tree's
         content hash), so ``save`` (which recomputes the content hash) can't
         produce it. Idempotent: a present tree is left as-is."""
-        dest = self.path(digest)
-        if not dest.is_dir():
-            shutil.copytree(Path(src), dest)
+        self._publish(Path(src), self.path(digest))
+
+    def _publish(self, src: Path, dest: Path) -> None:
+        """Copy ``src`` -> ``dest`` atomically. Content-addressed: if ``dest``
+        already exists (or a concurrent writer wins the race) it is the same
+        tree, so leave it. Readers never see a partially-copied ``dest``."""
+        if dest.is_dir():
+            return
+        tmp = self._root / f".tmp-{uuid4().hex}"
+        shutil.copytree(src, tmp)
+        try:
+            os.rename(tmp, dest)        # atomic publish (tmp is a sibling -> same filesystem)
+        except OSError:                 # lost the race; dest now present, identical content
+            shutil.rmtree(tmp, ignore_errors=True)
