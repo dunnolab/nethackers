@@ -18,7 +18,7 @@ def _timestamp(value: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
-def read_wall_of_fame(store: Store, *, limit: int = 4) -> dict[str, list[dict[str, Any]]]:
+def read_wall_of_fame(store: Store, *, limit: int = 100) -> dict[str, list[dict[str, Any]]]:
     """Return current keepers and all-time one-step frontier breakthroughs.
 
     Recognition is deliberately based on the self-reported competition tier,
@@ -95,7 +95,7 @@ def read_wall_of_fame(store: Store, *, limit: int = 4) -> dict[str, list[dict[st
     # Greatest breakthroughs: replay each identity chronologically, beginning
     # at AutoAscend. Credit only the amount by which a result moved the frontier
     # beyond the best result that existed immediately before it.
-    best_breakthrough_by_owner: dict[str, dict[str, Any]] = {}
+    breakthroughs: list[dict[str, Any]] = []
     for identity, candidates in by_identity.items():
         frontier = baseline.get(identity, 0.0)
         for result in sorted(candidates, key=lambda row: (row["at"], row["digest"])):
@@ -111,11 +111,8 @@ def read_wall_of_fame(store: Store, *, limit: int = 4) -> dict[str, list[dict[st
                 "solution_digest": result["digest"],
                 "at": result["at"].isoformat(),
             }
-            current = best_breakthrough_by_owner.get(result["owner"])
-            if current is None or (event["gain"], event["at"]) > (current["gain"], current["at"]):
-                best_breakthrough_by_owner[result["owner"]] = event
+            breakthroughs.append(event)
             frontier = result["score"]
 
-    breakthroughs = list(best_breakthrough_by_owner.values())
-    breakthroughs.sort(key=lambda row: (-row["gain"], row["at"], row["owner"]))
+    breakthroughs.sort(key=lambda row: (row["at"], row["owner"]), reverse=True)
     return {"keepers": keepers[:limit], "breakthroughs": breakthroughs[:limit]}

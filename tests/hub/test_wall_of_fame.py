@@ -36,7 +36,8 @@ def test_wall_tracks_current_keepers_and_historical_breakthroughs(tmp_path):
     ])
     submissions = [
         ("alice-a", "alice", identity_a, 0.2, "2026-08-01T00:00:00+00:00"),
-        ("bob-a", "bob", identity_a, 0.35, "2026-08-02T00:00:00+00:00"),
+        ("alice-a2", "alice", identity_a, 0.25, "2026-08-01T12:00:00+00:00"),
+        ("bob-a", "bob", identity_a, 0.4, "2026-08-02T00:00:00+00:00"),
         ("carol-b", "carol", identity_b, 0.4, "2026-08-03T00:00:00+00:00"),
         ("dave-c", "dave", identity_c, 0.1, "2026-08-04T00:00:00+00:00"),
     ]
@@ -60,16 +61,17 @@ def test_wall_tracks_current_keepers_and_historical_breakthroughs(tmp_path):
     wall = read_wall_of_fame(store)
 
     assert [(row["owner"], row["records"]) for row in wall["keepers"]] == [
-        ("carol", 1),
         ("bob", 1),
+        ("carol", 1),
     ]
     assert wall["keepers"][0]["total_lift"] == 0.3
     assert [row["owner"] for row in wall["breakthroughs"]] == [
         "carol",
         "bob",
         "alice",
+        "alice",
     ]
-    assert [row["gain"] for row in wall["breakthroughs"]] == [0.3, 0.15, 0.1]
+    assert [row["gain"] for row in wall["breakthroughs"]] == [0.3, 0.15, 0.05, 0.1]
     assert all(row["owner"] != "dave" for rows in wall.values() for row in rows)
 
 

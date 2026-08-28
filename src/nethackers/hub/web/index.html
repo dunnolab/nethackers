@@ -211,13 +211,12 @@ table.grid caption{ text-align:left; background:var(--indigo); color:#fff; font-
 .statuscard.wide{ grid-column:1/-1; }
 @media (max-width:640px){ .statuscard,.statuscard.pulse{ grid-column:span 6; } }
 @media (max-width:430px){ .statuscard,.statuscard.pulse{ grid-column:1/-1; } }
-.recognitiongrid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(245px,1fr)); gap:8px; }
-.personcard{ border:1px solid var(--silver-lo); background:#f7f7f2; padding:8px 10px; }
-.personcard{ cursor:pointer; }
-.personcard:hover,.personcard:focus{ background:#fff3b0; outline:2px solid var(--indigo); outline-offset:-2px; }
-.personcard .ph{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; color:var(--indigo); font-weight:700; }
-.personcard .pa{ color:#62626a; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace;
-  font-size:.72rem; line-height:1.45; margin-top:4px; }
+.famedesc{ color:#55555c; font-size:.92rem; margin:.25rem 0 .55rem; }
+.fametable .owner{ color:var(--indigo); font-weight:700; text-decoration:underline; }
+.fametable .roles{ white-space:normal; text-align:left; min-width:190px; }
+.famelog{ font-size:.75rem !important; }
+.famelog td{ font-variant-numeric:tabular-nums; }
+.famelog .submission{ color:var(--indigo); text-decoration:underline; }
 .emptyblock{ color:#777780; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; }
 
 /* FRONTIER heatmap --------------------------------------------------------- */
@@ -623,9 +622,11 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
         <h2 class="sec"><span class="glyph">&amp;</span> People moving the frontier</h2>
         <p class="lead">Recognition is attached to concrete records, roles, and source commits &mdash; not collapsed into one global score.</p>
         <div class="subh">Frontier Keepers</div>
-        <div class="recognitiongrid" id="recordholders"><div class="emptyblock">Loading frontier keepers&hellip;</div></div>
+        <p class="famedesc">Current self-reported identity leaders above AutoAscend. Click a row for the hacker's complete contribution history.</p>
+        <div id="recordholders"><div class="emptyblock">Loading frontier keepers&hellip;</div></div>
         <div class="subh">Greatest Breakthroughs</div>
-        <div class="recognitiongrid" id="breakthroughs"><div class="emptyblock">Loading breakthroughs&hellip;</div></div>
+        <p class="famedesc">A newest-first log of every submission that advanced an identity frontier. Click a row for the exact submission.</p>
+        <div id="breakthroughs"><div class="emptyblock">Loading breakthroughs&hellip;</div></div>
       </section>
 
       <hr class="rule">
@@ -1272,28 +1273,31 @@ function renderRecognition(){
   const holders=$("#recordholders"), breakthroughs=$("#breakthroughs");
   if(holders){
     const people=WALL_OF_FAME.keepers||[];
-    holders.innerHTML=people.length?people.map(p=>`<div class="personcard" data-owner="${esc(p.owner)}" tabindex="0" role="button" aria-label="Open contributions by @${esc(p.owner)}">
-      <div class="ph">@${esc(p.owner)}</div>
-      <div class="pa"><b>${p.records}</b> current frontier${p.records===1?'':'s'} above AutoAscend &middot; ${p.roles.map(r=>esc(ROLE_NAMES[r]||r)).join(', ')}<br>
-      combined lift <b>+${(p.total_lift*100).toFixed(1)} pp</b></div></div>`).join("")
+    holders.innerHTML=people.length?`<div class="tablewrap"><table class="grid fametable"><caption>FRONTIER KEEPERS &middot; SELF-REPORTED*</caption>
+      <thead><tr><th>#</th><th class="l">hacker</th><th>frontiers</th><th class="l">roles represented</th><th>combined lift</th></tr></thead>
+      <tbody>${people.map((p,i)=>`<tr data-owner="${esc(p.owner)}" tabindex="0" role="button" aria-label="Open contributions by @${esc(p.owner)}">
+        <td class="rk ${i<3?'top':''}">${i+1}</td><td class="l owner">@${esc(p.owner)}</td><td>${p.records}</td>
+        <td class="roles">${p.roles.map(r=>esc(ROLE_NAMES[r]||r)).join(', ')}</td><td class="dpos">+${(p.total_lift*100).toFixed(1)} pp</td></tr>`).join("")}</tbody></table></div>`
       :`<div class="emptyblock">No participant is above AutoAscend yet.</div>`;
-    holders.querySelectorAll(".personcard").forEach(card=>{
-      const open=()=>openHacker(card.dataset.owner);
-      card.addEventListener("click",open);
-      card.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } });
+    holders.querySelectorAll("tbody tr").forEach(row=>{
+      const open=()=>openHacker(row.dataset.owner);
+      row.addEventListener("click",open);
+      row.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } });
     });
   }
   if(breakthroughs){
     const people=WALL_OF_FAME.breakthroughs||[];
-    breakthroughs.innerHTML=people.length?people.map((p,i)=>`<div class="personcard" data-breakthrough="${i}" tabindex="0" role="button" aria-label="Open breakthrough submission by @${esc(p.owner)}">
-      <div class="ph">@${esc(p.owner)}</div>
-      <div class="pa"><b>+${(p.gain*100).toFixed(1)} pp</b> one-step frontier advance<br>
-      ${esc(p.identity)} &middot; ${esc(fmtDate(p.at))}</div></div>`).join("")
+    breakthroughs.innerHTML=people.length?`<div class="tablewrap"><table class="grid fametable famelog"><caption>GREATEST BREAKTHROUGHS &middot; NEWEST FIRST</caption>
+      <thead><tr><th class="l">registered</th><th class="l">hacker</th><th class="l">identity</th><th>before</th><th>result</th><th>advance</th><th class="l">submission</th></tr></thead>
+      <tbody>${people.map((p,i)=>`<tr data-breakthrough="${i}" tabindex="0" role="button" aria-label="Open breakthrough submission by @${esc(p.owner)}">
+        <td class="l">${esc(fmtDate(p.at))}</td><td class="l owner">@${esc(p.owner)}</td><td class="l">${esc(p.identity)}</td>
+        <td>${(p.previous*100).toFixed(1)}%</td><td>${(p.score*100).toFixed(1)}%</td><td class="dpos">+${(p.gain*100).toFixed(1)} pp</td>
+        <td class="l submission">${submissionLabel(p.solution_digest)}</td></tr>`).join("")}</tbody></table></div>`
       :`<div class="emptyblock">No breakthroughs above AutoAscend yet.</div>`;
-    breakthroughs.querySelectorAll(".personcard").forEach(card=>{
-      const open=()=>openBreakthrough(people[Number(card.dataset.breakthrough)]);
-      card.addEventListener("click",open);
-      card.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } });
+    breakthroughs.querySelectorAll("tbody tr").forEach(row=>{
+      const open=()=>openBreakthrough(people[Number(row.dataset.breakthrough)]);
+      row.addEventListener("click",open);
+      row.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } });
     });
   }
 }
@@ -1345,6 +1349,15 @@ function sourceLink(s){
   const file=[s.root&&s.root!=="."?s.root:"",s.entrypoint||""].filter(Boolean).join("/");
   const path=file?`/blob/${encodeURIComponent(commit)}/${file.split("/").map(encodeURIComponent).join("/")}`:`/tree/${encodeURIComponent(commit)}`;
   return `<a href="https://github.com/${repo}${path}" target="_blank" rel="noopener">${esc(repo)}@${esc(commit.slice(0,7)||"commit")}</a>`;
+}
+function submissionLabel(digest){
+  const s=SOLUTION_BY_DIGEST[digest];
+  if(s){
+    const repo=String(s.repo||"").replace(/^https?:\/\/github\.com\//i,"").replace(/^github\.com\//i,"").replace(/\.git$/i,"");
+    return `${esc(repo)}@${esc(String(s.commit_sha||"").slice(0,7)||"commit")}`;
+  }
+  const raw=String(digest).replace(/^github\.com\//i,""), at=raw.lastIndexOf("@");
+  return esc(at>=0?raw.slice(0,at+1)+raw.slice(at+1,at+8):raw);
 }
 function roleKeys(frontier){
   return [...new Set(frontier.map(x=>String(x.identity||"").split("-")[0]).filter(r=>ROLE_NAMES[r]))]
