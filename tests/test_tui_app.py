@@ -17,12 +17,14 @@ suite must never depend on -- or accidentally talk to -- one.
 from __future__ import annotations
 
 import asyncio
+import subprocess
 import threading
 
 from textual.widgets import ContentSwitcher, Input, Tabs
 
 from nethackers.hubclient.credentials import Credentials
-from nethackers.tui.app import NetHackersApp
+from nethackers.tui.app import NetHackersApp, _TOAST_DETAIL_MAXLEN, failure_detail
+from nethackers.tui.run import Run
 from nethackers.tui.screens.monitor import RunMonitor
 from nethackers.tui.status import EvolveConfig
 
@@ -496,3 +498,54 @@ async def test_starting_a_second_run_swaps_the_monitor_instead_of_stacking():
             if not (ra.running or rb.running):
                 break
             await asyncio.sleep(0.01)
+
+
+# --- a failed run's toast: a short, plain-text reason, never Textual markup --
+#
+# The `error` string routinely contains `[` (paths, list/CalledProcessError
+# reprs); Textual would parse that as content markup during toast layout and
+# raise MarkupError, crashing the whole app. `failure_detail` distils a
+# one-line reason and `_finish_run` passes `markup=False` so a `[` is shown
+# literally, never parsed.
+
+
+def test_failure_detail_prefers_last_stderr_line():
+    err = subprocess.CalledProcessError(
+        125, ["docker", "run"],
+        stderr="Unable to find image 'nethackers/arena:dev' locally\n"
+               "docker: Error response from daemon: pull access denied\n")
+    assert failure_detail(err) == "docker: Error response from daemon: pull access denied"
+
+
+def test_failure_detail_compact_for_calledprocess_without_stderr():
+    err = subprocess.CalledProcessError(125, ["docker", "run", "--rm", "..."])
+    assert failure_detail(err) == "eval exited 125"
+
+
+def test_failure_detail_caps_overlong():
+    out = failure_detail(RuntimeError("x" * 500))
+    assert len(out) == _TOAST_DETAIL_MAXLEN and out.endswith("…")
+
+
+def test_failure_detail_plain_exception():
+    assert failure_detail(RuntimeError("boom")) == "boom"
+
+
+_QOL_CFG = EvolveConfig("wiz-elf-cha-mal", "claude", 3)
+
+
+async def test_finish_run_reports_failure_as_plaintext():
+    # `_finish_run` reaches `_monitor_for` -> `self.screen`, which needs a
+    # mounted app, so drive it under `run_test()` (the plain sync call would
+    # raise ScreenStackError only AFTER the notify); `notify` is captured to
+    # bypass Textual's real toast layout.
+    app = NetHackersApp(hub=_DEAD_HUB, creds=None)
+    calls: list[tuple] = []
+    async with app.run_test():
+        app.notify = lambda msg, **kw: calls.append((msg, kw))   # capture, bypass Textual
+        app._finish_run(Run("r7", _QOL_CFG), None,
+                        RuntimeError("docker: Error response from daemon: boom"))
+    assert len(calls) == 1
+    msg, kw = calls[0]
+    assert kw.get("markup") is False
+    assert msg.startswith("run r7 failed:") and "boom" in msg and len(msg) < 300

@@ -23,6 +23,7 @@ launch paths converge on the same pushed-screen mechanics right after this
 from __future__ import annotations
 
 import contextlib
+import subprocess
 from collections.abc import Callable
 
 from textual import events, work
@@ -81,6 +82,31 @@ def _idbar_who(login: str | None, hub_mode: str | None, *, unreachable: bool) ->
             return "[b]OFFLINE[/]"
         return f"{base}  [yellow]⚠ OFFLINE hub[/]"
     return base
+
+
+_TOAST_DETAIL_MAXLEN = 200  # a toast shows a one-line reason; full error lives in the run/log
+
+
+def _cap(s: str) -> str:
+    s = s.strip()
+    return s if len(s) <= _TOAST_DETAIL_MAXLEN else s[: _TOAST_DETAIL_MAXLEN - 1] + "…"
+
+
+def failure_detail(error: BaseException) -> str:
+    """One-line, human reason for a failed run, safe for a plain-text toast.
+
+    Prefers the tail of a captured subprocess stderr (e.g. Docker's own error
+    line), else a compact exit-status line, else the exception text -- never the
+    giant CalledProcessError command repr."""
+    stderr = getattr(error, "stderr", None)
+    if stderr:
+        text = stderr.decode() if isinstance(stderr, bytes) else str(stderr)
+        lines = [ln.strip() for ln in text.splitlines() if ln.strip()]
+        if lines:
+            return _cap(lines[-1])
+    if isinstance(error, subprocess.CalledProcessError):
+        return _cap(f"eval exited {error.returncode}")
+    return _cap(str(error))
 
 
 class NetHackersApp(App):
@@ -324,7 +350,8 @@ class NetHackersApp(App):
                     error: BaseException | None) -> None:
         run.finish(results=results, error=error)
         if error is not None:
-            self.notify(f"run {run.rid} failed: {error}", severity="error", timeout=10)
+            self.notify(f"run {run.rid} failed: {failure_detail(error)}",
+                        severity="error", timeout=10, markup=False)
         m = self._monitor_for(run)
         if m is not None:
             m.render_state()
