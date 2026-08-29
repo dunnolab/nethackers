@@ -1,4 +1,6 @@
+import pytest
 from fastapi.testclient import TestClient
+from nethackers.contracts.models import Atom
 from nethackers.hub.api import create_app
 from nethackers.hub.auth import LocalStubAuth
 from nethackers.hub.ids import program_id
@@ -37,3 +39,23 @@ def test_program_get_by_opaque_id_and_404(tmp_path):
     assert got.status_code == 200
     assert got.json()["id"] == pid
     assert client.get("/programs/prog_missing").status_code == 404
+
+
+def _seed_atoms(store, digest, identity="wiz-elf-cha-mal"):
+    store.insert_atoms([
+        Atom(solution_digest=digest, owner="vkurenkov", tier="self-reported",
+             identity=identity, seed=0, progression=0.5, milestone=None,
+             ascended=False, status="completed", turns=5, steps=10,
+             evaluator_image="img@sha256:x")])
+
+
+def test_program_identities_enveloped(tmp_path):
+    client, store = _client(tmp_path)
+    _seed_atoms(store, DIGEST)
+    pid = program_id(DIGEST)
+    r = client.get(f"/programs/{pid}/identities")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["program_id"] == pid
+    assert body["rows"] == [{"identity": "wiz-elf-cha-mal", "progression": 0.5, "episodes": 1}]
+    assert client.get("/programs/prog_missing/identities").status_code == 404

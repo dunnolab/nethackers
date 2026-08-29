@@ -317,6 +317,13 @@ def create_app(
     def programs(owner: str | None = None, limit: int = 50, offset: int = 0) -> dict[str, Any]:
         return envelope(list_programs(store, owner=owner, limit=limit, offset=offset), owner=owner)
 
+    @app.get("/programs/{program_id}/identities")
+    def program_identities(program_id: str) -> dict[str, Any]:
+        digest = store.digest_for_program_id(program_id)
+        if digest is None:
+            raise HTTPException(status_code=404, detail=f"unknown program id: {program_id!r}")
+        return envelope(read_solution_frontier(store, digest), program_id=program_id)
+
     @app.get("/programs/{program_id}")
     def program(program_id: str) -> dict[str, Any]:
         prog = get_program(store, program_id)
