@@ -191,6 +191,18 @@ unchanged.
 - New/renamed `Store` helpers: resolve `program_id → solution row` (and reverse),
   and a filtered `iter_atoms` pass-through for `GET /atoms`. `random_owners`
   (from the merged v0.16.0) is unchanged.
+- **Write model — register is the only writer; reads never mutate.**
+  `POST /register` writes `solutions` + `atoms` + `lineage` + the additive
+  `attainment`/`attainment_holders` ratchet (`update_attainment`:
+  INSERT-OR-IGNORE + ON-CONFLICT, no DELETE). **`elite_pool` and
+  `recompute_elites` are deleted:** `/elites` becomes a **live** top-k-per-identity
+  query over `atoms` (window function), so register no longer does an
+  O(all-atoms) DELETE-and-rebuild of a materialized elite table. Every GET
+  (`/board`, `/elites`, `/hackers`, `/achievements`, `/programs`, `/atoms`,
+  `/progress`, `/stats`, `/baseline`) is then a pure read — consistent with the
+  atoms-cube framing (`atoms` is the substrate, the rest are projections).
+  `attainment` stays materialized: it is an additive ratchet encoding the
+  temporal "first-to-reach" fact, cheap and correct to write at register time.
 
 ### API layer (`hub/api.py`, `hub/views/*`)
 
