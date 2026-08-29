@@ -405,52 +405,53 @@ def render_frontier_grid(
 
 
 def render_search(results: list[dict[str, Any]]) -> RenderableType:
-    """A ``rich`` table of registered solutions: ``solution | owner | repo
-    | commit | registered`` (``solution``/``commit`` shortened via
-    ``_short_digest``). Empty -> a friendly one-line message, never a bare
-    header."""
+    """A ``rich`` table of registered programs: ``program | owner | repo |
+    commit | registered`` -- ``program`` the opaque ``id`` shown verbatim
+    (already short -- no ``_short_digest`` truncation), ``reference``
+    flattened into linked ``repo``/``commit`` cells (``commit`` still
+    shortened via ``_short_digest``, a real git object unlike the retired
+    content-hash digest). Empty -> a friendly one-line message, never a
+    bare header."""
     if not results:
         return _empty("no solutions found.")
 
     table = Table(header_style="bold", row_styles=["", "on grey11"])
-    for name in ("solution", "owner", "repo", "commit", "registered"):
+    for name in ("program", "owner", "repo", "commit", "registered"):
         table.add_column(name)
     for r in results:
+        reference = r.get("reference") or {}
+        repo = str(reference.get("repo", ""))
         table.add_row(
-            _short_digest(str(r.get("digest", ""))),
+            str(r.get("id", "")),
             _gh_user(r.get("owner", "")),
-            _gh_repo(r.get("repo", "")),
-            _gh_commit(r.get("repo", ""), r.get("commit_sha", "")),
+            _gh_repo(repo),
+            _gh_commit(repo, str(reference.get("commit", ""))),
             str(r.get("registered_at", "")),
         )
     return table
 
 
-def render_show(solution: dict[str, Any]) -> RenderableType:
-    """A 2-column key/value grid describing one registered solution
-    (``digest``/``commit_sha`` shortened via ``_short_digest``), the same
-    preferred-key ordering as the baseline ``plain`` ``render_show``.
-    Empty/missing -> a friendly one-line message, never an empty block."""
-    if not solution:
+def render_show(program: dict[str, Any]) -> RenderableType:
+    """A 2-column key/value grid describing one registered program (the
+    ``/programs/{id}`` object: ``{id, owner, reference:{repo,commit},
+    registered_at}``): ``id`` shown verbatim (opaque, already short --
+    no ``_short_digest`` truncation), ``reference`` flattened into linked
+    ``repo``/``commit`` rows via ``_gh_repo``/``_gh_commit`` (``commit``
+    still shortened -- a real git object, unlike the retired digest),
+    ``owner`` linked via ``_gh_user``. Empty/missing -> a friendly one-line
+    message, never an empty block."""
+    if not program:
         return _empty("no such solution.")
 
-    preferred = ["digest", "repo", "commit_sha", "owner", "root", "entrypoint", "registered_at"]
-    keys = [k for k in preferred if k in solution]
-    keys += [k for k in solution if k not in preferred]
+    reference = program.get("reference") or {}
+    repo = str(reference.get("repo", ""))
 
     grid = Table.grid(padding=(0, 2))
     grid.add_column(justify="right", style="bold")
     grid.add_column()
-    for key in keys:
-        value = solution[key]
-        if key == "digest":
-            grid.add_row(key, _short_digest(str(value)))  # content hash, not a git object
-        elif key == "commit_sha":
-            grid.add_row(key, _gh_commit(str(solution.get("repo", "")), str(value)))
-        elif key == "owner":
-            grid.add_row(key, _gh_user(str(value)))
-        elif key == "repo":
-            grid.add_row(key, _gh_repo(str(value)))
-        else:
-            grid.add_row(key, str(value))
+    grid.add_row("id", str(program.get("id", "")))
+    grid.add_row("repo", _gh_repo(repo))
+    grid.add_row("commit", _gh_commit(repo, str(reference.get("commit", ""))))
+    grid.add_row("owner", _gh_user(str(program.get("owner", ""))))
+    grid.add_row("registered_at", str(program.get("registered_at", "")))
     return grid

@@ -8,7 +8,6 @@ from rich.console import Console
 from textual.app import App, ComposeResult
 from textual.widgets import Tabs
 
-from nethackers.hubclient.client import _short_digest
 from nethackers.hubclient.credentials import Credentials
 from nethackers.hubclient.frontier import overall_mean
 from nethackers.tui.app import NetHackersApp
@@ -374,7 +373,7 @@ def _fake_board_with_champion(self, *a, **k) -> list:
              "mean_progression": 0.5}]
 
 
-def _fake_solution_frontier_for_champion(self, digest: str) -> list:
+def _fake_program_identities_for_champion(self, program_id: str) -> list:
     """The champion's own per-identity progression -- deliberately a
     *different* number (0.91) on the *same* identity (val-dwa-law-fem) as
     the universe fixture's 0.42, so a test can prove the grid actually
@@ -423,13 +422,23 @@ async def test_map_view_activating_program_subtab_shows_champion_grid(monkeypatc
     """Activating the Program subtab re-renders the same panel from
     champion_scores instead of universe_scores: the champion's distinct
     number replaces the universe number on the same identity, and the
-    @owner/digest caption appears."""
+    @owner/program-id caption appears.
+
+    Forward-carry closure (Task 1 -> Task 5): champion() already returns a
+    program_id (from the /board migration); champion_scores() must resolve
+    it via program_identities (-> /programs/{id}/identities), not the
+    retired solution_frontier (-> /solutions/{digest}/frontier, which 404s
+    on a program_id) -- updated here to patch program_identities, the
+    method MapView's real Program regime now actually calls. (A patched
+    method only proves the wiring, not the live route -- see
+    tests/hub/test_programs.py's end-to-end test for the real HTTP round
+    trip that closes the loop for good.)"""
     import nethackers.tui.screens.hub as hub
 
     monkeypatch.setattr(hub.HubClient, "elites", _fake_elites_rank_spread)
     monkeypatch.setattr(hub.HubClient, "board", _fake_board_with_champion)
-    monkeypatch.setattr(hub.HubClient, "solution_frontier",
-                         _fake_solution_frontier_for_champion)
+    monkeypatch.setattr(hub.HubClient, "program_identities",
+                         _fake_program_identities_for_champion)
     monkeypatch.setattr(hub.HubClient, "baseline", _fake_baseline)
 
     app = _HostMap()
@@ -446,7 +455,8 @@ async def test_map_view_activating_program_subtab_shows_champion_grid(monkeypatc
         rendered = _render_to_str(body.content)
         assert "91.0%" in rendered  # the champion's number
         assert "42.0%" not in rendered  # the universe number is gone, not merged
-        assert f"@vale/{_short_digest('abc123def456')}" in rendered
+        # program_id is opaque and already short -- shown verbatim, never truncated.
+        assert "@vale/abc123def456" in rendered
         assert "this one program across all identities" in rendered
         om = overall_mean({"val-dwa-law-fem": 0.91})
         assert om is not None

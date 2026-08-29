@@ -1,9 +1,9 @@
 """Tests for ``nethackers.hubclient.frontier``: pure adapters that assemble
 the two Frontier regimes' ``{identity: value}`` maps from hub reads
-(``HubClient.elites``/``.board``/``.solution_frontier``, Task 2). Exercised
-against a plain fake client -- no HTTP, no real ``HubClient`` -- since each
-adapter only ever calls one named method on the client and never touches
-anything else on it.
+(``HubClient.elites``/``.board``/``.program_identities``). Exercised against
+a plain fake client -- no HTTP, no real ``HubClient`` -- since each adapter
+only ever calls one named method on the client and never touches anything
+else on it.
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ WIZ_IDENTITY = "wiz-elf-cha-mal"
 
 class _FakeClient:
     """A minimal stand-in for ``HubClient``: ``elites``/``board``/
-    ``solution_frontier`` ignore whatever arguments the adapter passes them
+    ``program_identities`` ignore whatever arguments the adapter passes them
     and return the canned list the test scripted."""
 
     def __init__(self, *, elites=None, board=None, frontier=None, baseline=None):
@@ -40,7 +40,7 @@ class _FakeClient:
     def board(self, objective):
         return self._board
 
-    def solution_frontier(self, digest):
+    def program_identities(self, program_id):
         return self._frontier
 
     def baseline(self):
@@ -153,7 +153,7 @@ def test_champion_reads_the_generalist_board_not_random():
     assert seen == ["generalist"]
 
 
-# --- champion_scores: one solution's per-identity frontier ------------------
+# --- champion_scores: one program's per-identity frontier -------------------
 
 
 def test_champion_scores_maps_identity_to_progression():
@@ -163,7 +163,7 @@ def test_champion_scores_maps_identity_to_progression():
     ]
     client = _FakeClient(frontier=rows)
 
-    result = champion_scores(client, "sha256:top")
+    result = champion_scores(client, "prog_top")
 
     assert result == {VAL_IDENTITY: 0.42, WIZ_IDENTITY: 0.77}
 
@@ -171,7 +171,24 @@ def test_champion_scores_maps_identity_to_progression():
 def test_champion_scores_empty_frontier_returns_empty_map():
     client = _FakeClient(frontier=[])
 
-    assert champion_scores(client, "sha256:top") == {}
+    assert champion_scores(client, "prog_top") == {}
+
+
+def test_champion_scores_reads_program_identities_not_the_retired_solution_frontier():
+    # Forward-carry closure (Task 1 -> Task 5): champion() already returns a
+    # program_id; champion_scores() must resolve it via program_identities()
+    # (-> /programs/{id}/identities), never the retired solution_frontier()
+    # (-> /solutions/{digest}/frontier, which 404s on a program_id).
+    seen = []
+
+    class _Spy:
+        def program_identities(self, program_id):
+            seen.append(program_id)
+            return []
+
+    champion_scores(_Spy(), "prog_top")
+
+    assert seen == ["prog_top"]
 
 
 # --- overall_mean: mean of the non-None values ------------------------------

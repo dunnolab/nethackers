@@ -126,23 +126,27 @@ class HubClient:
         return (self._get("/board", {"scope": scope, "tier": tier}) or {}).get("rows", [])
 
     def search(self, owner: str | None = None, limit: int = 50, offset: int = 0) -> Any:
-        """``GET /search``, with ``?owner=`` only when given and
+        """``GET /programs``, with ``?owner=`` only when given and
         ``?limit=``/``?offset=`` always (they default server-side too, but
-        are sent explicitly here)."""
+        are sent explicitly here). Envelope unwrapped -- returns the rows."""
         params = {
             k: v
             for k, v in (("owner", owner), ("limit", limit), ("offset", offset))
             if v is not None
         }
-        return self._get("/search", params)
+        return (self._get("/programs", params) or {}).get("rows", [])
 
-    def show(self, digest: str) -> Any:
-        """``GET /solutions/{digest}``."""
-        return self._get(f"/solutions/{digest}")
+    def show(self, program_id: str) -> Any:
+        """``GET /programs/{id}`` -- the ``{id, owner, reference:{repo,
+        commit}, registered_at}`` object (a single resource, not enveloped)."""
+        return self._get(f"/programs/{program_id}")
 
-    def solution_frontier(self, digest: str) -> Any:
-        """``GET /solutions/{digest}/frontier``."""
-        return self._get(f"/solutions/{digest}/frontier")
+    def program_identities(self, program_id: str) -> Any:
+        """``GET /programs/{id}/identities`` -- that program's per-identity
+        mean progression rows (envelope unwrapped). Renamed from the retired
+        ``solution_frontier``/``/solutions/{digest}/frontier``, which only
+        ever understood a real solution digest, not an opaque ``program_id``."""
+        return (self._get(f"/programs/{program_id}/identities") or {}).get("rows", [])
 
     def hub_mode(self) -> str | None:
         """``GET /healthz`` (unauthenticated) and return the pointed-at hub's
@@ -418,18 +422,20 @@ def render_board(entries: list[dict[str, Any]]) -> str:
 
 
 def render_search(results: list[dict[str, Any]]) -> str:
-    """A table of registered solutions: ``solution | owner | repo | commit
-    | registered`` (``solution``/``commit`` short digests). A friendly
+    """A table of registered programs: ``program | owner | repo | commit |
+    registered`` (``program`` the opaque ``id`` shown verbatim -- already
+    short, never truncated; ``commit`` shortened via ``_short_digest``, a
+    real git object unlike the retired content-hash digest). A friendly
     one-line message instead of a bare header when ``results == []``."""
     if not results:
         return "no solutions found."
-    headers = ["solution", "owner", "repo", "commit", "registered"]
+    headers = ["program", "owner", "repo", "commit", "registered"]
     rows = [
         [
-            _short_digest(str(r.get("digest", ""))),
+            str(r.get("id", "")),
             str(r.get("owner", "")),
-            str(r.get("repo", "")),
-            _short_digest(str(r.get("commit_sha", ""))),
+            str((r.get("reference") or {}).get("repo", "")),
+            _short_digest(str((r.get("reference") or {}).get("commit", ""))),
             str(r.get("registered_at", "")),
         ]
         for r in results
@@ -437,20 +443,30 @@ def render_search(results: list[dict[str, Any]]) -> str:
     return _table(headers, rows)
 
 
-def render_show(solution: dict[str, Any]) -> str:
-    """An aligned ``key: value`` block describing one registered solution
-    (``digest``/``commit_sha`` shortened). A friendly one-line message
-    instead of an empty block when ``solution`` is empty/missing."""
-    if not solution:
+def render_show(program: dict[str, Any]) -> str:
+    """An aligned ``key: value`` block describing one registered program
+    (the ``/programs/{id}`` object: ``{id, owner, reference:{repo,commit},
+    registered_at}``) -- ``id`` shown verbatim (already short, opaque),
+    ``reference`` flattened into ``repo``/``commit`` (``commit`` shortened
+    via ``_short_digest``, a real git object unlike the retired digest). A
+    friendly one-line message instead of an empty block when ``program`` is
+    empty/missing."""
+    if not program:
         return "no such solution."
-    preferred = ["digest", "repo", "commit_sha", "owner", "root", "entrypoint", "registered_at"]
-    keys = [k for k in preferred if k in solution]
-    keys += [k for k in solution if k not in preferred]
+    reference = program.get("reference") or {}
+    flat = {
+        "id": program.get("id", ""),
+        "repo": reference.get("repo", ""),
+        "commit": reference.get("commit", ""),
+        "owner": program.get("owner", ""),
+        "registered_at": program.get("registered_at", ""),
+    }
+    keys = ["id", "repo", "commit", "owner", "registered_at"]
     width = max(len(k) for k in keys)
     lines = []
     for key in keys:
-        value = solution[key]
-        if key in ("digest", "commit_sha"):
+        value = flat[key]
+        if key == "commit":
             value = _short_digest(str(value))
         lines.append(f"{key:<{width}}: {value}")
     return "\n".join(lines)

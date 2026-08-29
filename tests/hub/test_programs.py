@@ -5,6 +5,8 @@ from nethackers.hub.api import create_app
 from nethackers.hub.auth import LocalStubAuth
 from nethackers.hub.ids import program_id
 from nethackers.hub.store import Store
+from nethackers.hubclient import frontier
+from nethackers.hubclient.client import HubClient
 
 DIGEST = "github.com/vkurenkov/nethacker@503686e9ec14e098912850c2587dfab3123e759b"
 
@@ -60,3 +62,36 @@ def test_program_identities_enveloped(tmp_path):
     assert body["program_id"] == pid
     assert body["rows"] == [{"identity": "wiz-elf-cha-mal", "progression": 0.5, "episodes": 1}]
     assert client.get("/programs/prog_missing/identities").status_code == 404
+
+
+def test_program_regime_end_to_end_champion_to_identities(tmp_path):
+    """Task-5 forward-carry closure. ``frontier.champion()`` already returns
+    a ``program_id`` (Task 1's ``/board`` migration). Before this task,
+    ``champion_scores()`` still called the retired ``solution_frontier()``
+    (-> ``/solutions/{digest}/frontier``), which 404s on a ``prog_`` id --
+    the TUI Frontier "Program" regime and the CLI ``frontier --program``
+    command were broken at runtime even though their own tests (client
+    doubles) stayed green throughout Tasks 1-4.
+
+    Wires a REAL ``HubClient`` through this file's real ``TestClient`` (an
+    actual HTTP round trip -- no client double) and drives the exact chain
+    those surfaces use: ``champion`` -> ``champion_scores`` ->
+    ``program_identities`` -> ``GET /programs/{id}/identities``. Also
+    confirms the retired path really would have 404'd on this id, so the
+    fix is provably load-bearing, not just cosmetic."""
+    client, store = _client(tmp_path)
+    _seed_atoms(store, DIGEST, identity="wiz-elf-cha-mal")
+    hub = HubClient("", http=client)
+
+    champ = frontier.champion(hub)
+    assert champ is not None
+    pid, owner = champ
+    assert pid == program_id(DIGEST)
+    assert owner == "vkurenkov"
+
+    scores = frontier.champion_scores(hub, pid)
+    assert scores == {"wiz-elf-cha-mal": 0.5}
+
+    # The bug this closes: the retired route only ever understood a real
+    # solution digest, never an opaque program_id.
+    assert client.get(f"/solutions/{pid}/frontier").status_code == 404

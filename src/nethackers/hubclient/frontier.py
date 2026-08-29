@@ -35,10 +35,13 @@ def champion(client: Any) -> tuple[str, str] | None:
     return str(top["program_id"]), str(top.get("owner", ""))
 
 
-def champion_scores(client: Any, digest: str) -> dict[str, float]:
+def champion_scores(client: Any, program_id: str) -> dict[str, float]:
+    """One program's per-identity mean progression, from the live
+    ``/programs/{id}/identities`` view (``program_id`` is ``champion``'s
+    first element)."""
     return {
         str(r["identity"]): float(r["progression"])
-        for r in (client.solution_frontier(digest) or [])
+        for r in (client.program_identities(program_id) or [])
     }
 
 

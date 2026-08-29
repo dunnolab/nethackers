@@ -158,43 +158,54 @@ def test_board_defaults_to_generalist_and_unwraps_the_envelopes_rows():
 
 
 def test_search_default_params():
-    http = _FakeHttp(response=[])
+    http = _FakeHttp(response={"rows": []})
     client = HubClient("http://localhost:8000", http=http)
 
     client.search()
 
-    assert http.calls == [("GET", "http://localhost:8000/search", {"limit": 50, "offset": 0})]
+    assert http.calls == [("GET", "http://localhost:8000/programs", {"limit": 50, "offset": 0})]
 
 
 def test_search_with_owner_and_paging():
-    http = _FakeHttp(response=[])
+    http = _FakeHttp(response={"rows": []})
     client = HubClient("http://localhost:8000", http=http)
 
     client.search(owner="sam", limit=10, offset=5)
 
     assert http.calls == [
-        ("GET", "http://localhost:8000/search", {"owner": "sam", "limit": 10, "offset": 5})
+        ("GET", "http://localhost:8000/programs", {"owner": "sam", "limit": 10, "offset": 5})
     ]
 
 
-def test_show_gets_solution_path():
-    http = _FakeHttp(response={"digest": "sha256:x"})
+def test_search_unwraps_the_envelopes_rows():
+    rows = [{"id": "prog_abc", "owner": "sam"}]
+    http = _FakeHttp(response={"generated_at": "t", "rows": rows})
     client = HubClient("http://localhost:8000", http=http)
 
-    result = client.show("sha256:x")
-
-    assert result == {"digest": "sha256:x"}
-    assert http.calls == [("GET", "http://localhost:8000/solutions/sha256:x", None)]
+    assert client.search() == rows
 
 
-def test_solution_frontier_gets_frontier_path():
-    http = _FakeHttp(response=[{"solution_digest": "sha256:x"}])
+def test_show_gets_program_path():
+    http = _FakeHttp(response={"id": "prog_x"})
     client = HubClient("http://localhost:8000", http=http)
 
-    result = client.solution_frontier("abc")
+    result = client.show("prog_x")
 
-    assert result == [{"solution_digest": "sha256:x"}]
-    assert http.calls == [("GET", "http://localhost:8000/solutions/abc/frontier", None)]
+    assert result == {"id": "prog_x"}
+    assert http.calls == [("GET", "http://localhost:8000/programs/prog_x", None)]
+
+
+def test_program_identities_gets_identities_path_and_unwraps():
+    rows = [{"identity": "val-hum-neu-fem", "progression": 0.42, "episodes": 3}]
+    http = _FakeHttp(response={"generated_at": "t", "program_id": "prog_abc", "rows": rows})
+    client = HubClient("http://localhost:8000", http=http)
+
+    result = client.program_identities("prog_abc")
+
+    assert result == rows
+    assert http.calls == [
+        ("GET", "http://localhost:8000/programs/prog_abc/identities", None)
+    ]
 
 
 def test_client_register_body():

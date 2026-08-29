@@ -87,16 +87,16 @@ def _make_fake_hub_client(response_map):
             calls.append(("board", scope, tier))
             return response_map.get("board", [])
 
-        def solution_frontier(self, digest):
-            calls.append(("solution_frontier", digest))
-            return response_map.get("solution_frontier", [])
+        def program_identities(self, program_id):
+            calls.append(("program_identities", program_id))
+            return response_map.get("program_identities", [])
 
         def search(self, owner=None, limit=50, offset=0):
             calls.append(("search", owner, limit, offset))
             return response_map.get("search", [])
 
-        def show(self, digest):
-            calls.append(("show", digest))
+        def show(self, program_id):
+            calls.append(("show", program_id))
             return response_map.get("show", {})
 
     return FakeHubClient, calls
@@ -140,18 +140,18 @@ def test_cli_attainment_alias_dispatches_to_universe_scores(monkeypatch, capsys)
     assert ("elites", "generalist") in calls
 
 
-def test_cli_frontier_program_digest_dispatches_to_solution_frontier(monkeypatch, capsys):
-    # `--program <digest>` (a non-empty value) skips champion resolution
-    # entirely and goes straight to that solution's own frontier.
-    digest = "sha256:abcdef0123456789"
+def test_cli_frontier_program_id_dispatches_to_program_identities(monkeypatch, capsys):
+    # `--program <id>` (a non-empty value) skips champion resolution
+    # entirely and goes straight to that program's own frontier.
+    pid = "prog_abcdef0123456789"
     response = [{"identity": "val-hum-neu-fem", "progression": 0.42, "episodes": 3}]
-    FakeHubClient, calls = _make_fake_hub_client({"solution_frontier": response})
+    FakeHubClient, calls = _make_fake_hub_client({"program_identities": response})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
 
-    rc = C.main(["frontier", "--program", digest, "-o", "json"])
+    rc = C.main(["frontier", "--program", pid, "-o", "json"])
 
     assert rc == 0
-    assert ("solution_frontier", digest) in calls
+    assert ("program_identities", pid) in calls
     assert ("board", "generalist", None) not in calls  # no champion lookup needed
     assert json.loads(capsys.readouterr().out) == {"val-hum-neu-fem": 0.42}
 
@@ -159,11 +159,11 @@ def test_cli_frontier_program_digest_dispatches_to_solution_frontier(monkeypatch
 def test_cli_frontier_bare_program_flag_resolves_champion_with_owner_note(monkeypatch, capsys):
     # `--program` with NO value (argparse's `const=""`) means "the champion":
     # look it up via `champion()`, then render its grid with an "@owner" note.
-    champion_id = "sha256:abcdef0123456789"  # a champion.program_id value, opaque to this test
+    champion_id = "prog_abcdef0123456789"  # a champion.program_id value, opaque to this test
     board_rows = [{"rank": 1, "program_id": champion_id, "owner": "sam"}]
     frontier_rows = [{"identity": "val-hum-neu-fem", "progression": 0.42, "episodes": 3}]
     FakeHubClient, calls = _make_fake_hub_client(
-        {"board": board_rows, "solution_frontier": frontier_rows}
+        {"board": board_rows, "program_identities": frontier_rows}
     )
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
     monkeypatch.setattr(O.console, "_width", 200)  # wide: the note fits on one line
@@ -172,10 +172,11 @@ def test_cli_frontier_bare_program_flag_resolves_champion_with_owner_note(monkey
 
     assert rc == 0
     assert ("board", "generalist", None) in calls
-    assert ("solution_frontier", champion_id) in calls
+    assert ("program_identities", champion_id) in calls
     out = capsys.readouterr().out
     assert "@sam" in out  # the champion's owner, called out by name
-    assert _short_digest(champion_id) in out  # not a mangled sha256:-prefix slice
+    # program_id is opaque and already short -- shown verbatim, never truncated.
+    assert champion_id in out
     assert "Valkyrie" in out and "hum-neu-fem" in out and "0.42" in out
 
 
@@ -456,16 +457,16 @@ def test_cli_search_defaults(monkeypatch, capsys):
     assert ("search", None, 50, 0) in calls
 
 
-def test_cli_show_dispatches_with_digest(monkeypatch, capsys):
-    FakeHubClient, calls = _make_fake_hub_client({"show": {"digest": "sha256:abc"}})
+def test_cli_show_dispatches_with_id(monkeypatch, capsys):
+    FakeHubClient, calls = _make_fake_hub_client({"show": {"id": "prog_abc"}})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
 
-    rc = C.main(["show", "sha256:abc", "-o", "json"])
+    rc = C.main(["show", "prog_abc", "-o", "json"])
 
     assert rc == 0
-    assert ("show", "sha256:abc") in calls
+    assert ("show", "prog_abc") in calls
     payload = json.loads(capsys.readouterr().out)
-    assert payload == {"digest": "sha256:abc"}
+    assert payload == {"id": "prog_abc"}
 
 
 # --- Group 1: emit dispatch (resolve()'s 3-tier precedence) ----------------
@@ -704,16 +705,17 @@ def test_rich_render_elites_empty_is_friendly_not_bare_header():
 
 def test_rich_render_search_contains_expected_cells():
     results = [
-        {"digest": "sha256:0123456789abcdef", "owner": "sam",
-         "repo": "github.com/sam/nethacker", "commit_sha": "a" * 40,
+        {"id": "prog_0123456789abcdef", "owner": "sam",
+         "reference": {"repo": "github.com/sam/nethacker", "commit": "a" * 40},
          "registered_at": "2026-01-01T00:00:00Z"}
     ]
     out = _render_text(rich_search(results))
-    assert "solution" in out and "owner" in out and "repo" in out
+    assert "program" in out and "owner" in out and "repo" in out
     assert "sam" in out
     assert "github.com/sam/nethacker" in out
-    assert _short_digest(results[0]["digest"]) in out
-    assert _short_digest(results[0]["commit_sha"]) in out
+    # program id is opaque and already short -- shown verbatim, never truncated.
+    assert results[0]["id"] in out
+    assert _short_digest(results[0]["reference"]["commit"]) in out
 
 
 def test_rich_render_search_empty_is_friendly_not_bare_header():
@@ -721,17 +723,19 @@ def test_rich_render_search_empty_is_friendly_not_bare_header():
 
 
 def test_rich_render_show_contains_expected_cells():
-    full_digest = "sha256:" + ("0123456789abcdef" * 2)
+    full_id = "prog_" + ("0123456789abcdef" * 2)
+    full_commit = "b" * 40
     solution = {
-        "digest": full_digest, "repo": "github.com/sam/nethacker", "commit_sha": "b" * 40,
-        "owner": "sam", "root": ".", "entrypoint": "bot.py",
+        "id": full_id, "owner": "sam",
+        "reference": {"repo": "github.com/sam/nethacker", "commit": full_commit},
         "registered_at": "2026-01-01T00:00:00Z",
     }
     out = _render_text(rich_show(solution))
-    assert "digest" in out
+    assert "id" in out
+    assert full_id in out  # opaque program id, shown verbatim, never truncated
     assert "owner" in out and "sam" in out
-    assert _short_digest(full_digest) in out
-    assert full_digest.removeprefix("sha256:") not in out  # actually shortened
+    assert _short_digest(full_commit) in out
+    assert full_commit not in out  # the commit sha is actually shortened
 
 
 def test_rich_render_show_empty_is_friendly_not_bare_block():
@@ -755,8 +759,8 @@ def test_rich_renderers_hyperlink_owner_and_repo_to_github():
     assert "https://github.com/octocat" in board  # owner -> profile (link target has no @)
 
     search = term(rich_search([
-        {"digest": "sha256:abc", "owner": "octocat",
-         "repo": "github.com/octocat/nethacker", "commit_sha": "a" * 40,
+        {"id": "prog_abc", "owner": "octocat",
+         "reference": {"repo": "github.com/octocat/nethacker", "commit": "a" * 40},
          "registered_at": "2026-01-01T00:00:00Z"}
     ]))
     assert "https://github.com/octocat" in search  # owner
@@ -942,12 +946,9 @@ def test_cli_elites_output_plain_matches_baseline_table(monkeypatch, capsys):
 def test_cli_search_output_plain_matches_baseline_table(monkeypatch, capsys):
     response = [
         {
-            "digest": "sha256:0123456789abcdef",
+            "id": "prog_0123456789abcdef",
             "owner": "sam",
-            "repo": "github.com/sam/nethacker",
-            "commit_sha": "a" * 40,
-            "root": ".",
-            "entrypoint": "bot.py",
+            "reference": {"repo": "github.com/sam/nethacker", "commit": "a" * 40},
             "registered_at": "2026-01-01T00:00:00Z",
         }
     ]
@@ -959,37 +960,36 @@ def test_cli_search_output_plain_matches_baseline_table(monkeypatch, capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert out == plain_search(response) + "\n"
-    assert "solution" in out and "owner" in out and "repo" in out  # header
+    assert "program" in out and "owner" in out and "repo" in out  # header
     assert "sam" in out
     assert "github.com/sam/nethacker" in out
-    assert _short_digest(response[0]["digest"]) in out
-    assert _short_digest(response[0]["commit_sha"]) in out
+    assert response[0]["id"] in out  # opaque, verbatim, never truncated
+    assert _short_digest(response[0]["reference"]["commit"]) in out
 
 
 def test_cli_show_output_plain_matches_baseline_table(monkeypatch, capsys):
-    full_digest = "sha256:" + ("0123456789abcdef" * 2)  # 32 hex chars after the prefix
+    full_id = "prog_" + ("0123456789abcdef" * 2)
+    full_commit = "b" * 40
     response = {
-        "digest": full_digest,
-        "repo": "github.com/sam/nethacker",
-        "commit_sha": "b" * 40,
+        "id": full_id,
         "owner": "sam",
-        "root": ".",
-        "entrypoint": "bot.py",
+        "reference": {"repo": "github.com/sam/nethacker", "commit": full_commit},
         "registered_at": "2026-01-01T00:00:00Z",
     }
     FakeHubClient, _calls = _make_fake_hub_client({"show": response})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
 
-    rc = C.main(["show", full_digest, "-o", "plain"])
+    rc = C.main(["show", full_id, "-o", "plain"])
 
     assert rc == 0
     out = capsys.readouterr().out
     assert out == plain_show(response) + "\n"
-    assert "digest" in out
+    assert "id" in out
+    assert full_id in out  # opaque program id, shown verbatim, never truncated
     assert "owner" in out and "sam" in out
-    assert _short_digest(full_digest) in out
-    # proves it's actually shortened, not just echoed verbatim
-    assert full_digest.removeprefix("sha256:") not in out
+    assert _short_digest(full_commit) in out
+    # proves the commit sha is actually shortened, not just echoed verbatim
+    assert full_commit not in out
 
 
 # --- Property 5: --hub default + override, before AND after the subcommand -

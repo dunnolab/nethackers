@@ -80,7 +80,6 @@ from nethackers.hubclient.auth import AuthError, TokenSource
 from nethackers.hubclient.client import (
     HubClient,
     HubUnreachable,
-    _short_digest,
     plain_frontier,
     render_board as plain_board,
     render_elites as plain_elites,
@@ -434,7 +433,7 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
     m.add_argument(
         "--program", nargs="?", const="", default=None,
         help="Show one program across all identities (default: the champion). "
-        "Pass a digest to pick a specific solution.",
+        "Pass a program id to pick a specific one.",
     )
 
     el = sub.add_parser(
@@ -468,9 +467,9 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
 
     sh = sub.add_parser(
         "show", parents=[common], formatter_class=RichHelpFormatter,
-        help="Show one registered solution by digest.",
+        help="Show one registered program by id.",
     )
-    sh.add_argument("digest")
+    sh.add_argument("id")
 
     r = sub.add_parser(
         "register", parents=[common], formatter_class=RichHelpFormatter,
@@ -728,8 +727,8 @@ def _run(argv: list[str] | None) -> int:
         note = ""
         scores: dict[str, float | None]
         if args.program is not None:
-            digest = args.program or None
-            if digest is None:
+            pid = args.program or None
+            if pid is None:
                 champ = champion(client)
                 if champ is None:
                     emit(
@@ -738,9 +737,9 @@ def _run(argv: list[str] | None) -> int:
                         plain=lambda s: "no ranked programs yet.",
                     )
                     return 0
-                digest, owner = champ
-                note = f"@{owner}/{_short_digest(digest)} — this one program across all identities"
-            scores = dict(champion_scores(client, digest))
+                pid, owner = champ
+                note = f"@{owner}/{pid} — this one program across all identities"
+            scores = dict(champion_scores(client, pid))
         else:
             scores = dict(universe_scores(client))
         om = overall_mean(scores)
@@ -782,7 +781,7 @@ def _run(argv: list[str] | None) -> int:
 
     if args.cmd == "show":
         client = HubClient(args.hub)
-        emit(client.show(args.digest), args.output, table=rich_show, plain=plain_show)
+        emit(client.show(args.id), args.output, table=rich_show, plain=plain_show)
         return 0
 
     if args.cmd == "register":
