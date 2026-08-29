@@ -48,6 +48,7 @@ from pydantic import BaseModel
 
 from nethackers.contracts.models import Evidence, ObjectiveSpec
 from nethackers.hub.auth import AuthError, AuthProvider, GitHubAppAuth, LocalStubAuth
+from nethackers.hub.envelope import envelope
 from nethackers.hub.github import GitHubRead, GitHubReadError
 from nethackers.hub.objectives import CATALOG
 from nethackers.hub.poll import PollValidationError, clean_vote
@@ -71,6 +72,7 @@ from nethackers.hub.views.boards import (
 from nethackers.hub.views.elites import read_elites
 from nethackers.hub.views.hackers import hacker_board
 from nethackers.hub.views.progress import read_progress
+from nethackers.hub.views.programs import get_program, list_programs
 from nethackers.hub.views.solution import read_solution_frontier
 from nethackers.hub.views.stats import read_stats
 
@@ -310,6 +312,17 @@ def create_app(
         params.extend([limit, offset])
         rows = store.conn.execute(sql, params).fetchall()
         return [dict(zip(_SEARCH_COLUMNS, row, strict=True)) for row in rows]
+
+    @app.get("/programs")
+    def programs(owner: str | None = None, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+        return envelope(list_programs(store, owner=owner, limit=limit, offset=offset), owner=owner)
+
+    @app.get("/programs/{program_id}")
+    def program(program_id: str) -> dict[str, Any]:
+        prog = get_program(store, program_id)
+        if prog is None:
+            raise HTTPException(status_code=404, detail=f"unknown program id: {program_id!r}")
+        return prog
 
     @app.post("/register")
     def register_solution(
