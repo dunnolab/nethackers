@@ -60,6 +60,9 @@ from nethackers.hub.validate import (
     WrongOwner,
     register,
 )
+from nethackers.hub.views.achievements import coverage as achievements_coverage
+from nethackers.hub.views.achievements import firsts as achievements_firsts
+from nethackers.hub.views.achievements import milestones as achievements_milestones
 from nethackers.hub.views.attainment import read_attainment
 from nethackers.hub.views.baseline import read_baseline
 from nethackers.hub.views.boards import (
@@ -226,6 +229,18 @@ def create_app(
     @app.get("/attainment")
     def attainment(identity: str | None = None) -> list[dict[str, Any]]:
         return read_attainment(store, identity=identity)
+
+    @app.get("/achievements/milestones")
+    def achievements_milestones_route(identity: str | None = None) -> dict[str, Any]:
+        return envelope(achievements_milestones(store, identity=identity), identity=identity)
+
+    @app.get("/achievements/coverage")
+    def achievements_coverage_route() -> dict[str, Any]:
+        return envelope(achievements_coverage(store))
+
+    @app.get("/achievements/firsts")
+    def achievements_firsts_route() -> dict[str, Any]:
+        return envelope(achievements_firsts(store))
 
     @app.get("/elites")
     def elites(objective: str) -> list[dict[str, Any]]:
