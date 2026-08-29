@@ -73,7 +73,6 @@ from nethackers.hub.views.progress import read_progress
 from nethackers.hub.views.recognition import read_recognition
 from nethackers.hub.views.solution import read_solution_frontier
 from nethackers.hub.views.stats import read_stats
-from nethackers.hub.views.summary import read_summary
 
 # The index.html file shipped in the wheel package data.
 _INDEX = Path(__file__).parent / "web" / "index.html"
@@ -191,13 +190,6 @@ def create_app(
     @app.get("/baseline")
     def baseline() -> dict[str, Any]:
         return read_baseline(store)
-
-    @app.get("/summary")
-    def summary(tier: str = "self-reported") -> dict[str, Any]:
-        # Single-object read (a sibling of /stats): the competition status
-        # cards, already carrying their own ``generated_at`` as-of, so returned
-        # directly rather than through the list envelope.
-        return read_summary(store, tier=tier)
 
     @app.get("/recognition")
     def recognition() -> dict[str, Any]:

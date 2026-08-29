@@ -11,15 +11,14 @@
  * endpoint shapes -- every collection enveloped as {..., rows:[...]}, program
  * rows carrying the opaque program_id + reference{repo,commit}:
  *   /stats, /baseline (single objects), /objectives (bare array),
- *   /summary?tier= (single object: status cards),
  *   /recognition (single object: {keepers, breakthroughs}),
  *   /elites?scope=generalist (enveloped, program_id rows),
  *   /board?scope=<identity> (enveloped, program_id rows, no episodes),
  *   /programs (enveloped list), /programs/{id} (single), /programs/{id}/identities
  *   (enveloped), /hackers/random (enveloped).
  * It runs the page's boot() and asserts the reworked render:
- *   pass 1 (populated): the four status cards (from /summary), the frontier with
- *     the AutoAscend floor painted into untouched cells (73 cells), the two
+ *   pass 1 (populated): the frontier with the AutoAscend floor painted into
+ *     untouched cells (73 cells), the two
  *     recognition tables (5 rows each, independent [ --More-- ] paging), and the
  *     three click-through popups -- identity leaderboard (/board?scope=), a
  *     breakthrough submission (/programs/{id} + /identities), and a hacker's
@@ -96,13 +95,6 @@ const IDENTITY_BOARD = { rows: [
 // /programs/{id}/identities -> enveloped per-identity frontier (has episodes)
 const FRONTIER = { rows: TOUCHED.map((id) => ({ identity: id, progression: 0.2, episodes: 15 })) };
 
-// /summary -> status-card metrics, largest_lift is program-bearing
-const SUMMARY = {
-  generated_at: "2026-08-27T09:30:00+00:00",
-  community_frontier: 0.081, frontier_gain_7d: 0.006, identities_improved_7d: 4,
-  largest_lift: { identity: TOUCHED[0], owner: "dun", program_id: "prog_aaa", reference: REF_AAA, score: 0.2, baseline: 0.08, lift: 0.12 },
-};
-
 // /recognition -> {keepers, breakthroughs}; breakthroughs are program-bearing
 const RECOGNITION = {
   generated_at: "2026-08-27T09:30:00+00:00",
@@ -124,7 +116,6 @@ function router(path) {
   if (route === "/stats") return { programs: 2, hackers: 2, ascensions: 0, last_registered_at: "2026-08-27T09:30:00+00:00" };
   if (route === "/baseline") return BASELINE;
   if (route === "/objectives") return IDENTITIES.map((n) => ({ name: n, episodes: 15 }));
-  if (route === "/summary") return SUMMARY;
   if (route === "/recognition") return RECOGNITION;
   if (route === "/elites") return ELITES_ALL;
   if (route === "/hackers/random") return { n: Number(params.get("n")), rows: RANDOM_HACKERS };
@@ -170,13 +161,6 @@ async function pass1() {
   const { document } = dom.window;
   await sleep(200);
   const q = (s) => document.querySelector(s), qa = (s) => [...document.querySelectorAll(s)];
-
-  // status cards, straight from /summary
-  const cards = qa("#statusgrid .statuscard");
-  ok(cards.length === 4, "status grid renders four cards");
-  ok(/8\.1%/.test(q("#statusgrid").textContent), "community frontier card shows /summary's 8.1%");
-  ok(/\+12\.0%/.test(q("#statusgrid").textContent), "largest-lift card shows +12.0% (from largest_lift.lift)");
-  ok(!!q("#statusgrid .statusowner"), "largest-lift card exposes a clickable @owner");
 
   // frontier: every per-identity cell has a value (program or floor), 73 total.
   const frCells = qa("#rolegrid td.vv:not(.hval)");
@@ -256,8 +240,6 @@ async function pass3() {
   const { document } = dom.window;
   await sleep(200);
   const q = (s) => document.querySelector(s);
-  ok(/Loading|No participant|No breakthroughs|dungeon ledger/i.test(q("#statusgrid").textContent) || q("#statusgrid").querySelectorAll(".statuscard").length >= 0,
-    "status grid degrades without throwing");
   ok(/No participant is above AutoAscend/i.test(q("#recordholders").textContent), "keepers show the empty recognition state offline");
   ok(/No breakthroughs above AutoAscend/i.test(q("#breakthroughs").textContent), "breakthroughs show the empty recognition state offline");
   // honesty: /stats failed -> the marquee omits the count line and the freshness stamp stays a neutral dash

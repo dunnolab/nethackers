@@ -112,8 +112,8 @@ def test_root_serves_the_page(tmp_path: Any) -> None:
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
     assert "NetHackers" in resp.text
-    assert 'id="statusgrid"' in resp.text
     assert 'id="rolegrid"' in resp.text
+    assert 'id="recordholders"' in resp.text
     # The marquee count and the freshness stamp are live (JS from /stats); the
     # old hardcoded literals must never creep back into the served page. (The
     # full behavior lives in the manual jsdom harness tests/hub/web/wire.test.mjs.)
@@ -173,20 +173,6 @@ def test_stats_reads_empty(tmp_path: Any) -> None:
         "identities_touched": 0,
         "best": 0.0,
         "last_registered_at": None,
-    }
-
-
-def test_summary_reads_empty(tmp_path: Any) -> None:
-    client, _store = _app(tmp_path)
-    response = client.get("/summary")
-    assert response.status_code == 200
-    body = response.json()
-    assert body.pop("generated_at")  # ISO 8601 as-of, present on every response
-    assert body == {
-        "community_frontier": 0.0,
-        "frontier_gain_7d": 0.0,
-        "identities_improved_7d": 0,
-        "largest_lift": None,
     }
 
 

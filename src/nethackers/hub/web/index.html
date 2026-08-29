@@ -1,12 +1,7 @@
 <title>NetHackers</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<!-- Metric-identical fallbacks for Times New Roman (Tinos) + Courier New (Cousine):
-     they render ONLY where the real system fonts are missing (e.g. Android, Linux),
-     so the Web 1.0 look is guaranteed on every device. On Mac/Windows the real
-     Courier New / Times New Roman are used first and nothing downloads. -->
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cousine:ital,wght@0,400;0,700;1,400;1,700&family=Tinos:ital,wght@0,400;0,700;1,400;1,700&display=swap">
+<!-- Web 1.0 typography: system Times New Roman + Courier New only, no web-font
+     downloads (Liberation / Nimbus are metric-compatible fallbacks for Linux). -->
 <style>
 /* ==========================================================================
    NetHackers  &mdash;  a 1998 research-group homepage for solving NetHack.
@@ -44,13 +39,13 @@
 html{ scroll-behavior:smooth; }
 body{
   margin:0; background:var(--ground); color:var(--ink);
-  font-family:"Times New Roman","Tinos","Liberation Serif","Nimbus Roman",Times,serif;
+  font-family:"Times New Roman","Liberation Serif","Nimbus Roman",Times,serif;
   font-size:17px; line-height:1.5;
   background-image:
     linear-gradient(rgba(255,255,255,.35),rgba(255,255,255,.35)),
     repeating-linear-gradient(0deg,transparent 0 3px,rgba(0,0,0,.012) 3px 4px);
 }
-.mono{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; }
+.mono{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; }
 a{ color:var(--indigo); text-decoration:underline; text-underline-offset:2px; }
 a:visited{ color:var(--violet); }
 a:hover{ color:var(--red); background:#fff3b0; }
@@ -60,26 +55,26 @@ img{ max-width:100%; }
 /* the document window ------------------------------------------------------ */
 .page{
   max-width:1000px; margin:74px auto 104px; background:var(--paper); position:relative; z-index:1;
-  border:1px solid var(--silver-lo); box-shadow:4px 4px 0 rgba(60,58,50,.35);
+  border:1px solid var(--silver-lo);
 }
 .pad{ padding:0 18px; }
 
 /* MASTHEAD ----------------------------------------------------------------- */
 .masthead{ background:var(--screen); color:var(--screen-ink); position:relative; overflow:hidden;
-  font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; padding:14px 16px 12px; }
+  font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; padding:14px 16px 12px; }
 .masthead pre{ margin:0; font-size:clamp(9px,2.1vw,15px); line-height:1.05; color:var(--gold);
   overflow-x:auto; white-space:pre; position:relative; z-index:1; }
 .masthead .sub{ margin-top:8px; font-size:.8rem; color:var(--screen-dim); position:relative; z-index:1; }
 /* ambient demo game: a faint dungeon behind the wordmark, with a tiny chase in progress */
 #demo{ position:absolute; top:10px; right:15px; margin:0; z-index:0; pointer-events:none;
-  font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:12px; line-height:1.12;
+  font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:12px; line-height:1.12;
   color:var(--screen-dim); opacity:.34; white-space:pre; }
 #demo .you{ color:var(--gold); font-weight:700; }
 #demo .pet{ color:var(--green); font-weight:700; }
 #demo .gridbug{ color:var(--scr-red); font-weight:700; }
 #demo .corpse{ color:var(--scr-red); font-weight:700; }
 #demoMsg{ position:absolute; top:4px; right:18px; z-index:0; pointer-events:none; white-space:pre;
-  text-align:right; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace;
+  text-align:right; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace;
   font-size:10px; line-height:1.18; }
 #demoMsg.run{ color:var(--screen-dim); opacity:.34; }
 #demoMsg.yasd{ color:var(--scr-red); opacity:.55; font-weight:700; }
@@ -89,7 +84,7 @@ img{ max-width:100%; }
 @keyframes blink{ 50%{ opacity:0; } }
 
 /* marquee message line (the NetHack top line) ------------------------------ */
-.msgbar{ background:#000; color:var(--screen-ink); font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace;
+.msgbar{ background:#000; color:var(--screen-ink); font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace;
   font-size:.82rem; border-top:1px solid #2a2a3a; overflow:hidden; white-space:nowrap; }
 .msgbar__in{ display:inline-block; padding:5px 0; white-space:nowrap;
   animation:scrollmsg 96s linear infinite; }
@@ -103,32 +98,32 @@ img{ max-width:100%; }
 .sidebar{ border-right:1px solid var(--rule-soft); padding:16px 14px; font-size:.86rem; }
 .main{ padding:14px 20px 4px; min-width:0; }
 
-.sidebar h4{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.7rem; letter-spacing:.12em;
+.sidebar h4{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.7rem; letter-spacing:.12em;
   text-transform:uppercase; color:var(--indigo); margin:0 0 6px; border-bottom:1px solid var(--rule-soft); padding-bottom:3px; }
-.idx{ list-style:none; margin:0 0 16px; padding:0; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.82rem; }
+.idx{ list-style:none; margin:0 0 16px; padding:0; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.82rem; }
 .idx li{ margin:2px 0; }
 .idx a{ text-decoration:none; }
 .idx a:hover{ text-decoration:underline; }
 .idx .k{ color:var(--red); }
 .ext{ list-style:none; margin:0 0 16px; padding:0; font-size:.85rem; }
 .ext li{ margin:3px 0; }
-.ext .c{ color:var(--indigo-2); font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; }
+.ext .c{ color:var(--indigo-2); font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; }
 
 /* hit counter -------------------------------------------------------------- */
 .counter{ margin:0 0 6px; }
 .od{ display:inline-flex; gap:2px; background:#000; padding:3px; border:2px inset var(--silver); }
-.od span{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-weight:700; color:var(--gold);
+.od span{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-weight:700; color:var(--gold);
   background:#111; padding:1px 3px; font-size:.9rem; }
-.counter .cap{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.68rem; color:var(--indigo-2); margin-top:3px; }
+.counter .cap{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.68rem; color:var(--indigo-2); margin-top:3px; }
 .reg{ display:flex; flex-direction:column; gap:6px; margin:2px 0 14px; }
 .regrow{ display:flex; align-items:center; gap:8px; }
 .reg .od span{ font-size:.82rem; }
-.reglbl{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.72rem; color:var(--indigo-2); }
-.updated{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.72rem; color:#6b6b72; margin:10px 0 14px; }
+.reglbl{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.72rem; color:var(--indigo-2); }
+.updated{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.72rem; color:#6b6b72; margin:10px 0 14px; }
 
 /* badges ------------------------------------------------------------------- */
 .badges{ display:flex; flex-direction:column; gap:6px; margin-top:8px; }
-.badge{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.62rem; line-height:1.25; color:#fff;
+.badge{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.62rem; line-height:1.25; color:#fff;
   padding:4px 6px; border:1px solid #000; text-align:center; text-decoration:none; display:block; }
 .badge.b1:hover{ background:var(--indigo-2); }
 .badge.b1{ background:var(--indigo); }
@@ -139,12 +134,12 @@ img{ max-width:100%; }
 /* MAIN sections ------------------------------------------------------------ */
 .main section{ scroll-margin-top:12px; }
 h2.sec{ font-size:1.5rem; color:var(--indigo); margin:.2rem 0 .1rem; }
-h2.sec .glyph{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; color:var(--red); }
+h2.sec .glyph{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; color:var(--red); }
 .lead{ margin:.3rem 0 .8rem; }
 .lead b{ color:var(--indigo); }
-.note{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; color:#5c5c64; }
+.note{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; color:#5c5c64; }
 hr.rule{ border:0; height:0; border-top:1px solid var(--silver-lo); border-bottom:1px solid var(--silver-hi); margin:22px 0; }
-.new{ color:var(--red); font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-weight:700; font-size:.68rem; }
+.new{ color:var(--red); font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-weight:700; font-size:.68rem; }
 .blink{ animation:blink2 1.2s steps(1) infinite; }
 @keyframes blink2{ 50%{ opacity:.25; } }
 
@@ -153,17 +148,17 @@ hr.rule{ border:0; height:0; border-top:1px solid var(--silver-lo); border-botto
 ul.hard{ margin:.4rem 0 .3rem; padding-left:1.25rem; }
 ul.hard li{ margin:.4rem 0; }
 ul.hard li b{ color:var(--indigo); }
-.sig{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.82rem; color:var(--indigo-2); }
-.factoids{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; margin:.6rem 0 0; padding-left:1.1rem; }
+.sig{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.82rem; color:var(--indigo-2); }
+.factoids{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; margin:.6rem 0 0; padding-left:1.1rem; }
 .factoids li{ margin:2px 0; }
 
 /* controls (retro) */
 .controls{ display:grid; grid-template-columns:max-content 1fr; gap:7px 14px; align-items:center;
-  margin:.6rem 0 .8rem; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; max-width:600px; }
+  margin:.6rem 0 .8rem; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; max-width:600px; }
 .controls .lbl{ color:#55555c; text-align:right; white-space:nowrap; }
 .controls .grp{ display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
 .bevel{ background:var(--silver); border:2px solid; border-color:var(--silver-hi) var(--silver-lo) var(--silver-lo) var(--silver-hi);
-  padding:3px 10px; cursor:pointer; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; color:#111; }
+  padding:3px 10px; cursor:pointer; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; color:#111; }
 .bevel:active,.bevel[aria-pressed="true"]{ border-color:var(--silver-lo) var(--silver-hi) var(--silver-hi) var(--silver-lo);
   background:#b6b6b1; }
 .bevel[aria-pressed="true"]{ color:var(--indigo); font-weight:700; }
@@ -172,7 +167,7 @@ select.bevel{ padding:3px 4px; }
 
 /* high-score TABLE --------------------------------------------------------- */
 .tablewrap{ overflow-x:auto; border:1px solid var(--silver-lo); }
-table.grid{ width:100%; border-collapse:collapse; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.83rem; background:#fff; }
+table.grid{ width:100%; border-collapse:collapse; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.83rem; background:#fff; }
 table.grid caption{ text-align:left; background:var(--indigo); color:#fff; font-weight:700; padding:4px 8px;
   font-size:.78rem; letter-spacing:.04em; }
 .grid th{ background:var(--silver); border:1px solid var(--silver-lo); padding:3px 8px; text-align:right;
@@ -193,39 +188,26 @@ table.grid caption{ text-align:left; background:var(--indigo); color:#fff; font-
 .cov .tot{ color:#9a9aa6; }
 .base td{ background:#eef0f6 !important; color:#6a6a72; }
 .base .tag{ font-size:.64rem; border:1px solid var(--silver-lo); padding:0 3px; }
-.more{ text-align:center; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; color:var(--indigo);
+.more{ text-align:center; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; color:var(--indigo);
   cursor:pointer; padding:6px; user-select:none; background:#f0f0f4; border:1px solid var(--silver-lo); border-top:0; }
 .more:hover{ background:#fff3b0; color:var(--red); }
 
-/* COMPETITION STATUS + RECOGNITION ---------------------------------------- */
-.statusgrid{ display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); gap:8px; margin:.8rem 0 1rem; }
-.statuscard{ grid-column:span 3; border:1px solid var(--silver-lo); background:#f7f7f2; padding:9px 11px; min-height:70px; }
-.statuscard .sv{ display:block; color:var(--indigo); font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace;
-  font-size:1.3rem; font-weight:700; font-variant-numeric:tabular-nums; }
-.statuscard .sl{ display:block; color:#62626a; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace;
-  font-size:.7rem; line-height:1.3; margin-top:3px; }
-.statusowner{ appearance:none; border:0; padding:0; background:transparent; color:var(--indigo); font:inherit;
-  font-weight:700; text-decoration:underline; cursor:pointer; }
-.statusowner:hover,.statusowner:focus{ color:var(--red); outline:1px dotted var(--indigo); outline-offset:2px; }
-.statuscard.pulse{ grid-column:span 4; }
-.statuscard.wide{ grid-column:1/-1; }
-@media (max-width:640px){ .statuscard,.statuscard.pulse{ grid-column:span 6; } }
-@media (max-width:430px){ .statuscard,.statuscard.pulse{ grid-column:1/-1; } }
+/* RECOGNITION ------------------------------------------------------------- */
 .famedesc{ color:#55555c; font-size:.92rem; margin:.25rem 0 .55rem; }
 .fametable .owner{ color:var(--indigo); font-weight:700; text-decoration:underline; }
 .fametable .roles{ white-space:normal; text-align:left; min-width:190px; }
 .famelog{ font-size:.75rem !important; }
 .famelog td{ font-variant-numeric:tabular-nums; }
-.emptyblock{ color:#777780; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; }
+.emptyblock{ color:#777780; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; }
 
 /* FRONTIER heatmap --------------------------------------------------------- */
 .frtop{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:.3rem 0 .7rem; }
-.regime{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; }
+.regime{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; }
 .regime label{ cursor:pointer; margin-right:12px; }
-.gridnote{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; color:#55555c; margin:.2rem 0 .8rem; }
+.gridnote{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; color:#55555c; margin:.2rem 0 .8rem; }
 .gridnote b{ color:var(--indigo); }
 .rolegrid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(238px,1fr)); gap:10px; align-items:start; }
-table.fr{ width:100%; table-layout:fixed; border-collapse:collapse; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.76rem; }
+table.fr{ width:100%; table-layout:fixed; border-collapse:collapse; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.76rem; }
 .fr col.c1{ width:44%; } .fr col.c2{ width:28%; } .fr col.c3{ width:28%; }
 .fr td.vn{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .fr tr.frhead td{ background:#eeeef2; border-color:var(--silver-lo); }
@@ -244,31 +226,31 @@ table.fr{ width:100%; table-layout:fixed; border-collapse:collapse; font-family:
 .fr td.dpos,.fr .dpos{ color:#1a7a2e; } .fr td.dneg,.fr .dneg{ color:var(--red); } .fr td.dz,.fr .dz{ color:#9a9aa6; }
 .fr .aachip{ color:#9a9aa6; font-style:normal; font-size:.64rem; letter-spacing:.08em; }
 .legend{ display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; margin-top:12px;
-  font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.72rem; color:#55555c; }
+  font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.72rem; color:#55555c; }
 .legend .ramp{ display:inline-flex; height:11px; width:120px; border:1px solid var(--silver-lo); }
 .legend .ramp i{ flex:1; } .legend .sw{ display:inline-block; width:11px; height:11px; border:1px solid #000; vertical-align:-1px; }
 
 /* CONTRIBUTE --------------------------------------------------------------- */
-.menu2{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.9rem; margin:.4rem 0 1rem; }
+.menu2{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.9rem; margin:.4rem 0 1rem; }
 .menu2 div{ margin:5px 0; }
 .menu2 .k{ color:var(--red); font-weight:700; }
 .menu2 .d{ color:#55555c; }
-.wayh{ font-family:"Times New Roman","Tinos","Liberation Serif","Nimbus Roman",Times,serif; font-weight:700; color:var(--indigo); font-size:1.2rem; margin:1.3rem 0 .3rem; }
-.wayh .wl{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; color:var(--red); margin-right:.35rem; }
-#contribute p a{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.86rem; }
+.wayh{ font-family:"Times New Roman","Liberation Serif","Nimbus Roman",Times,serif; font-weight:700; color:var(--indigo); font-size:1.2rem; margin:1.3rem 0 .3rem; }
+.wayh .wl{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; color:var(--red); margin-right:.35rem; }
+#contribute p a{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.86rem; }
 #contribute .term{ max-width:660px; }
 .term{ background:var(--screen); color:var(--screen-ink); border:1px solid #000; padding:9px 11px;
-  font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; line-height:1.65; overflow-x:auto; white-space:pre; }
+  font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; line-height:1.65; overflow-x:auto; white-space:pre; }
 .term .p{ color:var(--gold); } .term .c{ color:var(--screen-dim); }
-.linkbtn{ display:inline-block; margin-top:8px; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.82rem; }
-.card .kicker{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.7rem; letter-spacing:.08em; text-transform:uppercase; color:var(--red); }
+.linkbtn{ display:inline-block; margin-top:8px; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.82rem; }
+.card .kicker{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.7rem; letter-spacing:.08em; text-transform:uppercase; color:var(--red); }
 
 /* inline subhead within a prose section */
-.subh{ font-family:"Times New Roman","Tinos","Liberation Serif","Nimbus Roman",Times,serif; font-weight:700; color:var(--indigo);
+.subh{ font-family:"Times New Roman","Liberation Serif","Nimbus Roman",Times,serif; font-weight:700; color:var(--indigo);
   font-size:1.14rem; margin:1.2rem 0 .3rem; }
 
 /* the "state of the dungeon" record table (static, left-aligned) */
-table.dtable{ width:100%; border-collapse:collapse; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace;
+table.dtable{ width:100%; border-collapse:collapse; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace;
   font-size:.78rem; background:#fff; margin:.8rem 0 .3rem; }
 table.dtable caption{ text-align:left; background:var(--indigo); color:#fff; font-weight:700;
   padding:4px 8px; font-size:.74rem; letter-spacing:.03em; }
@@ -278,11 +260,11 @@ table.dtable caption{ text-align:left; background:var(--indigo); color:#fff; fon
 .dtable td.a{ text-align:center; font-weight:700; white-space:nowrap; }
 .dtable td.a.z{ color:var(--red); }
 .dtable tbody tr:nth-child(even) td{ background:#f6f6fa; }
-.dfn{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.72rem; color:#55555c; margin:6px 0 0; }
+.dfn{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.72rem; color:#55555c; margin:6px 0 0; }
 .dfn b{ color:var(--indigo); }
 
 /* the D1-D5 "what solving means" ladder */
-dl.ladder{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.82rem; margin:.5rem 0 .2rem;
+dl.ladder{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.82rem; margin:.5rem 0 .2rem;
   display:grid; grid-template-columns:max-content 1fr; gap:3px 12px; }
 dl.ladder dt{ color:var(--indigo); font-weight:700; }
 dl.ladder dd{ margin:0; color:#33333a; }
@@ -291,32 +273,32 @@ dl.ladder dd{ margin:0; color:#33333a; }
 .ref{ border-bottom:1px dotted var(--indigo-2); cursor:help; }
 .ref:hover,.ref:focus{ background:#fff3b0; outline:none; }
 .refpop{ position:absolute; z-index:80; max-width:340px; background:#fffdf5; color:var(--ink);
-  border:1px solid var(--indigo); box-shadow:4px 4px 0 rgba(47,54,119,.18); padding:9px 12px 10px;
-  font-family:"Times New Roman","Tinos","Liberation Serif","Nimbus Roman",Times,serif; font-size:.86rem; line-height:1.45; display:none; }
+  border:1px solid var(--indigo); padding:9px 12px 10px;
+  font-family:"Times New Roman","Liberation Serif","Nimbus Roman",Times,serif; font-size:.86rem; line-height:1.45; display:none; }
 .refpop.show{ display:block; }
-.refpop .rt{ display:block; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-weight:700; color:var(--indigo);
+.refpop .rt{ display:block; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-weight:700; color:var(--indigo);
   font-size:.74rem; text-transform:uppercase; letter-spacing:.05em; margin-bottom:5px; }
 .refpop .rd{ margin:0; }
-.refpop pre.ra{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.74rem; line-height:1.12; color:var(--indigo-2);
+.refpop pre.ra{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.74rem; line-height:1.12; color:var(--indigo-2);
   background:#f3f2ea; border:1px solid var(--rule-soft); padding:6px 8px; margin:7px 0 3px; white-space:pre; overflow-x:auto; }
-.refpop .rs{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.74rem; margin-top:7px; border-top:1px solid var(--rule-soft); padding-top:5px; }
+.refpop .rs{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.74rem; margin-top:7px; border-top:1px solid var(--rule-soft); padding-top:5px; }
 .refpop .rs a{ display:block; margin:2px 0; color:var(--indigo); }
 .refpop .rs a:hover{ color:var(--red); }
 
 /* audience signpost box */
 .signpost{ border:1px solid var(--rule-soft); background:#f6f5ee; padding:9px 13px; margin:16px 0 2px; }
 .signpost>b{ color:var(--indigo); }
-.signpost .who{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.82rem; margin:6px 0 0; line-height:1.5; }
+.signpost .who{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.82rem; margin:6px 0 0; line-height:1.5; }
 .signpost .who .arr{ color:var(--red); font-weight:700; }
 
 /* FOOTER ------------------------------------------------------------------- */
 footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px 22px;
   background:#efefe9; }
 .footgrid{ display:grid; grid-template-columns:minmax(300px,.8fr) 1.4fr; gap:22px; align-items:center; }
-.tomb{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.64rem; line-height:1.12; color:#3a3a42;
+.tomb{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.64rem; line-height:1.12; color:#3a3a42;
   margin:0; white-space:pre; overflow-x:auto; justify-self:center; }
 .tomb .epi{ color:var(--red); }
-.footinfo{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.76rem; color:#55555c; }
+.footinfo{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.76rem; color:#55555c; }
 .footinfo a{ }
 .footinfo .row{ margin:3px 0; }
 .footinfo .disc{ margin-top:8px; color:#6a6a72; max-width:52ch; }
@@ -327,14 +309,14 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
   background:rgba(20,20,28,.5); }
 .modal[open]{ display:grid; }
 .win{ width:min(560px,96vw); max-height:88vh; overflow:hidden; background:var(--silver);
-  border:2px solid; border-color:var(--silver-hi) #000 #000 var(--silver-hi); box-shadow:5px 5px 0 rgba(0,0,0,.4);
+  border:2px solid; border-color:var(--silver-hi) #000 #000 var(--silver-hi);
   display:flex; flex-direction:column; }
 .win.identitydetail{ width:min(980px,96vw); }
 .win__title{ display:flex; align-items:center; gap:8px; background:var(--indigo); color:#fff;
-  font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; font-weight:700; padding:3px 6px; }
+  font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; font-weight:700; padding:3px 6px; }
 .win__title .x{ margin-left:auto; width:18px; height:18px; line-height:16px; text-align:center; cursor:pointer;
   background:var(--silver); color:#000; border:2px solid; border-color:var(--silver-hi) #000 #000 var(--silver-hi); font-weight:700; }
-.win__body{ background:#fff; margin:3px; padding:12px; overflow:auto; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; }
+.win__body{ background:#fff; margin:3px; padding:12px; overflow:auto; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; }
 .kv{ display:grid; grid-template-columns:max-content 1fr; gap:3px 12px; font-size:.82rem; margin-bottom:12px; }
 .kv .k{ color:#55555c; } .kv .v{ color:#111; } .kv .v a{ word-break:break-all; }
 .minihead{ font-size:.74rem; color:#55555c; margin:.2rem 0 .5rem; }
@@ -377,7 +359,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
   /* --- The Nethack Dictionary: audio-reactive dungeon wall around the page frame --- */
   #dictviz{ position:fixed; inset:0; width:100%; height:100%; z-index:0; pointer-events:none; display:block; }
   #dictbar{ position:fixed; left:0; right:0; bottom:0; z-index:40; background:var(--screen); color:var(--screen-ink);
-    border-top:2px solid #000; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace;
+    border-top:2px solid #000; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace;
     font-size:.84rem; display:flex; align-items:center; justify-content:center; gap:14px; padding:7px 14px; flex-wrap:wrap; }
   #dictbar .dplay{ cursor:pointer; min-width:40px; font:inherit; padding:2px 9px; }
   #dictbar .dplay.loading{ color:var(--gold); animation:dpulse .9s ease-in-out infinite; }
@@ -397,19 +379,19 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 .orc{ margin:.5rem 0 0; }
 .orc-ballot{ border:1px solid var(--rule-soft); background:#fbfbf7; padding:2px 15px 14px; }
 .orc-q{ margin:.7rem 0 .2rem; }
-.orc-q .qh{ font-family:"Times New Roman","Tinos","Liberation Serif","Nimbus Roman",Times,serif; font-weight:700; color:var(--indigo);
+.orc-q .qh{ font-family:"Times New Roman","Liberation Serif","Nimbus Roman",Times,serif; font-weight:700; color:var(--indigo);
   font-size:1.08rem; margin:.7rem 0 .5rem; }
-.orc-q .qh .qn{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; color:var(--red); font-size:.82rem; margin-right:.4ch; }
+.orc-q .qh .qn{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; color:var(--red); font-size:.82rem; margin-right:.4ch; }
 .orc-opts{ display:flex; flex-direction:column; gap:2px; }
 .orc-opt{ display:flex; align-items:baseline; gap:9px; width:100%; text-align:left; cursor:pointer;
-  font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.86rem; color:#26262c;
+  font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.86rem; color:#26262c;
   background:transparent; border:1px solid transparent; padding:3px 8px; }
 .orc-opt:hover{ background:#fff3b0; }
 .orc-opt .mk{ color:var(--silver-lo); }
 .orc-opt[aria-checked="true"]{ background:#eef0f6; border-color:var(--rule-soft); color:var(--indigo); font-weight:700; }
 .orc-opt[aria-checked="true"] .mk{ color:var(--indigo); }
 .orc-about{ display:grid; grid-template-columns:max-content 1fr; gap:8px 12px; align-items:center;
-  margin:.9rem 0 .2rem; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; }
+  margin:.9rem 0 .2rem; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; }
 .orc-about .albl{ color:#55555c; text-align:right; white-space:nowrap; }
 .orc-about .grp{ display:flex; flex-wrap:wrap; gap:6px; }
 /* tribe chips are radio-semantic (aria-checked); give them the pressed bevel look too */
@@ -418,19 +400,19 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 .orc-cast{ margin:1rem 0 .2rem; display:flex; align-items:center; gap:13px; flex-wrap:wrap; }
 .orc-cast .go{ font-size:.92rem; padding:5px 16px; font-weight:700; color:var(--indigo); }
 .orc-cast .go[disabled]{ opacity:.45; cursor:not-allowed; color:#111; }
-.orc-hint{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.74rem; color:#6b6b72; }
+.orc-hint{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.74rem; color:#6b6b72; }
 /* results */
 .orc-results{ margin:.2rem 0 0; }
-.orc-speak{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.85rem; color:#33333a;
+.orc-speak{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.85rem; color:#33333a;
   background:var(--screen); color:var(--screen-ink); border:1px solid #000; padding:8px 11px; margin:.2rem 0 .8rem; }
 .orc-speak b{ color:var(--gold); font-weight:400; }
 .orc-lens{ margin:.2rem 0 .5rem; }
 .orc-seg-chips{ display:flex; flex-wrap:wrap; gap:6px; margin:.2rem 0 .5rem; }
 .orc-two{ display:grid; grid-template-columns:1fr 1fr; gap:24px; align-items:start; }
 @media (max-width:720px){ .orc-two{ grid-template-columns:1fr; gap:14px; } }
-.orc-cap{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.72rem; text-transform:uppercase;
+.orc-cap{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.72rem; text-transform:uppercase;
   letter-spacing:.05em; color:#55555c; border-bottom:1px solid var(--rule-soft); padding-bottom:3px; margin:0 0 9px; }
-.orc-bars{ display:flex; flex-direction:column; gap:9px; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.79rem; }
+.orc-bars{ display:flex; flex-direction:column; gap:9px; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.79rem; }
 .orc-bar{ display:flex; flex-direction:column; gap:3px; }
 .orc-bar .brow{ display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
 .orc-bar .bl{ color:#33333a; }
@@ -442,21 +424,21 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 .orc-bar.you .bf{ background:var(--indigo); }
 .orc-bar.you .yq{ color:var(--indigo); font-weight:700; margin-left:.4ch; }
 .orc-bar.dim .bf{ opacity:.42; }
-.orc-median{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; color:#55555c; margin:9px 0 0; }
+.orc-median{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; color:#55555c; margin:9px 0 0; }
 .orc-median b{ color:var(--indigo); }
-.orc-nrow{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.74rem; color:#6b6b72; margin:13px 0 0; }
+.orc-nrow{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.74rem; color:#6b6b72; margin:13px 0 0; }
 .orc-small{ color:var(--red); }
 /* compare tribes */
 .orc-cmp{ display:grid; grid-template-columns:repeat(auto-fill,minmax(152px,1fr)); gap:9px; margin:.3rem 0 0; }
 .orc-cmp-c{ border:1px solid var(--rule-soft); background:#fff; padding:7px 10px;
-  font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.76rem; }
-.orc-cmp-c.you{ border-color:var(--indigo); box-shadow:2px 2px 0 rgba(47,54,119,.28); }
+  font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.76rem; }
+.orc-cmp-c.you{ border-color:var(--indigo); }
 .orc-cmp-c .nm{ color:var(--indigo); font-weight:700; }
 .orc-cmp-c .nm .yb{ color:var(--indigo); }
 .orc-cmp-c .n{ color:#a6a6ae; font-weight:400; }
 .orc-cmp-c .md{ color:#111; margin:6px 0 2px; } .orc-cmp-c .md b{ color:var(--indigo); }
 .orc-cmp-c .ld{ color:#55555c; }
-.orc-revote{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; margin:15px 0 0; }
+.orc-revote{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; margin:15px 0 0; }
 .orc-revote a{ cursor:pointer; }
 </style>
 
@@ -486,13 +468,12 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
       <h4>Contents</h4>
       <ol class="idx">
         <li><span class="k">[1]</span> <a href="#about">What it is?</a></li>
-        <li><span class="k">[2]</span> <a href="#challenge">The challenge</a></li>
+        <li><span class="k">[2]</span> <a href="#why">Why care</a></li>
         <li><span class="k">[3]</span> <a href="#frontier">The Frontier</a></li>
         <li><span class="k">[4]</span> <a href="#hackers">Hackers</a></li>
         <li><span class="k">[5]</span> <a href="#oracle">The Oracle</a> <span class="new">NEW!</span></li>
-        <li><span class="k">[6]</span> <a href="#why">Why care</a></li>
-        <li><span class="k">[7]</span> <a href="#contribute">Contribute</a></li>
-        <li><span class="k">[8]</span> <a href="#faq">FAQ</a></li>
+        <li><span class="k">[6]</span> <a href="#contribute">Contribute</a></li>
+        <li><span class="k">[7]</span> <a href="#faq">FAQ</a></li>
       </ol>
 
       <h4>Registered</h4>
@@ -525,17 +506,8 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           evaluates the same result: the symbolic bot that comes out of the loop. The ultimate goal is an
           <span class="ref" data-k="ascension"><b>ascension</b></span>; until then, the board measures how far each bot gets.</p>
 
-        <div class="statusgrid" id="statusgrid"><div class="emptyblock">Loading the dungeon ledger&hellip;</div></div>
-        <p class="note">A result appears immediately as <b>self-reported*</b>. Independent held-out verification arrives with M2b.</p>
-
-      </section>
-
-      <hr class="rule">
-
-      <!-- THE CHALLENGE -->
-      <section id="challenge">
-        <h2 class="sec"><span class="glyph">%</span> The challenge</h2>
-        <p class="lead"><b>NetHack</b> (1987) is among the oldest <b>unsolved</b> challenges in games.
+        <div class="subh">The challenge</div>
+        <p><b>NetHack</b> (1987) is among the oldest <b>unsolved</b> challenges in games.
           Winning &mdash; an <span class="ref" data-k="ascension"><i>ascension</i></span> &mdash; means descending some fifty procedurally
           generated levels, seizing the <span class="ref" data-k="amulet">Amulet of Yendor</span>, and escaping through five final planes: tens of
           thousands of turns under <span class="ref" data-k="permadeath">permadeath</span>, randomized item identity, and a knowledge burden its own developers
@@ -586,6 +558,45 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           best <span class="ref" data-k="elite"><b>elites</b></span>; anyone can pull one, improve it, and register the result &mdash; so <b>one
           contributor's improvement becomes everyone's parent.</b> The hub never runs your search and assigns
           no work; how you make bots is entirely up to you.</p>
+      </section>
+
+      <hr class="rule">
+
+      <!-- WHY IT'S HARD -->
+      <section id="why">
+        <h2 class="sec"><span class="glyph">!</span> Why you should care</h2>
+        <p class="lead">There are at least three ways to fall into this dungeon.</p>
+
+        <div class="subh">If you cannot leave a loop alone</div>
+        <p>If <span class="ref" data-k="recursiveco">Recursive</span>,
+          <span class="ref" data-k="ricursive">Ricursive</span>,
+          <span class="ref" data-k="discoveryloop">Discovery Loop</span>,
+          <span class="ref" data-k="aide2">AIDE&sup2;</span>, and the
+          <span class="ref" data-k="dgm">Darwin G&ouml;del Machine</span> all appeared in your timeline before
+          breakfast; if every benchmark bump is <i>&ldquo;it&rsquo;s happening&rdquo;</i> and every plateau means
+          <i>&ldquo;add another outer loop&rdquo;</i>; if your honest answer to &ldquo;what improves the
+          improver?&rdquo; is &ldquo;another improver&rdquo; &mdash; welcome. Build the seed, mutate the harness,
+          fork the fork. The intelligence explosion can start with not dying to a grid bug.</p>
+
+        <div class="subh">If you do AI research</div>
+        <p>Winning NetHack is the headline; the research problem is <b>generalization</b>. A bot must turn wiki
+          knowledge into action, decompose a tens-of-thousands-of-steps objective, discover and compose reusable
+          skills, and recover when unfamiliar seeds or stochastic events break its plan.
+          <span class="ref" data-k="heldout">Held-out evaluation</span> tests whether those skills transfer rather
+          than whether one trajectory was memorized &mdash; and the result is a symbolic program you can inspect.</p>
+        <p>These are not game-only problems. <span class="ref" data-k="aspire">ASPIRE</span> applies a similar loop
+          to robotics, repairing code-as-policy programs after failed rollouts and saving skills for new tasks;
+          <span class="ref" data-k="codepolicies">Code as Policies</span> composes perception, control, and tools into
+          executable robot behavior. NetHack is a cheap, fast arena for studying long-horizon planning, skill
+          composition, tool creation, and generalization to unfamiliar seeds &mdash; without a robot lab.
+          <a href="#">&raquo; the paper &amp; hub API</a></p>
+
+        <div class="subh">If you just think it's cool</div>
+        <p>You don't need to be good at NetHack, or an ML researcher. A coding agent and a laptop will do.
+          Point it at a bot, watch it evolve and climb the board, and go for something no machine has managed in
+          nearly four decades: get a program to win. It runs locally, it is genuinely addictive (a slot machine of
+          stupid deaths and small breakthroughs), and every win you register becomes someone else's starting point
+          &mdash; your name on the frontier. <a href="#contribute">&raquo; start solving</a></p>
       </section>
 
       <hr class="rule">
@@ -677,45 +688,6 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
             <div class="orc-revote"><a id="orcRevote">[ change my prophecy ]</a></div>
           </div>
         </div>
-      </section>
-
-      <hr class="rule">
-
-      <!-- WHY IT'S HARD -->
-      <section id="why">
-        <h2 class="sec"><span class="glyph">!</span> Why you should care</h2>
-        <p class="lead">There are at least three ways to fall into this dungeon.</p>
-
-        <div class="subh">If you cannot leave a loop alone</div>
-        <p>If <span class="ref" data-k="recursiveco">Recursive</span>,
-          <span class="ref" data-k="ricursive">Ricursive</span>,
-          <span class="ref" data-k="discoveryloop">Discovery Loop</span>,
-          <span class="ref" data-k="aide2">AIDE&sup2;</span>, and the
-          <span class="ref" data-k="dgm">Darwin G&ouml;del Machine</span> all appeared in your timeline before
-          breakfast; if every benchmark bump is <i>&ldquo;it&rsquo;s happening&rdquo;</i> and every plateau means
-          <i>&ldquo;add another outer loop&rdquo;</i>; if your honest answer to &ldquo;what improves the
-          improver?&rdquo; is &ldquo;another improver&rdquo; &mdash; welcome. Build the seed, mutate the harness,
-          fork the fork. The intelligence explosion can start with not dying to a grid bug.</p>
-
-        <div class="subh">If you do AI research</div>
-        <p>Winning NetHack is the headline; the research problem is <b>generalization</b>. A bot must turn wiki
-          knowledge into action, decompose a tens-of-thousands-of-steps objective, discover and compose reusable
-          skills, and recover when unfamiliar seeds or stochastic events break its plan.
-          <span class="ref" data-k="heldout">Held-out evaluation</span> tests whether those skills transfer rather
-          than whether one trajectory was memorized &mdash; and the result is a symbolic program you can inspect.</p>
-        <p>These are not game-only problems. <span class="ref" data-k="aspire">ASPIRE</span> applies a similar loop
-          to robotics, repairing code-as-policy programs after failed rollouts and saving skills for new tasks;
-          <span class="ref" data-k="codepolicies">Code as Policies</span> composes perception, control, and tools into
-          executable robot behavior. NetHack is a cheap, fast arena for studying long-horizon planning, skill
-          composition, tool creation, and generalization to unfamiliar seeds &mdash; without a robot lab.
-          <a href="#">&raquo; the paper &amp; hub API</a></p>
-
-        <div class="subh">If you just think it's cool</div>
-        <p>You don't need to be good at NetHack, or an ML researcher. A coding agent and a laptop will do.
-          Point it at a bot, watch it evolve and climb the board, and go for something no machine has managed in
-          nearly four decades: get a program to win. It runs locally, it is genuinely addictive (a slot machine of
-          stupid deaths and small breakthroughs), and every win you register becomes someone else's starting point
-          &mdash; your name on the frontier. <a href="#contribute">&raquo; start solving</a></p>
       </section>
 
       <hr class="rule">
@@ -852,7 +824,6 @@ __)/\_//(\/(/\)/\//\/\|_)__</pre>
    Where an endpoint does not carry a field the render wants, we render "—" /
    omit it -- never a fabricated value (honest standings is the whole point). */
 let STATS=null;                      // live platform totals from /stats
-let COMPETITION_STATUS=null;          // collective frontier and rolling 7-day movement
 let WALL_OF_FAME={keepers:[],breakthroughs:[]};
 const FAME_PAGE_SIZE=5;
 const FAME_LIMITS={keepers:FAME_PAGE_SIZE,breakthroughs:FAME_PAGE_SIZE};
@@ -1154,38 +1125,14 @@ function odo(el,n,digits){ if(!el) return; el.innerHTML=String(n).padStart(digit
   odo($("#odoPlay"), 0, 5);   /* hackers  -- set live from /stats in boot() */
 })();
 
-/* ===================== competition status ===================== */
+/* ===================== tier ===================== */
 let curTier="self-reported";
 const EMPTY_VERIFIED='No verified programs yet &mdash; verification (M2b) is not live. Everything above the floor is self-reported.';
-function allIdentityIds(){ return Object.keys(ROLE_VARS).flatMap(r=>ROLE_VARS[r].map(v=>r+"-"+v)); }
-function statusCard(value,label,kind=""){ return `<div class="statuscard ${kind}"><span class="sv">${value}</span><span class="sl">${label}</span></div>`; }
-function renderStatus(){
-  const el=$("#statusgrid"); if(!el) return;
-  const per=(BASELINE&&BASELINE.per_identity)||{};
-  const best=COMPETITION_STATUS&&COMPETITION_STATUS.largest_lift;
-  const fallbackFrontier=allIdentityIds().reduce((sum,id)=>{
-    const aa=per[id]&&per[id].progression!=null?per[id].progression:0;
-    const community=UNIVERSE[id]&&UNIVERSE[id].v!=null?UNIVERSE[id].v:0;
-    return sum+Math.max(aa,community);
-  },0)/73;
-  const frontier=COMPETITION_STATUS&&COMPETITION_STATUS.community_frontier!=null
-    ?COMPETITION_STATUS.community_frontier:fallbackFrontier;
-  const gain=COMPETITION_STATUS&&COMPETITION_STATUS.frontier_gain_7d;
-  const moved=COMPETITION_STATUS&&COMPETITION_STATUS.identities_improved_7d;
-  const bestText=best?`+${(best.lift*100).toFixed(1)}%`:'&mdash;';
-  const bestLabel=best?`largest lift vs AutoAscend &middot; ${esc(best.identity)} by <button type="button" class="statusowner" data-owner="${esc(best.owner)}">@${esc(best.owner)}</button>`:'largest lift vs AutoAscend';
-  el.innerHTML=statusCard(`${(frontier*100).toFixed(1)}%`,"community frontier progress &middot; all 73 identities","pulse")
-    +statusCard(gain!=null?`${gain>=0?'+':''}${(gain*100).toFixed(1)} pp`:'&mdash;',"frontier gain &middot; last 7 days","pulse")
-    +statusCard(moved!=null?String(moved):'&mdash;',"identities improved &middot; last 7 days","pulse")
-    +statusCard(bestText,bestLabel,"wide");
-  const owner=el.querySelector(".statusowner");
-  if(owner) owner.addEventListener("click",()=>openHacker(owner.dataset.owner));
-}
 document.querySelectorAll("[data-tier]").forEach(b=>b.addEventListener("click",async()=>{
   curTier=b.dataset.tier;
   document.querySelectorAll("[data-tier]").forEach(x=>x.setAttribute("aria-pressed", x.dataset.tier===curTier?"true":"false"));
-  await Promise.all([loadUniverse(),loadSummary()]);
-  renderStatus(); renderRecognition(); renderFrontier(); }));
+  await loadUniverse();
+  renderFrontier(); }));
 
 /* ===================== frontier heatmap ===================== */
 function renderFrontier(){
@@ -1381,7 +1328,6 @@ function solutionCard(s){
       <span class="k">evaluation episodes</span><span>${loaded?episodes:'unavailable'}</span>
       <span class="k">current records</span><span>${records.length?`${records.length} identit${records.length===1?'y':'ies'}`:'&mdash;'}</span>
       <span class="k">best identity</span><span>${best?`${esc(best.identity)} &middot; mean ${best.progression.toFixed(3)}`:(loaded?'&mdash;':'unavailable')}</span>
-      <span class="k">entrypoint</span><span>bot.py</span>
       <span class="k">tier</span><span>self-reported*</span>
     </div></div>`;
 }
@@ -1408,7 +1354,6 @@ async function openBreakthrough(event){
       <span class="k">roles evaluated</span><span class="v">${roles.length?roles.map(r=>esc(ROLE_NAMES[r]||r)).join(", "):"—"}</span>
       <span class="k">identities evaluated</span><span class="v">${frontier.length} of 73</span>
       <span class="k">evaluation episodes</span><span class="v">${episodes}</span>
-      <span class="k">entrypoint</span><span class="v">bot.py</span>
       <span class="k">tier</span><span class="v">self-reported*</span>
     </div>
     <div class="clickhint">This submission moved ${esc(event.identity)} from ${(event.previous*100).toFixed(1)}% to ${(event.score*100).toFixed(1)}%, measured against the community frontier that existed when it was registered.</div>`;
@@ -1478,11 +1423,6 @@ async function loadProgramIndex(){
   }catch(e){ PROGRAM_BY_ID={}; }
 }
 
-async function loadSummary(){
-  try{ COMPETITION_STATUS=await jget(`/summary?tier=${encodeURIComponent(curTier)}`); }
-  catch(e){ COMPETITION_STATUS=null; }
-}
-
 async function loadRecognition(){
   try{ WALL_OF_FAME=await jget("/recognition"); }
   catch(e){ WALL_OF_FAME={keepers:[],breakthroughs:[]}; }
@@ -1499,8 +1439,8 @@ async function boot(){
   const baseP = jget("/baseline").then(b=>{ BASELINE = b; }).catch(()=>{ BASELINE = {owner:"autoascend", per_identity:{}, overall:null}; });
   const objP  = jget("/objectives").then(o=>{ OBJ_EP = Object.fromEntries(o.map(x=>[x.name, x.episodes])); }).catch(()=>{ OBJ_EP = {}; });
   await Promise.all([statsP,baseP,objP,loadProgramIndex(),loadRecognition()]);
-  await Promise.all([loadUniverse(),loadSummary()]);
-  renderStatus(); renderFrontier(); renderRecognition();
+  await loadUniverse();
+  renderFrontier(); renderRecognition();
 }
 boot();
 /* ===== The Nethack Dictionary: audio-reactive dungeon wall around the .page frame ===== */
@@ -1659,7 +1599,7 @@ boot();
     const per=buildPer(), N=per.length; if(!N) return;
     if(N!==lastN){ sm=new Float32Array(N); pk=new Float32Array(N); lastN=N; }
     const bins=analyser?analyser.frequencyBinCount:512, shuffle=Math.floor(t*2.4);
-    const vis=[]; g.font=ch+'px "Courier New","Cousine",monospace';
+    const vis=[]; g.font=ch+'px "Courier New",monospace';
     for(let k=0;k<N;k++){
       const x=per[k][0],y=per[k][1],dx=per[k][2],dy=per[k][3],base=per[k][4],pf=k/N;
       let m=0.015;                                // faint static outline at the very rest
@@ -1701,7 +1641,7 @@ boot();
     if(per.length){
       const GR=hexRGB(GROUND);                                                       // parchment, for the cleared patch
       const hch=Math.round(ch*TUNE.size), hcw=Math.max(1,Math.round(hch*0.6));
-      g.font="700 "+hch+'px "Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace';
+      g.font="700 "+hch+'px "Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace';
       g.textAlign="center";
       const N=per.length;
       for(let k=0;k<RUNNERS.length;k++){
