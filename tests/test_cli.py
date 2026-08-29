@@ -12,6 +12,7 @@ alongside the rest of the M2a hub-facing CLI coverage.
 import json
 
 import nethackers.cli as C
+from nethackers import _image_pins
 from nethackers.config import load_stage
 from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
 from nethackers.hub.objectives import CATALOG
@@ -42,12 +43,15 @@ def test_cli_eval_invokes_eval_batch_with_resolved_objective(
     # Resolves the real catalog entry -- not a hand-rolled Objective.
     assert seen["spec"] is CATALOG["val-dwa-law-fem"]
     assert seen["solution"] == tmp_path
-    assert seen["image"] == "nethackers/arena:dev"
+    # clean_stage chdirs to a bare tmp_path -- no repo checkout there -- so the
+    # sentinel (arena_image=None) resolves to the pinned ref, not the in-repo
+    # :dev tag (see resolve_image's ladder).
+    assert seen["image"] == _image_pins.ARENA_IMAGE
     assert seen["max_parallel_evals"] == 8  # default, unset here
 
     out = json.loads(capsys.readouterr().out)
     assert out["mean_progress"] == 0.1
-    assert out["evaluator_image"] == "nethackers/arena:dev"
+    assert out["evaluator_image"] == _image_pins.ARENA_IMAGE
     assert out["objective"]["seed_set"] == "val-dwa-law-fem"
 
 

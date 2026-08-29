@@ -71,6 +71,7 @@ from nethackers.harness.sandbox_preflight import (
     build_mutator_image,
     image_present,
     preflight as sandbox_preflight,
+    resolve_image,
 )
 from nethackers.hub.objectives import CATALOG
 from nethackers.hub.selector import resolve
@@ -600,15 +601,17 @@ def _run(argv: list[str] | None) -> int:
         if spec is None:
             err.print(_unknown_objective(args.objective))
             return 2
+        image = resolve_image(args.image, "arena")
         evidence = eval_batch(
-            Path(args.solution), spec, args.image, now=_now(),
+            Path(args.solution), spec, image, now=_now(),
             max_parallel_evals=args.max_parallel_evals,
         )
         print(json.dumps(evidence.to_dict(), indent=2))
         return 0
 
     if args.cmd == "models":
-        models: list[ModelInfo] | None = list_models(args.operator, image=args.mutator_image)
+        models: list[ModelInfo] | None = list_models(
+            args.operator, image=resolve_image(args.mutator_image, "mutator"))
         if models is None:
             err.print(f"[yellow]couldn't determine {args.operator}'s models[/] "
                       "(offline, old CLI, or logged out) — check `"
@@ -640,12 +643,16 @@ def _run(argv: list[str] | None) -> int:
         if msg is not None:
             err.print(msg)
             return 1
+        # One resolution covers every mutator-image use below (auto-provision,
+        # EvolveParams, model preflight) -- never re-read args.mutator_image
+        # directly past this point.
+        mut = resolve_image(args.mutator_image, "mutator")
         # Auto-provision the sandbox image (users never run `make` themselves):
         # if it isn't built yet, build it here with a one-time progress note.
-        if not image_present(args.mutator_image):
+        if not image_present(mut):
             err.print("[yellow]setting up the mutation sandbox[/] (first run — this "
                       "compiles NLE and can take a few minutes)…")
-            berr = build_mutator_image(args.mutator_image,
+            berr = build_mutator_image(mut,
                                        on_line=lambda ln: err.print(f"[dim]{ln}[/]"))
             if berr is not None:
                 err.print(berr)
@@ -660,11 +667,12 @@ def _run(argv: list[str] | None) -> int:
             objective=args.objective, seed=str(args.seed), operator=args.operator,
             iterations=args.iterations,
             max_parallel_evals=args.max_parallel_evals,
-            image=args.image, hub=args.hub, workdir=args.workdir, run_name=args.run_name,
+            image=resolve_image(args.image, "arena"), hub=args.hub, workdir=args.workdir,
+            run_name=args.run_name,
             token=args.token or (_creds.access_token if _creds else config.OFFLINE_TOKEN),
             owner=args.owner or (_creds.login if _creds else config.OFFLINE_OWNER),
             from_seed=args.from_seed, offline=args.offline,
-            model=args.model, effort=args.effort, mutator_image=args.mutator_image,
+            model=args.model, effort=args.effort, mutator_image=mut,
         )
         # An anonymous run is offline by necessity (the owner==OFFLINE_OWNER
         # backstop in _publisher_for), but --offline is the only case that says
@@ -692,7 +700,7 @@ def _run(argv: list[str] | None) -> int:
         # existing wiring test) free of any CLI/network probe. A confident
         # refuse stops here -- no run dir, no doomed spin; unknown only warns.
         if args.model:
-            pf = preflight_model(args.operator, args.model, image=args.mutator_image)
+            pf = preflight_model(args.operator, args.model, image=mut)
             if pf.action == "refuse":
                 err.print(f"[red]{pf.message}[/]")
                 return 2
@@ -840,8 +848,9 @@ def _run(argv: list[str] | None) -> int:
             err.print(_unknown_objective(args.objective))
             return 2
         # self-reported score: evaluate the local solution on the objective's batch
+        image = resolve_image(args.image, "arena")
         evidence = eval_batch(
-            Path(args.solution_dir), spec, args.image, now=_now(),
+            Path(args.solution_dir), spec, image, now=_now(),
             max_parallel_evals=args.max_parallel_evals,
         )
         slug = f"{creds.login}/{args.repo_name}"

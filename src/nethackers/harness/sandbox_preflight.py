@@ -15,6 +15,7 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from nethackers import _image_pins
 from nethackers.harness.auth_inject import AuthUnavailable, auth_docker_args
 
 
@@ -66,6 +67,24 @@ def _repo_root() -> Path | None:
         if (base / "Dockerfile.mutator").is_file() and (base / "Makefile").is_file():
             return base
     return None
+
+
+_LOCAL_DEV_REF = {"arena": "nethackers/arena:dev", "mutator": "nethackers/mutator:latest"}
+_PIN = {"arena": _image_pins.ARENA_IMAGE, "mutator": _image_pins.MUTATOR_IMAGE}
+
+
+def resolve_image(explicit: str | None, kind: str, *, repo_root=_repo_root) -> str:
+    """The image ref to use for ``kind`` (``"arena"``/``"mutator"``). Ladder
+    (spec §5.1): an explicit value (flag / env / .env.stack — anything that made
+    the layered Stage field non-None) wins verbatim; else a repo checkout uses the
+    locally-built dev tag; else the pinned GHCR digest. NO side effects — never
+    builds or pulls (safe in EvolveParams default factories); building/pulling
+    happens at the acquisition points. ``repo_root`` injectable for tests."""
+    if explicit is not None:
+        return explicit
+    if repo_root() is not None:
+        return _LOCAL_DEV_REF[kind]
+    return _PIN[kind]
 
 
 def build_mutator_image(image: str, *, on_line=None, popen=subprocess.Popen) -> str | None:

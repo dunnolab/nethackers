@@ -20,11 +20,15 @@ def test_cli_hub_default_is_stage_hub_url(monkeypatch):
 
 def test_evolveparams_defaults_from_stage(monkeypatch, clean_stage):
     monkeypatch.setenv("NETHACKERS_HUB", "http://localhost:8000")
+    from nethackers import _image_pins
     from nethackers.harness.launch import EvolveParams
     p = EvolveParams(objective="mon", seed="roots/autoascend")
     assert p.hub == "http://localhost:8000"          # from stage (env override here)
-    assert p.image == "nethackers/arena:dev"
-    assert p.mutator_image == "nethackers/mutator:latest"
+    # clean_stage chdirs to a bare tmp_path -- no repo checkout there -- so the
+    # sentinel (arena_image/mutator_image = None) resolves to the pinned refs,
+    # not the in-repo :dev/:latest tags (see resolve_image's ladder).
+    assert p.image == _image_pins.ARENA_IMAGE
+    assert p.mutator_image == _image_pins.MUTATOR_IMAGE
     assert p.token == OFFLINE_TOKEN and p.owner == OFFLINE_OWNER
     assert p.workdir == str(Path.home() / ".nethackers" / "evolve")
     assert p.repo_name == "nethacker"                # NEW field, default from stage

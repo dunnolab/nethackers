@@ -36,6 +36,7 @@ from nethackers.harness.sandbox_preflight import (
     build_mutator_image,
     image_present,
     preflight as sandbox_preflight,
+    resolve_image,
 )
 from nethackers.hub.selector import resolve
 from nethackers.hubclient.credentials import Credentials
@@ -251,7 +252,8 @@ class EvolveForm(Vertical):
         # catalog match what a run actually uses, not the host's possibly-
         # different CLI. On a None catalog (image not built / offline / logged
         # out) the static list stays; the version line still reflects detection.
-        cli, models = probe_operator(backend, image=load_stage().mutator_image)
+        cli, models = probe_operator(
+            backend, image=resolve_image(load_stage().mutator_image, "mutator"))
         self.app.call_from_thread(self._cache_and_apply, backend, cli, models)
 
     def _cache_and_apply(self, backend: str, cli: CliInfo,

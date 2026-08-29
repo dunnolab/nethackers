@@ -23,8 +23,8 @@ class Stage:
     compose_project: str = "nethackers"  # S17 (compose reads it)
     data_root: Path = Path.home() / ".nethackers" / "evolve"  # S5/S6 -> kills K1
     repo_name: str = "nethacker"  # S7 -> kills K6
-    arena_image: str = "nethackers/arena:dev"  # S14 -> kills K5
-    mutator_image: str = "nethackers/mutator:latest"  # S15 -> kills K5
+    arena_image: str | None = None    # S14 — sentinel; resolve via resolve_image()
+    mutator_image: str | None = None  # S15 — sentinel; resolve via resolve_image()
     github_client_id: str = "Iv23liWooDi2WlkrDAOw"  # S13 (public App id -- config, not secret)
 
     @property

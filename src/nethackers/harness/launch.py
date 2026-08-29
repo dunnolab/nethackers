@@ -18,6 +18,7 @@ from nethackers.config import load_stage
 from nethackers.harness import runlog
 from nethackers.harness.container_operator import ContainerOperator
 from nethackers.harness.loop import run_loop
+from nethackers.harness.sandbox_preflight import resolve_image
 from nethackers.harness.store import LocalTreeStore
 from nethackers.harness.version import RUN_SCHEMA_VERSION
 from nethackers.hubclient import credentials as _credentials
@@ -65,7 +66,7 @@ class EvolveParams:
     # -- never read at import time -- so a test's env/monkeypatch (or a future
     # .env.stack) is picked up on every fresh EvolveParams(), not frozen at
     # module load.
-    image: str = field(default_factory=lambda: load_stage().arena_image)
+    image: str = field(default_factory=lambda: resolve_image(load_stage().arena_image, "arena"))
     hub: str = field(default_factory=lambda: load_stage().hub_url)
     token: str = field(default_factory=lambda: config.OFFLINE_TOKEN)
     owner: str = field(default_factory=lambda: config.OFFLINE_OWNER)
@@ -75,7 +76,8 @@ class EvolveParams:
     offline: bool = False  # explicit no-publish/no-register gate (hub is still read for seeding)
     model: str | None = None   # pin the operator's model (None = harness default)
     effort: str | None = None  # reasoning effort level (None = harness default)
-    mutator_image: str = field(default_factory=lambda: load_stage().mutator_image)
+    mutator_image: str = field(
+        default_factory=lambda: resolve_image(load_stage().mutator_image, "mutator"))
     repo_name: str = field(default_factory=lambda: load_stage().repo_name)  # <owner>/<repo_name>
 
 
