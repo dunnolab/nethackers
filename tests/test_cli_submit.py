@@ -30,7 +30,7 @@ class _FakeHub:
 
 
 def _wire_gh(monkeypatch, *, gh="sam", sha="c" * 40):
-    monkeypatch.setattr(cli, "gh_login", lambda: gh)
+    monkeypatch.setattr(cli, "gh_state", lambda: (gh, "authed"))
     monkeypatch.setattr(cli, "ensure_repo", lambda slug: None)
     monkeypatch.setattr(cli, "publish_solution", lambda d, slug, *, message: sha)
     monkeypatch.setattr(cli, "eval_batch", lambda *a, **k: _FakeEvidence())
