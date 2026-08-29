@@ -1,4 +1,4 @@
-"""Collective competition progress for the website status cards.
+"""Collective competition summary for the website status cards.
 
 The community frontier is the mean, across all 73 identities, of the better
 of AutoAscend's per-identity baseline and the best participant program seen by
@@ -6,6 +6,11 @@ the requested point in time. Untouched identities therefore stay at the
 baseline instead of disappearing from the aggregate. The response also names
 the current identity result with the largest lift over its AutoAscend floor,
 so every status card is backed by this one authoritative endpoint.
+
+Served at ``GET /summary`` -- a single-object read (a sibling of ``/stats``)
+carrying the envelope's ``generated_at`` as-of. The program-bearing
+``largest_lift`` field uses the opaque ``program_id`` + ``reference
+{repo, commit}`` (never ``solution_digest``), per the hub API redesign.
 """
 
 from __future__ import annotations
@@ -14,6 +19,7 @@ import statistics
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
+from nethackers.hub.ids import program_id
 from nethackers.hub.objectives import IDENTITIES
 from nethackers.hub.store import Store
 
@@ -23,6 +29,13 @@ def _timestamp(value: str) -> datetime:
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=UTC)
     return parsed.astimezone(UTC)
+
+
+def _reference(store: Store, digest: str) -> dict[str, Any]:
+    """The ``{repo, commit}`` git pointer for a program, resolved from the
+    registered ``solutions`` row (``commit_sha`` is surfaced as ``commit``)."""
+    solution = store.get_solution(digest) or {}
+    return {"repo": solution.get("repo"), "commit": solution.get("commit_sha")}
 
 
 def _program_bests(rows: list[Any], *, cutoff: datetime | None) -> dict[str, dict[str, Any]]:
@@ -59,7 +72,7 @@ def _program_bests(rows: list[Any], *, cutoff: datetime | None) -> dict[str, dic
     return bests
 
 
-def read_competition_status(
+def read_summary(
     store: Store,
     *,
     tier: str = "self-reported",
@@ -69,7 +82,8 @@ def read_competition_status(
     current_time = now or datetime.now(UTC)
     if current_time.tzinfo is None:
         current_time = current_time.replace(tzinfo=UTC)
-    cutoff = current_time.astimezone(UTC) - timedelta(days=7)
+    current_time = current_time.astimezone(UTC)
+    cutoff = current_time - timedelta(days=7)
 
     baseline_groups: dict[str, list[float]] = {}
     for atom in store.iter_baseline_atoms():
@@ -113,22 +127,30 @@ def read_competition_status(
         for identity, result in current_bests.items()
         if identity in baseline and result["score"] > baseline[identity] + 1e-12
     ]
-    largest = min(
+    best_lift = min(
         lifts,
         key=lambda row: (-row["lift"], row["identity"], row["solution_digest"]),
         default=None,
     )
-    if largest is not None:
-        largest = {
-            key: round(value, 6) if isinstance(value, float) else value
-            for key, value in largest.items()
+    largest_lift: dict[str, Any] | None = None
+    if best_lift is not None:
+        digest = best_lift["solution_digest"]
+        largest_lift = {
+            "identity": best_lift["identity"],
+            "owner": best_lift["owner"],
+            "program_id": program_id(digest),
+            "reference": _reference(store, digest),
+            "score": round(best_lift["score"], 6),
+            "baseline": round(best_lift["baseline"], 6),
+            "lift": round(best_lift["lift"], 6),
         }
 
     current_frontier = statistics.mean(current_values)
     previous_frontier = statistics.mean(previous_values)
     return {
+        "generated_at": current_time.isoformat(),
         "community_frontier": round(current_frontier, 6),
         "frontier_gain_7d": round(current_frontier - previous_frontier, 6),
         "identities_improved_7d": improved,
-        "largest_lift": largest,
+        "largest_lift": largest_lift,
     }

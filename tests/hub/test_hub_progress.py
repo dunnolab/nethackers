@@ -1,6 +1,6 @@
 """Tests for nethackers.hub.views.progress: the website's best-so-far progress
 time series. `frontier` is the running max over programs of each program's mean
-progression on the objective (the leaderboard's "best mean", tracked over
+progression in scope (the leaderboard's "best mean", tracked over
 time); `ascensions`/`coverage` are cumulative."""
 
 from __future__ import annotations
@@ -75,15 +75,15 @@ def test_progress_counts_ascensions_cumulatively(tmp_path):
     assert [p["ascensions"] for p in out["series"]] == [1, 1]
 
 
-def test_progress_filters_by_objective_identity(tmp_path):
+def test_progress_filters_by_scope_identity(tmp_path):
     store = Store(str(tmp_path / "h.db"))
     store.init_schema()
     store.upsert_solution(digest="s1", repo="github.com/a/b", commit_sha="c1",
                           owner="a", root=".", entrypoint="bot.py", registered_at="t")
     store.insert_atoms([_atom("s1", seed=1, prog=0.20)])
     _backdate(store, {1: "2026-08-23"})
-    assert read_progress(store, objective=IDENT)["series"]           # non-empty
-    assert read_progress(store, objective="wiz-elf-cha-mal") == {"series": []}
+    assert read_progress(store, scope=IDENT)["series"]           # non-empty
+    assert read_progress(store, scope="wiz-elf-cha-mal") == {"series": []}
 
 
 def test_progress_ignores_none_milestone_in_coverage(tmp_path):

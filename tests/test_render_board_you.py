@@ -5,9 +5,9 @@ from rich.console import Console
 from nethackers.hubclient.render import render_board
 
 ENTRIES = [
-    {"rank": 1, "solution_digest": "a"*12, "owner": "vale",
+    {"rank": 1, "program_id": "prog_" + "a"*12, "owner": "vale",
      "ascensions": 0, "median_progression": 0.5, "mean_progression": 0.51},
-    {"rank": 2, "solution_digest": "b"*12, "owner": "castiel",
+    {"rank": 2, "program_id": "prog_" + "b"*12, "owner": "castiel",
      "ascensions": 0, "median_progression": 0.4, "mean_progression": 0.44},
 ]
 

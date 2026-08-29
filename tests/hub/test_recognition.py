@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from nethackers.contracts.models import Atom
+from nethackers.hub.ids import program_id
 from nethackers.hub.objectives import IDENTITIES
 from nethackers.hub.store import Store
-from nethackers.hub.views.wall_of_fame import read_wall_of_fame
+from nethackers.hub.views.recognition import read_recognition
 
 
 def _atom(
@@ -65,7 +66,7 @@ def test_wall_tracks_current_keepers_and_historical_breakthroughs(tmp_path):
         )
     store.conn.commit()
 
-    wall = read_wall_of_fame(store)
+    wall = read_recognition(store)
 
     assert [(row["owner"], row["records"]) for row in wall["keepers"]] == [
         ("bob", 1),
@@ -79,13 +80,30 @@ def test_wall_tracks_current_keepers_and_historical_breakthroughs(tmp_path):
         "alice",
     ]
     assert [row["gain"] for row in wall["breakthroughs"]] == [0.3, 0.15, 0.05, 0.1]
-    assert all(row["owner"] != "dave" for rows in wall.values() for row in rows)
+    # Breakthrough rows are program-bearing: opaque program_id + reference,
+    # never solution_digest (hub API redesign).
+    assert [row["program_id"] for row in wall["breakthroughs"]] == [
+        program_id("carol-b"),
+        program_id("bob-a"),
+        program_id("alice-a2"),
+        program_id("alice-a"),
+    ]
+    assert wall["breakthroughs"][0]["reference"] == {
+        "repo": "github.com/carol/bot",
+        "commit": "carol-b",
+    }
+    assert all("solution_digest" not in row for row in wall["breakthroughs"])
+    assert all(
+        row["owner"] != "dave" for row in wall["keepers"] + wall["breakthroughs"]
+    )
 
 
 def test_wall_is_empty_without_results(tmp_path):
     store = Store(str(tmp_path / "hub.db"))
     store.init_schema()
-    assert read_wall_of_fame(store) == {"keepers": [], "breakthroughs": []}
+    result = read_recognition(store)
+    assert result.pop("generated_at")  # ISO 8601 as-of, present on every response
+    assert result == {"keepers": [], "breakthroughs": []}
 
 
 def test_keeper_ties_follow_the_identity_leaderboard_rules(tmp_path):
@@ -114,6 +132,6 @@ def test_keeper_ties_follow_the_identity_leaderboard_rules(tmp_path):
         )
     store.conn.commit()
 
-    wall = read_wall_of_fame(store)
+    wall = read_recognition(store)
 
     assert [(row["owner"], row["records"]) for row in wall["keepers"]] == [("bob", 1)]

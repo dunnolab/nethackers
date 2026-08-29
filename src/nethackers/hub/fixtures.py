@@ -8,10 +8,13 @@ thing in this module with a side effect -- importing it mutates nothing.
 It upserts 2 catalog objectives (one per identity -- Task A3 dropped the
 now-retired ``"random"`` objective's upsert; atoms don't reference the
 catalog at all any more), 3 solutions (distinct digests/owners, one lineage
-edge), and 9 atoms across them, then runs the same view-population calls
-``validate.register`` runs for a real registration (``update_attainment``,
-``recompute_elites``) so the store comes out fully populated -- atoms plus
-every derived view -- exactly as if these had all been registered for real.
+edge), and 9 atoms across them, then runs the same view-population call
+``validate.register`` runs for a real registration (``update_attainment``)
+so the store comes out fully populated -- atoms plus every derived view --
+exactly as if these had all been registered for real. (``/elites`` is a
+live query straight over ``atoms``, so there is nothing to additionally
+populate for it -- Part 2 of the hub API redesign dropped the
+``recompute_elites`` call this used to also run.)
 
 Edge cases deliberately included, so the fixture exercises real system
 behavior rather than a degenerate happy path:
@@ -47,7 +50,6 @@ from nethackers.arena.progress import ACHIEVEMENTS
 from nethackers.contracts.models import Atom, ResultStatus
 from nethackers.hub.store import Store
 from nethackers.hub.views.attainment import update_attainment
-from nethackers.hub.views.elites import recompute_elites
 
 # Two published identities (both already used elsewhere in the hub test
 # suite as known-valid IDENTITIES members) -- the brief's "random + two
@@ -72,10 +74,11 @@ _EVALUATOR_IMAGE = "nethackers/arena@sha256:" + "f" * 64
 def load_fixtures(store: Store, *, now: str = "2026-01-01T00:00:00Z") -> None:
     """Populate ``store`` with the fixture dataset described in this
     module's docstring. Every underlying write (``upsert_solution``,
-    ``add_lineage``, ``insert_atoms``,
-    ``update_attainment``, ``recompute_elites``) is already idempotent, so
-    re-running this against the same store is safe. Pure side effect on
-    ``store`` -- importing this module does nothing."""
+    ``add_lineage``, ``insert_atoms``, ``update_attainment``) is already
+    idempotent, so re-running this against the same store is safe. Pure
+    side effect on ``store`` -- importing this module does nothing.
+    ``/elites`` is a live query over ``atoms``, so there is nothing left to
+    populate for it here."""
     for digest in (ALPHA, BETA, GAMMA):
         owner = _OWNER_BY_DIGEST[digest]
         store.upsert_solution(
@@ -122,7 +125,6 @@ def load_fixtures(store: Store, *, now: str = "2026-01-01T00:00:00Z") -> None:
     ]
     store.insert_atoms(atoms)
     update_attainment(store, atoms, now=now)
-    recompute_elites(store)
 
 
 def _atom(

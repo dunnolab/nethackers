@@ -856,7 +856,7 @@ let COMPETITION_STATUS=null;          // collective frontier and rolling 7-day m
 let WALL_OF_FAME={keepers:[],breakthroughs:[]};
 const FAME_PAGE_SIZE=5;
 const FAME_LIMITS={keepers:FAME_PAGE_SIZE,breakthroughs:FAME_PAGE_SIZE};
-let SOLUTION_BY_DIGEST={};            // metadata cache for identity-board source/date cells
+let PROGRAM_BY_ID={};                 // program registry index (by opaque id) for source/date cells
 let BASELINE={owner:"autoascend",per_identity:{},overall:null};  // raw /baseline
 let OBJ_EP={};                       // {objective: episodes} from /objectives (honest ep for tooltips)
 const ROLE_NAMES={arc:"Archeologist",bar:"Barbarian",cav:"Caveman",hea:"Healer",kni:"Knight",mon:"Monk",
@@ -876,7 +876,7 @@ const ROLE_VARS={
  tou:["hum-neu-fem","hum-neu-mal"],
  val:["dwa-law-fem","hum-law-fem","hum-neu-fem"],
  wiz:["elf-cha-fem","elf-cha-mal","gno-neu-fem","gno-neu-mal","hum-cha-fem","hum-cha-mal","hum-neu-fem","hum-neu-mal","orc-cha-fem","orc-cha-mal"]};
-let UNIVERSE={};                     // /elites?objective=all -> rank-1 per identity {id:{v,o,digest,ep}}
+let UNIVERSE={};                     // /elites?scope=generalist -> rank-1 per identity {id:{v,o,d,ep}}
 let HONOR_UNIVERSE={};               // self-reported records, retained while viewing verified
 const ASC=0.8745866562925501;
 const MEMES=[
@@ -889,7 +889,6 @@ const MEMES=[
 /* ===================== helpers ===================== */
 const $=s=>document.querySelector(s);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const short=d=>String(d).replace(/^sha256:/,"").slice(0,7);   // digest -> ~7-char display id
 function tint(v,floor){ if(v==null) return "#ffffff"; const a=(floor?0.05:0.10)+(floor?0.16:0.72)*Math.min(1,v); return `rgba(var(--tint) / ${a.toFixed(3)})`; }
 function tintText(v){ return v!=null && v>=0.5 ? "#ffffff" : "#111"; }
 
@@ -1185,7 +1184,7 @@ function renderStatus(){
 document.querySelectorAll("[data-tier]").forEach(b=>b.addEventListener("click",async()=>{
   curTier=b.dataset.tier;
   document.querySelectorAll("[data-tier]").forEach(x=>x.setAttribute("aria-pressed", x.dataset.tier===curTier?"true":"false"));
-  await Promise.all([loadUniverse(),loadCompetitionStatus()]);
+  await Promise.all([loadUniverse(),loadSummary()]);
   renderStatus(); renderRecognition(); renderFrontier(); }));
 
 /* ===================== frontier heatmap ===================== */
@@ -1327,16 +1326,17 @@ async function openIdentity(identity){
   $("#mBody").innerHTML=`<div class="popupstatus">Loading same-seed results&hellip;</div>`;
   showModal("identity");
   try{
-    const rows=curTier==="verified"?[]:await jget(`/board?objective=${encodeURIComponent(identity)}&tier=${encodeURIComponent(curTier)}`);
+    const resp=curTier==="verified"?{rows:[]}:await jget(`/board?scope=${encodeURIComponent(identity)}&tier=${encodeURIComponent(curTier)}`);
     if(request!==popupRequest) return;
+    const rows=resp.rows||[];
     const baseline=aa&&aa.progression!=null?aa.progression:null;
     const body=rows.length?rows.map(r=>{
-      const meta=SOLUTION_BY_DIGEST[r.solution_digest]||{digest:r.solution_digest,repo:"",commit_sha:"",owner:r.owner};
+      const meta=PROGRAM_BY_ID[r.program_id]||{reference:{repo:"",commit:""},registered_at:null,owner:r.owner};
       const delta=identityDelta(r.mean_progression,baseline);
       return `<tr><td class="num ${r.rank<=3?'top':''}">${r.rank}</td>
         <td><span class="ownerlink" data-owner="${esc(r.owner)}">@${esc(r.owner)}</span></td>
         <td>${sourceLink(meta)}</td><td class="num">${r.mean_progression.toFixed(3)}</td>
-        <td class="num">${r.median_progression.toFixed(3)}</td><td class="num">${r.episodes}</td>
+        <td class="num">${r.median_progression.toFixed(3)}</td><td class="num">${OBJ_EP[identity]!=null?OBJ_EP[identity]:'—'}</td>
         <td>${esc(r.deepest||'—')}</td><td class="num ${delta.cls}">${delta.text}</td>
         <td class="num ${r.ascensions?'star':''}">${r.ascensions||'·'}</td><td>${esc(fmtDate(meta.registered_at))}</td></tr>`;
     }).join(""):`<tr><td colspan="10" class="pend">${curTier==="verified"?EMPTY_VERIFIED:'No program has evaluated this identity yet.'}</td></tr>`;
@@ -1352,12 +1352,15 @@ function fmtDate(iso){
   return `${d.getUTCDate()} ${_MON[d.getUTCMonth()]} ${d.getUTCFullYear()}, ${String(d.getUTCHours()).padStart(2,"0")}:${String(d.getUTCMinutes()).padStart(2,"0")} UTC`;
 }
 function sourceLink(s){
-  const raw=String(s.repo||"").replace(/^https?:\/\/github\.com\//i,"").replace(/^github\.com\//i,"").replace(/\.git$/i,"");
+  // repo/commit now arrive inside reference{repo,commit}; the arena hard-codes the
+  // entrypoint (bot.py at the repo root), so there is no root/entrypoint to join.
+  const ref=s.reference||{};
+  const rawRepo=ref.repo!=null?ref.repo:s.repo;
+  const raw=String(rawRepo||"").replace(/^https?:\/\/github\.com\//i,"").replace(/^github\.com\//i,"").replace(/\.git$/i,"");
   const bits=raw.split("/").filter(Boolean);
-  if(bits.length!==2||!bits.every(x=>/^[\w.-]+$/.test(x))) return esc(s.repo||"source unavailable");
-  const repo=bits.join("/"), commit=String(s.commit_sha||"");
-  const file=[s.root&&s.root!=="."?s.root:"",s.entrypoint||""].filter(Boolean).join("/");
-  const path=file?`/blob/${encodeURIComponent(commit)}/${file.split("/").map(encodeURIComponent).join("/")}`:`/tree/${encodeURIComponent(commit)}`;
+  if(bits.length!==2||!bits.every(x=>/^[\w.-]+$/.test(x))) return esc(rawRepo||"source unavailable");
+  const repo=bits.join("/"), commit=String(ref.commit!=null?ref.commit:(s.commit_sha||""));
+  const path=commit?`/blob/${encodeURIComponent(commit)}/bot.py`:"";
   return `<a href="https://github.com/${repo}${path}" target="_blank" rel="noopener">${esc(repo)}@${esc(commit.slice(0,7)||"commit")}</a>`;
 }
 function roleKeys(frontier){
@@ -1368,7 +1371,7 @@ function solutionCard(s){
   const loaded=Array.isArray(s.frontier), fr=loaded?s.frontier:[], roles=roleKeys(fr);
   const episodes=fr.reduce((sum,x)=>sum+(x.episodes||0),0);
   const best=fr.reduce((winner,x)=>!winner||x.progression>winner.progression?x:winner,null);
-  const records=Object.entries(HONOR_UNIVERSE).filter(([,x])=>x.digest===s.digest).map(([id])=>id);
+  const records=Object.entries(HONOR_UNIVERSE).filter(([,x])=>x.d===s.id).map(([id])=>id);
   const chips=!loaded?"unavailable":(roles.length?roles.map(r=>`<span class="rolechip">${esc(ROLE_NAMES[r])}</span>`).join(""):"&mdash;");
   return `<div class="solutioncard">
     <div class="solutioncard__head"><span>${sourceLink(s)}</span><span class="solutioncard__date">${esc(fmtDate(s.registered_at))}</span></div>
@@ -1378,7 +1381,7 @@ function solutionCard(s){
       <span class="k">evaluation episodes</span><span>${loaded?episodes:'unavailable'}</span>
       <span class="k">current records</span><span>${records.length?`${records.length} identit${records.length===1?'y':'ies'}`:'&mdash;'}</span>
       <span class="k">best identity</span><span>${best?`${esc(best.identity)} &middot; mean ${best.progression.toFixed(3)}`:(loaded?'&mdash;':'unavailable')}</span>
-      <span class="k">entrypoint</span><span>${esc([s.root&&s.root!=="."?s.root:"",s.entrypoint||""].filter(Boolean).join("/")||"&mdash;")}</span>
+      <span class="k">entrypoint</span><span>bot.py</span>
       <span class="k">tier</span><span>self-reported*</span>
     </div></div>`;
 }
@@ -1389,12 +1392,11 @@ async function openBreakthrough(event){
   $("#mBody").innerHTML=`<div class="popupstatus">Loading the exact registered submission&hellip;</div>`;
   showModal();
   try{
-    const cached=SOLUTION_BY_DIGEST[event.solution_digest];
-    const solution=cached||await jget("/solutions/"+encodeURIComponent(event.solution_digest));
-    const frontier=await jget("/solutions/"+encodeURIComponent(event.solution_digest)+"/frontier");
+    const cached=PROGRAM_BY_ID[event.program_id];
+    const solution=cached||await jget("/programs/"+encodeURIComponent(event.program_id));
+    const frontier=(await jget("/programs/"+encodeURIComponent(event.program_id)+"/identities")).rows||[];
     if(request!==popupRequest) return;
     const roles=roleKeys(frontier), episodes=frontier.reduce((sum,x)=>sum+(x.episodes||0),0);
-    const entry=[solution.root&&solution.root!=="."?solution.root:"",solution.entrypoint||""].filter(Boolean).join("/")||"—";
     $("#mBody").innerHTML=`<div class="kv">
       <span class="k">hacker</span><span class="v">@${esc(event.owner)}</span>
       <span class="k">source</span><span class="v">${sourceLink(solution)}</span>
@@ -1406,7 +1408,7 @@ async function openBreakthrough(event){
       <span class="k">roles evaluated</span><span class="v">${roles.length?roles.map(r=>esc(ROLE_NAMES[r]||r)).join(", "):"—"}</span>
       <span class="k">identities evaluated</span><span class="v">${frontier.length} of 73</span>
       <span class="k">evaluation episodes</span><span class="v">${episodes}</span>
-      <span class="k">entrypoint</span><span class="v">${esc(entry)}</span>
+      <span class="k">entrypoint</span><span class="v">bot.py</span>
       <span class="k">tier</span><span class="v">self-reported*</span>
     </div>
     <div class="clickhint">This submission moved ${esc(event.identity)} from ${(event.previous*100).toFixed(1)}% to ${(event.score*100).toFixed(1)}%, measured against the community frontier that existed when it was registered.</div>`;
@@ -1420,9 +1422,9 @@ async function openHacker(owner){
   $("#mBody").innerHTML=`<div class="popupstatus">Loading registered solutions and per-identity results&hellip;</div>`;
   showModal();
   try{
-    const solutions=await jget(`/search?owner=${encodeURIComponent(owner)}&limit=50`);
+    const solutions=(await jget(`/programs?owner=${encodeURIComponent(owner)}&limit=50`)).rows||[];
     await Promise.all(solutions.map(async s=>{
-      try{ s.frontier=await jget("/solutions/"+encodeURIComponent(s.digest)+"/frontier"); }
+      try{ s.frontier=(await jget("/programs/"+encodeURIComponent(s.id)+"/identities")).rows||[]; }
       catch(e){ s.frontier=null; }
     }));
     if(request!==popupRequest) return;
@@ -1459,28 +1461,30 @@ const jget = async p => { const r = await fetch(p); if(!r.ok) throw new Error(p+
 async function loadUniverse(){
   if(curTier==="verified"){ UNIVERSE={}; return; }
   try{
-    const el = await jget("/elites?objective=all");
+    const el = await jget("/elites?scope=generalist");
     const uni = {};
-    for(const r of el){ if(r.rank===1) uni[r.identity] = {v:r.score, o:r.owner, digest:r.solution_digest, d:short(r.solution_digest), ep:OBJ_EP[r.identity]!=null?OBJ_EP[r.identity]:15}; }
+    for(const r of (el.rows||[])){ if(r.rank===1) uni[r.identity] = {v:r.score, o:r.owner, d:r.program_id, ep:OBJ_EP[r.identity]!=null?OBJ_EP[r.identity]:15}; }
     UNIVERSE = uni;
     HONOR_UNIVERSE = uni;
   }catch(e){ UNIVERSE = {}; }
 }
 
-async function loadSolutionIndex(){
+/* Program registry index, keyed by opaque program id -> {id, owner, reference{repo,commit}, registered_at}
+   (GET /programs). Feeds the identity-board source/date cells and the hacker/breakthrough popups. */
+async function loadProgramIndex(){
   try{
-    const rows=await jget("/search?limit=100");
-    SOLUTION_BY_DIGEST=Object.fromEntries(rows.map(s=>[s.digest,s]));
-  }catch(e){ SOLUTION_BY_DIGEST={}; }
+    const resp=await jget("/programs?limit=100");
+    PROGRAM_BY_ID=Object.fromEntries((resp.rows||[]).map(s=>[s.id,s]));
+  }catch(e){ PROGRAM_BY_ID={}; }
 }
 
-async function loadCompetitionStatus(){
-  try{ COMPETITION_STATUS=await jget(`/competition-status?tier=${encodeURIComponent(curTier)}`); }
+async function loadSummary(){
+  try{ COMPETITION_STATUS=await jget(`/summary?tier=${encodeURIComponent(curTier)}`); }
   catch(e){ COMPETITION_STATUS=null; }
 }
 
-async function loadWallOfFame(){
-  try{ WALL_OF_FAME=await jget("/wall-of-fame"); }
+async function loadRecognition(){
+  try{ WALL_OF_FAME=await jget("/recognition"); }
   catch(e){ WALL_OF_FAME={keepers:[],breakthroughs:[]}; }
 }
 
@@ -1494,8 +1498,8 @@ async function boot(){
     .catch(()=>{ STATS=null; odo($("#odoProg"),0,5); odo($("#odoPlay"),0,5); });
   const baseP = jget("/baseline").then(b=>{ BASELINE = b; }).catch(()=>{ BASELINE = {owner:"autoascend", per_identity:{}, overall:null}; });
   const objP  = jget("/objectives").then(o=>{ OBJ_EP = Object.fromEntries(o.map(x=>[x.name, x.episodes])); }).catch(()=>{ OBJ_EP = {}; });
-  await Promise.all([statsP,baseP,objP,loadSolutionIndex(),loadWallOfFame()]);
-  await Promise.all([loadUniverse(),loadCompetitionStatus()]);
+  await Promise.all([statsP,baseP,objP,loadProgramIndex(),loadRecognition()]);
+  await Promise.all([loadUniverse(),loadSummary()]);
   renderStatus(); renderFrontier(); renderRecognition();
 }
 boot();
@@ -1623,7 +1627,21 @@ boot();
   }
   function hash(a,b){ const s=Math.sin(a*127.1+b*311.7)*43758.5453; return s-Math.floor(s); }
 
-  let t=0, bloom=0, energy=0, atK=0, atVel=0, atRide=0;
+  let t=0, bloom=0, energy=0;
+  // Up to MAX_RUNNERS @username runners -- real registered hackers, sampled server-side
+  // (GET /hackers/random, enveloped -- .rows). Cleared-floor look; the tuned feel is
+  // baked below.
+  const MAX_RUNNERS=20;
+  const TUNE={size:0.75, crawl:0.8, dart:0.3, ride:0.6};   // approved by live tuning
+  let RUNNERS=[];
+  function buildRunners(names){
+    // stratified start positions (evenly spread, small jitter) + distinct speeds -> always a
+    // few in view, no fixed pattern, no permanent clumping.
+    const m=(names||[]).slice(0,MAX_RUNNERS), L=Math.max(1,m.length);
+    RUNNERS=m.map(function(name,i){ return {name:name,
+      pos:(i+Math.random()*0.6)/L, vel:0, atRide:0, spd:0.75+0.5*(i/Math.max(1,L-1))}; });
+  }
+  jget("/hackers/random?n="+MAX_RUNNERS).then(function(env){ buildRunners(env.rows); }).catch(function(){ RUNNERS=[]; });
   function draw(){
     // Two regimes. At rest the wall breathes gently in ink -- restrained, monochrome, never silent-frozen.
     // On play, COLOUR blooms in (`bloom`); how hard it reacts -- reach, brightness, tempo -- tracks the
@@ -1676,20 +1694,45 @@ boot();
           g.fillStyle="rgba("+RED[0]+","+RED[1]+","+RED[2]+","+(0.6+0.4*energy).toFixed(2)+")";
           g.fillText("★", sx, sy); } }
     }
-    // @ hero: a slow wanderer at rest (muted), darting and gold once the music is on -> rides the spike
-    if(vis.length){
-      atK += 0.02*idleAmt;                                                           // gentle idle crawl
-      if(Math.random() < 0.05*energy) atVel += (Math.random()-0.5)*2.6*energy;       // dart rate tracks volume
-      atVel *= 0.86;                                                                 // friction -> pauses between darts
-      atK += atVel;
-      const ai=vis[((Math.floor(atK)%vis.length)+vis.length)%vis.length], a0=per[ai];
-      if(a0){ const ride=Math.min(MAXEXT*0.45,(sm[ai]||0)*MAXEXT*0.45); atRide+=(ride-atRide)*0.2;
-        let ax=a0[0]+a0[2]*cw*atRide, ay=a0[1]+a0[3]*ch*atRide;
+    // 20 @username heroes -- the original lone @'s exact crawl/dart/ride, cloned. They ride the FULL
+    // page perimeter (per, not just the visible slice), so they crawl the whole landing page and never
+    // stick to the viewport; each draws only while its cell is on-screen. @ kisses the wall, the name
+    // trails outward ("username@" on the left wall, "@username" on the right/top/bottom).
+    if(per.length){
+      const GR=hexRGB(GROUND);                                                       // parchment, for the cleared patch
+      const hch=Math.round(ch*TUNE.size), hcw=Math.max(1,Math.round(hch*0.6));
+      g.font="700 "+hch+'px "Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace';
+      g.textAlign="center";
+      const N=per.length;
+      for(let k=0;k<RUNNERS.length;k++){
+        const r=RUNNERS[k];
+        r.pos += 0.02*r.spd*idleAmt*TUNE.crawl/N;                                    // calm crawl at its own steady pace (normalized to perimeter length)
+        if(Math.random() < 0.05*energy) r.vel += (Math.random()-0.5)*2.6*energy*TUNE.dart/N; // darts kick in with the MUSIC; calm when off
+        r.vel *= 0.86;                                                               // friction -> pauses between darts
+        r.pos += r.vel; r.pos -= Math.floor(r.pos);                                  // advance, wrap to [0,1)
+        const ai=Math.floor(r.pos*N)%N, a0=per[ai];                                  // whole-page perimeter, stable index -> no scroll jump
+        if(!a0) continue;
+        const ride=Math.min(MAXEXT*0.45,(sm[ai]||0)*MAXEXT*0.45)*TUNE.ride; r.atRide+=(ride-r.atRide)*0.2;
+        let ax=a0[0]+a0[2]*cw*r.atRide, ay=a0[1]+a0[3]*ch*r.atRide;
+        if(ay<-ch||ay>H+ch) continue;                                               // scrolled off-screen -> keep crawling, just don't draw
         ax=Math.max(ch,Math.min(W-ch,ax)); ay=Math.max(ch,Math.min(H-ch,ay));
-        g.font="700 "+Math.round(ch*1.08)+'px "Courier New","Cousine",monospace';
-        g.lineJoin="round"; g.lineWidth=Math.max(3,ch*0.3); g.strokeStyle=GROUND; g.strokeText("@",ax,ay);
-        const fr=MONO[0]+(GOLD_RGB[0]-MONO[0])*bloom, fg=MONO[1]+(GOLD_RGB[1]-MONO[1])*bloom, fb=MONO[2]+(GOLD_RGB[2]-MONO[2])*bloom;
-        g.fillStyle="rgba("+(fr|0)+","+(fg|0)+","+(fb|0)+","+(0.55+0.45*bloom).toFixed(2)+")"; g.fillText("@",ax,ay); }
+        const dx=a0[2];
+        const label = dx<0 ? (r.name+"@") : ("@"+r.name);                           // left wall flips so the @ kisses the wall
+        const n=label.length;
+        const x0 = dx<0 ? ax-(n-1)*hcw : ax, x1 = dx<0 ? ax : ax+(n-1)*hcw;
+        // cleared floor: a parchment patch blooms in behind the handle so the descent parts for it;
+        // dark ink text on top. At rest (bloom 0) there's no patch -- muted ink reads on the wall.
+        if(bloom>0.01){
+          g.fillStyle="rgba("+GR[0]+","+GR[1]+","+GR[2]+","+(0.9*bloom).toFixed(3)+")";
+          g.fillRect(x0-hcw*0.72, ay-hch*0.72, (x1-x0)+hcw*1.44, hch*1.44);
+        }
+        g.fillStyle="rgba("+MONO[0]+","+MONO[1]+","+MONO[2]+",0.92)";
+        for(let j=0;j<n;j++){
+          const cx = dx<0 ? ax-(n-1-j)*hcw : ax+j*hcw;
+          if(cx<-cw||cx>W+cw) continue;
+          g.fillText(label[j],cx,ay);
+        }
+      }
     }
   }
   function loop(){ draw(); requestAnimationFrame(loop); }

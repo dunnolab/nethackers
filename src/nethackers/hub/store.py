@@ -16,8 +16,12 @@ needed for M2a reads (``horizon`` is derivable via the catalog's
 ``max_steps``). Parked for M2b if provenance/verification ever needs them.
 
 This module is a thin data layer only: ``init_schema()`` provisions the
-derived-view tables (``attainment``, ``attainment_holders``, ``elite_pool``)
-but nothing here ever writes to them -- Tasks 7-8 own that logic.
+derived-view tables (``attainment``, ``attainment_holders``) but nothing
+here ever writes to them -- Tasks 7-8 own that logic. ``elite_pool`` (Task
+8's materialized top-k) is DROPPED by ``_migrate_drop_elite_pool``: Part 2
+of the hub API redesign made ``/elites`` a live query straight over
+``atoms`` instead, so there is nothing left to store or migrate into for
+it.
 
 ``init_schema()`` also migrates a legacy (pre-A3) ``atoms``/``baseline_atoms``
 still carrying ``objective_digest`` to the identity-keyed shape (Task A4,
@@ -33,6 +37,7 @@ from pathlib import Path
 from typing import Any
 
 from nethackers.contracts.models import Atom
+from nethackers.hub.ids import program_id
 
 # The whole DDL (task-5-context.md), verbatim. CREATE TABLE IF NOT EXISTS
 # throughout makes init_schema() idempotent.
@@ -92,11 +97,6 @@ CREATE TABLE IF NOT EXISTS attainment_holders (
     identity TEXT NOT NULL, milestone TEXT NOT NULL,
     solution_digest TEXT NOT NULL, owner TEXT NOT NULL, reached_at TEXT NOT NULL,
     PRIMARY KEY(identity, milestone, solution_digest)
-);
-CREATE TABLE IF NOT EXISTS elite_pool (
-    identity TEXT NOT NULL, solution_digest TEXT NOT NULL,
-    score REAL NOT NULL, rank INTEGER NOT NULL,
-    PRIMARY KEY(identity, solution_digest)
 );
 """
 
@@ -176,6 +176,37 @@ def _migrate_drop_objectives_table(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_drop_elite_pool(conn: sqlite3.Connection) -> None:
+    """Drop the legacy materialized ``elite_pool`` table. Part 2 of the hub
+    API redesign made ``/elites`` a live query straight over ``atoms``
+    (``views.elites.read_elites``) -- nothing writes ``elite_pool`` any
+    more, so an existing DB just sheds it. ``IF EXISTS`` makes this a no-op
+    on a fresh or already-migrated DB."""
+    conn.execute("DROP TABLE IF EXISTS elite_pool")
+    conn.commit()
+
+
+def _migrate_add_program_id(conn: sqlite3.Connection) -> None:
+    """Additively add the indexed ``program_id`` column and backfill every
+    row by pure function of its ``digest`` (which is the ``repo@commit``
+    reference). Idempotent: the ADD is guarded on the column's absence and
+    the backfill only touches rows still NULL, so re-running init_schema is
+    a no-op once every row is stamped. sqlite has no sha256(), so the
+    backfill runs in Python."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(solutions)")]
+    if "program_id" not in cols:
+        conn.execute("ALTER TABLE solutions ADD COLUMN program_id TEXT")
+    rows = conn.execute(
+        "SELECT digest FROM solutions WHERE program_id IS NULL").fetchall()
+    for (digest,) in rows:
+        conn.execute("UPDATE solutions SET program_id = ? WHERE digest = ?",
+                     (program_id(digest), digest))
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_solutions_program_id"
+        " ON solutions(program_id)")
+    conn.commit()
+
+
 class Store:
     """A single-connection sqlite3 data layer over the hub's schema.
 
@@ -193,8 +224,9 @@ class Store:
     def conn(self) -> sqlite3.Connection:
         """The store's single live connection (FK pragma already set) --
         the seam the derived views (Tasks 7-9) use to own their own SQL
-        against the ``attainment``/``attainment_holders``/``elite_pool``
-        tables, without opening a second connection to the same db file."""
+        against the ``attainment``/``attainment_holders`` tables (plus the
+        live ``/elites`` query straight over ``atoms``), without opening a
+        second connection to the same db file."""
         return self._conn
 
     def init_schema(self) -> None:
@@ -202,11 +234,15 @@ class Store:
         tables, which Tasks 7-8 populate, not this class. Then migrate a
         legacy ``atoms``/``baseline_atoms`` (still carrying the dropped
         ``objective_digest`` column) to the identity-keyed shape -- a no-op
-        on a fresh or already-migrated DB (Task A4)."""
+        on a fresh or already-migrated DB (Task A4) -- and drop the legacy
+        ``elite_pool`` table (Part 2: ``/elites`` is now a live query, so an
+        existing DB just sheds it; also a no-op once already dropped)."""
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
         _migrate_drop_objective_digest(self._conn)
         _migrate_drop_objectives_table(self._conn)
+        _migrate_add_program_id(self._conn)
+        _migrate_drop_elite_pool(self._conn)
 
     def upsert_solution(
         self,
@@ -221,17 +257,19 @@ class Store:
     ) -> None:
         self._conn.execute(
             """
-            INSERT INTO solutions (digest, repo, commit_sha, owner, root, entrypoint, registered_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO solutions
+                (digest, repo, commit_sha, owner, root, entrypoint, registered_at, program_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(digest) DO UPDATE SET
                 repo = excluded.repo,
                 commit_sha = excluded.commit_sha,
                 owner = excluded.owner,
                 root = excluded.root,
                 entrypoint = excluded.entrypoint,
-                registered_at = excluded.registered_at
+                registered_at = excluded.registered_at,
+                program_id = excluded.program_id
             """,
-            (digest, repo, commit_sha, owner, root, entrypoint, registered_at),
+            (digest, repo, commit_sha, owner, root, entrypoint, registered_at, program_id(digest)),
         )
         self._conn.commit()
 
@@ -244,6 +282,26 @@ class Store:
         if row is None:
             return None
         return dict(zip(_SOLUTION_COLUMNS, row, strict=True))
+
+    def digest_for_program_id(self, program_id: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT digest FROM solutions WHERE program_id = ?", (program_id,)).fetchone()
+        return row[0] if row is not None else None
+
+    def random_owners(self, n: int) -> list[str]:
+        """Up to ``n`` random distinct hacker handles -- the ``owner``s in
+        ``atoms`` (real *scored* submissions), the SAME source the leaderboard's
+        ``hacker_board`` reads. That is what keeps it honest without an allowlist:
+        the AutoAscend baseline lives in the isolated ``baseline_atoms`` table,
+        and any seed/root that sits only in ``solutions`` was never scored into
+        ``atoms`` -- so neither can appear. Cheap: a distinct-owner sample."""
+        if n <= 0:
+            return []
+        rows = self._conn.execute(
+            "SELECT DISTINCT owner FROM atoms WHERE owner != '' ORDER BY RANDOM() LIMIT ?",
+            (n,),
+        ).fetchall()
+        return [row[0] for row in rows]
 
     def add_lineage(self, child: str, parent: str, kind: str) -> None:
         """``kind`` must be ``"parent"`` or ``"influence"`` (DB CHECK

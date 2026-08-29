@@ -1,4 +1,13 @@
-"""Durable, achievement-based recognition for the website Wall of Fame."""
+"""Durable, achievement-based hacker recognition for the website.
+
+Served at ``GET /recognition`` (the UI still heads the section "Wall of
+Fame"). Two ledgers over the self-reported tier: the current identity
+record-holders grouped by hacker ("keepers"), and every all-time one-step
+frontier advance ("breakthroughs"). Breakthrough rows are program-bearing --
+the opaque ``program_id`` + ``reference {repo, commit}``, never
+``solution_digest`` -- per the hub API redesign, and the response carries the
+envelope's ``generated_at`` as-of.
+"""
 
 from __future__ import annotations
 
@@ -6,6 +15,7 @@ import statistics
 from datetime import UTC, datetime
 from typing import Any
 
+from nethackers.hub.ids import program_id
 from nethackers.hub.store import Store
 
 _MIN_LIFT = 0.0005
@@ -18,7 +28,7 @@ def _timestamp(value: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
-def read_wall_of_fame(store: Store, *, limit: int = 100) -> dict[str, list[dict[str, Any]]]:
+def read_recognition(store: Store, *, limit: int = 100) -> dict[str, Any]:
     """Return current keepers and all-time one-step frontier breakthroughs.
 
     Recognition is deliberately based on the self-reported competition tier,
@@ -32,12 +42,17 @@ def read_wall_of_fame(store: Store, *, limit: int = 100) -> dict[str, list[dict[
         for identity, values in baseline_groups.items()
     }
 
+    # The LEFT JOIN carries each program's git pointer (repo, commit) alongside
+    # its atoms so breakthrough rows can be program-bearing without an N+1 of
+    # per-digest solution lookups; repo/commit are constant per solution_digest.
     rows = store.conn.execute(
-        "SELECT solution_digest, owner, identity, progression, ascended, created_at "
-        "FROM atoms WHERE tier = 'self-reported'"
+        "SELECT a.solution_digest, a.owner, a.identity, a.progression, a.ascended, "
+        "a.created_at, s.repo, s.commit_sha "
+        "FROM atoms a LEFT JOIN solutions s ON a.solution_digest = s.digest "
+        "WHERE a.tier = 'self-reported'"
     ).fetchall()
     grouped: dict[tuple[str, str], dict[str, Any]] = {}
-    for digest, owner, identity, progression, ascended, created_at in rows:
+    for digest, owner, identity, progression, ascended, created_at, repo, commit in rows:
         key = (digest, identity)
         item = grouped.setdefault(
             key,
@@ -45,6 +60,8 @@ def read_wall_of_fame(store: Store, *, limit: int = 100) -> dict[str, list[dict[
                 "digest": digest,
                 "owner": owner,
                 "identity": identity,
+                "repo": repo,
+                "commit": commit,
                 "values": [],
                 "ascensions": 0,
                 "at": _timestamp(created_at),
@@ -114,11 +131,16 @@ def read_wall_of_fame(store: Store, *, limit: int = 100) -> dict[str, list[dict[
                 "gain": round(gain, 6),
                 "score": round(result["score"], 6),
                 "previous": round(frontier, 6),
-                "solution_digest": result["digest"],
+                "program_id": program_id(result["digest"]),
+                "reference": {"repo": result["repo"], "commit": result["commit"]},
                 "at": result["at"].isoformat(),
             }
             breakthroughs.append(event)
             frontier = result["score"]
 
     breakthroughs.sort(key=lambda row: (row["at"], row["owner"]), reverse=True)
-    return {"keepers": keepers[:limit], "breakthroughs": breakthroughs[:limit]}
+    return {
+        "generated_at": datetime.now(UTC).isoformat(),
+        "keepers": keepers[:limit],
+        "breakthroughs": breakthroughs[:limit],
+    }

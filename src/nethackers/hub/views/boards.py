@@ -23,8 +23,9 @@ attainment record (Task 7's ``attainment``/``attainment_holders`` tables),
 which sqlite's own ``COUNT``/``GROUP BY`` handles directly.
 
 Nothing in this module writes anything: no new tables, no mutation of
-``atoms``/``attainment``/``attainment_holders``/``elite_pool``. Pure reads
-over what Tasks 5-8 already store.
+``atoms``/``attainment``/``attainment_holders``. Pure reads over what
+Tasks 5-8 already store (``elites`` is its own live query straight over
+``atoms``, not a stored table -- see ``views.elites``).
 """
 
 from __future__ import annotations
@@ -34,11 +35,16 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from nethackers.contracts.models import Atom, ObjectiveSpec
-from nethackers.hub.objectives import IDENTITIES, ROLES
+from nethackers.hub.ids import program_id
+from nethackers.hub.objectives import FACETS, IDENTITIES, ROLES
 from nethackers.hub.store import Store
 from nethackers.hub.views.milestones import deepest_milestone
 
 _IDENTITY_SET = frozenset(IDENTITIES)
+
+# Facet scopes: each identity is "role-race-align-gender"; a facet scope
+# "<facet>:<value>" selects every identity whose facet segment equals value.
+_FACET_INDEX = {"role": 0, "race": 1, "align": 2, "gender": 3}
 
 
 def resolve_scope(token: str) -> tuple[str, tuple[str, ...]]:
@@ -52,6 +58,12 @@ def resolve_scope(token: str) -> tuple[str, tuple[str, ...]]:
         return ("role", tuple(i for i in IDENTITIES if i.startswith(f"{token}-")))
     if token in _IDENTITY_SET:
         return ("identity", (token,))
+    if ":" in token:
+        facet, _, value = token.partition(":")
+        if facet in _FACET_INDEX and value in FACETS[facet]:
+            idx = _FACET_INDEX[facet]
+            return (facet, tuple(i for i in IDENTITIES if i.split("-")[idx] == value))
+        raise ValueError(f"unknown facet scope: {token!r}")
     raise ValueError(f"unknown objective scope: {token!r}")
 
 # board()'s two ranking rules (task-9-context.md), keyed by
@@ -95,6 +107,19 @@ ORDER BY firsts DESC, first_solution ASC
 """
 
 
+def _finalize_row(store: Store, rank: int, entry: dict[str, Any]) -> dict[str, Any]:
+    """Turn one aggregated (pre-rank) entry -- still keyed by the internal
+    ``solution_digest`` working key -- into the one uniform ``/board`` row:
+    ``{rank, program_id, owner, reference, coverage, identities_total,
+    ascensions, mean_progression, median_progression, deepest}``.
+    ``reference`` ``{repo, commit}`` comes from ``solutions`` (every atom's
+    ``solution_digest`` FKs there, so ``get_solution`` always resolves)."""
+    digest = entry.pop("solution_digest")
+    solution = store.get_solution(digest) or {}
+    reference = {"repo": solution.get("repo", ""), "commit": solution.get("commit_sha", "")}
+    return {"rank": rank, "program_id": program_id(digest), "reference": reference, **entry}
+
+
 def board(
     store: Store, objective: ObjectiveSpec, *, tier: str = "self-reported"
 ) -> list[dict[str, Any]]:
@@ -106,15 +131,14 @@ def board(
     canonical objective -- see module docstring).
 
     Atoms are grouped by ``solution_digest`` and aggregated in Python:
-    ``owner`` (constant per solution -- any atom's), ``episodes`` (atom
-    count), ``ascensions`` (count with ``ascended`` True),
-    ``median_progression``/``mean_progression`` (``statistics.median``/
-    ``.mean`` over each atom's ``progression``). Ranked per
-    ``objective.aggregation`` (``"asc_median_mean"`` or ``"mean"`` --
-    unknown aggregation raises ``ValueError``), each entry gets ``rank``
-    1..n in ranked order: ``{rank, solution_digest, owner, episodes,
-    ascensions, median_progression, mean_progression}``. ``[]`` when no
-    atoms match.
+    ``owner`` (constant per solution -- any atom's), ``ascensions`` (count
+    with ``ascended`` True), ``median_progression``/``mean_progression``
+    (``statistics.median``/``.mean`` over each atom's ``progression``).
+    Ranked per ``objective.aggregation`` (``"asc_median_mean"`` or
+    ``"mean"`` -- unknown aggregation raises ``ValueError``). Emits the one
+    uniform ``/board`` row (see ``_finalize_row``); an identity is a scope
+    of exactly one, so ``coverage``/``identities_total`` are always ``1``.
+    ``[]`` when no atoms match.
     """
     sort_key = _SORT_KEYS.get(objective.aggregation)
     if sort_key is None:
@@ -133,7 +157,8 @@ def board(
             {
                 "solution_digest": solution_digest,
                 "owner": group[0].owner,
-                "episodes": len(group),
+                "coverage": 1,
+                "identities_total": 1,
                 "ascensions": sum(1 for a in group if a.ascended),
                 "median_progression": statistics.median(progressions),
                 "mean_progression": statistics.mean(progressions),
@@ -142,7 +167,7 @@ def board(
         )
 
     unranked.sort(key=sort_key)
-    return [{"rank": rank, **entry} for rank, entry in enumerate(unranked, start=1)]
+    return [_finalize_row(store, rank, entry) for rank, entry in enumerate(unranked, start=1)]
 
 
 def aggregate_board(
@@ -154,8 +179,11 @@ def aggregate_board(
     identity sits on that identity's canonical batch); a solution's
     per-identity means are then rolled up:
       ``coverage`` = #identities in ``ids`` it has >=1 atom on,
-      ``mean_progression`` = mean of its per-identity means over covered ids.
-    Ranked coverage desc, mean desc, ``solution_digest`` asc. Pure read."""
+      ``identities_total`` = ``len(ids)``,
+      ``mean_progression``/``median_progression`` = mean/median of its
+      per-identity means over covered ids.
+    Ranked coverage desc, mean desc, ``solution_digest`` asc. Emits the same
+    uniform ``/board`` row as ``board()`` (see ``_finalize_row``). Pure read."""
     per_solution: dict[str, dict[str, Any]] = {}
     for ident in ids:
         by_sol: dict[str, list[Atom]] = {}
@@ -174,15 +202,16 @@ def aggregate_board(
             "solution_digest": sol,
             "owner": e["owner"],
             "coverage": len(e["means"]),
-            "total": len(ids),
+            "identities_total": len(ids),
             "mean_progression": statistics.mean(e["means"]),
+            "median_progression": statistics.median(e["means"]),
             "ascensions": e["asc"],
             "deepest": deepest_milestone(e["milestones"]),
         }
         for sol, e in per_solution.items()
     ]
     unranked.sort(key=lambda x: (-x["coverage"], -x["mean_progression"], x["solution_digest"]))
-    return [{"rank": rank, **entry} for rank, entry in enumerate(unranked, start=1)]
+    return [_finalize_row(store, rank, entry) for rank, entry in enumerate(unranked, start=1)]
 
 
 def coverage_board(store: Store) -> list[dict[str, Any]]:

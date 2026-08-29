@@ -26,6 +26,7 @@ from nethackers.hub.validate import (
     WrongOwner,
     register,
 )
+from nethackers.hub.views.elites import read_elites
 
 
 class _Git:
@@ -94,6 +95,64 @@ def test_register_stores_link(tmp_path):
 
     row = s.get_solution(solution_id)
     assert row["owner"] == "sam" and row["commit_sha"] == SHA and row["root"] == "bot"
+
+
+def _evidence_with_a_milestone(objective_name: str = OBJ) -> Evidence:
+    """Like ``_evidence()``, but the first result carries a real milestone --
+    ``_evidence()``'s results are all ``milestone=None`` (a deliberate
+    bot-failure stand-in elsewhere), which ``update_attainment`` skips
+    entirely, so it alone can never prove attainment gets populated."""
+    from nethackers.arena.progress import ACHIEVEMENTS
+
+    batch = CATALOG[objective_name].batch
+    results = tuple(
+        TrajectoryResult(
+            trajectory_id=seed, status="completed",
+            progress=ACHIEVEMENTS["Dlvl:2"] if i == 0 else 0.5,
+            ascended=False, steps=1, turns=1, max_depth=1, end_status="died", error=None,
+            wall_seconds=0.1, character=character,
+            milestone="Dlvl:2" if i == 0 else None,
+        )
+        for i, (seed, character) in enumerate(batch)
+    )
+    return Evidence.from_results(
+        solution_digest="sha256:" + "ab" * 32,
+        objective=Objective(character=None, seed_set=objective_name),
+        evaluator_image="img", results=results, created_at="t",
+    )
+
+
+def test_register_writes_atoms_and_attainment_but_never_recomputes_elites(tmp_path):
+    # Part 2 of the hub API redesign: register no longer touches elites at
+    # all -- no elite_pool table exists (it's dropped from the schema), and
+    # /elites is a live query, so the atoms register just wrote are visible
+    # immediately with no separate recompute step.
+    s = _store(tmp_path)
+    register(
+        s,
+        LocalStubAuth({"t": "sam"}),
+        token="t",
+        reference=SolutionReference("github.com/sam/nethacker", SHA),
+        manifest=MANIFEST,
+        evidence=_evidence_with_a_milestone(),
+        git=_Git(),
+        now="2026-08-29T00:00:00Z",
+    )
+
+    solution_id = "github.com/sam/nethacker@" + SHA
+    assert len(s.iter_atoms(solution_digest=solution_id)) == len(CATALOG[OBJ].batch)
+    from nethackers.hub.views.attainment import read_attainment
+
+    assert read_attainment(s) != []  # attainment IS populated
+
+    tables = [r[0] for r in s.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+    assert "elite_pool" not in tables
+
+    rows = read_elites(s, scope=OBJ)
+    assert rows and rows[0]["rank"] == 1  # elites computed live, no recompute needed
+
+    rows = read_elites(s, scope=OBJ)
+    assert rows and rows[0]["rank"] == 1  # elites computed live, no recompute needed
 
 
 def test_wrong_owner(tmp_path):

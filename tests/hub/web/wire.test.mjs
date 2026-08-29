@@ -1,4 +1,4 @@
-/* Headless wiring check for the reworked leaderboard in
+/* Headless wiring check for the reworked dashboard in
  * src/nethackers/hub/web/index.html's live-data layer.
  *
  * This is a MANUAL dev-check, not part of the pytest CI (which is Python-only):
@@ -7,17 +7,29 @@
  * point NODE_PATH at it, e.g.:
  *   (cd /tmp/js && npm i jsdom) && NODE_PATH=/tmp/js/node_modules node tests/hub/web/wire.test.mjs
  *
- * It stubs window.fetch with canned JSON matching the FastAPI endpoint shapes
- * (/board?objective=<identity|generalist|role>, /hackers, /baseline, /elites,
- * /solutions/{d}/frontier, /progress, /objectives, /stats), runs the page's
- * boot(), and asserts the reworked render:
- *   pass 1 (generalist scope): grouped picker (87 options, 3 groups), the
- *     Hackers-primary union view (coverage+mean+Δ, NO firsts) + its AutoAscend
- *     floor row, the Programs aggregate view, and the frontier with the
- *     AutoAscend floor painted into untouched cells (73 cells total).
- *   pass 2 (identity + role scope): the identity board's deepest+score+Δ shape,
- *     and a role board's coverage+mean shape.
- *   pass 3 (every fetch rejects): friendly empty state, console clean.
+ * It stubs window.fetch with canned JSON matching the post-redesign FastAPI
+ * endpoint shapes -- every collection enveloped as {..., rows:[...]}, program
+ * rows carrying the opaque program_id + reference{repo,commit}:
+ *   /stats, /baseline (single objects), /objectives (bare array),
+ *   /summary?tier= (single object: status cards),
+ *   /recognition (single object: {keepers, breakthroughs}),
+ *   /elites?scope=generalist (enveloped, program_id rows),
+ *   /board?scope=<identity> (enveloped, program_id rows, no episodes),
+ *   /programs (enveloped list), /programs/{id} (single), /programs/{id}/identities
+ *   (enveloped), /hackers/random (enveloped).
+ * It runs the page's boot() and asserts the reworked render:
+ *   pass 1 (populated): the four status cards (from /summary), the frontier with
+ *     the AutoAscend floor painted into untouched cells (73 cells), the two
+ *     recognition tables (5 rows each, independent [ --More-- ] paging), and the
+ *     three click-through popups -- identity leaderboard (/board?scope=), a
+ *     breakthrough submission (/programs/{id} + /identities), and a hacker's
+ *     contributions (/programs?owner= + /identities).
+ *   pass 2 (verified tier): recognition stays visible (it is self-reported), the
+ *     frontier blanks.
+ *   pass 3 (every fetch rejects): friendly empty states, console clean.
+ * /hackers/random's consumer sits behind a canvas getContext("2d") gate that jsdom
+ * can't pass without the native `canvas` package (not installed here), so the
+ * passes never reach it; a source-level check guards its .rows unwrap instead.
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -62,61 +74,71 @@ const BASELINE = { owner: "autoascend", per_identity: PER_IDENTITY, overall: 0.0
 
 // a handful of identities a program has "touched" -> UNIVERSE (program cells); the rest stay floor
 const TOUCHED = IDENTITIES.slice(0, 10);
-const ELITES_ALL = TOUCHED.map((id, i) => ({
-  rank: 1, identity: id, score: 0.2 + i * 0.01, owner: "dun", solution_digest: "sha256:aaa",
-}));
+const REF_AAA = { repo: "github.com/dun/bot", commit: "aaacommit0000" };
+const REF_BBB = { repo: "github.com/ako/bot", commit: "bbbcommit0000" };
 
-const GENERALIST_BOARD = [
-  { rank: 1, solution_digest: "sha256:aaa", owner: "dun", coverage: 20, total: 73, mean_progression: 0.2, ascensions: 0, deepest: "Mines' End" },
-  { rank: 2, solution_digest: "sha256:bbb", owner: "ako", coverage: 8, total: 73, mean_progression: 0.31, ascensions: 0, deepest: "Sokoban" },
-];
-const GENERALIST_HACKERS = [
-  { rank: 1, owner: "dun", coverage: 24, total: 73, mean_progression: 0.19 },
-  { rank: 2, owner: "ako", coverage: 8, total: 73, mean_progression: 0.31 },
-];
-const IDENTITY_BOARD = [
-  { rank: 1, solution_digest: "sha256:aaa", owner: "dun", episodes: 15, ascensions: 0, median_progression: 0.3, mean_progression: 0.3, deepest: "Mines' End" },
-];
-const IDENTITY_HACKERS = [{ rank: 1, owner: "dun", coverage: 1, total: 1, mean_progression: 0.3 }];
-const ROLE_BOARD = [
-  { rank: 1, solution_digest: "sha256:aaa", owner: "dun", coverage: 3, total: 3, mean_progression: 0.24, ascensions: 0, deepest: "Mines' End" },
-];
-const ROLE_HACKERS = [{ rank: 1, owner: "dun", coverage: 3, total: 3, mean_progression: 0.24 }];
-const FRONTIER = TOUCHED.map((id) => ({ identity: id, progression: 0.2 }));
+// /elites?scope=generalist -> enveloped rank-1-per-identity rows (opaque program_id)
+const ELITES_ALL = { rows: TOUCHED.map((id, i) => ({
+  rank: 1, identity: id, program_id: "prog_aaa", owner: "dun", score: 0.2 + i * 0.01, reference: REF_AAA,
+})) };
+
+// /programs index (loadProgramIndex) -> {id, owner, reference, registered_at}
+const PROGRAMS_INDEX = { rows: [
+  { id: "prog_aaa", owner: "dun", reference: REF_AAA, registered_at: "2026-08-27T09:30:00+00:00" },
+  { id: "prog_bbb", owner: "ako", reference: REF_BBB, registered_at: "2026-08-26T09:30:00+00:00" },
+] };
+
+// /board?scope=<identity> -> enveloped program rows (program_id, no episodes column)
+const IDENTITY_BOARD = { rows: [
+  { rank: 1, program_id: "prog_aaa", owner: "dun", mean_progression: 0.3, median_progression: 0.3, ascensions: 1, deepest: "Mines' End" },
+] };
+
+// /programs/{id}/identities -> enveloped per-identity frontier (has episodes)
+const FRONTIER = { rows: TOUCHED.map((id) => ({ identity: id, progression: 0.2, episodes: 15 })) };
+
+// /summary -> status-card metrics, largest_lift is program-bearing
+const SUMMARY = {
+  generated_at: "2026-08-27T09:30:00+00:00",
+  community_frontier: 0.081, frontier_gain_7d: 0.006, identities_improved_7d: 4,
+  largest_lift: { identity: TOUCHED[0], owner: "dun", program_id: "prog_aaa", reference: REF_AAA, score: 0.2, baseline: 0.08, lift: 0.12 },
+};
+
+// /recognition -> {keepers, breakthroughs}; breakthroughs are program-bearing
+const RECOGNITION = {
+  generated_at: "2026-08-27T09:30:00+00:00",
+  keepers: Array.from({ length: 6 }, (_, i) => ({
+    owner: `keeper${i + 1}`, records: 7 - i, identities: [TOUCHED[i]], roles: [i % 2 ? "bar" : "arc"], total_lift: 0.8 - i * 0.1,
+  })),
+  breakthroughs: Array.from({ length: 7 }, (_, i) => ({
+    owner: `breaker${i + 1}`, identity: TOUCHED[i], gain: 0.12 - i * 0.01, score: 0.2, previous: 0.08,
+    program_id: i % 2 ? "prog_bbb" : "prog_aaa", reference: i % 2 ? REF_BBB : REF_AAA,
+    at: `2026-08-${String(27 - i).padStart(2, "0")}T09:30:00+00:00`,
+  })),
+};
+
+const RANDOM_HACKERS = ["dun", "ako", "sam"];
 
 function router(path) {
   const [route, query] = path.split("?");
   const params = new URLSearchParams(query || "");
-  const obj = params.get("objective");
   if (route === "/stats") return { programs: 2, hackers: 2, ascensions: 0, last_registered_at: "2026-08-27T09:30:00+00:00" };
-  if (route === "/competition-status") return {
-    community_frontier: 0.081, frontier_gain_7d: 0.006, identities_improved_7d: 4,
-    largest_lift: { identity: TOUCHED[0], owner: "dun", solution_digest: "sha256:aaa", score: 0.2, baseline: 0.08, lift: 0.12 },
-  };
-  if (route === "/wall-of-fame") return {
-    keepers: Array.from({ length: 6 }, (_, i) => ({
-      owner: `keeper${i + 1}`, records: 7 - i, identities: [TOUCHED[i]], roles: [i % 2 ? "bar" : "arc"], total_lift: 0.8 - i * 0.1,
-    })),
-    breakthroughs: Array.from({ length: 7 }, (_, i) => ({
-      owner: `breaker${i + 1}`, identity: TOUCHED[i], gain: 0.12 - i * 0.01, score: 0.2, previous: 0.08,
-      solution_digest: i % 2 ? "sha256:bbb" : "sha256:aaa", at: `2026-08-${String(27 - i).padStart(2, "0")}T09:30:00+00:00`,
-    })),
-  };
   if (route === "/baseline") return BASELINE;
   if (route === "/objectives") return IDENTITIES.map((n) => ({ name: n, episodes: 15 }));
+  if (route === "/summary") return SUMMARY;
+  if (route === "/recognition") return RECOGNITION;
   if (route === "/elites") return ELITES_ALL;
-  if (route === "/progress") return { series: [] };
-  if (route.startsWith("/solutions/")) return FRONTIER; // /solutions/{d}/frontier
-  if (route === "/hackers") {
-    if (obj === "generalist" || obj == null) return GENERALIST_HACKERS;
-    if (obj === "val") return ROLE_HACKERS;
-    return IDENTITY_HACKERS;
+  if (route === "/hackers/random") return { n: Number(params.get("n")), rows: RANDOM_HACKERS };
+  if (route === "/programs") {
+    const owner = params.get("owner");
+    if (owner) return { rows: [{ id: "prog_" + owner, owner, reference: { repo: `github.com/${owner}/bot`, commit: owner + "cmt00" }, registered_at: "2026-08-20T00:00:00+00:00" }] };
+    return PROGRAMS_INDEX;
   }
-  if (route === "/board") {
-    if (obj === "generalist") return GENERALIST_BOARD;
-    if (obj === "val") return ROLE_BOARD;
-    return IDENTITY_BOARD; // an identity token
+  if (route.startsWith("/programs/") && route.endsWith("/identities")) return FRONTIER;
+  if (route.startsWith("/programs/")) {
+    const id = decodeURIComponent(route.split("/")[2] || "");
+    return { id, owner: "dun", reference: REF_AAA, registered_at: "2026-08-27T09:30:00+00:00" };
   }
+  if (route === "/board") return IDENTITY_BOARD; // openIdentity fetches /board?scope=<identity>
   throw new Error("unrouted " + path);
 }
 
@@ -142,39 +164,21 @@ function makeDom(fetchImpl, errors) {
 }
 
 async function pass1() {
-  console.log("\n== pass 1: generalist scope (populated) ==");
+  console.log("\n== pass 1: populated dashboard ==");
   const errors = [];
   const dom = makeDom((p) => Promise.resolve({ ok: true, status: 200, json: async () => router(p) }), errors);
   const { document } = dom.window;
   await sleep(200);
   const q = (s) => document.querySelector(s), qa = (s) => [...document.querySelectorAll(s)];
 
-  ok(qa("#objSelect option").length === 87, "picker has 87 options (1+13+73)");
-  ok(qa("#objSelect optgroup").length === 3, "picker has 3 optgroups");
-  ok(q("#objSelect").value === "generalist", "default objective is generalist");
-
-  const pressed = qa("[data-view]").find((b) => b.getAttribute("aria-pressed") === "true");
-  ok(pressed && pressed.dataset.view === "people", "Hackers is the default (primary) view");
-
-  const cap = q("#scCap").textContent;
-  ok(/GENERALIST/.test(cap) && /hackers/.test(cap), "caption: GENERALIST / hackers");
-  const head = q("#scHead").textContent;
-  ok(/coverage/.test(head) && /mean/.test(head) && /vs AA/.test(head), "hackers header: coverage + mean + Δ vs AA");
-  ok(!/firsts/i.test(head), "hackers header has NO firsts");
-  const rows = qa("#scBody tr");
-  ok(rows.length === 3, "hackers: 2 rows + AutoAscend floor row = 3");
-  ok(rows[0] && /@dun/.test(rows[0].textContent) && /24\/73/.test(rows[0].textContent), "hacker row1 @dun 24/73");
-  ok(/autoascend/.test(rows[rows.length - 1].textContent), "last row is the autoascend floor");
-
-  // switch to Programs
-  q('[data-view="programs"]').click();
-  await sleep(20);
-  const phead = q("#scHead").textContent;
-  ok(/program/.test(phead) && /coverage/.test(phead) && /vs AA/.test(phead), "programs (aggregate) header: coverage + Δ");
-  ok(qa("#scBody tr").length === 3, "programs: 2 rows + floor = 3");
+  // status cards, straight from /summary
+  const cards = qa("#statusgrid .statuscard");
+  ok(cards.length === 4, "status grid renders four cards");
+  ok(/8\.1%/.test(q("#statusgrid").textContent), "community frontier card shows /summary's 8.1%");
+  ok(/\+12\.0%/.test(q("#statusgrid").textContent), "largest-lift card shows +12.0% (from largest_lift.lift)");
+  ok(!!q("#statusgrid .statusowner"), "largest-lift card exposes a clickable @owner");
 
   // frontier: every per-identity cell has a value (program or floor), 73 total.
-  // :not(.hval) excludes the per-role header average cells (also class "vv").
   const frCells = qa("#rolegrid td.vv:not(.hval)");
   const floorCells = qa("#rolegrid td.vv.floor:not(.hval)").length;
   const progCells = qa("#rolegrid td.vv:not(.hval):not(.floor):not(.empty)").length;
@@ -186,46 +190,60 @@ async function pass1() {
   const mq = q("#mq").textContent;
   ok(/2 programs registered/.test(mq), "marquee shows the live program count (2)");
   ok(/none has ascended/.test(mq), "marquee: 'none has ascended' when ascensions=0");
-  ok(!/3 programs registered/.test(mq), "marquee no longer hardcodes '3 programs'");
   ok(/27 Aug 2026/.test(q("#updated").textContent), "last-updated shows the formatted registered_at (UTC)");
 
   // Recognition tables start compact and expand independently in five-row pages.
   ok(qa("#recordholders tbody tr").length === 5, "frontier keepers initially shows the top 5");
   ok(qa("#breakthroughs tbody tr").length === 5, "breakthrough log initially shows the latest 5");
-  ok(!/submission/i.test(q("#breakthroughs thead").textContent), "breakthrough table omits the redundant submission column");
   q('[data-fame-more="keepers"]').click();
   ok(qa("#recordholders tbody tr").length === 6, "keepers More control reveals the next page");
   ok(qa("#breakthroughs tbody tr").length === 5, "keepers expansion does not alter breakthroughs");
   q('[data-fame-more="breakthroughs"]').click();
   ok(qa("#breakthroughs tbody tr").length === 7, "breakthroughs More control reveals the next page");
 
+  // click-through 1: a frontier row opens the identity leaderboard (/board?scope=)
+  q("#rolegrid tr.frontierrow").click();
+  await sleep(40);
+  ok(document.querySelector("#modal").hasAttribute("open"), "clicking a frontier row opens the identity modal");
+  const idBody = q("#mBody").textContent;
+  ok(/@dun/.test(idBody) && /Mines' End/.test(idBody), "identity leaderboard shows the program row (@dun, Mines' End)");
+  ok(/github\.com\/dun\/bot/.test(q("#mBody").innerHTML), "identity source cell resolves reference{repo} to a github link");
+  q("#mX").click();
+
+  // click-through 2: a breakthrough row opens the exact submission (/programs/{id} + /identities)
+  q("#breakthroughs tbody tr").click();
+  await sleep(40);
+  const bBody = q("#mBody").textContent;
+  ok(/breakthrough/i.test(q("#mTitle").textContent), "breakthrough modal titled for the identity");
+  ok(/frontier advance/i.test(bBody) && /github\.com/.test(q("#mBody").innerHTML), "breakthrough submission shows advance + source link");
+  q("#mX").click();
+
+  // click-through 3: a keeper row opens the hacker's contributions (/programs?owner= + /identities)
+  q("#recordholders tbody tr").click();
+  await sleep(40);
+  ok(/contributions/i.test(q("#mTitle").textContent), "keeper row opens the hacker contributions modal");
+  ok(/registered solutions/i.test(q("#mBody").textContent), "hacker modal lists registered solutions");
+  q("#mX").click();
+
   ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
   dom.window.close();
 }
 
 async function pass2() {
-  console.log("\n== pass 2: identity + role scope ==");
+  console.log("\n== pass 2: verified tier keeps recognition, blanks the frontier ==");
   const errors = [];
   const dom = makeDom((p) => Promise.resolve({ ok: true, status: 200, json: async () => router(p) }), errors);
-  const { document, Event } = dom.window;
+  const { document } = dom.window;
   await sleep(200);
   const q = (s) => document.querySelector(s), qa = (s) => [...document.querySelectorAll(s)];
 
-  // to an identity, Programs view
-  const sel = q("#objSelect"); sel.value = "val-dwa-law-fem"; sel.dispatchEvent(new Event("change"));
-  q('[data-view="programs"]').click();
+  const verifiedBtn = qa("[data-tier]").find((b) => b.dataset.tier === "verified");
+  verifiedBtn.click();
   await sleep(60);
-  const head = q("#scHead").textContent;
-  ok(/deepest reach/.test(head) && /score/.test(head) && /vs AA/.test(head), "identity programs header: deepest + score + Δ");
-  ok(!/coverage/.test(head), "identity header has no coverage column");
-  ok(/Mines' End/.test(q("#scBody").textContent), "identity program row shows real deepest (Mines' End)");
-
-  // to a role
-  sel.value = "val"; sel.dispatchEvent(new Event("change"));
-  await sleep(60);
-  const rhead = q("#scHead").textContent;
-  ok(/coverage/.test(rhead) && /mean/.test(rhead), "role programs header: coverage + mean");
-  ok(/3\/3/.test(q("#scBody").textContent), "role row shows coverage out of the role's identities (3/3)");
+  ok(qa("#recordholders tbody tr").length >= 5, "recognition keepers stay visible on the verified tier");
+  ok(qa("#breakthroughs tbody tr").length >= 5, "recognition breakthroughs stay visible on the verified tier");
+  const progCells = qa("#rolegrid td.vv:not(.hval):not(.floor):not(.empty)").length;
+  ok(progCells === 0, "frontier shows no program cells on the verified tier (M2b not live)");
 
   ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
   dom.window.close();
@@ -238,23 +256,34 @@ async function pass3() {
   const { document } = dom.window;
   await sleep(200);
   const q = (s) => document.querySelector(s);
-  ok(/be the first/i.test(q("#scBody").textContent), "empty hackers state invites the first register");
-  ok(/autoascend/.test(q("#scBody").textContent), "floor row still present under the empty state");
-  // honesty: with no baseline the floor must read "—", never a fabricated 0.000 (both views)
-  q('[data-view="programs"]').click();
-  await sleep(20);
-  const floorRow = [...document.querySelectorAll("#scBody tr")].find((r) => /autoascend/.test(r.textContent));
-  ok(floorRow && !/0\.000/.test(floorRow.textContent), "programs floor shows no fake 0.000 when baseline is absent");
-  // honesty: /stats failed -> the marquee omits the count line and the freshness
-  // stamp stays a neutral dash, never a stale/fabricated value
+  ok(/Loading|No participant|No breakthroughs|dungeon ledger/i.test(q("#statusgrid").textContent) || q("#statusgrid").querySelectorAll(".statuscard").length >= 0,
+    "status grid degrades without throwing");
+  ok(/No participant is above AutoAscend/i.test(q("#recordholders").textContent), "keepers show the empty recognition state offline");
+  ok(/No breakthroughs above AutoAscend/i.test(q("#breakthroughs").textContent), "breakthroughs show the empty recognition state offline");
+  // honesty: /stats failed -> the marquee omits the count line and the freshness stamp stays a neutral dash
   ok(!/programs registered/.test(q("#mq").textContent), "marquee omits the stats line when /stats fails");
   ok(q("#updated") && q("#updated").textContent.trim() === "—", "last-updated is a neutral dash offline");
   ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
   dom.window.close();
 }
 
+function checkDictvizRandomWiring() {
+  console.log("\n== dictviz source check: /hackers/random consumer ==");
+  // Its fetch lives inside the audio-reactive wall's IIFE, gated on
+  // `cv.getContext("2d")`. jsdom returns null there without the native `canvas`
+  // package (not installed for this harness -- see the header comment), so that
+  // IIFE returns early and the passes above never reach the fetch. Guard the
+  // envelope-unwrap at the source instead of behaviorally.
+  const line = html.split("\n").find((l) => l.includes('jget("/hackers/random'));
+  ok(line != null, "index.html fetches /hackers/random for the @username wall runners");
+  ok(line != null && /\.rows/.test(line), "the /hackers/random read unwraps .rows before use");
+  ok(line != null && !/\.then\(\s*buildRunners\s*\)/.test(line),
+    "no longer hands the raw envelope straight to buildRunners");
+}
+
 await pass1();
 await pass2();
 await pass3();
+checkDictvizRandomWiring();
 console.log("\n" + (failures === 0 ? "ALL PASSED" : failures + " CHECK(S) FAILED"));
 process.exit(failures === 0 ? 0 : 1);

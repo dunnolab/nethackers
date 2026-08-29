@@ -196,7 +196,10 @@ def run_loop(
                                         store=tree_store, fetch=fetch))
     owned: dict[str, tuple[Path, list[str]]] = {}
     for ident, (entry, tree_path) in elites.items():
-        owned.setdefault(entry["solution_digest"], (tree_path, []))[1].append(ident)
+        # program_id (not solution_digest -- /elites rows don't carry that;
+        # see harness/select.py) -- opaque, but stable per distinct champion,
+        # which is all this grouping key needs.
+        owned.setdefault(entry["program_id"], (tree_path, []))[1].append(ident)
 
     frontier_results: list[TrajectoryResult] = []   # every cold-start episode -> baseline tally
     for d, (tree_path, idents) in owned.items():

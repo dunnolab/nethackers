@@ -33,10 +33,10 @@ from typing import Any, Protocol
 from nethackers.contracts.models import Evidence, ObjectiveSpec
 from nethackers.hub.atoms import evidence_to_atoms
 from nethackers.hub.auth import AuthProvider, owns_repo
+from nethackers.hub.ids import program_id as _program_id
 from nethackers.hub.objectives import CATALOG, IDENTITIES, build_union_spec
 from nethackers.hub.store import Store
 from nethackers.hub.views.attainment import update_attainment
-from nethackers.hub.views.elites import recompute_elites
 
 _COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 
@@ -57,6 +57,7 @@ class RegisterResult:
     owner: str
     objective: str  # the objective name (evidence.objective.seed_set)
     atoms_inserted: int
+    program_id: str
 
 
 class CommitChecker(Protocol):
@@ -177,15 +178,18 @@ def register(
     if evidence.tier != "self-reported":
         raise WrongTier(f"tier {evidence.tier!r} is not self-reported")
 
-    # 5. store & recompute -- reached only once every check above has passed.
+    # 5. store -- reached only once every check above has passed. atoms +
+    # attainment are all this writes now: /elites is a live query over
+    # atoms (Part 2 of the hub API redesign dropped elite_pool + the
+    # recompute step that used to run here).
     solution_id = f"{reference.repo}@{reference.commit}"
     store.upsert_solution(
         solution_id,
         repo=reference.repo,
         commit_sha=reference.commit,
         owner=login,
-        root=manifest["root"],
-        entrypoint=manifest["entrypoint"],
+        root=manifest.get("root", "."),
+        entrypoint=manifest.get("entrypoint", "bot.py"),
         registered_at=now,
     )
     for parent in manifest.get("parents", []):
@@ -196,23 +200,20 @@ def register(
     atoms = evidence_to_atoms(evidence, owner=login, solution_id=solution_id)
     inserted = store.insert_atoms(atoms)
     update_attainment(store, atoms, now=now)
-    recompute_elites(store)
 
     return RegisterResult(
-        solution_id=solution_id, owner=login, objective=name, atoms_inserted=inserted
+        solution_id=solution_id, owner=login, objective=name, atoms_inserted=inserted,
+        program_id=_program_id(solution_id),
     )
 
 
 def _validated_manifest(manifest: dict[str, Any] | None) -> dict[str, Any]:
-    """Raise ``BadManifest`` unless ``manifest`` is a dict with non-empty
-    string ``root`` and ``entrypoint``, and (if present) ``parents`` /
-    ``influences`` each a list of strings. Returns it unchanged, type-narrowed."""
+    """Raise ``BadManifest`` unless ``manifest`` is a dict whose (if present)
+    ``parents`` / ``influences`` are each a list of strings. ``root`` and
+    ``entrypoint`` are optional -- ``register`` defaults them when absent.
+    Returns it unchanged, type-narrowed."""
     if not isinstance(manifest, dict):
         raise BadManifest("manifest missing or not an object")
-    if not isinstance(manifest.get("root"), str) or not manifest["root"]:
-        raise BadManifest("manifest.root must be a non-empty string")
-    if not isinstance(manifest.get("entrypoint"), str) or not manifest["entrypoint"]:
-        raise BadManifest("manifest.entrypoint must be a non-empty string")
     for key in ("parents", "influences"):
         if key not in manifest:
             continue

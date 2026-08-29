@@ -129,8 +129,10 @@ def _fitness_runner_by_character(progress_fn):
 
 class _ElitesHub(_FakeHub):
     """A hub that also serves per-identity elites for cold-start cell seeding.
-    `by_identity` maps identity -> a champion entry; tier='verified' so every
-    entry is trusted regardless of the run owner (select._trusted)."""
+    `by_identity` maps identity -> a champion entry; every fixture entry
+    below carries owner='dev', matching every one of this file's run_loop
+    calls that use `_ElitesHub` -- so every entry is trusted (select._trusted
+    is an owner match only; there's no 'verified' tier)."""
     def __init__(self, by_identity):
         super().__init__()
         self._by = by_identity
@@ -142,8 +144,9 @@ class _ElitesHub(_FakeHub):
 def _champion_fetch(version_by_digest):
     """A cold-start `fetch` that materializes each champion's tree on demand:
     the solution manifest plus a bot.py whose VERSION the fake fitness runner
-    scores. Digests are atom-style ('repo@commit', no ':'), so select._resolve
-    caches them via store.save_as and never hits a real git pull."""
+    scores. Keyed by program_id -- an opaque id (never a real 'sha256:...'
+    content digest), so select._resolve caches it via store.save_as and never
+    hits a real git pull."""
     def fetch(entry, dest):
         dest = Path(dest)
         dest.mkdir(parents=True, exist_ok=True)
@@ -151,7 +154,7 @@ def _champion_fetch(version_by_digest):
             {"schema": "nethackers.solution/v1", "name": "champ", "root": ".",
              "parents": [], "influences": [], "entrypoint": "bot.py"}))
         (dest / "bot.py").write_text(
-            f"VERSION = {version_by_digest[entry['solution_digest']]}\n")
+            f"VERSION = {version_by_digest[entry['program_id']]}\n")
         return dest
     return fetch
 
@@ -639,8 +642,10 @@ def test_coldstart_scores_each_champion_on_its_own_identities(tmp_path, monkeypa
     # (the old P*N blowup) -- and with every cell covered, the seed is not
     # scored at all. So the ONLY evals are the two champion sub-unions.
     a, b, c = "mon-hum-cha-mal", "mon-hum-law-mal", "mon-hum-neu-mal"
-    champ_a = {"solution_digest": "github.com/t/a@11", "score": 0.99, "tier": "verified"}
-    champ_b = {"solution_digest": "github.com/t/b@22", "score": 0.99, "tier": "verified"}
+    champ_a = {"program_id": "github.com/t/a@11", "score": 0.99, "owner": "dev",
+               "reference": {"repo": "github.com/t/a", "commit": "11"}}
+    champ_b = {"program_id": "github.com/t/b@22", "score": 0.99, "owner": "dev",
+               "reference": {"repo": "github.com/t/b", "commit": "22"}}
     seen = _spy_batches(monkeypatch)
     run_loop(
         objective=f"{a},{b},{c}", seed_tree=_seed_tree(tmp_path / "seed"),
@@ -664,8 +669,10 @@ def test_coldstart_fills_each_cell_with_its_own_champion(tmp_path):
     # up owned by its champion. (On the old full-union path both champions scored
     # every identity, so the higher one took both cells.)
     a, b = "wiz-elf-cha-mal", "wiz-orc-cha-mal"
-    champ_a = {"solution_digest": "github.com/t/a@11", "score": 0.99, "tier": "verified"}
-    champ_b = {"solution_digest": "github.com/t/b@22", "score": 0.99, "tier": "verified"}
+    champ_a = {"program_id": "github.com/t/a@11", "score": 0.99, "owner": "dev",
+               "reference": {"repo": "github.com/t/a", "commit": "11"}}
+    champ_b = {"program_id": "github.com/t/b@22", "score": 0.99, "owner": "dev",
+               "reference": {"repo": "github.com/t/b", "commit": "22"}}
     states = []
     run_loop(
         objective=f"{a},{b}", seed_tree=_seed_tree(tmp_path / "seed"),
@@ -685,7 +692,8 @@ def test_coldstart_seeds_only_championless_cells(tmp_path, monkeypatch):
     # champion owns id1; id2 has NO hub elite -> the seed is scored on id2 ONLY,
     # never the full union.
     a, b = "wiz-elf-cha-mal", "wiz-orc-cha-mal"
-    champ = {"solution_digest": "github.com/t/a@11", "score": 0.99, "tier": "verified"}
+    champ = {"program_id": "github.com/t/a@11", "score": 0.99, "owner": "dev",
+             "reference": {"repo": "github.com/t/a", "commit": "11"}}
     store = LocalTreeStore(tmp_path / "store")
     seed_tree = _seed_tree(tmp_path / "seed")
     seed_path = store.path(store.save(seed_tree))
@@ -707,7 +715,8 @@ def test_coldstart_base_dev_is_the_frontier_mean(tmp_path):
     # base_dev is the frontier mean (0.7 + 0.2) / 2 = 0.45, NOT the seed's union
     # mean (0.2, what the old full-union seed eval reported).
     a, b = "wiz-elf-cha-mal", "wiz-orc-cha-mal"
-    champ = {"solution_digest": "github.com/t/a@11", "score": 0.99, "tier": "verified"}
+    champ = {"program_id": "github.com/t/a@11", "score": 0.99, "owner": "dev",
+             "reference": {"repo": "github.com/t/a", "commit": "11"}}
     baseline = []
     run_loop(
         objective=f"{a},{b}", seed_tree=_seed_tree(tmp_path / "seed"),
@@ -727,8 +736,10 @@ def test_coldstart_baseline_when_every_cell_has_a_champion(tmp_path):
     # on a seed eval that didn't run (the old causes=_causes(seed_ev.results)
     # would reference an unbound seed_ev here).
     a, b = "wiz-elf-cha-mal", "wiz-orc-cha-mal"
-    champ_a = {"solution_digest": "github.com/t/a@11", "score": 0.99, "tier": "verified"}
-    champ_b = {"solution_digest": "github.com/t/b@22", "score": 0.99, "tier": "verified"}
+    champ_a = {"program_id": "github.com/t/a@11", "score": 0.99, "owner": "dev",
+               "reference": {"repo": "github.com/t/a", "commit": "11"}}
+    champ_b = {"program_id": "github.com/t/b@22", "score": 0.99, "owner": "dev",
+               "reference": {"repo": "github.com/t/b", "commit": "22"}}
     baseline = []
     run_loop(
         objective=f"{a},{b}", seed_tree=_seed_tree(tmp_path / "seed"),
@@ -751,8 +762,10 @@ def test_coldstart_warm_cell_mutates_without_error(tmp_path):
     # full-union cold-start. Proves the D2 subset doesn't trip the unchanged
     # regression/brief path (no silent 'error:' iteration).
     a, b = "wiz-elf-cha-mal", "wiz-orc-cha-mal"
-    champ_a = {"solution_digest": "github.com/t/a@11", "score": 0.99, "tier": "verified"}
-    champ_b = {"solution_digest": "github.com/t/b@22", "score": 0.99, "tier": "verified"}
+    champ_a = {"program_id": "github.com/t/a@11", "score": 0.99, "owner": "dev",
+               "reference": {"repo": "github.com/t/a", "commit": "11"}}
+    champ_b = {"program_id": "github.com/t/b@22", "score": 0.99, "owner": "dev",
+               "reference": {"repo": "github.com/t/b", "commit": "22"}}
     results = run_loop(
         objective=f"{a},{b}", seed_tree=_seed_tree(tmp_path / "seed"),
         tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),

@@ -5,9 +5,10 @@ from __future__ import annotations
 from datetime import UTC, datetime
 
 from nethackers.contracts.models import Atom
+from nethackers.hub.ids import program_id
 from nethackers.hub.objectives import IDENTITIES
 from nethackers.hub.store import Store
-from nethackers.hub.views.competition_status import read_competition_status
+from nethackers.hub.views.summary import read_summary
 
 
 def _atom(
@@ -72,19 +73,21 @@ def test_collective_frontier_uses_baseline_floor_and_seven_day_window(tmp_path):
     )
     store.conn.commit()
 
-    result = read_competition_status(
+    result = read_summary(
         store,
         now=datetime(2026, 8, 28, 12, tzinfo=UTC),
     )
 
     assert result == {
+        "generated_at": "2026-08-28T12:00:00+00:00",
         "community_frontier": round(7.55 / 73, 6),
         "frontier_gain_7d": round(0.15 / 73, 6),
         "identities_improved_7d": 2,
         "largest_lift": {
             "identity": identity_a,
             "owner": "hacker",
-            "solution_digest": "new-a",
+            "program_id": program_id("new-a"),
+            "reference": {"repo": "github.com/a/b", "commit": "new-a"},
             "score": 0.3,
             "baseline": 0.1,
             "lift": 0.2,
@@ -95,7 +98,9 @@ def test_collective_frontier_uses_baseline_floor_and_seven_day_window(tmp_path):
 def test_collective_frontier_empty_store_is_zero(tmp_path):
     store = Store(str(tmp_path / "hub.db"))
     store.init_schema()
-    assert read_competition_status(store) == {
+    result = read_summary(store)
+    assert result.pop("generated_at")  # ISO 8601 as-of, present on every response
+    assert result == {
         "community_frontier": 0.0,
         "frontier_gain_7d": 0.0,
         "identities_improved_7d": 0,
@@ -131,8 +136,9 @@ def test_largest_lift_uses_identity_leaderboard_tiebreakers(tmp_path):
         )
     store.conn.commit()
 
-    largest = read_competition_status(store)["largest_lift"]
+    largest = read_summary(store)["largest_lift"]
 
     assert largest is not None
     assert largest["owner"] == "bob"
-    assert largest["solution_digest"] == "ascended"
+    assert largest["program_id"] == program_id("ascended")
+    assert largest["reference"] == {"repo": "github.com/bob/bot", "commit": "ascended"}

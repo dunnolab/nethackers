@@ -8,7 +8,6 @@ from rich.console import Console
 from textual.app import App, ComposeResult
 from textual.widgets import Tabs
 
-from nethackers.hubclient.client import _short_digest
 from nethackers.hubclient.credentials import Credentials
 from nethackers.hubclient.frontier import overall_mean
 from nethackers.tui.app import NetHackersApp
@@ -243,7 +242,6 @@ class _FakeHubClient:
         self.base_url = base_url
         self.timeout = timeout
         self.board_calls: list[tuple] = []
-        self.attainment_calls: list[tuple] = []
         self.elites_calls: list[tuple] = []
         _FakeHubClient.instances.append(self)
 
@@ -254,12 +252,8 @@ class _FakeHubClient:
         return [{"rank": 1, "owner": "vale", "mean_progression": 0.5,
                  "solution_digest": "a" * 12}]
 
-    def attainment(self, identity: str | None = None) -> list:
-        self.attainment_calls.append((identity,))
-        return []
-
-    def elites(self, objective: str) -> list:
-        self.elites_calls.append((objective,))
+    def elites(self, scope: str) -> list:
+        self.elites_calls.append((scope,))
         return []
 
 
@@ -293,7 +287,7 @@ async def test_boards_view_calls_board_and_passes_you(monkeypatch):
 
 
 async def test_elites_view_calls_elites_and_passes_to_renderer(monkeypatch):
-    """ElitesView calls client.elites('all') and passes result to render_elites."""
+    """ElitesView calls client.elites('generalist') and passes result to render_elites."""
     import nethackers.tui.screens.hub as hub
 
     captured_renderer_calls = []
@@ -311,11 +305,11 @@ async def test_elites_view_calls_elites_and_passes_to_renderer(monkeypatch):
     app = _HostElites()
     async with app.run_test() as pilot:
         await _settle(app, pilot)
-        # Verify client.elites was called with "all"
+        # Verify client.elites was called with "generalist"
         assert len(_FakeHubClient.instances) > 0
         client = _FakeHubClient.instances[0]
         assert len(client.elites_calls) > 0
-        assert client.elites_calls[0][0] == "all"
+        assert client.elites_calls[0][0] == "generalist"
         # Also verify render_elites was called with the result
         assert len(captured_renderer_calls) > 0
         assert captured_renderer_calls[0][0] == "render_elites"
@@ -331,7 +325,7 @@ async def test_boards_view_renders_entry_content(monkeypatch):
     fake_entries = [
         {
             "rank": 1,
-            "solution_digest": "abc123def456",
+            "program_id": "prog_abc123def456",
             "owner": "testuser",
             "ascensions": 5,
             "median_progression": 0.75,
@@ -358,7 +352,7 @@ async def test_boards_view_renders_entry_content(monkeypatch):
 # across a regime switch, not call-argument recording.
 
 
-def _fake_elites_rank_spread(self, objective: str) -> list:
+def _fake_elites_rank_spread(self, scope: str) -> list:
     """A rank-1 spread across two identities, plus one rank-2 row (must be
     excluded by universe_scores' rank filter -- its value, 0.99, must never
     appear in a Universe render)."""
@@ -370,11 +364,11 @@ def _fake_elites_rank_spread(self, objective: str) -> list:
 
 
 def _fake_board_with_champion(self, *a, **k) -> list:
-    return [{"rank": 1, "owner": "vale", "solution_digest": "abc123def456",
+    return [{"rank": 1, "owner": "vale", "program_id": "abc123def456",
              "mean_progression": 0.5}]
 
 
-def _fake_solution_frontier_for_champion(self, digest: str) -> list:
+def _fake_program_identities_for_champion(self, program_id: str) -> list:
     """The champion's own per-identity progression -- deliberately a
     *different* number (0.91) on the *same* identity (val-dwa-law-fem) as
     the universe fixture's 0.42, so a test can prove the grid actually
@@ -423,13 +417,23 @@ async def test_map_view_activating_program_subtab_shows_champion_grid(monkeypatc
     """Activating the Program subtab re-renders the same panel from
     champion_scores instead of universe_scores: the champion's distinct
     number replaces the universe number on the same identity, and the
-    @owner/digest caption appears."""
+    @owner/program-id caption appears.
+
+    Forward-carry closure (Task 1 -> Task 5): champion() already returns a
+    program_id (from the /board migration); champion_scores() must resolve
+    it via program_identities (-> /programs/{id}/identities), not the
+    retired solution_frontier (-> /solutions/{digest}/frontier, which 404s
+    on a program_id) -- updated here to patch program_identities, the
+    method MapView's real Program regime now actually calls. (A patched
+    method only proves the wiring, not the live route -- see
+    tests/hub/test_programs.py's end-to-end test for the real HTTP round
+    trip that closes the loop for good.)"""
     import nethackers.tui.screens.hub as hub
 
     monkeypatch.setattr(hub.HubClient, "elites", _fake_elites_rank_spread)
     monkeypatch.setattr(hub.HubClient, "board", _fake_board_with_champion)
-    monkeypatch.setattr(hub.HubClient, "solution_frontier",
-                         _fake_solution_frontier_for_champion)
+    monkeypatch.setattr(hub.HubClient, "program_identities",
+                         _fake_program_identities_for_champion)
     monkeypatch.setattr(hub.HubClient, "baseline", _fake_baseline)
 
     app = _HostMap()
@@ -446,7 +450,8 @@ async def test_map_view_activating_program_subtab_shows_champion_grid(monkeypatc
         rendered = _render_to_str(body.content)
         assert "91.0%" in rendered  # the champion's number
         assert "42.0%" not in rendered  # the universe number is gone, not merged
-        assert f"@vale/{_short_digest('abc123def456')}" in rendered
+        # program_id is opaque and already short -- shown verbatim, never truncated.
+        assert "@vale/abc123def456" in rendered
         assert "this one program across all identities" in rendered
         om = overall_mean({"val-dwa-law-fem": 0.91})
         assert om is not None

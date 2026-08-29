@@ -96,7 +96,11 @@ ROLES: tuple[str, ...] = (
 )
 RACES: tuple[str, ...] = ("hum", "elf", "dwa", "gno", "orc")
 ALIGNMENTS: tuple[str, ...] = ("law", "neu", "cha")
-GENDERS: tuple[str, ...] = ("fem", "mal")
+GENDERS: tuple[str, ...] = ("mal", "fem")
+
+FACETS: dict[str, tuple[str, ...]] = {
+    "role": ROLES, "race": RACES, "align": ALIGNMENTS, "gender": GENDERS,
+}
 
 # Race -> allowed alignments (races[race].allow's align bits, NetHack
 # 3.6.6 src/role.c). The hard race->align invariant: every identity's
