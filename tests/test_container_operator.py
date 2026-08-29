@@ -14,7 +14,7 @@ from nethackers.harness.container_operator import (
 
 def _argv(harness, **kw):
     return build_docker_argv(
-        harness=harness, image="nethackers/mutator:test", name="mut-r-1",
+        harness=harness, image="nethackers/mutator:test", name="nethackers-mut-r-1",
         worktree=Path("/runs/r/work/iter-1"), cli=None, model="gpt-x", effort="high",
         caps=ContainerCaps(), auth_args=["-v", "/h/.codex:/home/agent/.codex"],
         brief="B", **kw)
@@ -23,7 +23,7 @@ def _argv(harness, **kw):
 def test_docker_run_shape_and_caps():
     a = _argv("codex")
     assert a[:3] == ["docker", "run", "--rm"]
-    assert "--name" in a and "mut-r-1" in a
+    assert "--name" in a and "nethackers-mut-r-1" in a
     for cap in ("--pids-limit", "512", "--memory", "8g", "--cpus", "4"):
         assert cap in a
     assert a[a.index("--security-opt") + 1] == "no-new-privileges"
@@ -95,12 +95,13 @@ def test_stop_docker_kills_named_container(tmp_path):
     op._docker_kill = lambda name: killed.append(name)
     # drive the stop-watcher directly (unit): a set event → docker kill invoked
     # (name is an arbitrary stand-in for whatever run() computed -- shaped
-    # like the real mut-${RUN_ID}-${ITER} scheme, not the old worktree-
-    # parent-derived one, since _maybe_kill_on_stop just relays it verbatim)
+    # like the real nethackers-mut-${RUN_ID}-${ITER} scheme, not the old
+    # worktree-parent-derived one, since _maybe_kill_on_stop just relays it
+    # verbatim)
     stop = threading.Event()
     stop.set()
-    op._maybe_kill_on_stop("mut-r9-iter-9", stop)
-    assert killed == ["mut-r9-iter-9"]
+    op._maybe_kill_on_stop("nethackers-mut-r9-iter-9", stop)
+    assert killed == ["nethackers-mut-r9-iter-9"]
 
 
 class _GatedFakePopen:
@@ -170,7 +171,7 @@ def test_stop_kills_the_same_name_baked_into_the_docker_argv(tmp_path):
     op.run(wt, "BRIEF-TEXT", stop=stop)
 
     name_in_argv = seen["cmd"][seen["cmd"].index("--name") + 1]
-    assert name_in_argv == "mut-r7-iter-7"
+    assert name_in_argv == "nethackers-mut-r7-iter-7"
     assert killed                        # _docker_kill fired at least once
     assert set(killed) == {name_in_argv}  # every call used the SAME name
 
@@ -180,9 +181,10 @@ def test_run_id_makes_container_name_unique_across_two_concurrent_runs(tmp_path)
     container name used to be derived from `worktree.parent.name`, which is
     ALWAYS the literal "work" (worktree == <workdir>/runs/<rid>/work/iter-N),
     so two concurrent `evolve --sandbox` runs collided on the exact same
-    `mut-work-iter-0` name regardless of run id -- and a hard-stop's `docker
-    kill <name>` could then target the WRONG run's live container. Spec
-    §3.3 requires `mut-${RUN_ID}-${ITER}`; pin that two ContainerOperators
+    `nethackers-mut-work-iter-0` name regardless of run id -- and a hard-stop's
+    `docker kill <name>` could then target the WRONG run's live container.
+    Spec §3.3 requires `nethackers-mut-${RUN_ID}-${ITER}`; pin that two
+    ContainerOperators
     constructed with DIFFERENT run ids, driving the SAME iteration number
     (iter-0 -- the exact shape of the pre-fix collision), get DIFFERENT
     docker --name values.
@@ -212,8 +214,8 @@ def test_run_id_makes_container_name_unique_across_two_concurrent_runs(tmp_path)
     name_b = seen_b["cmd"][seen_b["cmd"].index("--name") + 1]
 
     assert name_a != name_b
-    assert name_a == "mut-run-aaa-iter-0"
-    assert name_b == "mut-run-bbb-iter-0"
+    assert name_a == "nethackers-mut-run-aaa-iter-0"
+    assert name_b == "nethackers-mut-run-bbb-iter-0"
 
 
 class _StillRunningFakePopen:
