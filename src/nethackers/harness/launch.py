@@ -19,7 +19,7 @@ from nethackers.harness import runlog
 from nethackers.harness.container_operator import ContainerOperator
 from nethackers.harness.loop import run_loop
 from nethackers.harness.store import LocalTreeStore
-from nethackers.harness.version import HARNESS_VERSION
+from nethackers.harness.version import RUN_SCHEMA_VERSION
 from nethackers.hubclient import credentials as _credentials
 from nethackers.hubclient.auth import TokenSource
 from nethackers.hubclient.client import HubClient
@@ -94,7 +94,7 @@ def _publisher_for(
     owner's public ``<owner>/<repo_name>`` repo via ``gh`` and return its
     ``{repo, commit}`` -- so the win is fetchable and passes the hub's
     commit-exists check. Pushes go to this run's own branch
-    (``evo-harness-<HARNESS_VERSION>/<run_id>``), not the repo's default
+    (``evo-harness-<RUN_SCHEMA_VERSION>/<run_id>``), not the repo's default
     branch, so parallel runs never race on the same fast-forward. Returns
     ``None`` (loop keeps the win as a local elite, unpublished) when
     publishing can't work: an explicit ``--offline`` (checked first, wins
@@ -108,7 +108,7 @@ def _publisher_for(
     from nethackers.hubclient.publish import PublishError, ensure_repo, publish_solution
 
     slug = f"{owner}/{repo_name}"
-    ref = f"evo-harness-{HARNESS_VERSION}/{run_id}"
+    ref = f"evo-harness-{RUN_SCHEMA_VERSION}/{run_id}"
 
     def publish(worktree: Path) -> dict[str, str] | None:
         try:
@@ -159,7 +159,7 @@ def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
 
     runlog.write_run_config(run_dir, {
         "run_id": rid, "created_at": started.isoformat(),
-        "harness_version": HARNESS_VERSION,
+        "run_schema_version": RUN_SCHEMA_VERSION,
         "git_sha": git_sha if git_sha is not None else _git_sha(),
         "objective": params.objective, "seed": str(params.seed), "operator": params.operator,
         "iterations": params.iterations,

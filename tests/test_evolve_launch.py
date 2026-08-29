@@ -4,7 +4,7 @@ from pathlib import Path
 
 from nethackers.harness import launch
 from nethackers.harness.launch import EvolveParams, prepare_evolve
-from nethackers.harness.version import HARNESS_VERSION
+from nethackers.harness.version import RUN_SCHEMA_VERSION
 
 
 def test_prepare_evolve_writes_config_and_drives_run_loop(tmp_path, monkeypatch):
@@ -119,11 +119,11 @@ def test_prepare_evolve_iterations_pass_through_unchanged(tmp_path, monkeypatch)
     assert cfg["iterations"] == 5 and "iterations_per_island" not in cfg
 
 
-def test_harness_version_is_v1():
-    assert HARNESS_VERSION == "v1"
+def test_run_schema_version_is_v1():
+    assert RUN_SCHEMA_VERSION == "v1"
 
 
-def test_run_config_records_harness_version(tmp_path):
+def test_run_config_records_run_schema_version(tmp_path):
     from nethackers.harness.launch import EvolveParams, prepare_evolve
     from nethackers.harness.store import LocalTreeStore
     seed = tmp_path / "seed"
@@ -135,4 +135,4 @@ def test_run_config_records_harness_version(tmp_path):
                      workdir=str(tmp_path / "wd"), owner="dev", from_seed=True),
         tree_store=LocalTreeStore(tmp_path / "store"))
     cfg = json.loads((plan.run_dir / "run.json").read_text())
-    assert cfg["harness_version"] == HARNESS_VERSION
+    assert cfg["run_schema_version"] == RUN_SCHEMA_VERSION
