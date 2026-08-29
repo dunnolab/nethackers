@@ -10,7 +10,15 @@ class _FakeHub:
     def register(self, *, token, reference, manifest, evidence):
         self.calls.append({"token": token, "reference": reference,
                            "manifest": manifest, "evidence": evidence})
-        return {"solution_digest": evidence["solution_digest"]}
+        # The real hub response (RegisterResult) carries BOTH the
+        # human-readable ``solution_id`` (``repo@commit``) and the opaque
+        # ``program_id`` -- ``register_win`` forwards the whole dict so a
+        # caller can read either. (Today ``harness.loop`` fires-and-forgets
+        # the return; the CLI shows ``solution_id``. See the forward test.)
+        solution_id = f"{reference['repo']}@{reference['commit']}"
+        return {"solution_id": solution_id,
+                "program_id": "prog_" + "0" * 32,
+                "owner": "dev", "objective": "generalist", "atoms_inserted": 1}
 
 
 def _ev():
@@ -29,14 +37,18 @@ def test_register_win_builds_payload_and_records_lineage():
     hub = _FakeHub()
     manifest = {"schema": "nethackers.solution/v1", "name": "c", "root": ".",
                 "parents": [], "influences": [], "entrypoint": "bot.py"}
-    register_win(hub, token="dev-token", child_manifest=manifest,
-                 evidence=_ev(), parent_digest="sha256:PARENT", reference=REFERENCE)
+    result = register_win(hub, token="dev-token", child_manifest=manifest,
+                          evidence=_ev(), parent_digest="sha256:PARENT", reference=REFERENCE)
     call = hub.calls[0]
     assert call["token"] == "dev-token"
     assert call["reference"] == REFERENCE                       # passed straight through
     assert call["manifest"]["parents"] == ["sha256:PARENT"]     # lineage recorded
     assert manifest["parents"] == []                            # caller's dict untouched
     assert call["evidence"]["solution_digest"] == "sha256:" + "ab" * 32
+    # register_win forwards the hub's response verbatim, so the opaque
+    # program_id (Part-1 addition) reaches any caller that wants it.
+    assert result["program_id"] == "prog_" + "0" * 32
+    assert result["solution_id"] == f"{REFERENCE['repo']}@{REFERENCE['commit']}"
 
 
 # -- B5: dead client-side register_win_slices removed ------------------------
