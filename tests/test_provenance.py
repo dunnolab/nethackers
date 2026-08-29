@@ -4,12 +4,10 @@
 in-container operator version -- an untrusted debugging breadcrumb
 (INV1/INV7), never gated on. Both resolvers are injectable so these tests
 never touch a real Docker daemon."""
-import inspect
 import json
 
-from nethackers.eval.runner import _default_image_digest
 from nethackers.harness import launch
-from nethackers.harness.launch import EvolveParams, prepare_evolve
+from nethackers.harness.launch import EvolveParams, _default_operator_version, prepare_evolve
 from nethackers.harness.store import LocalTreeStore
 
 
@@ -21,11 +19,28 @@ def _seed(tmp_path):
     return seed
 
 
-def test_default_image_digest_resolver_is_the_eval_runner_one():
-    # design constraint: reuse eval.runner._default_image_digest rather than
-    # inventing a second digest resolver.
-    sig = inspect.signature(prepare_evolve)
-    assert sig.parameters["image_digest_resolver"].default is _default_image_digest
+def test_omitted_image_digest_resolver_falls_back_to_the_real_default(tmp_path, monkeypatch):
+    # design constraint: reuse eval.runner._default_image_digest (imported
+    # into launch.py as _default_image_digest) as the actual fallback, not a
+    # re-implementation, when no resolver is injected. The kwarg default is
+    # `None` rather than `= _default_image_digest` specifically so this name
+    # is looked up dynamically at call time -- proven here by monkeypatching
+    # the name itself, the same mechanism conftest.py's autouse
+    # `_hermetic_provenance` fixture relies on to keep the rest of the suite
+    # hermetic.
+    monkeypatch.setattr(launch, "_default_image_digest", lambda image: f"sentinel:{image}")
+    seed = _seed(tmp_path)
+
+    plan = prepare_evolve(
+        EvolveParams(objective="val-dwa-law-fem", seed=str(seed),
+                     workdir=str(tmp_path / "wd"), owner="dev", from_seed=True,
+                     image="repo/arena:tag", mutator_image="repo/mutator:tag"),
+        tree_store=LocalTreeStore(tmp_path / "store"),
+    )
+
+    cfg = json.loads((plan.run_dir / "run.json").read_text())
+    assert cfg["arena_image_digest"] == "sentinel:repo/arena:tag"
+    assert cfg["mutator_image_digest"] == "sentinel:repo/mutator:tag"
 
 
 def test_records_injected_digests_operator_version_and_model(tmp_path):
@@ -81,7 +96,16 @@ def test_resolver_failures_are_best_effort_and_never_block_the_run(tmp_path):
     assert cfg["operator_version"] is None
 
 
-def test_default_operator_version_resolver_uses_discovery_detect_cli(tmp_path, monkeypatch):
+def test_default_operator_version_resolver_uses_discovery_detect_cli(monkeypatch):
+    # Calls the _default_operator_version function object imported above
+    # directly (captured at module-collection time, before any fixture has
+    # run) rather than dereferencing `launch._default_operator_version`
+    # through the module at call time -- conftest.py's autouse
+    # `_hermetic_provenance` fixture stubs that module attribute suite-wide,
+    # so going through `launch._default_operator_version(...)` here would
+    # just observe the stub, not this function's real delegation to
+    # discovery.detect_cli. The captured reference is immune to that later
+    # attribute reassignment.
     from nethackers.harness.discovery import CliInfo
 
     calls = {}
@@ -92,16 +116,8 @@ def test_default_operator_version_resolver_uses_discovery_detect_cli(tmp_path, m
         return CliInfo(backend, True, "claude 9.9.9", True)
 
     monkeypatch.setattr(launch, "detect_cli", fake_detect_cli)
-    seed = _seed(tmp_path)
 
-    plan = prepare_evolve(
-        EvolveParams(objective="val-dwa-law-fem", seed=str(seed), operator="claude",
-                     workdir=str(tmp_path / "wd"), owner="dev", from_seed=True,
-                     mutator_image="repo/mutator:tag"),
-        tree_store=LocalTreeStore(tmp_path / "store"),
-        image_digest_resolver=lambda image: f"sha256:{image}",
-    )
+    result = _default_operator_version("claude", "repo/mutator:tag")
 
-    cfg = json.loads((plan.run_dir / "run.json").read_text())
-    assert cfg["operator_version"] == "claude 9.9.9"
+    assert result == "claude 9.9.9"
     assert calls == {"backend": "claude", "image": "repo/mutator:tag"}

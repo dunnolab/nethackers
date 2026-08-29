@@ -1,6 +1,7 @@
 """Suite-wide test fixtures."""
 import pytest
 
+import nethackers.harness.launch as _launch
 import nethackers.tui.screens.evolve_form as _ef
 from nethackers.harness.discovery import CliInfo
 
@@ -18,6 +19,25 @@ def _hermetic_tui_discovery(monkeypatch):
         _ef, "probe_operator",
         lambda backend, **k: (CliInfo(backend, True, f"{backend} 0.0.0", True), None),
         raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_provenance(monkeypatch):
+    # launch.prepare_evolve's provenance fields (arena/mutator image digest,
+    # operator version) fall back to _default_image_digest/
+    # _default_operator_version when a test doesn't inject its own resolver
+    # -- both shell out to a real `docker image inspect` / `docker run ...
+    # --version`. On a box with the images already built locally that's a
+    # real, multi-second container spin-up on every evolve-wiring test, not
+    # just the tests that actually exercise provenance (the hermetic-suite
+    # rule). Stub both suite-wide by name; prepare_evolve looks these up
+    # dynamically at call time (see launch.py), not via a bound-at-def-time
+    # kwarg default, so the patch always takes effect. Tests that inject
+    # their own resolver, or want to exercise the real default, are
+    # unaffected -- test_provenance.py does both (an injected resolver wins
+    # outright; re-patching these same names overrides this fixture).
+    monkeypatch.setattr(_launch, "_default_image_digest", lambda *a, **kw: None, raising=False)
+    monkeypatch.setattr(_launch, "_default_operator_version", lambda *a, **kw: None, raising=False)
 
 
 # The NETHACKERS_* stage keys that `load_stage`/`_find_stack_file` consume.

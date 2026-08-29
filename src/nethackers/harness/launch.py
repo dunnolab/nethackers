@@ -166,8 +166,8 @@ def _best_effort(resolve: Callable[[], str | None]) -> str | None:
 def prepare_evolve(
     params: EvolveParams, *, git_sha: str | None = None,
     tree_store: LocalTreeStore | None = None,
-    image_digest_resolver: Callable[[str], str] = _default_image_digest,
-    operator_version_resolver: Callable[[str, str], str | None] = _default_operator_version,
+    image_digest_resolver: Callable[[str], str] | None = None,
+    operator_version_resolver: Callable[[str, str], str | None] | None = None,
 ) -> EvolvePlan:
     started = datetime.datetime.now(datetime.UTC)
     runs_dir = Path(params.workdir) / "runs"
@@ -192,10 +192,18 @@ def prepare_evolve(
     # version -- distinct from `Evidence.evaluator_image` on an atom (the
     # untrusted per-score trace, INV1/INV7); this is the evolve run's own
     # traceability record. Best-effort: never let a resolver crash the run.
-    arena_image_digest = _best_effort(lambda: image_digest_resolver(params.image))
-    mutator_image_digest = _best_effort(lambda: image_digest_resolver(params.mutator_image))
+    # The two resolver params default to `None`, not `= _default_...`
+    # directly, so the fallback below is looked up by *name* at call time --
+    # a bound-at-def-time kwarg default would capture that function object
+    # once at import time, making a test's `monkeypatch.setattr(launch,
+    # "_default_image_digest", ...)` a silent no-op. An explicitly injected
+    # (non-None) resolver always wins over the default.
+    img_res = image_digest_resolver or _default_image_digest
+    ov_res = operator_version_resolver or _default_operator_version
+    arena_image_digest = _best_effort(lambda: img_res(params.image))
+    mutator_image_digest = _best_effort(lambda: img_res(params.mutator_image))
     operator_version = _best_effort(
-        lambda: operator_version_resolver(params.operator, params.mutator_image))
+        lambda: ov_res(params.operator, params.mutator_image))
 
     runlog.write_run_config(run_dir, {
         "run_id": rid, "created_at": started.isoformat(),
