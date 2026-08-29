@@ -34,11 +34,16 @@ from collections.abc import Callable, Sequence
 from typing import Any
 
 from nethackers.contracts.models import Atom, ObjectiveSpec
-from nethackers.hub.objectives import IDENTITIES, ROLES
+from nethackers.hub.objectives import ALIGNMENTS, GENDERS, IDENTITIES, RACES, ROLES
 from nethackers.hub.store import Store
 from nethackers.hub.views.milestones import deepest_milestone
 
 _IDENTITY_SET = frozenset(IDENTITIES)
+
+# Facet scopes: each identity is "role-race-align-gender"; a facet scope
+# "<facet>:<value>" selects every identity whose facet segment equals value.
+_FACET_INDEX = {"role": 0, "race": 1, "align": 2, "gender": 3}
+_FACET_VOCAB = {"role": ROLES, "race": RACES, "align": ALIGNMENTS, "gender": GENDERS}
 
 
 def resolve_scope(token: str) -> tuple[str, tuple[str, ...]]:
@@ -52,6 +57,12 @@ def resolve_scope(token: str) -> tuple[str, tuple[str, ...]]:
         return ("role", tuple(i for i in IDENTITIES if i.startswith(f"{token}-")))
     if token in _IDENTITY_SET:
         return ("identity", (token,))
+    if ":" in token:
+        facet, _, value = token.partition(":")
+        if facet in _FACET_INDEX and value in _FACET_VOCAB[facet]:
+            idx = _FACET_INDEX[facet]
+            return (facet, tuple(i for i in IDENTITIES if i.split("-")[idx] == value))
+        raise ValueError(f"unknown facet scope: {token!r}")
     raise ValueError(f"unknown objective scope: {token!r}")
 
 # board()'s two ranking rules (task-9-context.md), keyed by
