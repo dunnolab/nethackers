@@ -272,23 +272,19 @@ def create_app(
         return envelope(rows, scope=scope, tier=tier)
 
     @app.get("/hackers")
-    def hackers(
-        objective: str = "generalist", tier: str = "self-reported"
-    ) -> list[dict[str, Any]]:
+    def hackers(scope: str = "generalist", tier: str = "self-reported") -> dict[str, Any]:
         try:
-            _kind, ids = resolve_scope(objective)
+            _kind, ids = resolve_scope(scope)
         except ValueError as e:
-            raise HTTPException(
-                status_code=404, detail=f"unknown objective: {objective!r}"
-            ) from e
-        return hacker_board(store, ids, tier=tier)
+            raise HTTPException(status_code=404, detail=f"unknown scope: {scope!r}") from e
+        return envelope(hacker_board(store, ids, tier=tier), scope=scope, tier=tier)
 
     @app.get("/hackers/random")
-    def hackers_random(n: int = 20) -> list[str]:
+    def hackers_random(n: int = 20) -> dict[str, Any]:
         """Up to ``n`` (clamped to 20) random registered hacker handles,
         sampled server-side -- names for the dungeon-wall @username runners.
         Cheaper than /hackers: no coverage/mean aggregation."""
-        return store.random_owners(max(0, min(20, n)))
+        return envelope(store.random_owners(max(0, min(20, n))), n=n)
 
     @app.get("/hackers/leaders")
     def hackers_leaders_route(by: str, tier: str = "self-reported") -> dict[str, Any]:

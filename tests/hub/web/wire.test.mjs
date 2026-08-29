@@ -9,7 +9,8 @@
  *
  * It stubs window.fetch with canned JSON matching the FastAPI endpoint shapes
  * (/board?scope=<identity|generalist|role> (enveloped, program_id rows),
- * /hackers, /baseline, /elites?scope=generalist (enveloped, program_id rows),
+ * /hackers?scope= (enveloped), /hackers/random (enveloped), /baseline,
+ * /elites?scope=generalist (enveloped, program_id rows),
  * /programs/{id}/identities (enveloped), /progress, /objectives, /stats), runs the page's
  * boot(), and asserts the reworked render:
  *   pass 1 (generalist scope): grouped picker (87 options, 3 groups), the
@@ -19,6 +20,9 @@
  *   pass 2 (identity + role scope): the identity board's deepest+score+Δ shape,
  *     and a role board's coverage+mean shape.
  *   pass 3 (every fetch rejects): friendly empty state, console clean.
+ * /hackers/random's consumer sits behind a canvas getContext("2d") gate that jsdom
+ * can't pass without the native `canvas` package (not installed here), so passes
+ * 1-3 never reach it; a source-level check after them guards its .rows unwrap instead.
  */
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -72,23 +76,23 @@ const GENERALIST_BOARD = [
   { rank: 2, program_id: "prog_bbb", owner: "ako", coverage: 8, identities_total: 73, mean_progression: 0.31, median_progression: 0.31, ascensions: 0, deepest: "Sokoban" },
 ];
 const GENERALIST_HACKERS = [
-  { rank: 1, owner: "dun", coverage: 24, total: 73, mean_progression: 0.19 },
-  { rank: 2, owner: "ako", coverage: 8, total: 73, mean_progression: 0.31 },
+  { rank: 1, owner: "dun", coverage: 24, identities_total: 73, mean_progression: 0.19 },
+  { rank: 2, owner: "ako", coverage: 8, identities_total: 73, mean_progression: 0.31 },
 ];
 const IDENTITY_BOARD = [
   { rank: 1, program_id: "prog_aaa", owner: "dun", coverage: 1, identities_total: 1, ascensions: 0, median_progression: 0.3, mean_progression: 0.3, deepest: "Mines' End" },
 ];
-const IDENTITY_HACKERS = [{ rank: 1, owner: "dun", coverage: 1, total: 1, mean_progression: 0.3 }];
+const IDENTITY_HACKERS = [{ rank: 1, owner: "dun", coverage: 1, identities_total: 1, mean_progression: 0.3 }];
 const ROLE_BOARD = [
   { rank: 1, program_id: "prog_aaa", owner: "dun", coverage: 3, identities_total: 3, mean_progression: 0.24, median_progression: 0.24, ascensions: 0, deepest: "Mines' End" },
 ];
-const ROLE_HACKERS = [{ rank: 1, owner: "dun", coverage: 3, total: 3, mean_progression: 0.24 }];
+const ROLE_HACKERS = [{ rank: 1, owner: "dun", coverage: 3, identities_total: 3, mean_progression: 0.24 }];
 const FRONTIER = TOUCHED.map((id) => ({ identity: id, progression: 0.2 }));
+const RANDOM_HACKERS = ["dun", "ako", "sam"];
 
 function router(path) {
   const [route, query] = path.split("?");
   const params = new URLSearchParams(query || "");
-  const obj = params.get("objective");
   const scope = params.get("scope");
   if (route === "/stats") return { programs: 2, hackers: 2, ascensions: 0, last_registered_at: "2026-08-27T09:30:00+00:00" };
   if (route === "/baseline") return BASELINE;
@@ -96,10 +100,11 @@ function router(path) {
   if (route === "/elites") return { rows: ELITES_ALL };
   if (route === "/progress") return { series: [] };
   if (route.startsWith("/programs/") && route.endsWith("/identities")) return { rows: FRONTIER };
+  if (route === "/hackers/random") return { n: Number(params.get("n")), rows: RANDOM_HACKERS };
   if (route === "/hackers") {
-    if (obj === "generalist" || obj == null) return GENERALIST_HACKERS;
-    if (obj === "val") return ROLE_HACKERS;
-    return IDENTITY_HACKERS;
+    if (scope === "generalist" || scope == null) return { rows: GENERALIST_HACKERS };
+    if (scope === "val") return { rows: ROLE_HACKERS };
+    return { rows: IDENTITY_HACKERS };
   }
   if (route === "/board") {
     if (scope === "generalist") return { rows: GENERALIST_BOARD };
@@ -232,8 +237,23 @@ async function pass3() {
   dom.window.close();
 }
 
+function checkDictvizRandomWiring() {
+  console.log("\n== dictviz source check: /hackers/random consumer ==");
+  // Its fetch lives inside the audio-reactive wall's IIFE, gated on
+  // `cv.getContext("2d")`. jsdom returns null there without the native `canvas`
+  // package (not installed for this harness -- see the header comment), so that
+  // IIFE returns early and pass1-3 above never reach the fetch. Guard the
+  // envelope-unwrap at the source instead of behaviorally.
+  const line = html.split("\n").find((l) => l.includes('jget("/hackers/random'));
+  ok(line != null, "index.html fetches /hackers/random");
+  ok(line != null && /\.rows/.test(line), "the /hackers/random read unwraps .rows before use");
+  ok(line != null && !/\.then\(\s*buildRunners\s*\)/.test(line),
+    "no longer hands the raw envelope straight to buildRunners");
+}
+
 await pass1();
 await pass2();
 await pass3();
+checkDictvizRandomWiring();
 console.log("\n" + (failures === 0 ? "ALL PASSED" : failures + " CHECK(S) FAILED"));
 process.exit(failures === 0 ? 0 : 1);

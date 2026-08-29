@@ -1420,12 +1420,14 @@ function rebuildAutoascend(){
 }
 
 /* PEOPLE (the Hackers tally): the union-frontier standings for the current scope,
-   from GET /hackers (coverage + mean, coverage-first). The server does the
-   aggregation across each owner's programs. Degrades to [] on failure. */
+   from GET /hackers?scope= (enveloped -- .rows; coverage + mean, coverage-first).
+   The server does the aggregation across each owner's programs. Degrades to []
+   on failure. */
 async function loadHackers(obj){
   try{
-    const rows = await jget(`/hackers?objective=${encodeURIComponent(obj)}&tier=${encodeURIComponent(curTier)}`);
-    PEOPLE = rows.map(r=>({rank:r.rank, owner:r.owner, coverage:r.coverage, total:r.total, mean:r.mean_progression}));
+    const hk = await jget(`/hackers?scope=${encodeURIComponent(obj)}&tier=${encodeURIComponent(curTier)}`);
+    const rows = hk.rows || [];
+    PEOPLE = rows.map(r=>({rank:r.rank, owner:r.owner, coverage:r.coverage, total:r.identities_total, mean:r.mean_progression}));
   }catch(e){ PEOPLE = []; }
 }
 
@@ -1650,7 +1652,8 @@ boot();
 
   let t=0, bloom=0, energy=0;
   // Up to MAX_RUNNERS @username runners -- real registered hackers, sampled server-side
-  // (GET /hackers/random). Cleared-floor look; the tuned feel is baked below.
+  // (GET /hackers/random, enveloped -- .rows). Cleared-floor look; the tuned feel is
+  // baked below.
   const MAX_RUNNERS=20;
   const TUNE={size:0.75, crawl:0.8, dart:0.3, ride:0.6};   // approved by live tuning
   let RUNNERS=[];
@@ -1661,7 +1664,7 @@ boot();
     RUNNERS=m.map(function(name,i){ return {name:name,
       pos:(i+Math.random()*0.6)/L, vel:0, atRide:0, spd:0.75+0.5*(i/Math.max(1,L-1))}; });
   }
-  jget("/hackers/random?n="+MAX_RUNNERS).then(buildRunners).catch(function(){ RUNNERS=[]; });
+  jget("/hackers/random?n="+MAX_RUNNERS).then(function(env){ buildRunners(env.rows); }).catch(function(){ RUNNERS=[]; });
   function draw(){
     // Two regimes. At rest the wall breathes gently in ink -- restrained, monochrome, never silent-frozen.
     // On play, COLOUR blooms in (`bloom`); how hard it reacts -- reach, brightness, tempo -- tracks the

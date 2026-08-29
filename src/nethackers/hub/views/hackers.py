@@ -39,7 +39,7 @@ def hacker_board(
         {
             "owner": owner,
             "coverage": len(per_ident),
-            "total": len(ids),
+            "identities_total": len(ids),
             "mean_progression": statistics.mean(per_ident.values()),
         }
         for owner, per_ident in best.items()

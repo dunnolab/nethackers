@@ -502,9 +502,28 @@ def test_hackers_returns_union_shape_and_defaults_to_generalist(tmp_path: Any) -
         for i in VAL_IDS
     ]
     _seed_atoms(store, atoms)
-    rows = client.get("/hackers").json()
-    assert rows and {"owner", "coverage", "total", "mean_progression"} <= set(rows[0])
-    assert rows[0]["total"] == 73 and rows[0]["owner"] == "dun"
+    body = client.get("/hackers").json()
+    assert set(body) >= {"generated_at", "scope", "tier", "rows"}
+    assert body["scope"] == "generalist"   # the default, unenveloped before
+    rows = body["rows"]
+    assert rows and {"rank", "owner", "coverage", "identities_total",
+                     "mean_progression"} <= set(rows[0])
+    assert rows[0]["identities_total"] == 73 and rows[0]["owner"] == "dun"
+
+
+def test_hackers_scope_role_narrows_to_that_roles_identities(tmp_path: Any) -> None:
+    client, store = _app(tmp_path)
+    atoms = [_mk_atom(solution_digest="sha256:b", owner="dun",
+                      identity=i, seed=0, progression=0.2) for i in VAL_IDS]
+    _seed_atoms(store, atoms)
+    body = client.get("/hackers?scope=val").json()
+    assert body["scope"] == "val"
+    assert body["rows"][0]["identities_total"] == 3
+
+
+def test_hackers_unknown_scope_404(tmp_path: Any) -> None:
+    client, _store = _app(tmp_path)
+    assert client.get("/hackers?scope=nope").status_code == 404
 
 
 # --- /hackers/random (dungeon-wall handle sampler) ---------------------------
@@ -541,9 +560,10 @@ def test_hackers_random_samples_scored_hackers(tmp_path: Any) -> None:
     client, store = _app(tmp_path)
     for owner, s in [("alice", "1"), ("bob", "2"), ("cara", "3")]:
         _seed_hacker(store, owner, s)
-    got = client.get("/hackers/random?n=20").json()
-    assert sorted(got) == ["alice", "bob", "cara"]          # distinct scored owners
-    assert len(client.get("/hackers/random?n=2").json()) == 2  # respects n
+    body = client.get("/hackers/random?n=20").json()
+    assert set(body) >= {"generated_at", "n", "rows"} and body["n"] == 20
+    assert sorted(body["rows"]) == ["alice", "bob", "cara"]     # distinct scored owners
+    assert len(client.get("/hackers/random?n=2").json()["rows"]) == 2  # respects n
 
 
 def test_hackers_random_excludes_solutions_only_roots(tmp_path: Any) -> None:
@@ -553,11 +573,11 @@ def test_hackers_random_excludes_solutions_only_roots(tmp_path: Any) -> None:
     _seed_hacker(store, "dana", "d")
     _seed_root(store, "autoascend", "a")   # seed/root: solution only, no atoms
     _seed_root(store, "rootbot", "r")      # another root
-    assert client.get("/hackers/random?n=20").json() == ["dana"]
+    assert client.get("/hackers/random?n=20").json()["rows"] == ["dana"]
 
 
 def test_hackers_random_empty_when_no_scored_hackers(tmp_path: Any) -> None:
     # Solutions with no atoms (e.g. only roots) -> no hackers on the wall.
     client, store = _app(tmp_path)
     _seed_root(store, "rootbot", "r")
-    assert client.get("/hackers/random").json() == []
+    assert client.get("/hackers/random").json()["rows"] == []
