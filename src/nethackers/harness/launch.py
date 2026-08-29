@@ -15,8 +15,10 @@ from typing import Any
 
 from nethackers import config
 from nethackers.config import load_stage
+from nethackers.eval.runner import _default_image_digest
 from nethackers.harness import runlog
 from nethackers.harness.container_operator import ContainerOperator
+from nethackers.harness.discovery import detect_cli
 from nethackers.harness.loop import run_loop
 from nethackers.harness.sandbox_preflight import resolve_image
 from nethackers.harness.store import LocalTreeStore
@@ -139,8 +141,34 @@ def _authed_hub(base_url: str) -> HubClient:
     return HubClient(base_url, token_source=TokenSource(creds) if creds is not None else None)
 
 
-def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
-                   tree_store: LocalTreeStore | None = None) -> EvolvePlan:
+def _default_operator_version(operator: str, image: str) -> str | None:
+    """The in-container ``<operator> --version`` baked into the mutator image
+    this run actually uses (not whatever happens to be on the host), via
+    ``discovery.detect_cli``. ``detect_cli`` already degrades to
+    ``CliInfo(version=None)`` on any probe failure (image absent, docker
+    down, unparseable output) -- this thin wrapper just exists so
+    ``prepare_evolve`` has an operator-shaped default it can inject a fake
+    for in tests."""
+    return detect_cli(operator, image=image).version
+
+
+def _best_effort(resolve: Callable[[], str | None]) -> str | None:
+    """Provenance is an untrusted debugging breadcrumb (spec INV1/INV7),
+    never a gate: a resolver may shell out to docker, which can be absent,
+    down, or slow to fail. Collapse any exception to ``None`` rather than
+    let a provenance probe crash -- or block -- a run's launch."""
+    try:
+        return resolve()
+    except Exception:
+        return None
+
+
+def prepare_evolve(
+    params: EvolveParams, *, git_sha: str | None = None,
+    tree_store: LocalTreeStore | None = None,
+    image_digest_resolver: Callable[[str], str] = _default_image_digest,
+    operator_version_resolver: Callable[[str, str], str | None] = _default_operator_version,
+) -> EvolvePlan:
     started = datetime.datetime.now(datetime.UTC)
     runs_dir = Path(params.workdir) / "runs"
     rid = runlog.run_id(started, params.run_name, exists=lambda r: (runs_dir / r).exists())
@@ -159,6 +187,16 @@ def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
     # tells the loop to ignore the hub for that cell seeding.
     parent_tree = Path(params.seed)
 
+    # Per-run provenance (design 5.9): the resolved *platform* digests of the
+    # images this run actually launches, plus the in-container operator
+    # version -- distinct from `Evidence.evaluator_image` on an atom (the
+    # untrusted per-score trace, INV1/INV7); this is the evolve run's own
+    # traceability record. Best-effort: never let a resolver crash the run.
+    arena_image_digest = _best_effort(lambda: image_digest_resolver(params.image))
+    mutator_image_digest = _best_effort(lambda: image_digest_resolver(params.mutator_image))
+    operator_version = _best_effort(
+        lambda: operator_version_resolver(params.operator, params.mutator_image))
+
     runlog.write_run_config(run_dir, {
         "run_id": rid, "created_at": started.isoformat(),
         "run_schema_version": RUN_SCHEMA_VERSION,
@@ -167,6 +205,9 @@ def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
         "iterations": params.iterations,
         "max_parallel_evals": params.max_parallel_evals, "image": params.image,
         "mutator_image": params.mutator_image,
+        "arena_image_digest": arena_image_digest,
+        "mutator_image_digest": mutator_image_digest,
+        "operator_version": operator_version,
         "parent": "seed",
         "model": params.model, "effort": params.effort,
     })
