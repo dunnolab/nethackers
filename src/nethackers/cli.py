@@ -439,9 +439,13 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
 
     el = sub.add_parser(
         "elites", parents=[common], formatter_class=RichHelpFormatter,
-        help="Show the elite pool for an objective.",
+        help="Show the elites (best programs per identity) for a scope.",
     )
-    el.add_argument("--objective", required=True, help="A catalog objective name.")
+    el.add_argument(
+        "--scope", default="generalist",
+        help="'generalist', a role (e.g. 'val'), a facet (e.g. 'race:elf'), "
+        "or a full identity (default: %(default)s).",
+    )
 
     b = sub.add_parser(
         "leaderboard", aliases=["board"], parents=[common],
@@ -750,11 +754,13 @@ def _run(argv: list[str] | None) -> int:
         return 0
 
     if args.cmd == "elites":
-        if args.objective not in CATALOG:
-            err.print(_unknown_objective(args.objective))
+        try:
+            resolve_scope(args.scope)
+        except ValueError:
+            err.print(_unknown_scope(args.scope))
             return 2
         client = HubClient(args.hub)
-        emit(client.elites(args.objective), args.output, table=rich_elites, plain=plain_elites)
+        emit(client.elites(args.scope), args.output, table=rich_elites, plain=plain_elites)
         return 0
 
     if args.cmd in ("leaderboard", "board"):

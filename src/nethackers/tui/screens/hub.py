@@ -213,4 +213,4 @@ class ElitesView(_HubView):
     PANEL_TITLE = "⚑ Elite Pool"
 
     def _render_hub(self, client: HubClient):
-        return render_elites(client.elites("all"))
+        return render_elites(client.elites("generalist"))

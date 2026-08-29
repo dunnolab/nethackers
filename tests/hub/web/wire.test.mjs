@@ -9,8 +9,8 @@
  *
  * It stubs window.fetch with canned JSON matching the FastAPI endpoint shapes
  * (/board?scope=<identity|generalist|role> (enveloped, program_id rows),
- * /hackers, /baseline, /elites, /programs/{id}/identities (enveloped),
- * /progress, /objectives, /stats), runs the page's
+ * /hackers, /baseline, /elites?scope=generalist (enveloped, program_id rows),
+ * /programs/{id}/identities (enveloped), /progress, /objectives, /stats), runs the page's
  * boot(), and asserts the reworked render:
  *   pass 1 (generalist scope): grouped picker (87 options, 3 groups), the
  *     Hackers-primary union view (coverage+mean+Δ, NO firsts) + its AutoAscend
@@ -64,7 +64,7 @@ const BASELINE = { owner: "autoascend", per_identity: PER_IDENTITY, overall: 0.0
 // a handful of identities a program has "touched" -> UNIVERSE (program cells); the rest stay floor
 const TOUCHED = IDENTITIES.slice(0, 10);
 const ELITES_ALL = TOUCHED.map((id, i) => ({
-  rank: 1, identity: id, score: 0.2 + i * 0.01, owner: "dun", solution_digest: "sha256:aaa",
+  rank: 1, identity: id, score: 0.2 + i * 0.01, owner: "dun", program_id: "prog_aaa",
 }));
 
 const GENERALIST_BOARD = [
@@ -93,7 +93,7 @@ function router(path) {
   if (route === "/stats") return { programs: 2, hackers: 2, ascensions: 0, last_registered_at: "2026-08-27T09:30:00+00:00" };
   if (route === "/baseline") return BASELINE;
   if (route === "/objectives") return IDENTITIES.map((n) => ({ name: n, episodes: 15 }));
-  if (route === "/elites") return ELITES_ALL;
+  if (route === "/elites") return { rows: ELITES_ALL };
   if (route === "/progress") return { series: [] };
   if (route.startsWith("/programs/") && route.endsWith("/identities")) return { rows: FRONTIER };
   if (route === "/hackers") {

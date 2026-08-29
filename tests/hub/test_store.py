@@ -211,14 +211,38 @@ def test_iter_atoms_rejects_unknown_filter_keys(tmp_path):
 
 
 def test_init_schema_provisions_but_does_not_populate_derived_view_tables(tmp_path):
-    # Property 7: init_schema creates attainment/attainment_holders/
-    # elite_pool (querying a nonexistent table would raise), but Task 5
-    # never writes to them -- Tasks 7-8 own that.
+    # Property 7: init_schema creates attainment/attainment_holders
+    # (querying a nonexistent table would raise), but Task 5 never writes to
+    # them -- Tasks 7-8 own that. elite_pool is GONE (Part 2 of the hub API
+    # redesign: /elites is now a live query over atoms) -- see
+    # test_init_schema_drops_legacy_elite_pool_table below.
     _, db_path = _new_store(tmp_path)
     conn = sqlite3.connect(db_path)
-    for table in ("attainment", "attainment_holders", "elite_pool"):
+    for table in ("attainment", "attainment_holders"):
         count = conn.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0]
         assert count == 0
+
+
+def test_init_schema_drops_legacy_elite_pool_table(tmp_path):
+    # elite_pool -- Task 8's materialized top-k table -- is dropped outright:
+    # Part 2 of the hub API redesign made /elites a live query over atoms, so
+    # nothing writes elite_pool any more. A legacy DB that still has it (with
+    # rows) must shed it on init (mirrors test_init_schema_drops_legacy_
+    # objectives_table above).
+    db = tmp_path / "legacy.db"
+    con = sqlite3.connect(db)
+    con.execute(
+        "CREATE TABLE elite_pool (identity TEXT, solution_digest TEXT, "
+        "score REAL, rank INTEGER, PRIMARY KEY(identity, solution_digest))"
+    )
+    con.execute("INSERT INTO elite_pool VALUES ('val-dwa-law-fem', 'sha256:x', 0.5, 1)")
+    con.commit()
+    con.close()
+
+    store = Store(str(db))
+    store.init_schema()
+    tables = {r[0] for r in store.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+    assert "elite_pool" not in tables
 
 
 def test_poll_upsert_is_one_row_per_voter_and_replaces(tmp_path):

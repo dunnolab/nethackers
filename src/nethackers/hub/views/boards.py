@@ -23,8 +23,9 @@ attainment record (Task 7's ``attainment``/``attainment_holders`` tables),
 which sqlite's own ``COUNT``/``GROUP BY`` handles directly.
 
 Nothing in this module writes anything: no new tables, no mutation of
-``atoms``/``attainment``/``attainment_holders``/``elite_pool``. Pure reads
-over what Tasks 5-8 already store.
+``atoms``/``attainment``/``attainment_holders``. Pure reads over what
+Tasks 5-8 already store (``elites`` is its own live query straight over
+``atoms``, not a stored table -- see ``views.elites``).
 """
 
 from __future__ import annotations

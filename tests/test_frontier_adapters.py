@@ -75,10 +75,10 @@ def test_universe_scores_keeps_only_rank_1_rows():
     # of rank-major order -- the filter must key off each row's own `rank`
     # field, not assume rank-1 rows come first in the list.
     rows = [
-        {"identity": WIZ_IDENTITY, "solution_digest": "sha256:b", "score": 0.2, "rank": 2},
-        {"identity": VAL_IDENTITY, "solution_digest": "sha256:a", "score": 0.8, "rank": 1},
-        {"identity": WIZ_IDENTITY, "solution_digest": "sha256:c", "score": 0.65, "rank": 1},
-        {"identity": VAL_IDENTITY, "solution_digest": "sha256:d", "score": 0.5, "rank": 2},
+        {"identity": WIZ_IDENTITY, "program_id": "prog_b", "score": 0.2, "rank": 2},
+        {"identity": VAL_IDENTITY, "program_id": "prog_a", "score": 0.8, "rank": 1},
+        {"identity": WIZ_IDENTITY, "program_id": "prog_c", "score": 0.65, "rank": 1},
+        {"identity": VAL_IDENTITY, "program_id": "prog_d", "score": 0.5, "rank": 2},
     ]
     client = _FakeClient(elites=rows)
 
@@ -88,7 +88,7 @@ def test_universe_scores_keeps_only_rank_1_rows():
 
 
 def test_universe_scores_casts_score_to_float():
-    rows = [{"identity": VAL_IDENTITY, "solution_digest": "sha256:a", "score": 1, "rank": 1}]
+    rows = [{"identity": VAL_IDENTITY, "program_id": "prog_a", "score": 1, "rank": 1}]
     client = _FakeClient(elites=rows)
 
     result = universe_scores(client)
@@ -101,6 +101,21 @@ def test_universe_scores_empty_elites_returns_empty_map():
     client = _FakeClient(elites=[])
 
     assert universe_scores(client) == {}
+
+
+def test_universe_scores_reads_the_generalist_elites_not_all():
+    # Universe = scope=generalist (all 73, best program each) -- the old
+    # objective="all" token is retired.
+    seen = []
+
+    class _Spy:
+        def elites(self, scope):
+            seen.append(scope)
+            return []
+
+    universe_scores(_Spy())
+
+    assert seen == ["generalist"]
 
 
 # --- champion: board("generalist")[0] ----------------------------------------

@@ -102,13 +102,32 @@ def test_baseline_gets_baseline_with_no_params():
     assert http.calls == [("GET", "http://localhost:8000/baseline", None)]
 
 
-def test_elites_sends_objective_param():
-    http = _FakeHttp(response=[])
+def test_elites_sends_scope_and_tier_params():
+    http = _FakeHttp(response={"rows": []})
     client = HubClient("http://localhost:8000", http=http)
 
-    client.elites("random")
+    client.elites(scope="val", tier="verified")
 
-    assert http.calls == [("GET", "http://localhost:8000/elites", {"objective": "random"})]
+    assert http.calls == [
+        ("GET", "http://localhost:8000/elites", {"scope": "val", "tier": "verified"})
+    ]
+
+
+def test_elites_defaults_to_generalist_and_unwraps_the_envelopes_rows():
+    rows = [{"rank": 1, "identity": "val-dwa-law-fem", "program_id": "prog_abc",
+             "owner": "sam", "score": 0.5}]
+    http = _FakeHttp(response={
+        "generated_at": "t", "scope": "generalist", "tier": "self-reported", "rows": rows,
+    })
+    client = HubClient("http://localhost:8000", http=http)
+
+    result = client.elites()
+
+    assert result == rows
+    assert http.calls == [
+        ("GET", "http://localhost:8000/elites",
+         {"scope": "generalist", "tier": "self-reported"})
+    ]
 
 
 def test_board_sends_scope_and_tier_params():

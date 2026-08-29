@@ -79,8 +79,8 @@ def _make_fake_hub_client(response_map):
             calls.append(("__init__", base_url))
             self.base_url = base_url
 
-        def elites(self, objective):
-            calls.append(("elites", objective))
+        def elites(self, scope):
+            calls.append(("elites", scope))
             return response_map.get("elites", [])
 
         def board(self, scope=None, tier=None):
@@ -125,7 +125,7 @@ def test_cli_frontier_no_flag_dispatches_to_universe_scores(monkeypatch, capsys)
     rc = C.main(["frontier"])
 
     assert rc == 0
-    assert ("elites", "all") in calls
+    assert ("elites", "generalist") in calls
 
 
 def test_cli_attainment_alias_dispatches_to_universe_scores(monkeypatch, capsys):
@@ -137,7 +137,7 @@ def test_cli_attainment_alias_dispatches_to_universe_scores(monkeypatch, capsys)
     rc = C.main(["attainment"])
 
     assert rc == 0
-    assert ("elites", "all") in calls
+    assert ("elites", "generalist") in calls
 
 
 def test_cli_frontier_program_digest_dispatches_to_solution_frontier(monkeypatch, capsys):
@@ -214,7 +214,7 @@ def test_cli_frontier_hub_down_is_friendly_not_traceback(monkeypatch, capsys):
         def __init__(self, base_url):
             pass
 
-        def elites(self, objective):
+        def elites(self, scope):
             raise httpx.ConnectError("Connection refused", request=request)
 
     monkeypatch.setattr(C, "HubClient", FakeHub)
@@ -382,16 +382,36 @@ def test_cli_register_401_against_an_offline_hub_gets_a_clear_hint(monkeypatch, 
     assert "Traceback" not in err
 
 
-def test_cli_elites_dispatches_with_objective(monkeypatch, capsys):
+def test_cli_elites_dispatches_with_scope(monkeypatch, capsys):
     FakeHubClient, calls = _make_fake_hub_client({"elites": [{"identity": "x"}]})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
 
-    rc = C.main(["elites", "--objective", "random", "-o", "json"])
+    rc = C.main(["elites", "--scope", "val", "-o", "json"])
 
     assert rc == 0
-    assert ("elites", "random") in calls
+    assert ("elites", "val") in calls
     payload = json.loads(capsys.readouterr().out)
     assert payload == [{"identity": "x"}]
+
+
+def test_cli_elites_defaults_to_generalist_scope(monkeypatch, capsys):
+    FakeHubClient, calls = _make_fake_hub_client({"elites": []})
+    monkeypatch.setattr(C, "HubClient", FakeHubClient)
+
+    rc = C.main(["elites"])
+
+    assert rc == 0
+    assert ("elites", "generalist") in calls
+
+
+def test_cli_elites_unknown_scope_is_friendly_not_a_hub_roundtrip(capsys):
+    # Same client-side resolve_scope short-circuit as board's: a typo/garbage
+    # scope is caught before any HTTP call, clean message + rc 2.
+    rc = C.main(["elites", "--scope", "not-a-real-scope"])
+    assert rc == 2
+    err = capsys.readouterr().err
+    assert "unknown scope" in err and "not-a-real-scope" in err
+    assert "Traceback" not in err
 
 
 def test_cli_board_dispatches_with_scope(monkeypatch, capsys):
@@ -570,9 +590,9 @@ def test_cli_frontier_json_emits_identity_value_map(monkeypatch, capsys):
     # The populated case: -o json prints exactly the {identity: value} map
     # universe_scores assembled (rank-1 elites only), parseable by jq.
     rows = [
-        {"identity": "val-hum-neu-fem", "solution_digest": "sha256:a", "score": 0.8, "rank": 1},
-        {"identity": "val-hum-neu-fem", "solution_digest": "sha256:b", "score": 0.5, "rank": 2},
-        {"identity": "wiz-elf-cha-mal", "solution_digest": "sha256:c", "score": 0.65, "rank": 1},
+        {"identity": "val-hum-neu-fem", "program_id": "prog_a", "score": 0.8, "rank": 1},
+        {"identity": "val-hum-neu-fem", "program_id": "prog_b", "score": 0.5, "rank": 2},
+        {"identity": "wiz-elf-cha-mal", "program_id": "prog_c", "score": 0.65, "rank": 1},
     ]
     FakeHubClient, _calls = _make_fake_hub_client({"elites": rows})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
@@ -667,39 +687,19 @@ def test_rich_render_board_empty_is_friendly_not_bare_header():
 
 def test_rich_render_elites_contains_expected_cells():
     entries = [
-        {"identity": "val-dwa-law-fem", "solution_digest": "sha256:0123456789abcdef",
+        {"identity": "val-dwa-law-fem", "program_id": "prog_0123456789abcdef",
          "score": 0.5087697678994835, "rank": 1}
     ]
     out = _render_text(rich_elites(entries))
     assert "identity" in out and "score" in out  # header
     assert "val-dwa-law-fem" in out
-    assert _short_digest(entries[0]["solution_digest"]) in out
+    assert "prog_0123456789abcdef" in out  # verbatim opaque id, never truncated
     assert "0.509" in out
     assert "0.5087697678994835" not in out
 
 
 def test_rich_render_elites_empty_is_friendly_not_bare_header():
     assert _render_text(rich_elites([])).strip() == "no elites recorded yet."
-
-
-def test_rich_render_elites_shows_full_source_link_without_truncating():
-    sha = "0123456789" * 4
-    entries = [{
-        "identity": "val-dwa-law-fem",
-        "solution_digest": "sha256:0123456789abcdef",
-        "repo": "github.com/sam/nethacker",
-        "commit_sha": sha,
-        "score": 0.5,
-        "rank": 1,
-    }]
-
-    narrow = _render_text(rich_elites(entries), width=70)
-    wide = _render_text(rich_elites(entries), width=160)
-
-    assert "source" in narrow
-    assert f"https://github.com/sam/nethacker/commit/{sha}" in wide
-    assert sha[-10:] in narrow  # the wrapped final chunk is still present
-    assert "…" not in narrow
 
 
 def test_rich_render_search_contains_expected_cells():
@@ -800,8 +800,8 @@ def test_cli_board_output_table_renders_through_console(monkeypatch, capsys):
 
 def test_cli_map_output_table_renders_universe_grid_through_console(monkeypatch, capsys):
     rows = [
-        {"identity": "val-hum-neu-fem", "solution_digest": "sha256:a", "score": 0.42, "rank": 1},
-        {"identity": "wiz-elf-cha-mal", "solution_digest": "sha256:b", "score": 0.77, "rank": 1},
+        {"identity": "val-hum-neu-fem", "program_id": "prog_a", "score": 0.42, "rank": 1},
+        {"identity": "wiz-elf-cha-mal", "program_id": "prog_b", "score": 0.77, "rank": 1},
     ]
     FakeHubClient, _calls = _make_fake_hub_client({"elites": rows})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
@@ -848,7 +848,7 @@ def test_cli_auto_resolves_to_table_under_forced_terminal(monkeypatch, capsys):
 
 def test_cli_map_output_plain_matches_baseline_frontier(monkeypatch, capsys):
     rows = [
-        {"identity": "val-hum-neu-fem", "solution_digest": "sha256:a", "score": 0.42, "rank": 1},
+        {"identity": "val-hum-neu-fem", "program_id": "prog_a", "score": 0.42, "rank": 1},
     ]
     FakeHubClient, _calls = _make_fake_hub_client({"elites": rows})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
@@ -919,7 +919,7 @@ def test_cli_elites_output_plain_matches_baseline_table(monkeypatch, capsys):
     response = [
         {
             "identity": "val-dwa-law-fem",
-            "solution_digest": "sha256:0123456789abcdef",
+            "program_id": "prog_0123456789abcdef",
             "score": 0.5087697678994835,
             "rank": 1,
         }
@@ -927,14 +927,14 @@ def test_cli_elites_output_plain_matches_baseline_table(monkeypatch, capsys):
     FakeHubClient, _calls = _make_fake_hub_client({"elites": response})
     monkeypatch.setattr(C, "HubClient", FakeHubClient)
 
-    rc = C.main(["elites", "--objective", "val-dwa-law-fem", "-o", "plain"])
+    rc = C.main(["elites", "--scope", "val-dwa-law-fem", "-o", "plain"])
 
     assert rc == 0
     out = capsys.readouterr().out
     assert out == plain_elites(response) + "\n"
     assert "identity" in out and "score" in out  # header
     assert "val-dwa-law-fem" in out
-    assert _short_digest(response[0]["solution_digest"]) in out
+    assert "prog_0123456789abcdef" in out  # verbatim opaque id, never truncated
     assert "0.509" in out  # rounded
     assert "0.5087697678994835" not in out  # not full precision
 

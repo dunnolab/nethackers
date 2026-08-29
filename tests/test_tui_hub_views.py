@@ -258,8 +258,8 @@ class _FakeHubClient:
         self.attainment_calls.append((identity,))
         return []
 
-    def elites(self, objective: str) -> list:
-        self.elites_calls.append((objective,))
+    def elites(self, scope: str) -> list:
+        self.elites_calls.append((scope,))
         return []
 
 
@@ -293,7 +293,7 @@ async def test_boards_view_calls_board_and_passes_you(monkeypatch):
 
 
 async def test_elites_view_calls_elites_and_passes_to_renderer(monkeypatch):
-    """ElitesView calls client.elites('all') and passes result to render_elites."""
+    """ElitesView calls client.elites('generalist') and passes result to render_elites."""
     import nethackers.tui.screens.hub as hub
 
     captured_renderer_calls = []
@@ -311,11 +311,11 @@ async def test_elites_view_calls_elites_and_passes_to_renderer(monkeypatch):
     app = _HostElites()
     async with app.run_test() as pilot:
         await _settle(app, pilot)
-        # Verify client.elites was called with "all"
+        # Verify client.elites was called with "generalist"
         assert len(_FakeHubClient.instances) > 0
         client = _FakeHubClient.instances[0]
         assert len(client.elites_calls) > 0
-        assert client.elites_calls[0][0] == "all"
+        assert client.elites_calls[0][0] == "generalist"
         # Also verify render_elites was called with the result
         assert len(captured_renderer_calls) > 0
         assert captured_renderer_calls[0][0] == "render_elites"
@@ -358,7 +358,7 @@ async def test_boards_view_renders_entry_content(monkeypatch):
 # across a regime switch, not call-argument recording.
 
 
-def _fake_elites_rank_spread(self, objective: str) -> list:
+def _fake_elites_rank_spread(self, scope: str) -> list:
     """A rank-1 spread across two identities, plus one rank-2 row (must be
     excluded by universe_scores' rank filter -- its value, 0.99, must never
     appear in a Universe render)."""

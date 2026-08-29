@@ -37,7 +37,6 @@ from nethackers.hub.ids import program_id as _program_id
 from nethackers.hub.objectives import CATALOG, IDENTITIES, build_union_spec
 from nethackers.hub.store import Store
 from nethackers.hub.views.attainment import update_attainment
-from nethackers.hub.views.elites import recompute_elites
 
 _COMMIT_RE = re.compile(r"[0-9a-f]{40}")
 
@@ -179,7 +178,10 @@ def register(
     if evidence.tier != "self-reported":
         raise WrongTier(f"tier {evidence.tier!r} is not self-reported")
 
-    # 5. store & recompute -- reached only once every check above has passed.
+    # 5. store -- reached only once every check above has passed. atoms +
+    # attainment are all this writes now: /elites is a live query over
+    # atoms (Part 2 of the hub API redesign dropped elite_pool + the
+    # recompute step that used to run here).
     solution_id = f"{reference.repo}@{reference.commit}"
     store.upsert_solution(
         solution_id,
@@ -198,7 +200,6 @@ def register(
     atoms = evidence_to_atoms(evidence, owner=login, solution_id=solution_id)
     inserted = store.insert_atoms(atoms)
     update_attainment(store, atoms, now=now)
-    recompute_elites(store)
 
     return RegisterResult(
         solution_id=solution_id, owner=login, objective=name, atoms_inserted=inserted,

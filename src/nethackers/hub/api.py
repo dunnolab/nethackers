@@ -24,11 +24,10 @@ token.
 **Catalog-injection scope:** the injected ``catalog`` drives only this
 module's own listing/resolution endpoints -- ``GET /objectives``,
 ``GET /objectives/{name}/batch``, and the name->spec resolution
-``GET /board``'s ``?scope=`` branch needs. ``GET /elites`` delegates
-straight to ``views.elites.read_elites``, which resolves against the
-*module* ``nethackers.hub.objectives.CATALOG`` -- not whatever ``catalog``
-this app was built with. In normal use (the default ``catalog=CATALOG``)
-every endpoint agrees, since both are the same dict object.
+``GET /board``'s ``?scope=`` identity-kind branch needs. ``GET /elites``
+resolves its own ``?scope=`` purely via ``views.boards.resolve_scope``
+(roles/facets/identities/``"generalist"``) -- it never touches ``catalog``
+at all, injected or module-level.
 """
 
 from __future__ import annotations
@@ -240,10 +239,12 @@ def create_app(
         return envelope(achievements_firsts(store))
 
     @app.get("/elites")
-    def elites(objective: str) -> list[dict[str, Any]]:
-        if objective not in catalog:
-            raise HTTPException(status_code=404, detail=f"unknown objective: {objective!r}")
-        return read_elites(store, objective=objective)
+    def elites(scope: str = "generalist", tier: str = "self-reported") -> dict[str, Any]:
+        try:
+            rows = read_elites(store, scope=scope, tier=tier)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=f"unknown scope: {scope!r}") from e
+        return envelope(rows, scope=scope, tier=tier)
 
     @app.get("/board")
     def get_board(

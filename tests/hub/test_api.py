@@ -308,16 +308,58 @@ def test_attainment_reads_empty(tmp_path: Any) -> None:
     assert response.json() == []
 
 
-def test_elites_known_objective_is_a_list(tmp_path: Any) -> None:
-    client, _store = _app(tmp_path)
-    response = client.get("/elites", params={"objective": IDENTITY})
-    assert response.status_code == 200
-    assert isinstance(response.json(), list)
+def test_elites_scope_generalist_enveloped_uniform_row_schema(tmp_path: Any) -> None:
+    # /elites?scope= replaces the old ?objective= -- enveloped, one row
+    # schema keyed by program_id instead of solution_digest.
+    client, store = _app(tmp_path)
+    atoms = [_mk_atom(solution_digest="sha256:s", seed=0, progression=0.5)]
+    _seed_atoms(store, atoms)
+
+    body = client.get("/elites?scope=generalist").json()
+
+    assert set(body) >= {"generated_at", "scope", "tier", "rows"}
+    row = next(r for r in body["rows"] if r["identity"] == IDENTITY)
+    assert row["program_id"] == program_id("sha256:s") and "solution_digest" not in row
+    assert {"rank", "identity", "program_id", "owner", "score"} <= set(row)
+    assert row["rank"] == 1
 
 
-def test_elites_unknown_objective_404(tmp_path: Any) -> None:
+def test_elites_scope_role_narrows_to_that_roles_identities(tmp_path: Any) -> None:
+    client, store = _app(tmp_path)
+    atoms = [_mk_atom(solution_digest="sha256:b", identity=i, seed=0, progression=0.2)
+             for i in VAL_IDS]
+    _seed_atoms(store, atoms)
+
+    body = client.get("/elites?scope=val").json()
+
+    assert body["scope"] == "val"
+    assert {r["identity"] for r in body["rows"]} == set(VAL_IDS)
+
+
+def test_elites_is_a_live_view_over_atoms(tmp_path: Any) -> None:
+    # The core Part 2 change: /elites is computed fresh on every request --
+    # no recompute step, no elite_pool table at all. Two solutions on the
+    # SAME identity, distinct mean progression (atoms only, nothing else
+    # written): the higher immediately ranks #1.
+    client, store = _app(tmp_path)
+    atoms = [
+        _mk_atom(solution_digest="sha256:lo", seed=0, progression=0.4),
+        _mk_atom(solution_digest="sha256:hi", seed=1, progression=0.8),
+    ]
+    _seed_atoms(store, atoms)
+
+    body = client.get("/elites?scope=generalist").json()
+    row = next(r for r in body["rows"] if r["identity"] == IDENTITY and r["rank"] == 1)
+
+    assert row["program_id"] == program_id("sha256:hi")
+
+    tables = [t[0] for t in store.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+    assert "elite_pool" not in tables
+
+
+def test_elites_unknown_scope_404(tmp_path: Any) -> None:
     client, _store = _app(tmp_path)
-    response = client.get("/elites", params={"objective": "not-a-real-objective"})
+    response = client.get("/elites", params={"scope": "not-a-real-scope"})
     assert response.status_code == 404
 
 

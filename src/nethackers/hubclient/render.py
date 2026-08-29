@@ -139,19 +139,6 @@ def _gh_commit(repo: str, sha: str) -> Text:
     return Text(short, style=f"link {base}/commit/{sha}")
 
 
-def _gh_commit_url(repo: str, sha: str) -> Text:
-    """A full, visibly printed commit URL for surfaces where the source link
-    itself matters. Unlike ``_gh_commit``, no part of the label is shortened;
-    callers should put it in a folding table column for narrow terminals."""
-    sha, repo = str(sha), str(repo)
-    if not repo:
-        return Text(sha)
-    base = (repo.rstrip("/") if repo.startswith(("http://", "https://"))
-            else f"https://{repo.rstrip('/')}")
-    url = f"{base}/commit/{sha}" if sha else base
-    return Text(url, style=f"link {url}")
-
-
 def render_board(entries: list[dict[str, Any]], *, you: str | None = None) -> RenderableType:
     """A ``rich`` table of board entries, shape-aware over which metric
     produced them (mirrors the baseline ``plain`` ``render_board``'s shape
@@ -220,33 +207,24 @@ def render_board(entries: list[dict[str, Any]], *, you: str | None = None) -> Re
 
 
 def render_elites(entries: list[dict[str, Any]]) -> RenderableType:
-    """A ``rich`` table of elite-pool entries.
-
-    Real hub rows include ``repo`` and ``commit_sha``; those render as a full,
-    clickable commit URL in a folding ``source`` column, so narrow TUI windows
-    wrap the link instead of truncating it. Older/short fixture rows without
-    source metadata retain the compact ``solution`` digest column. Empty -> a
-    friendly one-line message, never a bare header."""
+    """A ``rich`` table of elite entries: ``rank | identity | program |
+    score`` -- ``program`` the opaque ``program_id`` shown verbatim
+    (already short -- no ``_short_digest`` truncation), ``score`` colored
+    via ``ramp``. Empty -> a friendly one-line message, never a bare
+    header."""
     if not entries:
         return _empty("no elites recorded yet.")
 
-    has_sources = any(e.get("repo") for e in entries)
     table = Table(header_style="bold", row_styles=["", "on grey11"])
     table.add_column("rank", justify="right", no_wrap=True)
     table.add_column("identity", no_wrap=True)
-    if has_sources:
-        table.add_column("source", overflow="fold", no_wrap=False, ratio=1)
-    else:
-        table.add_column("solution", overflow="fold", no_wrap=False)
+    table.add_column("program", overflow="fold", no_wrap=False)
     table.add_column("score", justify="right", no_wrap=True)
     for e in entries:
-        source = (_gh_commit_url(e.get("repo", ""), e.get("commit_sha", ""))
-                  if has_sources and e.get("repo")
-                  else Text(str(e.get("solution_digest", ""))))
         table.add_row(
             str(e.get("rank", "")),
             str(e.get("identity", "")),
-            source if has_sources else _short_digest(str(e.get("solution_digest", ""))),
+            str(e.get("program_id", "")),
             _colored_num(e.get("score", "")),
         )
     return table

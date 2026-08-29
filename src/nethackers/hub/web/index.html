@@ -885,7 +885,7 @@ const ROLE_VARS={
  tou:["hum-neu-fem","hum-neu-mal"],
  val:["dwa-law-fem","hum-law-fem","hum-neu-fem"],
  wiz:["elf-cha-fem","elf-cha-mal","gno-neu-fem","gno-neu-mal","hum-cha-fem","hum-cha-mal","hum-neu-fem","hum-neu-mal","orc-cha-fem","orc-cha-mal"]};
-let UNIVERSE={};                     // /elites?objective=all -> rank-1 per identity {id:{v,o,d,ep}}
+let UNIVERSE={};                     // /elites?scope=generalist -> rank-1 per identity {id:{v,o,d,ep}}
 let CHAMPION={digest:"",owner:"",scores:{}};  // /board?scope=generalist [0] + its /programs/{id}/identities
 const ASC=0.8745866562925501;
 /* AutoAscend baseline bar first, then day-bucketed best-so-far from /progress */
@@ -904,7 +904,6 @@ const MEMES=[
 /* ===================== helpers ===================== */
 const $=s=>document.querySelector(s);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const short=d=>String(d).replace(/^sha256:/,"").slice(0,7);   // digest -> ~7-char display id
 function tint(v,floor){ if(v==null) return "#ffffff"; const a=(floor?0.05:0.10)+(floor?0.16:0.72)*Math.min(1,v); return `rgba(var(--tint) / ${a.toFixed(3)})`; }
 function tintText(v){ return v!=null && v>=0.5 ? "#ffffff" : "#111"; }
 
@@ -1430,14 +1429,16 @@ async function loadHackers(obj){
   }catch(e){ PEOPLE = []; }
 }
 
-/* Frontier "universe": each identity's rank-1 elite. /elites has no episodes, so ep comes
-   from /objectives (the honest per-identity batch size) -- falls back to the 15-episode
-   identity batch if /objectives was unavailable. */
+/* Frontier "universe": each identity's rank-1 elite, from GET /elites?scope=generalist
+   (enveloped -- .rows). /elites has no episodes, so ep comes from /objectives (the honest
+   per-identity batch size) -- falls back to the 15-episode identity batch if /objectives
+   was unavailable. */
 async function loadUniverse(){
   try{
-    const el = await jget("/elites?objective=all");
+    const el = await jget("/elites?scope=generalist");
+    const rows = el.rows || [];
     const uni = {};
-    for(const r of el){ if(r.rank===1) uni[r.identity] = {v:r.score, o:r.owner, d:short(r.solution_digest), ep: OBJ_EP[r.identity]!=null ? OBJ_EP[r.identity] : 15}; }
+    for(const r of rows){ if(r.rank===1) uni[r.identity] = {v:r.score, o:r.owner, d:r.program_id, ep: OBJ_EP[r.identity]!=null ? OBJ_EP[r.identity] : 15}; }
     UNIVERSE = uni;
   }catch(e){ UNIVERSE = {}; }
 }

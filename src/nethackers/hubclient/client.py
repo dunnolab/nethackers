@@ -117,9 +117,9 @@ class HubClient:
         """``GET /baseline`` -- AutoAscend's per-identity reference floor."""
         return self._get("/baseline")
 
-    def elites(self, objective: str) -> Any:
-        """``GET /elites?objective=...``."""
-        return self._get("/elites", {"objective": objective})
+    def elites(self, scope: str = "generalist", tier: str = "self-reported") -> Any:
+        """``GET /elites?scope=`` -- the ranked rows (envelope unwrapped)."""
+        return (self._get("/elites", {"scope": scope, "tier": tier}) or {}).get("rows", [])
 
     def board(self, scope: str = "generalist", tier: str = "self-reported") -> Any:
         """``GET /board?scope=`` -- the ranked rows (envelope unwrapped)."""
@@ -334,18 +334,18 @@ def plain_frontier(scores: dict[str, float | None]) -> str:
 
 
 def render_elites(entries: list[dict[str, Any]]) -> str:
-    """A table of elite-pool entries: ``rank | identity | solution |
-    score`` (``solution`` a short digest, ``score`` rounded via ``_num``).
-    A friendly one-line message instead of a bare header when
-    ``entries == []``."""
+    """A table of elite entries: ``rank | identity | program | score``
+    (``program`` the opaque ``program_id``, shown verbatim -- already short,
+    never truncated; ``score`` rounded via ``_num``). A friendly one-line
+    message instead of a bare header when ``entries == []``."""
     if not entries:
         return "no elites recorded yet."
-    headers = ["rank", "identity", "solution", "score"]
+    headers = ["rank", "identity", "program", "score"]
     rows = [
         [
             str(entry.get("rank", "")),
             str(entry.get("identity", "")),
-            _short_digest(str(entry.get("solution_digest", ""))),
+            str(entry.get("program_id", "")),
             _num(entry.get("score", "")),
         ]
         for entry in entries

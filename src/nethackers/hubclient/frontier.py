@@ -17,8 +17,11 @@ def baseline_scores(client: Any) -> dict[str, float]:
 
 
 def universe_scores(client: Any) -> dict[str, float]:
+    """Each identity's #1 elite, keyed by identity -- ``client.elites
+    ("generalist")`` is the "Universe" regime (all 73 identities, best
+    program each), from the live ``/elites`` view."""
     out: dict[str, float] = {}
-    for row in client.elites("all") or []:
+    for row in client.elites("generalist") or []:
         if int(row.get("rank", 0)) == 1:
             out[str(row["identity"])] = float(row["score"])
     return out
