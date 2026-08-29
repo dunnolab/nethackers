@@ -44,17 +44,17 @@ from nethackers.hubclient.client import _num, _short_digest
 # which add_column's Literal-typed `justify` parameter then rejects).
 _GRADING_COLUMNS: tuple[tuple[str, JustifyMethod], ...] = (
     ("rank", "right"),
-    ("solution", "left"),
+    ("program", "left"),
     ("owner", "left"),
     ("asc", "right"),
     ("median", "right"),
     ("mean", "right"),
 )
 _COVERAGE_COLUMNS: tuple[tuple[str, JustifyMethod], ...] = (
-    ("rank", "right"), ("solution", "left"), ("owner", "left"), ("cells", "right"),
+    ("rank", "right"), ("program", "left"), ("owner", "left"), ("cells", "right"),
 )
 _FIRSTS_COLUMNS: tuple[tuple[str, JustifyMethod], ...] = (
-    ("rank", "right"), ("solution", "left"), ("owner", "left"), ("firsts", "right"),
+    ("rank", "right"), ("program", "left"), ("owner", "left"), ("firsts", "right"),
 )
 
 # A 5-stop viridis-ish gradient (dark purple -> teal -> yellow): low values
@@ -139,37 +139,25 @@ def _gh_commit(repo: str, sha: str) -> Text:
     return Text(short, style=f"link {base}/commit/{sha}")
 
 
-def _gh_commit_url(repo: str, sha: str) -> Text:
-    """A full, visibly printed commit URL for surfaces where the source link
-    itself matters. Unlike ``_gh_commit``, no part of the label is shortened;
-    callers should put it in a folding table column for narrow terminals."""
-    sha, repo = str(sha), str(repo)
-    if not repo:
-        return Text(sha)
-    base = (repo.rstrip("/") if repo.startswith(("http://", "https://"))
-            else f"https://{repo.rstrip('/')}")
-    url = f"{base}/commit/{sha}" if sha else base
-    return Text(url, style=f"link {url}")
-
-
 def render_board(entries: list[dict[str, Any]], *, you: str | None = None) -> RenderableType:
     """A ``rich`` table of board entries, shape-aware over which metric
     produced them (mirrors the baseline ``plain`` ``render_board``'s shape
     detection exactly, so ``-o table``/``-o plain`` never disagree on
     which columns a given response gets):
 
-    - grading board (entries carry ``ascensions``): ``rank | solution |
-      owner | asc | median | mean``, ``median``/``mean`` colored via
-      ``ramp``.
-    - coverage board (entries carry ``cells_held``): ``rank | solution |
-      owner | cells``.
-    - firsts board (entries carry ``firsts``): ``rank | solution | owner |
-      firsts``.
+    - grading board (``/board``'s one row shape -- entries carry
+      ``ascensions``): ``rank | program | owner | asc | median | mean``,
+      ``median``/``mean`` colored via ``ramp``.
+    - coverage board (``/achievements/coverage`` -- entries carry
+      ``cells_held``): ``rank | program | owner | cells``.
+    - firsts board (``/achievements/firsts`` -- entries carry ``firsts``):
+      ``rank | program | owner | firsts``.
     - unknown shape: falls back to the first entry's own (sorted) keys.
 
-    Numeric columns right-aligned, ``solution`` shortened via
-    ``_short_digest``, bold header, faint zebra striping. Empty -> a
-    friendly one-line message, never a bare header."""
+    Numeric columns right-aligned, ``program`` the opaque ``program_id``
+    shown verbatim (already short -- no ``_short_digest`` truncation),
+    bold header, faint zebra striping. Empty -> a friendly one-line
+    message, never a bare header."""
     if not entries:
         return _empty("no board entries yet.")
 
@@ -182,7 +170,7 @@ def render_board(entries: list[dict[str, Any]], *, you: str | None = None) -> Re
         for e in entries:
             table.add_row(
                 str(e.get("rank", "")),
-                _short_digest(str(e.get("solution_digest", ""))),
+                str(e.get("program_id", "")),
                 _gh_user(e.get("owner", ""), you=you),
                 str(e.get("ascensions", "")),
                 _colored_num(e.get("median_progression", "")),
@@ -194,7 +182,7 @@ def render_board(entries: list[dict[str, Any]], *, you: str | None = None) -> Re
         for e in entries:
             table.add_row(
                 str(e.get("rank", "")),
-                _short_digest(str(e.get("solution_digest", ""))),
+                str(e.get("program_id", "")),
                 _gh_user(e.get("owner", ""), you=you),
                 str(e.get("cells_held", "")),
             )
@@ -204,7 +192,7 @@ def render_board(entries: list[dict[str, Any]], *, you: str | None = None) -> Re
         for e in entries:
             table.add_row(
                 str(e.get("rank", "")),
-                _short_digest(str(e.get("solution_digest", ""))),
+                str(e.get("program_id", "")),
                 _gh_user(e.get("owner", ""), you=you),
                 str(e.get("firsts", "")),
             )
@@ -219,33 +207,24 @@ def render_board(entries: list[dict[str, Any]], *, you: str | None = None) -> Re
 
 
 def render_elites(entries: list[dict[str, Any]]) -> RenderableType:
-    """A ``rich`` table of elite-pool entries.
-
-    Real hub rows include ``repo`` and ``commit_sha``; those render as a full,
-    clickable commit URL in a folding ``source`` column, so narrow TUI windows
-    wrap the link instead of truncating it. Older/short fixture rows without
-    source metadata retain the compact ``solution`` digest column. Empty -> a
-    friendly one-line message, never a bare header."""
+    """A ``rich`` table of elite entries: ``rank | identity | program |
+    score`` -- ``program`` the opaque ``program_id`` shown verbatim
+    (already short -- no ``_short_digest`` truncation), ``score`` colored
+    via ``ramp``. Empty -> a friendly one-line message, never a bare
+    header."""
     if not entries:
         return _empty("no elites recorded yet.")
 
-    has_sources = any(e.get("repo") for e in entries)
     table = Table(header_style="bold", row_styles=["", "on grey11"])
     table.add_column("rank", justify="right", no_wrap=True)
     table.add_column("identity", no_wrap=True)
-    if has_sources:
-        table.add_column("source", overflow="fold", no_wrap=False, ratio=1)
-    else:
-        table.add_column("solution", overflow="fold", no_wrap=False)
+    table.add_column("program", overflow="fold", no_wrap=False)
     table.add_column("score", justify="right", no_wrap=True)
     for e in entries:
-        source = (_gh_commit_url(e.get("repo", ""), e.get("commit_sha", ""))
-                  if has_sources and e.get("repo")
-                  else Text(str(e.get("solution_digest", ""))))
         table.add_row(
             str(e.get("rank", "")),
             str(e.get("identity", "")),
-            source if has_sources else _short_digest(str(e.get("solution_digest", ""))),
+            str(e.get("program_id", "")),
             _colored_num(e.get("score", "")),
         )
     return table
@@ -426,52 +405,53 @@ def render_frontier_grid(
 
 
 def render_search(results: list[dict[str, Any]]) -> RenderableType:
-    """A ``rich`` table of registered solutions: ``solution | owner | repo
-    | commit | registered`` (``solution``/``commit`` shortened via
-    ``_short_digest``). Empty -> a friendly one-line message, never a bare
-    header."""
+    """A ``rich`` table of registered programs: ``program | owner | repo |
+    commit | registered`` -- ``program`` the opaque ``id`` shown verbatim
+    (already short -- no ``_short_digest`` truncation), ``reference``
+    flattened into linked ``repo``/``commit`` cells (``commit`` still
+    shortened via ``_short_digest``, a real git object unlike the retired
+    content-hash digest). Empty -> a friendly one-line message, never a
+    bare header."""
     if not results:
-        return _empty("no solutions found.")
+        return _empty("no programs found.")
 
     table = Table(header_style="bold", row_styles=["", "on grey11"])
-    for name in ("solution", "owner", "repo", "commit", "registered"):
+    for name in ("program", "owner", "repo", "commit", "registered"):
         table.add_column(name)
     for r in results:
+        reference = r.get("reference") or {}
+        repo = str(reference.get("repo", ""))
         table.add_row(
-            _short_digest(str(r.get("digest", ""))),
+            str(r.get("id", "")),
             _gh_user(r.get("owner", "")),
-            _gh_repo(r.get("repo", "")),
-            _gh_commit(r.get("repo", ""), r.get("commit_sha", "")),
+            _gh_repo(repo),
+            _gh_commit(repo, str(reference.get("commit", ""))),
             str(r.get("registered_at", "")),
         )
     return table
 
 
-def render_show(solution: dict[str, Any]) -> RenderableType:
-    """A 2-column key/value grid describing one registered solution
-    (``digest``/``commit_sha`` shortened via ``_short_digest``), the same
-    preferred-key ordering as the baseline ``plain`` ``render_show``.
-    Empty/missing -> a friendly one-line message, never an empty block."""
-    if not solution:
-        return _empty("no such solution.")
+def render_show(program: dict[str, Any]) -> RenderableType:
+    """A 2-column key/value grid describing one registered program (the
+    ``/programs/{id}`` object: ``{id, owner, reference:{repo,commit},
+    registered_at}``): ``id`` shown verbatim (opaque, already short --
+    no ``_short_digest`` truncation), ``reference`` flattened into linked
+    ``repo``/``commit`` rows via ``_gh_repo``/``_gh_commit`` (``commit``
+    still shortened -- a real git object, unlike the retired digest),
+    ``owner`` linked via ``_gh_user``. Empty/missing -> a friendly one-line
+    message, never an empty block."""
+    if not program:
+        return _empty("no such program.")
 
-    preferred = ["digest", "repo", "commit_sha", "owner", "root", "entrypoint", "registered_at"]
-    keys = [k for k in preferred if k in solution]
-    keys += [k for k in solution if k not in preferred]
+    reference = program.get("reference") or {}
+    repo = str(reference.get("repo", ""))
 
     grid = Table.grid(padding=(0, 2))
     grid.add_column(justify="right", style="bold")
     grid.add_column()
-    for key in keys:
-        value = solution[key]
-        if key == "digest":
-            grid.add_row(key, _short_digest(str(value)))  # content hash, not a git object
-        elif key == "commit_sha":
-            grid.add_row(key, _gh_commit(str(solution.get("repo", "")), str(value)))
-        elif key == "owner":
-            grid.add_row(key, _gh_user(str(value)))
-        elif key == "repo":
-            grid.add_row(key, _gh_repo(str(value)))
-        else:
-            grid.add_row(key, str(value))
+    grid.add_row("id", str(program.get("id", "")))
+    grid.add_row("repo", _gh_repo(repo))
+    grid.add_row("commit", _gh_commit(repo, str(reference.get("commit", ""))))
+    grid.add_row("owner", _gh_user(str(program.get("owner", ""))))
+    grid.add_row("registered_at", str(program.get("registered_at", "")))
     return grid

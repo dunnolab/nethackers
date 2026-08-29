@@ -20,6 +20,7 @@ from nethackers.contracts.models import Atom, Evidence, Objective, TrajectoryRes
 from nethackers.hub.api import create_app
 from nethackers.hub.auth import LocalStubAuth
 from nethackers.hub.github import GitHubReadError
+from nethackers.hub.ids import program_id
 from nethackers.hub.objectives import CATALOG
 from nethackers.hub.store import Store
 
@@ -159,12 +160,38 @@ def test_register_link_ok(tmp_path: Any) -> None:
     payload = response.json()
     assert payload["solution_id"] == f"{REPO}@{SHA}"
     assert payload["owner"] == OWNER
+    assert payload["program_id"] == program_id(payload["solution_id"])
 
     row = store.get_solution(f"{REPO}@{SHA}")
     assert row is not None
     assert row["owner"] == OWNER
     assert row["commit_sha"] == SHA
     assert row["root"] == "bot"
+
+
+def test_register_link_ok_without_root_entrypoint(tmp_path: Any) -> None:
+    # manifest.root/entrypoint are no longer required -- a manifest omitting
+    # them still registers, and the stored columns fall back to defaults.
+    client, store = _app(tmp_path)
+
+    body = _register_body()
+    body["manifest"] = {}
+
+    response = client.post(
+        "/register",
+        json=body,
+        headers=_auth_headers(),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["solution_id"] == f"{REPO}@{SHA}"
+    assert payload["program_id"] == program_id(payload["solution_id"])
+
+    row = store.get_solution(f"{REPO}@{SHA}")
+    assert row is not None
+    assert row["root"] == "."
+    assert row["entrypoint"] == "bot.py"
 
 
 def test_register_requires_token(tmp_path: Any) -> None:
@@ -246,13 +273,23 @@ def test_register_github_error_502(tmp_path: Any) -> None:
 # --- read endpoints (score views stay empty in M1, but still resolve) -------
 
 
-def test_unknown_solution_digest_404(tmp_path: Any) -> None:
+def test_retired_routes_404(tmp_path: Any) -> None:
+    # Task 7 cutover: /search, /solutions/{digest}[/frontier], /attainment,
+    # and /objectives/{name}/batch are gone for good -- replaced by
+    # /programs*, /achievements/*, and nothing (no consumer ever needed the
+    # raw published batch over HTTP). A generic framework 404 (unmatched
+    # route), not a handler-level one.
     client, _store = _app(tmp_path)
-    response = client.get("/solutions/sha256:does-not-exist")
-    assert response.status_code == 404
+    assert client.get("/search").status_code == 404
+    assert client.get("/solutions/sha256:anything").status_code == 404
+    assert client.get("/solutions/sha256:anything/frontier").status_code == 404
+    assert client.get("/attainment").status_code == 404
+    assert client.get(f"/objectives/{IDENTITY}/batch").status_code == 404
 
 
-def test_objectives_list_and_batch(tmp_path: Any) -> None:
+def test_objectives_list(tmp_path: Any) -> None:
+    # GET /objectives/{name}/batch is retired (Task 7) -- the catalog listing
+    # itself lives on; see test_retired_routes_404 for the batch route.
     client, _store = _app(tmp_path)
 
     objectives = client.get("/objectives")
@@ -262,75 +299,142 @@ def test_objectives_list_and_batch(tmp_path: Any) -> None:
     assert entries[IDENTITY]["episodes"] == BATCH_SIZE
     assert "random" in entries
 
-    batch = client.get(f"/objectives/{IDENTITY}/batch")
-    assert batch.status_code == 200
-    payload = batch.json()
-    assert payload["name"] == IDENTITY
-    assert len(payload["batch"]) == BATCH_SIZE
-    assert payload["batch"][0] == [0, IDENTITY]
 
-    unknown = client.get("/objectives/not-a-real-objective/batch")
-    assert unknown.status_code == 404
-
-
-def test_attainment_reads_empty(tmp_path: Any) -> None:
-    # No atoms are ever written in M1, so attainment is an empty list.
+def test_achievements_milestones_reads_empty(tmp_path: Any) -> None:
+    # No atoms are ever written in M1, so milestones is an empty list.
+    # (Repointed from the retired /attainment -- Task 7.)
     client, _store = _app(tmp_path)
-    response = client.get("/attainment")
+    response = client.get("/achievements/milestones")
     assert response.status_code == 200
-    assert response.json() == []
+    assert response.json()["rows"] == []
 
 
-def test_elites_known_objective_is_a_list(tmp_path: Any) -> None:
+def test_elites_scope_generalist_enveloped_uniform_row_schema(tmp_path: Any) -> None:
+    # /elites?scope= replaces the old ?objective= -- enveloped, one row
+    # schema keyed by program_id instead of solution_digest.
+    client, store = _app(tmp_path)
+    atoms = [_mk_atom(solution_digest="sha256:s", seed=0, progression=0.5)]
+    _seed_atoms(store, atoms)
+
+    body = client.get("/elites?scope=generalist").json()
+
+    assert set(body) >= {"generated_at", "scope", "tier", "rows"}
+    row = next(r for r in body["rows"] if r["identity"] == IDENTITY)
+    assert row["program_id"] == program_id("sha256:s") and "solution_digest" not in row
+    assert {"rank", "identity", "program_id", "owner", "score", "reference"} <= set(row)
+    assert row["rank"] == 1
+    # reference:{repo,commit} -- harness/select.py's cold-start pull pointer
+    # (Task 2b); nested, not the old bare repo/commit_sha row fields.
+    assert row["reference"] == {"repo": "r", "commit": "c"}
+
+
+def test_elites_scope_role_narrows_to_that_roles_identities(tmp_path: Any) -> None:
+    client, store = _app(tmp_path)
+    atoms = [_mk_atom(solution_digest="sha256:b", identity=i, seed=0, progression=0.2)
+             for i in VAL_IDS]
+    _seed_atoms(store, atoms)
+
+    body = client.get("/elites?scope=val").json()
+
+    assert body["scope"] == "val"
+    assert {r["identity"] for r in body["rows"]} == set(VAL_IDS)
+
+
+def test_elites_is_a_live_view_over_atoms(tmp_path: Any) -> None:
+    # The core Part 2 change: /elites is computed fresh on every request --
+    # no recompute step, no elite_pool table at all. Two solutions on the
+    # SAME identity, distinct mean progression (atoms only, nothing else
+    # written): the higher immediately ranks #1.
+    client, store = _app(tmp_path)
+    atoms = [
+        _mk_atom(solution_digest="sha256:lo", seed=0, progression=0.4),
+        _mk_atom(solution_digest="sha256:hi", seed=1, progression=0.8),
+    ]
+    _seed_atoms(store, atoms)
+
+    body = client.get("/elites?scope=generalist").json()
+    row = next(r for r in body["rows"] if r["identity"] == IDENTITY and r["rank"] == 1)
+
+    assert row["program_id"] == program_id("sha256:hi")
+
+    tables = [t[0] for t in store.conn.execute("SELECT name FROM sqlite_master WHERE type='table'")]
+    assert "elite_pool" not in tables
+
+
+def test_elites_unknown_scope_404(tmp_path: Any) -> None:
     client, _store = _app(tmp_path)
-    response = client.get("/elites", params={"objective": IDENTITY})
-    assert response.status_code == 200
-    assert isinstance(response.json(), list)
-
-
-def test_elites_unknown_objective_404(tmp_path: Any) -> None:
-    client, _store = _app(tmp_path)
-    response = client.get("/elites", params={"objective": "not-a-real-objective"})
+    response = client.get("/elites", params={"scope": "not-a-real-scope"})
     assert response.status_code == 404
 
 
-def test_board_reads_are_lists(tmp_path: Any) -> None:
+def test_board_scope_one_shape_enveloped(tmp_path: Any) -> None:
+    # /board?scope= replaces the old ?objective=/?metric= XOR: one path, one
+    # uniform row schema, program_id instead of solution_digest.
+    client, store = _app(tmp_path)
+    from nethackers.arena.progress import ACHIEVEMENTS
+
+    atoms = [_mk_atom(solution_digest="sha256:s", seed=0,
+                      progression=ACHIEVEMENTS["Dlvl:5"], milestone="Dlvl:5")]
+    _seed_atoms(store, atoms)
+
+    body = client.get("/board?scope=generalist").json()
+    assert set(body) >= {"generated_at", "scope", "tier", "rows"}
+    row = body["rows"][0]
+    assert "program_id" in row and "solution_digest" not in row
+    assert {"rank", "owner", "reference", "coverage", "identities_total",
+            "ascensions", "mean_progression", "median_progression", "deepest"} <= set(row)
+    assert row["program_id"] == program_id("sha256:s")
+    assert row["identities_total"] == 73
+    assert row["deepest"] == "Dlvl:5"
+
+
+def test_board_scope_role_narrows_to_that_roles_identities(tmp_path: Any) -> None:
+    client, store = _app(tmp_path)
+    atoms = [_mk_atom(solution_digest="sha256:b", identity=i, seed=0, progression=0.2)
+             for i in VAL_IDS]
+    _seed_atoms(store, atoms)
+    body = client.get("/board?scope=val").json()
+    assert body["scope"] == "val"
+    assert body["rows"][0]["identities_total"] == 3 and body["rows"][0]["coverage"] == 3
+
+
+def test_board_scope_identity_row_has_coverage_and_identities_total_of_one(
+    tmp_path: Any,
+) -> None:
+    client, store = _app(tmp_path)
+    atoms = [_mk_atom(solution_digest="sha256:s", seed=0, progression=0.5)]
+    _seed_atoms(store, atoms)
+    row = client.get(f"/board?scope={IDENTITY}").json()["rows"][0]
+    assert row["coverage"] == 1 and row["identities_total"] == 1
+
+
+def test_board_unknown_scope_404(tmp_path: Any) -> None:
     client, _store = _app(tmp_path)
-    for params in ({"objective": IDENTITY}, {"metric": "coverage"}, {"metric": "firsts"}):
-        response = client.get("/board", params=params)
-        assert response.status_code == 200
-        assert isinstance(response.json(), list)
+    assert client.get("/board?scope=nope").status_code == 404
 
 
-def test_board_unknown_objective_404_and_neither_param_400(tmp_path: Any) -> None:
+def test_board_metric_param_is_gone(tmp_path: Any) -> None:
+    # The old ?metric=coverage|firsts branch is retired -- coverage/firsts
+    # now live at /achievements/coverage|firsts (Part 1).
     client, _store = _app(tmp_path)
-
-    unknown = client.get("/board", params={"objective": "nope"})
-    assert unknown.status_code == 404
-
-    neither = client.get("/board")
-    assert neither.status_code == 400
-
-
-def test_board_both_params_400(tmp_path: Any) -> None:
-    client, _store = _app(tmp_path)
-    response = client.get("/board", params={"objective": IDENTITY, "metric": "coverage"})
-    assert response.status_code == 400
+    assert client.get("/board?metric=coverage").status_code in (400, 422)
 
 
 def test_board_rejects_retired_random_and_all(tmp_path: Any) -> None:
     # random/all are retired (Task A1): every atom now lives on its
-    # identity's own canonical batch, so neither is a board objective anymore.
+    # identity's own canonical batch, so neither is a board scope anymore.
     client, _store = _app(tmp_path)
     for token in ("random", "all"):
-        assert client.get("/board", params={"objective": token}).status_code == 404
+        assert client.get("/board", params={"scope": token}).status_code == 404
 
 
-def test_search_lists_and_owner_filter(tmp_path: Any) -> None:
-    # After registering a link, /search lists it and filters by owner. The
-    # ``digest`` column now holds the repo@commit solution id.
+def test_programs_lists_and_owner_filter(tmp_path: Any) -> None:
+    # After registering a link, /programs lists it and filters by owner.
+    # (Repointed from the retired /search -- Task 7 -- onto the opaque
+    # program id instead of the raw digest.)
     client, _store = _app(tmp_path)
     solution_id = f"{REPO}@{SHA}"
+    pid = program_id(solution_id)
 
     registered = client.post(
         "/register",
@@ -339,17 +443,17 @@ def test_search_lists_and_owner_filter(tmp_path: Any) -> None:
     )
     assert registered.status_code == 200
 
-    listed = client.get("/search")
+    listed = client.get("/programs")
     assert listed.status_code == 200
-    assert solution_id in [row["digest"] for row in listed.json()]
+    assert pid in [row["id"] for row in listed.json()["rows"]]
 
-    mine = client.get("/search", params={"owner": OWNER})
+    mine = client.get("/programs", params={"owner": OWNER})
     assert mine.status_code == 200
-    assert [row["digest"] for row in mine.json()] == [solution_id]
+    assert [row["id"] for row in mine.json()["rows"]] == [pid]
 
-    someone_elses = client.get("/search", params={"owner": "not-an-owner"})
+    someone_elses = client.get("/programs", params={"owner": "not-an-owner"})
     assert someone_elses.status_code == 200
-    assert someone_elses.json() == []
+    assert someone_elses.json()["rows"] == []
 
 
 def test_root_serves_the_dungeon_viz(tmp_path: Any) -> None:
@@ -393,40 +497,6 @@ def _mk_atom(**kw: Any) -> Any:
     return Atom(**base)
 
 
-def test_board_generalist_returns_aggregate_shape(tmp_path: Any) -> None:
-    client, store = _app(tmp_path)
-    atoms = [_mk_atom(solution_digest="sha256:b", identity=i, seed=0, progression=0.2)
-             for i in VAL_IDS]
-    _seed_atoms(store, atoms)
-    rows = client.get("/board?objective=generalist&tier=self-reported").json()
-    assert rows and {"coverage", "total", "mean_progression"} <= set(rows[0])
-    assert rows[0]["total"] == 73
-
-
-def test_board_role_returns_aggregate_shape(tmp_path: Any) -> None:
-    client, store = _app(tmp_path)
-    atoms = [_mk_atom(solution_digest="sha256:b", identity=i, seed=0, progression=0.2)
-             for i in VAL_IDS]
-    _seed_atoms(store, atoms)
-    rows = client.get("/board?objective=val").json()
-    assert rows[0]["total"] == 3 and rows[0]["coverage"] == 3
-
-
-def test_board_identity_includes_deepest(tmp_path: Any) -> None:
-    client, store = _app(tmp_path)
-    from nethackers.arena.progress import ACHIEVEMENTS
-    atoms = [_mk_atom(solution_digest="sha256:s", seed=0,
-                      progression=ACHIEVEMENTS["Dlvl:5"], milestone="Dlvl:5")]
-    _seed_atoms(store, atoms)
-    rows = client.get(f"/board?objective={IDENTITY}").json()
-    assert rows[0]["deepest"] == "Dlvl:5"
-
-
-def test_board_unknown_objective_404(tmp_path: Any) -> None:
-    client, _store = _app(tmp_path)
-    assert client.get("/board?objective=nonsense").status_code == 404
-
-
 def test_hackers_returns_union_shape_and_defaults_to_generalist(tmp_path: Any) -> None:
     client, store = _app(tmp_path)
     atoms = [
@@ -435,9 +505,28 @@ def test_hackers_returns_union_shape_and_defaults_to_generalist(tmp_path: Any) -
         for i in VAL_IDS
     ]
     _seed_atoms(store, atoms)
-    rows = client.get("/hackers").json()
-    assert rows and {"owner", "coverage", "total", "mean_progression"} <= set(rows[0])
-    assert rows[0]["total"] == 73 and rows[0]["owner"] == "dun"
+    body = client.get("/hackers").json()
+    assert set(body) >= {"generated_at", "scope", "tier", "rows"}
+    assert body["scope"] == "generalist"   # the default, unenveloped before
+    rows = body["rows"]
+    assert rows and {"rank", "owner", "coverage", "identities_total",
+                     "mean_progression"} <= set(rows[0])
+    assert rows[0]["identities_total"] == 73 and rows[0]["owner"] == "dun"
+
+
+def test_hackers_scope_role_narrows_to_that_roles_identities(tmp_path: Any) -> None:
+    client, store = _app(tmp_path)
+    atoms = [_mk_atom(solution_digest="sha256:b", owner="dun",
+                      identity=i, seed=0, progression=0.2) for i in VAL_IDS]
+    _seed_atoms(store, atoms)
+    body = client.get("/hackers?scope=val").json()
+    assert body["scope"] == "val"
+    assert body["rows"][0]["identities_total"] == 3
+
+
+def test_hackers_unknown_scope_404(tmp_path: Any) -> None:
+    client, _store = _app(tmp_path)
+    assert client.get("/hackers?scope=nope").status_code == 404
 
 
 # --- /hackers/random (dungeon-wall handle sampler) ---------------------------
@@ -474,9 +563,10 @@ def test_hackers_random_samples_scored_hackers(tmp_path: Any) -> None:
     client, store = _app(tmp_path)
     for owner, s in [("alice", "1"), ("bob", "2"), ("cara", "3")]:
         _seed_hacker(store, owner, s)
-    got = client.get("/hackers/random?n=20").json()
-    assert sorted(got) == ["alice", "bob", "cara"]          # distinct scored owners
-    assert len(client.get("/hackers/random?n=2").json()) == 2  # respects n
+    body = client.get("/hackers/random?n=20").json()
+    assert set(body) >= {"generated_at", "n", "rows"} and body["n"] == 20
+    assert sorted(body["rows"]) == ["alice", "bob", "cara"]     # distinct scored owners
+    assert len(client.get("/hackers/random?n=2").json()["rows"]) == 2  # respects n
 
 
 def test_hackers_random_excludes_solutions_only_roots(tmp_path: Any) -> None:
@@ -486,11 +576,11 @@ def test_hackers_random_excludes_solutions_only_roots(tmp_path: Any) -> None:
     _seed_hacker(store, "dana", "d")
     _seed_root(store, "autoascend", "a")   # seed/root: solution only, no atoms
     _seed_root(store, "rootbot", "r")      # another root
-    assert client.get("/hackers/random?n=20").json() == ["dana"]
+    assert client.get("/hackers/random?n=20").json()["rows"] == ["dana"]
 
 
 def test_hackers_random_empty_when_no_scored_hackers(tmp_path: Any) -> None:
     # Solutions with no atoms (e.g. only roots) -> no hackers on the wall.
     client, store = _app(tmp_path)
     _seed_root(store, "rootbot", "r")
-    assert client.get("/hackers/random").json() == []
+    assert client.get("/hackers/random").json()["rows"] == []

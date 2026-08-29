@@ -885,8 +885,8 @@ const ROLE_VARS={
  tou:["hum-neu-fem","hum-neu-mal"],
  val:["dwa-law-fem","hum-law-fem","hum-neu-fem"],
  wiz:["elf-cha-fem","elf-cha-mal","gno-neu-fem","gno-neu-mal","hum-cha-fem","hum-cha-mal","hum-neu-fem","hum-neu-mal","orc-cha-fem","orc-cha-mal"]};
-let UNIVERSE={};                     // /elites?objective=all -> rank-1 per identity {id:{v,o,d,ep}}
-let CHAMPION={digest:"",owner:"",scores:{}};  // /board?objective=generalist [0] + its /frontier
+let UNIVERSE={};                     // /elites?scope=generalist -> rank-1 per identity {id:{v,o,d,ep}}
+let CHAMPION={digest:"",owner:"",scores:{}};  // /board?scope=generalist [0] + its /programs/{id}/identities
 const ASC=0.8745866562925501;
 /* AutoAscend baseline bar first, then day-bucketed best-so-far from /progress */
 let PROGRESS=[];
@@ -904,7 +904,6 @@ const MEMES=[
 /* ===================== helpers ===================== */
 const $=s=>document.querySelector(s);
 const esc=s=>String(s).replace(/[&<>"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
-const short=d=>String(d).replace(/^sha256:/,"").slice(0,7);   // digest -> ~7-char display id
 function tint(v,floor){ if(v==null) return "#ffffff"; const a=(floor?0.05:0.10)+(floor?0.16:0.72)*Math.min(1,v); return `rgba(var(--tint) / ${a.toFixed(3)})`; }
 function tintText(v){ return v!=null && v>=0.5 ? "#ffffff" : "#111"; }
 
@@ -1369,8 +1368,8 @@ async function openProgram(d){
   const p = d==="autoascend" ? AUTOASCEND : PROGRAMS.find(x=>x.digest===d); if(!p) return;
   /* lazily load this program's per-identity frontier (mean progression per identity) */
   if(!p.base && !p.fr && p.fulldigest){
-    try{ const fr = await jget("/solutions/"+encodeURIComponent(p.fulldigest)+"/frontier");
-      p.fr = Object.fromEntries(fr.map(r=>[r.identity, r.progression])); }
+    try{ const fr = await jget("/programs/"+encodeURIComponent(p.fulldigest)+"/identities");
+      p.fr = Object.fromEntries((fr.rows||[]).map(r=>[r.identity, r.progression])); }
     catch(e){ p.fr = {}; }
   }
   $("#mTitle").textContent=p.base?"autoascend - the baseline":`nethacker@${d} - @${p.owner}`;
@@ -1421,23 +1420,27 @@ function rebuildAutoascend(){
 }
 
 /* PEOPLE (the Hackers tally): the union-frontier standings for the current scope,
-   from GET /hackers (coverage + mean, coverage-first). The server does the
-   aggregation across each owner's programs. Degrades to [] on failure. */
+   from GET /hackers?scope= (enveloped -- .rows; coverage + mean, coverage-first).
+   The server does the aggregation across each owner's programs. Degrades to []
+   on failure. */
 async function loadHackers(obj){
   try{
-    const rows = await jget(`/hackers?objective=${encodeURIComponent(obj)}&tier=${encodeURIComponent(curTier)}`);
-    PEOPLE = rows.map(r=>({rank:r.rank, owner:r.owner, coverage:r.coverage, total:r.total, mean:r.mean_progression}));
+    const hk = await jget(`/hackers?scope=${encodeURIComponent(obj)}&tier=${encodeURIComponent(curTier)}`);
+    const rows = hk.rows || [];
+    PEOPLE = rows.map(r=>({rank:r.rank, owner:r.owner, coverage:r.coverage, total:r.identities_total, mean:r.mean_progression}));
   }catch(e){ PEOPLE = []; }
 }
 
-/* Frontier "universe": each identity's rank-1 elite. /elites has no episodes, so ep comes
-   from /objectives (the honest per-identity batch size) -- falls back to the 15-episode
-   identity batch if /objectives was unavailable. */
+/* Frontier "universe": each identity's rank-1 elite, from GET /elites?scope=generalist
+   (enveloped -- .rows). /elites has no episodes, so ep comes from /objectives (the honest
+   per-identity batch size) -- falls back to the 15-episode identity batch if /objectives
+   was unavailable. */
 async function loadUniverse(){
   try{
-    const el = await jget("/elites?objective=all");
+    const el = await jget("/elites?scope=generalist");
+    const rows = el.rows || [];
     const uni = {};
-    for(const r of el){ if(r.rank===1) uni[r.identity] = {v:r.score, o:r.owner, d:short(r.solution_digest), ep: OBJ_EP[r.identity]!=null ? OBJ_EP[r.identity] : 15}; }
+    for(const r of rows){ if(r.rank===1) uni[r.identity] = {v:r.score, o:r.owner, d:r.program_id, ep: OBJ_EP[r.identity]!=null ? OBJ_EP[r.identity] : 15}; }
     UNIVERSE = uni;
   }catch(e){ UNIVERSE = {}; }
 }
@@ -1447,12 +1450,13 @@ async function loadUniverse(){
    blank and the program regime honestly shows every cell "·". */
 async function loadChampion(){
   try{
-    const rnd = await jget(`/board?objective=generalist&tier=${encodeURIComponent(curTier)}`);
+    const board = await jget(`/board?scope=generalist&tier=${encodeURIComponent(curTier)}`);
+    const rnd = board.rows || [];
     if(rnd.length){
       const top = rnd[0]; let scores = {};
-      try{ const fr = await jget("/solutions/"+encodeURIComponent(top.solution_digest)+"/frontier");
-        scores = Object.fromEntries(fr.map(r=>[r.identity, r.progression])); }catch(e){ scores = {}; }
-      CHAMPION = {digest:short(top.solution_digest), owner:top.owner, scores};
+      try{ const fr = await jget("/programs/"+encodeURIComponent(top.program_id)+"/identities");
+        scores = Object.fromEntries((fr.rows||[]).map(r=>[r.identity, r.progression])); }catch(e){ scores = {}; }
+      CHAMPION = {digest:top.program_id, owner:top.owner, scores};
     } else { CHAMPION = {digest:"", owner:"", scores:{}}; }
   }catch(e){ CHAMPION = {digest:"", owner:"", scores:{}}; }
 }
@@ -1464,21 +1468,23 @@ async function loadObjective(obj){
   rebuildAutoascend();                                  // floor row reflects this objective's scope
   const agg = scopeKind(obj)!=="identity";
   let rows=[];
-  try{ rows = await jget(`/board?objective=${encodeURIComponent(obj)}&tier=${encodeURIComponent(curTier)}`); }
-  catch(e){ rows=[]; }                                  // unknown obj (404) / offline -> "be the first" empty state
+  try{ const board = await jget(`/board?scope=${encodeURIComponent(obj)}&tier=${encodeURIComponent(curTier)}`);
+    rows = board.rows || []; }
+  catch(e){ rows=[]; }                                  // unknown scope (404) / offline -> "be the first" empty state
   PROGRAMS = rows.map(r=>({
-    rank:r.rank, digest:short(r.solution_digest), fulldigest:r.solution_digest,
+    // program_id is opaque and already short -- shown verbatim, no more short()/fulldigest split.
+    rank:r.rank, digest:r.program_id, fulldigest:r.program_id,
     owner:r.owner, score:r.mean_progression,
     med: r.median_progression!=null ? r.median_progression : null,   // identity board only
-    ep:  r.episodes!=null ? r.episodes : null,                       // identity board only
-    coverage: agg ? r.coverage : null, total: agg ? r.total : null,  // aggregate board only
+    ep:  null,                          // /board's uniform row no longer carries episodes
+    coverage: agg ? r.coverage : null, total: agg ? r.identities_total : null,  // aggregate board only
     asc:r.ascensions, deepest: r.deepest!=null ? r.deepest : "—",    // /board now carries deepest
     fr:null,                                            // loaded lazily in openProgram
   }));
   BOARD_BY_OBJ[obj] = PROGRAMS;
   await loadHackers(obj);                               // the Hackers tally (union frontier)
   let series=[];
-  try{ const pr = await jget(`/progress?objective=val-dwa-law-fem&tier=${encodeURIComponent(curTier)}`); series = (pr && pr.series) || []; }
+  try{ const pr = await jget(`/progress?scope=val-dwa-law-fem&tier=${encodeURIComponent(curTier)}`); series = (pr && pr.series) || []; }
   catch(e){ series=[]; }
   PROGRESS = [
     {t:"autoascend", frontier: (BASELINE && BASELINE.overall!=null) ? BASELINE.overall : 0, ascensions:0, coverage:0 /*GAP: baseline cell-count not exposed*/, base:true},
@@ -1646,7 +1652,8 @@ boot();
 
   let t=0, bloom=0, energy=0;
   // Up to MAX_RUNNERS @username runners -- real registered hackers, sampled server-side
-  // (GET /hackers/random). Cleared-floor look; the tuned feel is baked below.
+  // (GET /hackers/random, enveloped -- .rows). Cleared-floor look; the tuned feel is
+  // baked below.
   const MAX_RUNNERS=20;
   const TUNE={size:0.75, crawl:0.8, dart:0.3, ride:0.6};   // approved by live tuning
   let RUNNERS=[];
@@ -1657,7 +1664,7 @@ boot();
     RUNNERS=m.map(function(name,i){ return {name:name,
       pos:(i+Math.random()*0.6)/L, vel:0, atRide:0, spd:0.75+0.5*(i/Math.max(1,L-1))}; });
   }
-  jget("/hackers/random?n="+MAX_RUNNERS).then(buildRunners).catch(function(){ RUNNERS=[]; });
+  jget("/hackers/random?n="+MAX_RUNNERS).then(function(env){ buildRunners(env.rows); }).catch(function(){ RUNNERS=[]; });
   function draw(){
     // Two regimes. At rest the wall breathes gently in ink -- restrained, monochrome, never silent-frozen.
     // On play, COLOUR blooms in (`bloom`); how hard it reacts -- reach, brightness, tempo -- tracks the

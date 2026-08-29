@@ -11,9 +11,9 @@ def test_cli_hub_default_is_stage_hub_url(monkeypatch):
     from nethackers import cli
     importlib.reload(cli)
     p = cli._build_parser(Stage())
-    # `board`'s objective is `--objective <name>`, never a bare positional
+    # `board`'s scope is `--scope <name>`, never a bare positional
     # (see test_cli_m2a.py's real invocations) -- "generalist" needs the flag.
-    ns = p.parse_args(["board", "--objective", "generalist"])
+    ns = p.parse_args(["board", "--scope", "generalist"])
     # top-level --hub default flows to the subcommand via the SUPPRESS merge
     assert ns.hub == "https://nethackers.dunnolab.ai"
 

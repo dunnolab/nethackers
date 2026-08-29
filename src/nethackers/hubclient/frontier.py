@@ -17,8 +17,11 @@ def baseline_scores(client: Any) -> dict[str, float]:
 
 
 def universe_scores(client: Any) -> dict[str, float]:
+    """Each identity's #1 elite, keyed by identity -- ``client.elites
+    ("generalist")`` is the "Universe" regime (all 73 identities, best
+    program each), from the live ``/elites`` view."""
     out: dict[str, float] = {}
-    for row in client.elites("all") or []:
+    for row in client.elites("generalist") or []:
         if int(row.get("rank", 0)) == 1:
             out[str(row["identity"])] = float(row["score"])
     return out
@@ -29,13 +32,16 @@ def champion(client: Any) -> tuple[str, str] | None:
     if not board:
         return None
     top = board[0]
-    return str(top["solution_digest"]), str(top.get("owner", ""))
+    return str(top["program_id"]), str(top.get("owner", ""))
 
 
-def champion_scores(client: Any, digest: str) -> dict[str, float]:
+def champion_scores(client: Any, program_id: str) -> dict[str, float]:
+    """One program's per-identity mean progression, from the live
+    ``/programs/{id}/identities`` view (``program_id`` is ``champion``'s
+    first element)."""
     return {
         str(r["identity"]): float(r["progression"])
-        for r in (client.solution_frontier(digest) or [])
+        for r in (client.program_identities(program_id) or [])
     }
 
 

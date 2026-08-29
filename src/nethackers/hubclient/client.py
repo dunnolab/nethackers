@@ -104,48 +104,41 @@ class HubClient:
         """``GET /objectives`` -- the catalog listing."""
         return self._get("/objectives")
 
-    def objective_batch(self, name: str) -> Any:
-        """``GET /objectives/{name}/batch`` -- that objective's published
-        ``(seed, character)`` pairs."""
-        return self._get(f"/objectives/{name}/batch")
-
-    def attainment(self, identity: str | None = None) -> Any:
-        """``GET /attainment``, optionally narrowed to one ``?identity=``."""
-        return self._get("/attainment", {"identity": identity} if identity else None)
-
     def baseline(self) -> Any:
         """``GET /baseline`` -- AutoAscend's per-identity reference floor."""
         return self._get("/baseline")
 
-    def elites(self, objective: str) -> Any:
-        """``GET /elites?objective=...``."""
-        return self._get("/elites", {"objective": objective})
+    def elites(self, scope: str = "generalist", tier: str = "self-reported") -> Any:
+        """``GET /elites?scope=`` -- the ranked rows (envelope unwrapped)."""
+        return (self._get("/elites", {"scope": scope, "tier": tier}) or {}).get("rows", [])
 
-    def board(self, objective: str | None = None, metric: str | None = None) -> Any:
-        """``GET /board``, with whichever of ``?objective=``/``?metric=``
-        was given (the server requires exactly one; this method just passes
-        through whatever the caller supplied)."""
-        params = {k: v for k, v in (("objective", objective), ("metric", metric)) if v}
-        return self._get("/board", params)
+    def board(self, scope: str = "generalist", tier: str = "self-reported") -> Any:
+        """``GET /board?scope=`` -- the ranked rows (envelope unwrapped)."""
+        return (self._get("/board", {"scope": scope, "tier": tier}) or {}).get("rows", [])
 
     def search(self, owner: str | None = None, limit: int = 50, offset: int = 0) -> Any:
-        """``GET /search``, with ``?owner=`` only when given and
+        """``GET /programs``, with ``?owner=`` only when given and
         ``?limit=``/``?offset=`` always (they default server-side too, but
-        are sent explicitly here)."""
+        are sent explicitly here). Envelope unwrapped -- returns the rows."""
         params = {
             k: v
             for k, v in (("owner", owner), ("limit", limit), ("offset", offset))
             if v is not None
         }
-        return self._get("/search", params)
+        return (self._get("/programs", params) or {}).get("rows", [])
 
-    def show(self, digest: str) -> Any:
-        """``GET /solutions/{digest}``."""
-        return self._get(f"/solutions/{digest}")
+    def show(self, program_id: str) -> Any:
+        """``GET /programs/{id}`` -- the ``{id, owner, reference:{repo,
+        commit}, registered_at}`` object (a single resource, not enveloped)."""
+        return self._get(f"/programs/{program_id}")
 
-    def solution_frontier(self, digest: str) -> Any:
-        """``GET /solutions/{digest}/frontier``."""
-        return self._get(f"/solutions/{digest}/frontier")
+    def program_identities(self, program_id: str) -> Any:
+        """``GET /programs/{id}/identities`` -- that program's per-identity
+        mean progression rows (envelope unwrapped). Takes an opaque
+        ``program_id``, never a raw solution digest -- the retired
+        ``solution_frontier`` method this replaced only ever understood the
+        latter."""
+        return (self._get(f"/programs/{program_id}/identities") or {}).get("rows", [])
 
     def hub_mode(self) -> str | None:
         """``GET /healthz`` (unauthenticated) and return the pointed-at hub's
@@ -337,18 +330,18 @@ def plain_frontier(scores: dict[str, float | None]) -> str:
 
 
 def render_elites(entries: list[dict[str, Any]]) -> str:
-    """A table of elite-pool entries: ``rank | identity | solution |
-    score`` (``solution`` a short digest, ``score`` rounded via ``_num``).
-    A friendly one-line message instead of a bare header when
-    ``entries == []``."""
+    """A table of elite entries: ``rank | identity | program | score``
+    (``program`` the opaque ``program_id``, shown verbatim -- already short,
+    never truncated; ``score`` rounded via ``_num``). A friendly one-line
+    message instead of a bare header when ``entries == []``."""
     if not entries:
         return "no elites recorded yet."
-    headers = ["rank", "identity", "solution", "score"]
+    headers = ["rank", "identity", "program", "score"]
     rows = [
         [
             str(entry.get("rank", "")),
             str(entry.get("identity", "")),
-            _short_digest(str(entry.get("solution_digest", ""))),
+            str(entry.get("program_id", "")),
             _num(entry.get("score", "")),
         ]
         for entry in entries
@@ -358,15 +351,16 @@ def render_elites(entries: list[dict[str, Any]]) -> str:
 
 def render_board(entries: list[dict[str, Any]]) -> str:
     """A table of board entries, shape-aware over which metric produced
-    them (``solution`` is always a short digest):
+    them (``program`` is the opaque ``program_id`` -- already short,
+    verbatim, never truncated):
 
-    - grading board (``asc_median_mean``/``mean`` aggregation -- entries
-      carry ``ascensions``): ``rank | solution | owner | asc | median |
-      mean`` (``median``/``mean`` via ``_num``).
-    - coverage board (entries carry ``cells_held``): ``rank | solution |
-      owner | cells``.
-    - firsts board (entries carry ``firsts``): ``rank | solution | owner |
-      firsts``.
+    - grading board (``/board``'s one row shape -- entries carry
+      ``ascensions``): ``rank | program | owner | asc | median | mean``
+      (``median``/``mean`` via ``_num``).
+    - coverage board (``/achievements/coverage`` -- entries carry
+      ``cells_held``): ``rank | program | owner | cells``.
+    - firsts board (``/achievements/firsts`` -- entries carry ``firsts``):
+      ``rank | program | owner | firsts``.
 
     A friendly one-line message instead of a bare header when
     ``entries == []`` (there's no shape to detect from zero rows anyway --
@@ -377,11 +371,11 @@ def render_board(entries: list[dict[str, Any]]) -> str:
 
     first = entries[0]
     if "ascensions" in first:
-        headers = ["rank", "solution", "owner", "asc", "median", "mean"]
+        headers = ["rank", "program", "owner", "asc", "median", "mean"]
         rows = [
             [
                 str(e.get("rank", "")),
-                _short_digest(str(e.get("solution_digest", ""))),
+                str(e.get("program_id", "")),
                 str(e.get("owner", "")),
                 str(e.get("ascensions", "")),
                 _num(e.get("median_progression", "")),
@@ -390,22 +384,22 @@ def render_board(entries: list[dict[str, Any]]) -> str:
             for e in entries
         ]
     elif "cells_held" in first:
-        headers = ["rank", "solution", "owner", "cells"]
+        headers = ["rank", "program", "owner", "cells"]
         rows = [
             [
                 str(e.get("rank", "")),
-                _short_digest(str(e.get("solution_digest", ""))),
+                str(e.get("program_id", "")),
                 str(e.get("owner", "")),
                 str(e.get("cells_held", "")),
             ]
             for e in entries
         ]
     elif "firsts" in first:
-        headers = ["rank", "solution", "owner", "firsts"]
+        headers = ["rank", "program", "owner", "firsts"]
         rows = [
             [
                 str(e.get("rank", "")),
-                _short_digest(str(e.get("solution_digest", ""))),
+                str(e.get("program_id", "")),
                 str(e.get("owner", "")),
                 str(e.get("firsts", "")),
             ]
@@ -420,18 +414,20 @@ def render_board(entries: list[dict[str, Any]]) -> str:
 
 
 def render_search(results: list[dict[str, Any]]) -> str:
-    """A table of registered solutions: ``solution | owner | repo | commit
-    | registered`` (``solution``/``commit`` short digests). A friendly
+    """A table of registered programs: ``program | owner | repo | commit |
+    registered`` (``program`` the opaque ``id`` shown verbatim -- already
+    short, never truncated; ``commit`` shortened via ``_short_digest``, a
+    real git object unlike the retired content-hash digest). A friendly
     one-line message instead of a bare header when ``results == []``."""
     if not results:
-        return "no solutions found."
-    headers = ["solution", "owner", "repo", "commit", "registered"]
+        return "no programs found."
+    headers = ["program", "owner", "repo", "commit", "registered"]
     rows = [
         [
-            _short_digest(str(r.get("digest", ""))),
+            str(r.get("id", "")),
             str(r.get("owner", "")),
-            str(r.get("repo", "")),
-            _short_digest(str(r.get("commit_sha", ""))),
+            str((r.get("reference") or {}).get("repo", "")),
+            _short_digest(str((r.get("reference") or {}).get("commit", ""))),
             str(r.get("registered_at", "")),
         ]
         for r in results
@@ -439,20 +435,30 @@ def render_search(results: list[dict[str, Any]]) -> str:
     return _table(headers, rows)
 
 
-def render_show(solution: dict[str, Any]) -> str:
-    """An aligned ``key: value`` block describing one registered solution
-    (``digest``/``commit_sha`` shortened). A friendly one-line message
-    instead of an empty block when ``solution`` is empty/missing."""
-    if not solution:
-        return "no such solution."
-    preferred = ["digest", "repo", "commit_sha", "owner", "root", "entrypoint", "registered_at"]
-    keys = [k for k in preferred if k in solution]
-    keys += [k for k in solution if k not in preferred]
+def render_show(program: dict[str, Any]) -> str:
+    """An aligned ``key: value`` block describing one registered program
+    (the ``/programs/{id}`` object: ``{id, owner, reference:{repo,commit},
+    registered_at}``) -- ``id`` shown verbatim (already short, opaque),
+    ``reference`` flattened into ``repo``/``commit`` (``commit`` shortened
+    via ``_short_digest``, a real git object unlike the retired digest). A
+    friendly one-line message instead of an empty block when ``program`` is
+    empty/missing."""
+    if not program:
+        return "no such program."
+    reference = program.get("reference") or {}
+    flat = {
+        "id": program.get("id", ""),
+        "repo": reference.get("repo", ""),
+        "commit": reference.get("commit", ""),
+        "owner": program.get("owner", ""),
+        "registered_at": program.get("registered_at", ""),
+    }
+    keys = ["id", "repo", "commit", "owner", "registered_at"]
     width = max(len(k) for k in keys)
     lines = []
     for key in keys:
-        value = solution[key]
-        if key in ("digest", "commit_sha"):
+        value = flat[key]
+        if key == "commit":
             value = _short_digest(str(value))
         lines.append(f"{key:<{width}}: {value}")
     return "\n".join(lines)

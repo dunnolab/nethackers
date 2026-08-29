@@ -22,7 +22,7 @@ from textual.containers import VerticalScroll
 from textual.widgets import Static, Tab, Tabs
 from textual.worker import get_current_worker
 
-from nethackers.hubclient.client import HubClient, _short_digest
+from nethackers.hubclient.client import HubClient
 from nethackers.hubclient.frontier import (
     baseline_scores,
     champion,
@@ -186,9 +186,9 @@ class MapView(_HubView):
             champ = champion(client)
             if champ is None:
                 return Text("no ranked programs yet.", style="dim")
-            digest, owner = champ
-            scores: dict[str, float | None] = dict(champion_scores(client, digest))
-            note = f"@{owner}/{_short_digest(digest)} — this one program across all identities"
+            pid, owner = champ
+            scores: dict[str, float | None] = dict(champion_scores(client, pid))
+            note = f"@{owner}/{pid} — this one program across all identities"
             om = overall_mean(scores)
             if om is not None:
                 note = f"{note} · overall {om * 100:.1f}%"
@@ -213,4 +213,4 @@ class ElitesView(_HubView):
     PANEL_TITLE = "⚑ Elite Pool"
 
     def _render_hub(self, client: HubClient):
-        return render_elites(client.elites("all"))
+        return render_elites(client.elites("generalist"))

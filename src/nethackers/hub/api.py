@@ -22,13 +22,11 @@ The hub holds no GitHub secret: every GitHub read uses the caller's own
 token.
 
 **Catalog-injection scope:** the injected ``catalog`` drives only this
-module's own listing/resolution endpoints -- ``GET /objectives``,
-``GET /objectives/{name}/batch``, and the name->spec resolution
-``GET /board``'s ``?objective=`` branch needs. ``GET /elites`` delegates
-straight to ``views.elites.read_elites``, which resolves against the
-*module* ``nethackers.hub.objectives.CATALOG`` -- not whatever ``catalog``
-this app was built with. In normal use (the default ``catalog=CATALOG``)
-every endpoint agrees, since both are the same dict object.
+module's own listing/resolution endpoints -- ``GET /objectives`` and the
+name->spec resolution ``GET /board``'s ``?scope=`` identity-kind branch
+needs. ``GET /elites`` resolves its own ``?scope=`` purely via
+``views.boards.resolve_scope`` (roles/facets/identities/``"generalist"``)
+-- it never touches ``catalog`` at all, injected or module-level.
 """
 
 from __future__ import annotations
@@ -48,7 +46,9 @@ from pydantic import BaseModel
 
 from nethackers.contracts.models import Evidence, ObjectiveSpec
 from nethackers.hub.auth import AuthError, AuthProvider, GitHubAppAuth, LocalStubAuth
+from nethackers.hub.envelope import envelope
 from nethackers.hub.github import GitHubRead, GitHubReadError
+from nethackers.hub.ids import program_id
 from nethackers.hub.objectives import CATALOG
 from nethackers.hub.poll import PollValidationError, clean_vote
 from nethackers.hub.store import Store
@@ -59,17 +59,16 @@ from nethackers.hub.validate import (
     WrongOwner,
     register,
 )
-from nethackers.hub.views.attainment import read_attainment
-from nethackers.hub.views.baseline import read_baseline
-from nethackers.hub.views.boards import (
-    aggregate_board,
-    board,
-    coverage_board,
-    firsts_board,
-    resolve_scope,
+from nethackers.hub.views.achievements import (
+    coverage as achievements_coverage,
+    firsts as achievements_firsts,
+    milestones as achievements_milestones,
 )
+from nethackers.hub.views.baseline import read_baseline
+from nethackers.hub.views.boards import aggregate_board, board, resolve_scope
 from nethackers.hub.views.elites import read_elites
-from nethackers.hub.views.hackers import hacker_board
+from nethackers.hub.views.hackers import hacker_board, leaders as hackers_leaders
+from nethackers.hub.views.programs import get_program, list_programs
 from nethackers.hub.views.progress import read_progress
 from nethackers.hub.views.solution import read_solution_frontier
 from nethackers.hub.views.stats import read_stats
@@ -86,13 +85,6 @@ def _dict_audio_path() -> Path:
         "NETHACKERS_DICT_AUDIO",
         str(Path(__file__).parent / "web" / "dictionary.mp3"),
     ))
-
-# GET /search's column list, local to this module -- the context calls for
-# keeping this one small SELECT in api.py rather than adding a store.py
-# method for it.
-_SEARCH_COLUMNS: tuple[str, ...] = (
-    "digest", "repo", "commit_sha", "owner", "root", "entrypoint", "registered_at",
-)
 
 
 class RegisterRequest(BaseModel):
@@ -199,8 +191,8 @@ def create_app(
         return read_baseline(store)
 
     @app.get("/progress")
-    def progress(objective: str | None = None, tier: str = "self-reported") -> dict[str, Any]:
-        return read_progress(store, objective=objective, tier=tier)
+    def progress(scope: str | None = None, tier: str = "self-reported") -> dict[str, Any]:
+        return read_progress(store, scope=scope, tier=tier)
 
     @app.get("/objectives")
     def list_objectives() -> list[dict[str, Any]]:
@@ -214,96 +206,113 @@ def create_app(
             for spec in catalog.values()
         ]
 
-    @app.get("/objectives/{name}/batch")
-    def objective_batch(name: str) -> dict[str, Any]:
-        spec = catalog.get(name)
-        if spec is None:
-            raise HTTPException(status_code=404, detail=f"unknown objective: {name!r}")
-        return {"name": name, "batch": [[seed, character] for seed, character in spec.batch]}
+    @app.get("/achievements/milestones")
+    def achievements_milestones_route(identity: str | None = None) -> dict[str, Any]:
+        return envelope(achievements_milestones(store, identity=identity), identity=identity)
 
-    @app.get("/attainment")
-    def attainment(identity: str | None = None) -> list[dict[str, Any]]:
-        return read_attainment(store, identity=identity)
+    @app.get("/achievements/coverage")
+    def achievements_coverage_route() -> dict[str, Any]:
+        return envelope(achievements_coverage(store))
+
+    @app.get("/achievements/firsts")
+    def achievements_firsts_route() -> dict[str, Any]:
+        return envelope(achievements_firsts(store))
 
     @app.get("/elites")
-    def elites(objective: str) -> list[dict[str, Any]]:
-        if objective not in catalog:
-            raise HTTPException(status_code=404, detail=f"unknown objective: {objective!r}")
-        return read_elites(store, objective=objective)
+    def elites(scope: str = "generalist", tier: str = "self-reported") -> dict[str, Any]:
+        try:
+            rows = read_elites(store, scope=scope, tier=tier)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=f"unknown scope: {scope!r}") from e
+        return envelope(rows, scope=scope, tier=tier)
 
     @app.get("/board")
     def get_board(
-        objective: str | None = None,
-        metric: str | None = None,
+        scope: str = "generalist",
         tier: str = "self-reported",
-    ) -> list[dict[str, Any]]:
-        if (objective is None) == (metric is None):
+        metric: str | None = None,
+    ) -> dict[str, Any]:
+        # ?metric= (coverage/firsts) is retired -- those now live at
+        # /achievements/coverage|/firsts (Part 1). Reject explicitly rather
+        # than silently ignoring it and returning the (unrelated) ?scope=
+        # board, which would mask a caller still on the old contract.
+        if metric is not None:
             raise HTTPException(
-                status_code=400, detail="specify exactly one of ?objective= or ?metric="
+                status_code=400,
+                detail="?metric= is gone; use /achievements/coverage or /achievements/firsts",
             )
-        if objective is not None:
-            # only identities are single-objective boards; random/all are
-            # retired (Task A1) and generalist/role are always a
-            # macro-average over their identity set.
-            if objective in catalog and catalog[objective].kind == "identity":
-                return board(store, catalog[objective], tier=tier)
+        if scope in catalog and catalog[scope].kind == "identity":
+            rows = board(store, catalog[scope], tier=tier)
+        else:
             try:
-                _kind, ids = resolve_scope(objective)
+                _kind, ids = resolve_scope(scope)
             except ValueError as e:
-                raise HTTPException(
-                    status_code=404, detail=f"unknown objective: {objective!r}"
-                ) from e
-            return aggregate_board(store, ids, tier=tier)
-        if metric == "coverage":
-            return coverage_board(store)
-        if metric == "firsts":
-            return firsts_board(store)
-        raise HTTPException(status_code=400, detail=f"unknown metric: {metric!r}")
+                raise HTTPException(status_code=404, detail=f"unknown scope: {scope!r}") from e
+            rows = aggregate_board(store, ids, tier=tier)
+        return envelope(rows, scope=scope, tier=tier)
 
     @app.get("/hackers")
-    def hackers(
-        objective: str = "generalist", tier: str = "self-reported"
-    ) -> list[dict[str, Any]]:
+    def hackers(scope: str = "generalist", tier: str = "self-reported") -> dict[str, Any]:
         try:
-            _kind, ids = resolve_scope(objective)
+            _kind, ids = resolve_scope(scope)
         except ValueError as e:
-            raise HTTPException(
-                status_code=404, detail=f"unknown objective: {objective!r}"
-            ) from e
-        return hacker_board(store, ids, tier=tier)
+            raise HTTPException(status_code=404, detail=f"unknown scope: {scope!r}") from e
+        return envelope(hacker_board(store, ids, tier=tier), scope=scope, tier=tier)
 
     @app.get("/hackers/random")
-    def hackers_random(n: int = 20) -> list[str]:
+    def hackers_random(n: int = 20) -> dict[str, Any]:
         """Up to ``n`` (clamped to 20) random registered hacker handles,
         sampled server-side -- names for the dungeon-wall @username runners.
         Cheaper than /hackers: no coverage/mean aggregation."""
-        return store.random_owners(max(0, min(20, n)))
+        return envelope(store.random_owners(max(0, min(20, n))), n=n)
 
-    @app.get("/solutions/{digest}")
-    def get_solution(digest: str) -> dict[str, Any]:
-        solution = store.get_solution(digest)
-        if solution is None:
-            raise HTTPException(status_code=404, detail=f"unknown solution digest: {digest!r}")
-        return solution
+    @app.get("/hackers/leaders")
+    def hackers_leaders_route(by: str, tier: str = "self-reported") -> dict[str, Any]:
+        try:
+            rows = hackers_leaders(store, by, tier=tier)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return envelope(rows, by=by, tier=tier)
 
-    @app.get("/solutions/{digest}/frontier")
-    def solution_frontier(digest: str) -> list[dict[str, Any]]:
-        if store.get_solution(digest) is None:
-            raise HTTPException(status_code=404, detail=f"unknown solution digest: {digest!r}")
-        return read_solution_frontier(store, digest)
+    @app.get("/programs")
+    def programs(owner: str | None = None, limit: int = 50, offset: int = 0) -> dict[str, Any]:
+        return envelope(list_programs(store, owner=owner, limit=limit, offset=offset), owner=owner)
 
-    @app.get("/search")
-    def search(owner: str | None = None, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
-        columns_sql = ", ".join(_SEARCH_COLUMNS)
-        sql = f"SELECT {columns_sql} FROM solutions"
-        params: list[Any] = []
-        if owner is not None:
-            sql += " WHERE owner = ?"
-            params.append(owner)
-        sql += " ORDER BY registered_at DESC LIMIT ? OFFSET ?"
-        params.extend([limit, offset])
-        rows = store.conn.execute(sql, params).fetchall()
-        return [dict(zip(_SEARCH_COLUMNS, row, strict=True)) for row in rows]
+    @app.get("/programs/{program_id}/identities")
+    def program_identities(program_id: str) -> dict[str, Any]:
+        digest = store.digest_for_program_id(program_id)
+        if digest is None:
+            raise HTTPException(status_code=404, detail=f"unknown program id: {program_id!r}")
+        return envelope(read_solution_frontier(store, digest), program_id=program_id)
+
+    @app.get("/programs/{program_id}")
+    def program(program_id: str) -> dict[str, Any]:
+        prog = get_program(store, program_id)
+        if prog is None:
+            raise HTTPException(status_code=404, detail=f"unknown program id: {program_id!r}")
+        return prog
+
+    # TODO(launch): /atoms is an unbounded full-table read -- paginate before
+    # public exposure (see hub security audit).
+    @app.get("/atoms")
+    def atoms(program: str | None = None, identity: str | None = None,
+              tier: str | None = None) -> dict[str, Any]:
+        filters: dict[str, Any] = {}
+        if program is not None:
+            digest = store.digest_for_program_id(program)
+            if digest is None:
+                return envelope([], program=program, identity=identity, tier=tier)
+            filters["solution_digest"] = digest
+        if identity is not None:
+            filters["identity"] = identity
+        if tier is not None:
+            filters["tier"] = tier
+        rows = []
+        for atom in store.iter_atoms(**filters):
+            d = atom.to_dict()
+            d["program_id"] = program_id(d.pop("solution_digest"))
+            rows.append(d)
+        return envelope(rows, program=program, identity=identity, tier=tier)
 
     @app.post("/register")
     def register_solution(

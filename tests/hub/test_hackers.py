@@ -58,7 +58,7 @@ def test_hacker_board_unions_best_per_identity_across_a_persons_solutions(tmp_pa
     assert abs(by_owner["dun"]["mean_progression"] - 0.55) < 1e-9  # best(0.6 on i0), 0.5 on i1
     assert by_owner["ako"]["coverage"] == 1
     assert [r["owner"] for r in rows] == ["dun", "ako"]            # coverage-first
-    assert rows[0]["total"] == 3
+    assert rows[0]["identities_total"] == 3
 
 
 def test_hacker_board_empty_when_no_atoms(tmp_path):

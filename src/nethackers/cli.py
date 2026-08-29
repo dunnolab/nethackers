@@ -29,8 +29,8 @@ and ``-o``/``--output`` (default ``"auto"``, overridable via
 ``$NETHACKERS_OUTPUT``; replaces the old boolean ``--json``) both live on a
 shared parent parser (``_common_parser``) carried by every subcommand, so
 either flag works whether given before or after the subcommand name --
-e.g. both ``nethackers --hub URL board --objective random`` and
-``nethackers board --objective random --hub URL`` work; argparse only
+e.g. both ``nethackers --hub URL board --scope generalist`` and
+``nethackers board --scope generalist --hub URL`` work; argparse only
 re-applies a parent's default when the attribute isn't already set on the
 namespace, so whichever position actually supplies the flag wins.
 tests/test_cli_m2a.py exercises this wiring with ``HubClient``
@@ -74,12 +74,12 @@ from nethackers.harness.sandbox_preflight import (
 )
 from nethackers.hub.objectives import CATALOG
 from nethackers.hub.selector import resolve
+from nethackers.hub.views.boards import resolve_scope
 from nethackers.hubclient import credentials as _cred
 from nethackers.hubclient.auth import AuthError, TokenSource
 from nethackers.hubclient.client import (
     HubClient,
     HubUnreachable,
-    _short_digest,
     plain_frontier,
     render_board as plain_board,
     render_elites as plain_elites,
@@ -287,7 +287,7 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
             "NetHackers — a distributed effort to 'solve' NetHack by evolving "
             "deterministic symbolic players (built on AutoAscend), coordinated through "
             "a shared hub. This CLI browses the hub — the attainment map, ranking "
-            "boards, and elite solutions — and lets you evaluate and register your own. "
+            "boards, and elite programs — and lets you evaluate and register your own. "
             "Reads print a rich table in a terminal and JSON when piped; use -o to "
             "force a format."
         ),
@@ -433,28 +433,33 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
     m.add_argument(
         "--program", nargs="?", const="", default=None,
         help="Show one program across all identities (default: the champion). "
-        "Pass a digest to pick a specific solution.",
+        "Pass a program id to pick a specific one.",
     )
 
     el = sub.add_parser(
         "elites", parents=[common], formatter_class=RichHelpFormatter,
-        help="Show the elite pool for an objective.",
+        help="Show the elites (best programs per identity) for a scope.",
     )
-    el.add_argument("--objective", required=True, help="A catalog objective name.")
+    el.add_argument(
+        "--scope", default="generalist",
+        help="'generalist', a role (e.g. 'val'), a facet (e.g. 'race:elf'), "
+        "or a full identity (default: %(default)s).",
+    )
 
     b = sub.add_parser(
         "leaderboard", aliases=["board"], parents=[common],
         formatter_class=RichHelpFormatter,
-        help="Show the leaderboard — solutions ranked on an objective.",
+        help="Show the leaderboard — programs ranked by scope.",
     )
-    b.add_argument("--objective", default=None, help="A catalog objective name.")
     b.add_argument(
-        "--metric", default=None, help="'coverage' or 'firsts' (instead of --objective)."
+        "--scope", default="generalist",
+        help="'generalist', a role (e.g. 'val'), a facet (e.g. 'race:elf'), "
+        "or a full identity (default: %(default)s).",
     )
 
     se = sub.add_parser(
         "search", parents=[common], formatter_class=RichHelpFormatter,
-        help="Search registered solutions.",
+        help="Search registered programs.",
     )
     se.add_argument("--owner", default=None, help="Narrow to one owner login.")
     se.add_argument("--limit", type=int, default=50)
@@ -462,13 +467,13 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
 
     sh = sub.add_parser(
         "show", parents=[common], formatter_class=RichHelpFormatter,
-        help="Show one registered solution by digest.",
+        help="Show one registered program by id.",
     )
-    sh.add_argument("digest")
+    sh.add_argument("id")
 
     r = sub.add_parser(
         "register", parents=[common], formatter_class=RichHelpFormatter,
-        help="Register a repo@commit solution link with the hub (uses your stored login).",
+        help="Register a repo@commit program link with the hub (uses your stored login).",
     )
     r.add_argument("--repo", required=True, help="e.g. github.com/owner/name")
     r.add_argument("--commit", required=True, help="40-hex commit sha")
@@ -506,6 +511,13 @@ def _unknown_objective(name: str) -> str:
         f"unknown objective {name!r}. Use a full identity such as "
         f"'wiz-elf-cha-mal', a role (e.g. 'wiz'), a comma list, or a glob like "
         f"'*-elf-*-*' (the hub catalog has {len(CATALOG)} objectives)."
+    )
+
+
+def _unknown_scope(name: str) -> str:
+    return (
+        f"unknown scope {name!r}. Use 'generalist', a role (e.g. 'val'), "
+        f"a facet (e.g. 'race:elf'), or a full identity (e.g. 'wiz-elf-cha-mal')."
     )
 
 
@@ -715,8 +727,8 @@ def _run(argv: list[str] | None) -> int:
         note = ""
         scores: dict[str, float | None]
         if args.program is not None:
-            digest = args.program or None
-            if digest is None:
+            pid = args.program or None
+            if pid is None:
                 champ = champion(client)
                 if champ is None:
                     emit(
@@ -725,9 +737,9 @@ def _run(argv: list[str] | None) -> int:
                         plain=lambda s: "no ranked programs yet.",
                     )
                     return 0
-                digest, owner = champ
-                note = f"@{owner}/{_short_digest(digest)} — this one program across all identities"
-            scores = dict(champion_scores(client, digest))
+                pid, owner = champ
+                note = f"@{owner}/{pid} — this one program across all identities"
+            scores = dict(champion_scores(client, pid))
         else:
             scores = dict(universe_scores(client))
         om = overall_mean(scores)
@@ -741,19 +753,23 @@ def _run(argv: list[str] | None) -> int:
         return 0
 
     if args.cmd == "elites":
-        if args.objective not in CATALOG:
-            err.print(_unknown_objective(args.objective))
+        try:
+            resolve_scope(args.scope)
+        except ValueError:
+            err.print(_unknown_scope(args.scope))
             return 2
         client = HubClient(args.hub)
-        emit(client.elites(args.objective), args.output, table=rich_elites, plain=plain_elites)
+        emit(client.elites(args.scope), args.output, table=rich_elites, plain=plain_elites)
         return 0
 
     if args.cmd in ("leaderboard", "board"):
-        if args.objective is not None and args.objective not in CATALOG:
-            err.print(_unknown_objective(args.objective))
+        try:
+            resolve_scope(args.scope)
+        except ValueError:
+            err.print(_unknown_scope(args.scope))
             return 2
         client = HubClient(args.hub)
-        emit(client.board(args.objective, args.metric), args.output,
+        emit(client.board(scope=args.scope), args.output,
              table=rich_board, plain=plain_board)
         return 0
 
@@ -765,7 +781,7 @@ def _run(argv: list[str] | None) -> int:
 
     if args.cmd == "show":
         client = HubClient(args.hub)
-        emit(client.show(args.digest), args.output, table=rich_show, plain=plain_show)
+        emit(client.show(args.id), args.output, table=rich_show, plain=plain_show)
         return 0
 
     if args.cmd == "register":

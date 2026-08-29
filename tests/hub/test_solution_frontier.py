@@ -10,18 +10,14 @@ the ``atoms`` table.
 from __future__ import annotations
 
 import pytest
-from fastapi.testclient import TestClient
 
 from nethackers.contracts.models import Atom
-from nethackers.hub.api import create_app
-from nethackers.hub.auth import LocalStubAuth
 from nethackers.hub.objectives import IDENTITIES
 from nethackers.hub.store import Store
 from nethackers.hub.views.solution import read_solution_frontier
 
 DIGEST = "sha256:solution-a"
 OTHER_DIGEST = "sha256:solution-b"
-EMPTY_DIGEST = "sha256:solution-empty"
 
 # Two real identities the target digest has atoms on ("val-..." sorts
 # before "wiz-..." -- exercises the view's ORDER BY identity for real).
@@ -104,56 +100,3 @@ def test_read_solution_frontier_means_progression_per_identity_sorted(tmp_path):
     assert entries[1]["progression"] == pytest.approx(0.5)
     assert entries[1]["episodes"] == 2
     assert OTHER_IDENTITY not in [e["identity"] for e in entries]
-
-
-def _client(tmp_path) -> tuple[TestClient, Store]:
-    store = _new_store(tmp_path)
-    app = create_app(store, LocalStubAuth({}))
-    return TestClient(app), store
-
-
-def test_get_solution_frontier_200_for_known_digest_404_for_unknown(tmp_path):
-    # Property 2: GET /solutions/{digest}/frontier -> 200 with the same
-    # rows read_solution_frontier computes, for a digest with atoms; ->
-    # 404 (exact detail string, matching get_solution's) for a digest with
-    # no registered solution at all.
-    client, store = _client(tmp_path)
-    _seed(store, _frontier_atoms())
-
-    response = client.get(f"/solutions/{DIGEST}/frontier")
-
-    assert response.status_code == 200
-    entries = response.json()
-    assert [e["identity"] for e in entries] == [VAL_IDENTITY, WIZ_IDENTITY]
-    assert entries[0]["progression"] == pytest.approx(0.2)
-    assert entries[0]["episodes"] == 1
-    assert entries[1]["progression"] == pytest.approx(0.5)
-    assert entries[1]["episodes"] == 2
-
-    unknown = client.get("/solutions/sha256:does-not-exist/frontier")
-
-    assert unknown.status_code == 404
-    assert unknown.json()["detail"] == "unknown solution digest: 'sha256:does-not-exist'"
-
-
-def test_get_solution_frontier_200_empty_list_for_known_solution_with_no_atoms(tmp_path):
-    # Property 3 (spec's Testing section, frontier-view-design.md:139-140):
-    # a solution that IS registered but has zero atoms -> 200 with [] --
-    # distinct from the unknown-digest case above, which 404s. The view's
-    # GROUP BY over zero matching rows already yields zero groups; this is
-    # API-level coverage of that, not new behavior.
-    client, store = _client(tmp_path)
-    store.upsert_solution(
-        EMPTY_DIGEST,
-        repo="r",
-        commit_sha="c",
-        owner="sam",
-        root=".",
-        entrypoint="bot.py",
-        registered_at="2026-01-01T00:00:00Z",
-    )
-
-    response = client.get(f"/solutions/{EMPTY_DIGEST}/frontier")
-
-    assert response.status_code == 200
-    assert response.json() == []
