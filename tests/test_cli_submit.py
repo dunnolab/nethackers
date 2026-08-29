@@ -34,6 +34,11 @@ def _wire_gh(monkeypatch, *, gh="sam", sha="c" * 40):
     monkeypatch.setattr(cli, "ensure_repo", lambda slug: None)
     monkeypatch.setattr(cli, "publish_solution", lambda d, slug, *, message: sha)
     monkeypatch.setattr(cli, "eval_batch", lambda *a, **k: _FakeEvidence())
+    # submit scores locally exactly like eval (self-reported), so it carries
+    # the same arena-only preflight (this task's acquisition gap) -- stub it
+    # green so this stays hermetic, never shelling out to Docker.
+    monkeypatch.setattr(cli, "preflight_runtime", lambda **kw: None)
+    monkeypatch.setattr(cli, "ensure_image", lambda *a, **kw: None)
 
 
 def test_submit_publishes_and_registers(monkeypatch, tmp_path, capsys, clean_stage):
@@ -112,6 +117,8 @@ def test_submit_publish_error_is_friendly(monkeypatch, tmp_path):
     monkeypatch.setattr(cli, "gh_state", lambda: ("sam", "authed"))
     monkeypatch.setattr(cli, "ensure_repo", lambda slug: None)
     monkeypatch.setattr(cli, "eval_batch", lambda *a, **k: _FakeEvidence())
+    monkeypatch.setattr(cli, "preflight_runtime", lambda **kw: None)
+    monkeypatch.setattr(cli, "ensure_image", lambda *a, **kw: None)
 
     def boom(d, slug, *, message):
         raise PublishError("gh is not installed")

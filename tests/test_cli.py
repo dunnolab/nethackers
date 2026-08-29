@@ -18,8 +18,20 @@ from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
 from nethackers.hub.objectives import CATALOG
 
 
+def _stub_arena_preflight(monkeypatch):
+    # `eval`/`submit` gained a preflight (this task's acquisition gap): a
+    # working container runtime + the image being present, both ahead of
+    # eval_batch. Stub both green so these wiring tests -- which monkeypatch
+    # eval_batch itself and must never shell out to Docker -- stay hermetic;
+    # the real preflight_runtime/ensure_image logic is unit-tested in
+    # test_acquisition.py.
+    monkeypatch.setattr(C, "preflight_runtime", lambda **kw: None)
+    monkeypatch.setattr(C, "ensure_image", lambda *a, **kw: None)
+
+
 def test_cli_eval_invokes_eval_batch_with_resolved_objective(
         monkeypatch, capsys, tmp_path, clean_stage):
+    _stub_arena_preflight(monkeypatch)
     seen = {}
 
     def fake_eval_batch(solution, spec, image, *, now, max_parallel_evals=8):
@@ -56,6 +68,7 @@ def test_cli_eval_invokes_eval_batch_with_resolved_objective(
 
 
 def test_cli_eval_custom_image_is_passed_through(monkeypatch, capsys, tmp_path):
+    _stub_arena_preflight(monkeypatch)
     seen = {}
 
     def fake_eval_batch(solution, spec, image, *, now, max_parallel_evals=8):
@@ -78,6 +91,7 @@ def test_cli_eval_custom_image_is_passed_through(monkeypatch, capsys, tmp_path):
 
 
 def test_cli_eval_custom_max_parallel_evals_is_passed_through(monkeypatch, capsys, tmp_path):
+    _stub_arena_preflight(monkeypatch)
     seen = {}
 
     def fake_eval_batch(solution, spec, image, *, now, max_parallel_evals=8):

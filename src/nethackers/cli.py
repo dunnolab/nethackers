@@ -68,9 +68,10 @@ from nethackers.eval.runner import eval_batch
 from nethackers.harness.discovery import ModelInfo, list_models, preflight_model
 from nethackers.harness.launch import EvolveParams, _now, prepare_evolve
 from nethackers.harness.sandbox_preflight import (
-    build_mutator_image,
+    ensure_image,
     image_present,
     preflight as sandbox_preflight,
+    preflight_runtime,
     resolve_image,
 )
 from nethackers.hub.objectives import CATALOG
@@ -601,7 +602,19 @@ def _run(argv: list[str] | None) -> int:
         if spec is None:
             err.print(_unknown_objective(args.objective))
             return 2
+        # A plain eval only ever scores in the arena sandbox -- no operator
+        # (codex/claude) involved -- so this checks ONLY the runtime gate,
+        # never preflight_operator (spec S5.5's "two separate gates").
+        rt_err = preflight_runtime()
+        if rt_err is not None:
+            err.print(rt_err)
+            return 1
         image = resolve_image(args.image, "arena")
+        img_err = ensure_image(image, "arena",
+                               on_line=lambda ln: err.print(f"[dim]{ln}[/]"))
+        if img_err is not None:
+            err.print(img_err)
+            return 1
         evidence = eval_batch(
             Path(args.solution), spec, image, now=_now(),
             max_parallel_evals=args.max_parallel_evals,
@@ -645,19 +658,27 @@ def _run(argv: list[str] | None) -> int:
             return 1
         # One resolution covers every mutator-image use below (auto-provision,
         # EvolveParams, model preflight) -- never re-read args.mutator_image
-        # directly past this point.
+        # directly past this point. Same for the arena image: run_loop scores
+        # every iteration through it (harness/evaluate.py -> eval_batch), so it
+        # needs provisioning up front exactly like the mutator does -- an
+        # unset-up arena image would otherwise fail deep inside the first
+        # iteration instead of here, at Start.
         mut = resolve_image(args.mutator_image, "mutator")
-        # Auto-provision the sandbox image (users never run `make` themselves):
-        # if it isn't built yet, build it here with a one-time progress note.
-        if not image_present(mut):
-            err.print("[yellow]setting up the mutation sandbox[/] (first run — this "
-                      "compiles NLE and can take a few minutes)…")
-            berr = build_mutator_image(mut,
-                                       on_line=lambda ln: err.print(f"[dim]{ln}[/]"))
-            if berr is not None:
-                err.print(berr)
+        arena_img = resolve_image(args.image, "arena")
+        # Auto-provision both sandbox images (users never run `make`/`docker
+        # pull` themselves): whichever isn't present yet is acquired here with
+        # a one-time progress note.
+        for _ref, _kind in ((mut, "mutator"), (arena_img, "arena")):
+            if image_present(_ref):
+                continue
+            err.print(f"[yellow]setting up the {_kind} sandbox[/] (first run — this "
+                      "can take a few minutes)…")
+            ierr = ensure_image(_ref, _kind,
+                                on_line=lambda ln: err.print(f"[dim]{ln}[/]"))
+            if ierr is not None:
+                err.print(ierr)
                 return 1
-            err.print("[green]✓ sandbox ready[/]")
+            err.print(f"[green]✓ {_kind} sandbox ready[/]")
 
         _creds = _load_creds()
         # run.json + run wiring live in prepare_evolve, shared with the in-app
@@ -667,7 +688,7 @@ def _run(argv: list[str] | None) -> int:
             objective=args.objective, seed=str(args.seed), operator=args.operator,
             iterations=args.iterations,
             max_parallel_evals=args.max_parallel_evals,
-            image=resolve_image(args.image, "arena"), hub=args.hub, workdir=args.workdir,
+            image=arena_img, hub=args.hub, workdir=args.workdir,
             run_name=args.run_name,
             token=args.token or (_creds.access_token if _creds else config.OFFLINE_TOKEN),
             owner=args.owner or (_creds.login if _creds else config.OFFLINE_OWNER),
@@ -847,8 +868,18 @@ def _run(argv: list[str] | None) -> int:
         if spec is None:
             err.print(_unknown_objective(args.objective))
             return 2
-        # self-reported score: evaluate the local solution on the objective's batch
+        # self-reported score: evaluate the local solution on the objective's
+        # batch. Same arena-only gate as `eval` -- no operator/login involved.
+        rt_err = preflight_runtime()
+        if rt_err is not None:
+            err.print(rt_err)
+            return 1
         image = resolve_image(args.image, "arena")
+        img_err = ensure_image(image, "arena",
+                               on_line=lambda ln: err.print(f"[dim]{ln}[/]"))
+        if img_err is not None:
+            err.print(img_err)
+            return 1
         evidence = eval_batch(
             Path(args.solution_dir), spec, image, now=_now(),
             max_parallel_evals=args.max_parallel_evals,

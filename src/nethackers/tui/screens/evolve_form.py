@@ -33,7 +33,7 @@ from nethackers.harness.discovery import CliInfo, ModelInfo, probe_operator
 from nethackers.harness.launch import EvolveParams, prepare_evolve
 from nethackers.harness.models import EFFORTS, MODELS
 from nethackers.harness.sandbox_preflight import (
-    build_mutator_image,
+    ensure_image,
     image_present,
     preflight as sandbox_preflight,
     resolve_image,
@@ -341,29 +341,35 @@ class EvolveForm(Vertical):
         if msg is not None:
             self.query_one("#f_err", Static).update(msg)
             return
-        # The sandbox image is auto-provisioned: if it isn't built yet, build it
-        # (off the UI thread, streaming progress into #f_err) and launch once
-        # ready -- the user never runs `make`. Already built -> launch straight.
-        if image_present(params.mutator_image):
+        # Both sandbox images are auto-provisioned: if either isn't built/
+        # pulled yet, acquire it (off the UI thread, streaming progress into
+        # #f_err) and launch once ready -- the user never runs `make`/`docker
+        # pull`. The arena image needs this exactly as much as the mutator:
+        # run_loop scores every iteration through it (harness/evaluate.py), so
+        # provisioning it only here -- not mid-loop -- keeps a missing/stale
+        # arena image a fail-fast Start-time error instead of a confusing
+        # mid-run stall. Already present -> launch straight.
+        if image_present(params.mutator_image) and image_present(params.image):
             self._launch(params)
         else:
             self.query_one("#f_err", Static).update(
-                "[yellow]setting up the sandbox[/] (first run — compiling NLE, a few minutes)…")
-            self._build_then_launch(params)
+                "[yellow]setting up the sandbox[/] (first run — a few minutes)…")
+            self._provision_then_launch(params)
 
     def _launch(self, params: EvolveParams) -> None:
         plan = prepare_evolve(params)
         cast("NetHackersApp", self.app).start_run(plan)  # background run + open its monitor
 
     @work(exclusive=True, thread=True)
-    def _build_then_launch(self, params: EvolveParams) -> None:
+    def _provision_then_launch(self, params: EvolveParams) -> None:
         def _line(ln: str) -> None:
             self.app.call_from_thread(
                 lambda: self.query_one("#f_err", Static).update(
                     f"[yellow]setting up the sandbox…[/] [dim]{ln}[/]"))
-        err = build_mutator_image(params.mutator_image, on_line=_line)
-        if err is not None:
-            self.app.call_from_thread(
-                lambda: self.query_one("#f_err", Static).update(err))
-            return
+        for ref, kind in ((params.mutator_image, "mutator"), (params.image, "arena")):
+            err = ensure_image(ref, kind, on_line=_line)
+            if err is not None:
+                self.app.call_from_thread(
+                    lambda e=err: self.query_one("#f_err", Static).update(e))
+                return
         self.app.call_from_thread(self._launch, params)

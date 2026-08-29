@@ -294,9 +294,10 @@ async def test_effort_options_follow_selected_model(monkeypatch):
 
 
 async def test_missing_image_builds_then_launches(monkeypatch):
-    """When the sandbox image isn't built, Start builds it (off the UI thread,
-    streaming progress into #f_err) and launches once ready -- the user never
-    runs `make`."""
+    """When a sandbox image isn't built/pulled, Start acquires it (off the UI
+    thread, streaming progress into #f_err) and launches once ready -- the
+    user never runs `make`/`docker pull`. Both images (mutator + arena) go
+    through this."""
     seen: dict = {}
 
     def _fake_prepare(p, **k):
@@ -305,24 +306,25 @@ async def test_missing_image_builds_then_launches(monkeypatch):
 
     monkeypatch.setattr(ef, "prepare_evolve", _fake_prepare)
     monkeypatch.setattr(ef, "image_present", lambda *a, **k: False)   # not built -> build path
-    built: dict = {}
+    provisioned: list[tuple[str, str]] = []
 
-    def _build(image, on_line=None, **k):
-        built["image"] = image
+    def _ensure(ref, kind, on_line=None, **k):
+        provisioned.append((ref, kind))
         if on_line:
             on_line("compiling nle…")     # exercises the streamed-progress path
         return None                        # success
 
-    monkeypatch.setattr(ef, "build_mutator_image", _build)
+    monkeypatch.setattr(ef, "ensure_image", _ensure)
     app = _Host(None)
     async with app.run_test(size=(100, 40)) as pilot:
         app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
         app.query_one("#f_start", Button).press()
         await pilot.pause()
-        await app.workers.wait_for_complete()   # the build-then-launch worker
+        await app.workers.wait_for_complete()   # the provision-then-launch worker
         await pilot.pause()
-        assert built.get("image")                # the image was auto-built
-        assert seen.get("prepared") is True       # prepare_evolve ran after the build
+        kinds = {kind for _ref, kind in provisioned}
+        assert kinds == {"mutator", "arena"}      # both images were auto-provisioned
+        assert seen.get("prepared") is True       # prepare_evolve ran after provisioning
         assert isinstance(app.started, _Plan)     # and the plan reached start_run
 
 

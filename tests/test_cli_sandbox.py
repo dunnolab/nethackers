@@ -202,11 +202,12 @@ def test_preflight_failure_never_reaches_run_loop(tmp_path, monkeypatch, capsys)
 
 def test_missing_image_triggers_auto_build_then_proceeds(tmp_path, monkeypatch):
     seed = _seed(tmp_path)
-    built = {}
+    provisioned = []
     monkeypatch.setattr(cli, "sandbox_preflight", lambda *a, **kw: None)
-    monkeypatch.setattr(cli, "image_present", lambda *a, **kw: False)   # not built yet
-    monkeypatch.setattr(cli, "build_mutator_image",
-                        lambda image, **kw: built.update(image=image))  # returns None (ok)
+    monkeypatch.setattr(cli, "image_present", lambda *a, **kw: False)   # nothing built yet
+    monkeypatch.setattr(
+        cli, "ensure_image",
+        lambda ref, kind, **kw: provisioned.append((ref, kind)) or None)  # returns None (ok)
     captured = {}
     monkeypatch.setattr(launch, "run_loop",
                         lambda **kw: captured.update(kw) or [], raising=False)
@@ -214,7 +215,8 @@ def test_missing_image_triggers_auto_build_then_proceeds(tmp_path, monkeypatch):
     rc = cli._run(_evolve_argv(seed, tmp_path, "--mutator-image", "my/mut:tag"))
 
     assert rc == 0
-    assert built.get("image") == "my/mut:tag"     # auto-built the requested image
+    assert ("my/mut:tag", "mutator") in provisioned     # auto-provisioned the requested image
+    assert any(kind == "arena" for _ref, kind in provisioned)  # the arena image too
     assert "operator" in captured                  # and then the run proceeded
 
 
@@ -222,8 +224,9 @@ def test_auto_build_failure_exits_nonzero_without_starting(tmp_path, capsys, mon
     seed = _seed(tmp_path)
     monkeypatch.setattr(cli, "sandbox_preflight", lambda *a, **kw: None)
     monkeypatch.setattr(cli, "image_present", lambda *a, **kw: False)
-    monkeypatch.setattr(cli, "build_mutator_image",
-                        lambda *a, **kw: "[red]sandbox setup failed[/] — build did not complete")
+    monkeypatch.setattr(
+        cli, "ensure_image",
+        lambda *a, **kw: "[red]sandbox setup failed[/] — build did not complete")
 
     def _boom(**kw):
         raise AssertionError("run_loop must not start when the build failed")
