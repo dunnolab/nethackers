@@ -50,6 +50,7 @@ from nethackers.contracts.models import Evidence, ObjectiveSpec
 from nethackers.hub.auth import AuthError, AuthProvider, GitHubAppAuth, LocalStubAuth
 from nethackers.hub.envelope import envelope
 from nethackers.hub.github import GitHubRead, GitHubReadError
+from nethackers.hub.ids import program_id
 from nethackers.hub.objectives import CATALOG
 from nethackers.hub.poll import PollValidationError, clean_vote
 from nethackers.hub.store import Store
@@ -345,6 +346,26 @@ def create_app(
         if prog is None:
             raise HTTPException(status_code=404, detail=f"unknown program id: {program_id!r}")
         return prog
+
+    @app.get("/atoms")
+    def atoms(program: str | None = None, identity: str | None = None,
+              tier: str | None = None) -> dict[str, Any]:
+        filters: dict[str, Any] = {}
+        if program is not None:
+            digest = store.digest_for_program_id(program)
+            if digest is None:
+                return envelope([], program=program, identity=identity, tier=tier)
+            filters["solution_digest"] = digest
+        if identity is not None:
+            filters["identity"] = identity
+        if tier is not None:
+            filters["tier"] = tier
+        rows = []
+        for atom in store.iter_atoms(**filters):
+            d = atom.to_dict()
+            d["program_id"] = program_id(d.pop("solution_digest"))
+            rows.append(d)
+        return envelope(rows, program=program, identity=identity, tier=tier)
 
     @app.post("/register")
     def register_solution(
