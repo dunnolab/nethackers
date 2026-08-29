@@ -61,9 +61,11 @@ from nethackers.hub.validate import (
     WrongOwner,
     register,
 )
-from nethackers.hub.views.achievements import coverage as achievements_coverage
-from nethackers.hub.views.achievements import firsts as achievements_firsts
-from nethackers.hub.views.achievements import milestones as achievements_milestones
+from nethackers.hub.views.achievements import (
+    coverage as achievements_coverage,
+    firsts as achievements_firsts,
+    milestones as achievements_milestones,
+)
 from nethackers.hub.views.attainment import read_attainment
 from nethackers.hub.views.baseline import read_baseline
 from nethackers.hub.views.boards import (
@@ -75,8 +77,8 @@ from nethackers.hub.views.boards import (
 )
 from nethackers.hub.views.elites import read_elites
 from nethackers.hub.views.hackers import hacker_board, leaders as hackers_leaders
-from nethackers.hub.views.progress import read_progress
 from nethackers.hub.views.programs import get_program, list_programs
+from nethackers.hub.views.progress import read_progress
 from nethackers.hub.views.solution import read_solution_frontier
 from nethackers.hub.views.stats import read_stats
 

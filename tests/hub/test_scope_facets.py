@@ -1,5 +1,6 @@
 import pytest
-from nethackers.hub.objectives import IDENTITIES, GENDERS
+
+from nethackers.hub.objectives import GENDERS, IDENTITIES
 from nethackers.hub.views.boards import resolve_scope
 
 
@@ -12,7 +13,9 @@ def test_gender_vocab():
 
 
 def test_facet_scopes_resolve_by_position():
-    assert resolve_scope("role:val") == ("role", tuple(i for i in IDENTITIES if i.split("-")[0] == "val"))
+    assert resolve_scope("role:val") == (
+        "role", tuple(i for i in IDENTITIES if i.split("-")[0] == "val")
+    )
     assert _facet(resolve_scope("race:elf")[1], 1, "elf")
     assert _facet(resolve_scope("align:law")[1], 2, "law")
     assert _facet(resolve_scope("gender:fem")[1], 3, "fem")

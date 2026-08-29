@@ -1,5 +1,5 @@
-import pytest
 from fastapi.testclient import TestClient
+
 from nethackers.contracts.models import Atom
 from nethackers.hub.api import create_app
 from nethackers.hub.auth import LocalStubAuth
@@ -10,7 +10,8 @@ DIGEST = "github.com/vkurenkov/nethacker@503686e9ec14e098912850c2587dfab3123e759
 
 
 def _client(tmp_path):
-    store = Store(tmp_path / "h.sqlite3"); store.init_schema()
+    store = Store(tmp_path / "h.sqlite3")
+    store.init_schema()
     store.upsert_solution(DIGEST, repo="github.com/vkurenkov/nethacker",
                           commit_sha="503686e9ec14e098912850c2587dfab3123e759b",
                           owner="vkurenkov", root=".", entrypoint="bot.py",

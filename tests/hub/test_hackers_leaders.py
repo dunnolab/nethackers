@@ -1,5 +1,6 @@
 # tests/hub/test_hackers_leaders.py
 from fastapi.testclient import TestClient
+
 from nethackers.contracts.models import Atom
 from nethackers.hub.api import create_app
 from nethackers.hub.auth import LocalStubAuth
@@ -7,7 +8,8 @@ from nethackers.hub.store import Store
 
 
 def _client(tmp_path):
-    store = Store(tmp_path / "h.sqlite3"); store.init_schema()
+    store = Store(tmp_path / "h.sqlite3")
+    store.init_schema()
     store.upsert_solution("github.com/o/r@c", repo="github.com/o/r", commit_sha="c",
                           owner="sam", root=".", entrypoint="bot.py",
                           registered_at="2026-01-01T00:00:00Z")

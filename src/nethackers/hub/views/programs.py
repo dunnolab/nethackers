@@ -25,8 +25,10 @@ def list_programs(store: Store, owner: str | None = None, limit: int = 50,
     sql = f"SELECT {', '.join(_COLUMNS)} FROM solutions"
     params: list[Any] = []
     if owner is not None:
-        sql += " WHERE owner = ?"; params.append(owner)
-    sql += " ORDER BY registered_at DESC LIMIT ? OFFSET ?"; params += [limit, offset]
+        sql += " WHERE owner = ?"
+        params.append(owner)
+    sql += " ORDER BY registered_at DESC LIMIT ? OFFSET ?"
+    params += [limit, offset]
     rows = store.conn.execute(sql, params).fetchall()
     return [_row(dict(zip(_COLUMNS, r, strict=True))) for r in rows]
 
@@ -35,4 +37,7 @@ def get_program(store: Store, program_id_value: str) -> dict[str, Any] | None:
     digest = store.digest_for_program_id(program_id_value)
     if digest is None:
         return None
-    return _row(store.get_solution(digest))
+    row = store.get_solution(digest)
+    if row is None:
+        return None
+    return _row(row)
