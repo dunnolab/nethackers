@@ -90,6 +90,9 @@ module = [
 ]
 ignore_missing_imports = true
 
+[tool.uv]
+cache-keys = [{ file = "pyproject.toml" }, { file = "src/**/*.py" }]
+
 [tool.ruff]
 target-version = "py311"
 line-length = 100
