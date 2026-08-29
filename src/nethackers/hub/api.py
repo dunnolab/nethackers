@@ -74,7 +74,7 @@ from nethackers.hub.views.boards import (
     resolve_scope,
 )
 from nethackers.hub.views.elites import read_elites
-from nethackers.hub.views.hackers import hacker_board
+from nethackers.hub.views.hackers import hacker_board, leaders as hackers_leaders
 from nethackers.hub.views.progress import read_progress
 from nethackers.hub.views.programs import get_program, list_programs
 from nethackers.hub.views.solution import read_solution_frontier
@@ -296,6 +296,14 @@ def create_app(
         sampled server-side -- names for the dungeon-wall @username runners.
         Cheaper than /hackers: no coverage/mean aggregation."""
         return store.random_owners(max(0, min(20, n)))
+
+    @app.get("/hackers/leaders")
+    def hackers_leaders_route(by: str, tier: str = "self-reported") -> dict[str, Any]:
+        try:
+            rows = hackers_leaders(store, by, tier=tier)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        return envelope(rows, by=by, tier=tier)
 
     # ``:path`` (not the default converter) so a link-registered digest --
     # ``github.com/owner/repo@commit``, which carries slashes -- matches; the
