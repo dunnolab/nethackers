@@ -45,7 +45,7 @@ body{
     linear-gradient(rgba(255,255,255,.35),rgba(255,255,255,.35)),
     repeating-linear-gradient(0deg,transparent 0 3px,rgba(0,0,0,.012) 3px 4px);
 }
-.mono{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; }
+.mono, .masthead, #demo, #demoMsg, .msgbar, .od span, h2.sec .glyph, table.grid, table.fr, table.dtable, .identityboard, .term, .tomb, .refpop pre.ra, .wayh .wl, .src{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; }
 a{ color:var(--indigo); text-decoration:underline; text-underline-offset:2px; }
 a:visited{ color:var(--violet); }
 a:hover{ color:var(--red); background:#fff3b0; }
@@ -61,20 +61,20 @@ img{ max-width:100%; }
 
 /* MASTHEAD ----------------------------------------------------------------- */
 .masthead{ background:var(--screen); color:var(--screen-ink); position:relative; overflow:hidden;
-  font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; padding:14px 16px 12px; }
+   padding:14px 16px 12px; }
 .masthead pre{ margin:0; font-size:clamp(9px,2.1vw,15px); line-height:1.05; color:var(--gold);
   overflow-x:auto; white-space:pre; position:relative; z-index:1; }
 .masthead .sub{ margin-top:8px; font-size:.8rem; color:var(--screen-dim); position:relative; z-index:1; }
 /* ambient demo game: a faint dungeon behind the wordmark, with a tiny chase in progress */
 #demo{ position:absolute; top:10px; right:15px; margin:0; z-index:0; pointer-events:none;
-  font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:12px; line-height:1.12;
+   font-size:12px; line-height:1.12;
   color:var(--screen-dim); opacity:.34; white-space:pre; }
 #demo .you{ color:var(--gold); font-weight:700; }
 #demo .pet{ color:var(--green); font-weight:700; }
 #demo .gridbug{ color:var(--scr-red); font-weight:700; }
 #demo .corpse{ color:var(--scr-red); font-weight:700; }
 #demoMsg{ position:absolute; top:4px; right:18px; z-index:0; pointer-events:none; white-space:pre;
-  text-align:right; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace;
+  text-align:right; 
   font-size:10px; line-height:1.18; }
 #demoMsg.run{ color:var(--screen-dim); opacity:.34; }
 #demoMsg.yasd{ color:var(--scr-red); opacity:.55; font-weight:700; }
@@ -84,7 +84,7 @@ img{ max-width:100%; }
 @keyframes blink{ 50%{ opacity:0; } }
 
 /* marquee message line (the NetHack top line) ------------------------------ */
-.msgbar{ background:#000; color:var(--screen-ink); font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace;
+.msgbar{ background:#000; color:var(--screen-ink); 
   font-size:.82rem; border-top:1px solid #2a2a3a; overflow:hidden; white-space:nowrap; }
 .msgbar__in{ display:inline-block; padding:5px 0; white-space:nowrap;
   animation:scrollmsg 96s linear infinite; }
@@ -98,32 +98,32 @@ img{ max-width:100%; }
 .sidebar{ border-right:1px solid var(--rule-soft); padding:16px 14px; font-size:.86rem; }
 .main{ padding:14px 20px 4px; min-width:0; }
 
-.sidebar h4{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.7rem; letter-spacing:.12em;
+.sidebar h4{  font-size:.7rem; letter-spacing:.12em;
   text-transform:uppercase; color:var(--indigo); margin:0 0 6px; border-bottom:1px solid var(--rule-soft); padding-bottom:3px; }
-.idx{ list-style:none; margin:0 0 16px; padding:0; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.82rem; }
+.idx{ list-style:none; margin:0 0 16px; padding:0;  font-size:.82rem; }
 .idx li{ margin:2px 0; }
 .idx a{ text-decoration:none; }
 .idx a:hover{ text-decoration:underline; }
 .idx .k{ color:var(--red); }
 .ext{ list-style:none; margin:0 0 16px; padding:0; font-size:.85rem; }
 .ext li{ margin:3px 0; }
-.ext .c{ color:var(--indigo-2); font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; }
+.ext .c{ color:var(--indigo-2);  font-size:.8rem; }
 
 /* hit counter -------------------------------------------------------------- */
 .counter{ margin:0 0 6px; }
 .od{ display:inline-flex; gap:2px; background:#000; padding:3px; border:2px inset var(--silver); }
-.od span{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-weight:700; color:var(--gold);
+.od span{  font-weight:700; color:var(--gold);
   background:#111; padding:1px 3px; font-size:.9rem; }
-.counter .cap{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.68rem; color:var(--indigo-2); margin-top:3px; }
+.counter .cap{  font-size:.68rem; color:var(--indigo-2); margin-top:3px; }
 .reg{ display:flex; flex-direction:column; gap:6px; margin:2px 0 14px; }
 .regrow{ display:flex; align-items:center; gap:8px; }
 .reg .od span{ font-size:.82rem; }
-.reglbl{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.72rem; color:var(--indigo-2); }
-.updated{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.72rem; color:#6b6b72; margin:10px 0 14px; }
+.reglbl{  font-size:.72rem; color:var(--indigo-2); }
+.updated{  font-size:.72rem; color:#6b6b72; margin:10px 0 14px; }
 
 /* badges ------------------------------------------------------------------- */
 .badges{ display:flex; flex-direction:column; gap:6px; margin-top:8px; }
-.badge{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.62rem; line-height:1.25; color:#fff;
+.badge{  font-size:.62rem; line-height:1.25; color:#fff;
   padding:4px 6px; border:1px solid #000; text-align:center; text-decoration:none; display:block; }
 .badge.b1:hover{ background:var(--indigo-2); }
 .badge.b1{ background:var(--indigo); }
@@ -134,12 +134,12 @@ img{ max-width:100%; }
 /* MAIN sections ------------------------------------------------------------ */
 .main section{ scroll-margin-top:12px; }
 h2.sec{ font-size:1.5rem; color:var(--indigo); margin:.2rem 0 .1rem; }
-h2.sec .glyph{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; color:var(--red); }
+h2.sec .glyph{  color:var(--red); }
 .lead{ margin:.3rem 0 .8rem; }
 .lead b{ color:var(--indigo); }
-.note{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; color:#5c5c64; }
+.note{  font-size:.78rem; color:#5c5c64; }
 hr.rule{ border:0; height:0; border-top:1px solid var(--silver-lo); border-bottom:1px solid var(--silver-hi); margin:22px 0; }
-.new{ color:var(--red); font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-weight:700; font-size:.68rem; }
+.new{ color:var(--red);  font-weight:700; font-size:.68rem; }
 .blink{ animation:blink2 1.2s steps(1) infinite; }
 @keyframes blink2{ 50%{ opacity:.25; } }
 
@@ -148,17 +148,17 @@ hr.rule{ border:0; height:0; border-top:1px solid var(--silver-lo); border-botto
 ul.hard{ margin:.4rem 0 .3rem; padding-left:1.25rem; }
 ul.hard li{ margin:.4rem 0; }
 ul.hard li b{ color:var(--indigo); }
-.sig{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.82rem; color:var(--indigo-2); }
-.factoids{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; margin:.6rem 0 0; padding-left:1.1rem; }
+.sig{  font-size:.82rem; color:var(--indigo-2); }
+.factoids{  font-size:.8rem; margin:.6rem 0 0; padding-left:1.1rem; }
 .factoids li{ margin:2px 0; }
 
 /* controls (retro) */
 .controls{ display:grid; grid-template-columns:max-content 1fr; gap:7px 14px; align-items:center;
-  margin:.6rem 0 .8rem; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; max-width:600px; }
+  margin:.6rem 0 .8rem;  font-size:.8rem; max-width:600px; }
 .controls .lbl{ color:#55555c; text-align:right; white-space:nowrap; }
 .controls .grp{ display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
 .bevel{ background:var(--silver); border:2px solid; border-color:var(--silver-hi) var(--silver-lo) var(--silver-lo) var(--silver-hi);
-  padding:3px 10px; cursor:pointer; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; color:#111; }
+  padding:3px 10px; cursor:pointer;  font-size:.78rem; color:#111; }
 .bevel:active,.bevel[aria-pressed="true"]{ border-color:var(--silver-lo) var(--silver-hi) var(--silver-hi) var(--silver-lo);
   background:#b6b6b1; }
 .bevel[aria-pressed="true"]{ color:var(--indigo); font-weight:700; }
@@ -167,7 +167,7 @@ select.bevel{ padding:3px 4px; }
 
 /* high-score TABLE --------------------------------------------------------- */
 .tablewrap{ overflow-x:auto; border:1px solid var(--silver-lo); }
-table.grid{ width:100%; border-collapse:collapse; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.83rem; background:#fff; }
+table.grid{ width:100%; border-collapse:collapse;  font-size:.83rem; background:#fff; }
 table.grid caption{ text-align:left; background:var(--indigo); color:#fff; font-weight:700; padding:4px 8px;
   font-size:.78rem; letter-spacing:.04em; }
 .grid th{ background:var(--silver); border:1px solid var(--silver-lo); padding:3px 8px; text-align:right;
@@ -188,7 +188,7 @@ table.grid caption{ text-align:left; background:var(--indigo); color:#fff; font-
 .cov .tot{ color:#9a9aa6; }
 .base td{ background:#eef0f6 !important; color:#6a6a72; }
 .base .tag{ font-size:.64rem; border:1px solid var(--silver-lo); padding:0 3px; }
-.more{ text-align:center; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; color:var(--indigo);
+.more{ text-align:center;  font-size:.8rem; color:var(--indigo);
   cursor:pointer; padding:6px; user-select:none; background:#f0f0f4; border:1px solid var(--silver-lo); border-top:0; }
 .more:hover{ background:#fff3b0; color:var(--red); }
 
@@ -198,16 +198,16 @@ table.grid caption{ text-align:left; background:var(--indigo); color:#fff; font-
 .fametable .roles{ white-space:normal; text-align:left; min-width:190px; }
 .famelog{ font-size:.75rem !important; }
 .famelog td{ font-variant-numeric:tabular-nums; }
-.emptyblock{ color:#777780; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; }
+.emptyblock{ color:#777780;  font-size:.78rem; }
 
 /* FRONTIER heatmap --------------------------------------------------------- */
 .frtop{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:.3rem 0 .7rem; }
-.regime{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; }
+.regime{  font-size:.8rem; }
 .regime label{ cursor:pointer; margin-right:12px; }
-.gridnote{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; color:#55555c; margin:.2rem 0 .8rem; }
+.gridnote{  font-size:.78rem; color:#55555c; margin:.2rem 0 .8rem; }
 .gridnote b{ color:var(--indigo); }
 .rolegrid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(238px,1fr)); gap:10px; align-items:start; }
-table.fr{ width:100%; table-layout:fixed; border-collapse:collapse; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.76rem; }
+table.fr{ width:100%; table-layout:fixed; border-collapse:collapse;  font-size:.76rem; }
 .fr col.c1{ width:44%; } .fr col.c2{ width:28%; } .fr col.c3{ width:28%; }
 .fr td.vn{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .fr tr.frhead td{ background:#eeeef2; border-color:var(--silver-lo); }
@@ -226,31 +226,31 @@ table.fr{ width:100%; table-layout:fixed; border-collapse:collapse; font-family:
 .fr td.dpos,.fr .dpos{ color:#1a7a2e; } .fr td.dneg,.fr .dneg{ color:var(--red); } .fr td.dz,.fr .dz{ color:#9a9aa6; }
 .fr .aachip{ color:#9a9aa6; font-style:normal; font-size:.64rem; letter-spacing:.08em; }
 .legend{ display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; margin-top:12px;
-  font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.72rem; color:#55555c; }
+   font-size:.72rem; color:#55555c; }
 .legend .ramp{ display:inline-flex; height:11px; width:120px; border:1px solid var(--silver-lo); }
 .legend .ramp i{ flex:1; } .legend .sw{ display:inline-block; width:11px; height:11px; border:1px solid #000; vertical-align:-1px; }
 
 /* CONTRIBUTE --------------------------------------------------------------- */
-.menu2{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.9rem; margin:.4rem 0 1rem; }
+.menu2{  font-size:.9rem; margin:.4rem 0 1rem; }
 .menu2 div{ margin:5px 0; }
 .menu2 .k{ color:var(--red); font-weight:700; }
 .menu2 .d{ color:#55555c; }
 .wayh{ font-family:"Times New Roman","Liberation Serif","Nimbus Roman",Times,serif; font-weight:700; color:var(--indigo); font-size:1.2rem; margin:1.3rem 0 .3rem; }
-.wayh .wl{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; color:var(--red); margin-right:.35rem; }
-#contribute p a{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.86rem; }
+.wayh .wl{  color:var(--red); margin-right:.35rem; }
+#contribute p a{  font-size:.86rem; }
 #contribute .term{ max-width:660px; }
 .term{ background:var(--screen); color:var(--screen-ink); border:1px solid #000; padding:9px 11px;
-  font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; line-height:1.65; overflow-x:auto; white-space:pre; }
+   font-size:.78rem; line-height:1.65; overflow-x:auto; white-space:pre; }
 .term .p{ color:var(--gold); } .term .c{ color:var(--screen-dim); }
-.linkbtn{ display:inline-block; margin-top:8px; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.82rem; }
-.card .kicker{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.7rem; letter-spacing:.08em; text-transform:uppercase; color:var(--red); }
+.linkbtn{ display:inline-block; margin-top:8px;  font-size:.82rem; }
+.card .kicker{  font-size:.7rem; letter-spacing:.08em; text-transform:uppercase; color:var(--red); }
 
 /* inline subhead within a prose section */
 .subh{ font-family:"Times New Roman","Liberation Serif","Nimbus Roman",Times,serif; font-weight:700; color:var(--indigo);
   font-size:1.14rem; margin:1.2rem 0 .3rem; }
 
 /* the "state of the dungeon" record table (static, left-aligned) */
-table.dtable{ width:100%; border-collapse:collapse; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace;
+table.dtable{ width:100%; border-collapse:collapse; 
   font-size:.78rem; background:#fff; margin:.8rem 0 .3rem; }
 table.dtable caption{ text-align:left; background:var(--indigo); color:#fff; font-weight:700;
   padding:4px 8px; font-size:.74rem; letter-spacing:.03em; }
@@ -260,11 +260,11 @@ table.dtable caption{ text-align:left; background:var(--indigo); color:#fff; fon
 .dtable td.a{ text-align:center; font-weight:700; white-space:nowrap; }
 .dtable td.a.z{ color:var(--red); }
 .dtable tbody tr:nth-child(even) td{ background:#f6f6fa; }
-.dfn{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.72rem; color:#55555c; margin:6px 0 0; }
+.dfn{  font-size:.72rem; color:#55555c; margin:6px 0 0; }
 .dfn b{ color:var(--indigo); }
 
 /* the D1-D5 "what solving means" ladder */
-dl.ladder{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.82rem; margin:.5rem 0 .2rem;
+dl.ladder{  font-size:.82rem; margin:.5rem 0 .2rem;
   display:grid; grid-template-columns:max-content 1fr; gap:3px 12px; }
 dl.ladder dt{ color:var(--indigo); font-weight:700; }
 dl.ladder dd{ margin:0; color:#33333a; }
@@ -276,29 +276,29 @@ dl.ladder dd{ margin:0; color:#33333a; }
   border:1px solid var(--indigo); padding:9px 12px 10px;
   font-family:"Times New Roman","Liberation Serif","Nimbus Roman",Times,serif; font-size:.86rem; line-height:1.45; display:none; }
 .refpop.show{ display:block; }
-.refpop .rt{ display:block; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-weight:700; color:var(--indigo);
+.refpop .rt{ display:block;  font-weight:700; color:var(--indigo);
   font-size:.74rem; text-transform:uppercase; letter-spacing:.05em; margin-bottom:5px; }
 .refpop .rd{ margin:0; }
-.refpop pre.ra{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.74rem; line-height:1.12; color:var(--indigo-2);
+.refpop pre.ra{  font-size:.74rem; line-height:1.12; color:var(--indigo-2);
   background:#f3f2ea; border:1px solid var(--rule-soft); padding:6px 8px; margin:7px 0 3px; white-space:pre; overflow-x:auto; }
-.refpop .rs{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.74rem; margin-top:7px; border-top:1px solid var(--rule-soft); padding-top:5px; }
+.refpop .rs{  font-size:.74rem; margin-top:7px; border-top:1px solid var(--rule-soft); padding-top:5px; }
 .refpop .rs a{ display:block; margin:2px 0; color:var(--indigo); }
 .refpop .rs a:hover{ color:var(--red); }
 
 /* audience signpost box */
 .signpost{ border:1px solid var(--rule-soft); background:#f6f5ee; padding:9px 13px; margin:16px 0 2px; }
 .signpost>b{ color:var(--indigo); }
-.signpost .who{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.82rem; margin:6px 0 0; line-height:1.5; }
+.signpost .who{  font-size:.82rem; margin:6px 0 0; line-height:1.5; }
 .signpost .who .arr{ color:var(--red); font-weight:700; }
 
 /* FOOTER ------------------------------------------------------------------- */
 footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px 22px;
   background:#efefe9; }
 .footgrid{ display:grid; grid-template-columns:minmax(300px,.8fr) 1.4fr; gap:22px; align-items:center; }
-.tomb{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.64rem; line-height:1.12; color:#3a3a42;
+.tomb{  font-size:.64rem; line-height:1.12; color:#3a3a42;
   margin:0; white-space:pre; overflow-x:auto; justify-self:center; }
 .tomb .epi{ color:var(--red); }
-.footinfo{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.76rem; color:#55555c; }
+.footinfo{  font-size:.76rem; color:#55555c; }
 .footinfo a{ }
 .footinfo .row{ margin:3px 0; }
 .footinfo .disc{ margin-top:8px; color:#6a6a72; max-width:52ch; }
@@ -313,10 +313,10 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
   display:flex; flex-direction:column; }
 .win.identitydetail{ width:min(980px,96vw); }
 .win__title{ display:flex; align-items:center; gap:8px; background:var(--indigo); color:#fff;
-  font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; font-weight:700; padding:3px 6px; }
+   font-size:.78rem; font-weight:700; padding:3px 6px; }
 .win__title .x{ margin-left:auto; width:18px; height:18px; line-height:16px; text-align:center; cursor:pointer;
   background:var(--silver); color:#000; border:2px solid; border-color:var(--silver-hi) #000 #000 var(--silver-hi); font-weight:700; }
-.win__body{ background:#fff; margin:3px; padding:12px; overflow:auto; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; }
+.win__body{ background:#fff; margin:3px; padding:12px; overflow:auto;  }
 .kv{ display:grid; grid-template-columns:max-content 1fr; gap:3px 12px; font-size:.82rem; margin-bottom:12px; }
 .kv .k{ color:#55555c; } .kv .v{ color:#111; } .kv .v a{ word-break:break-all; }
 .minihead{ font-size:.74rem; color:#55555c; margin:.2rem 0 .5rem; }
@@ -359,7 +359,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
   /* --- The Nethack Dictionary: audio-reactive dungeon wall around the page frame --- */
   #dictviz{ position:fixed; inset:0; width:100%; height:100%; z-index:0; pointer-events:none; display:block; }
   #dictbar{ position:fixed; left:0; right:0; bottom:0; z-index:40; background:var(--screen); color:var(--screen-ink);
-    border-top:2px solid #000; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace;
+    border-top:2px solid #000; 
     font-size:.84rem; display:flex; align-items:center; justify-content:center; gap:14px; padding:7px 14px; flex-wrap:wrap; }
   #dictbar .dplay{ cursor:pointer; min-width:40px; font:inherit; padding:2px 9px; }
   #dictbar .dplay.loading{ color:var(--gold); animation:dpulse .9s ease-in-out infinite; }
@@ -381,17 +381,17 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 .orc-q{ margin:.7rem 0 .2rem; }
 .orc-q .qh{ font-family:"Times New Roman","Liberation Serif","Nimbus Roman",Times,serif; font-weight:700; color:var(--indigo);
   font-size:1.08rem; margin:.7rem 0 .5rem; }
-.orc-q .qh .qn{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; color:var(--red); font-size:.82rem; margin-right:.4ch; }
+.orc-q .qh .qn{  color:var(--red); font-size:.82rem; margin-right:.4ch; }
 .orc-opts{ display:flex; flex-direction:column; gap:2px; }
 .orc-opt{ display:flex; align-items:baseline; gap:9px; width:100%; text-align:left; cursor:pointer;
-  font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.86rem; color:#26262c;
+   font-size:.86rem; color:#26262c;
   background:transparent; border:1px solid transparent; padding:3px 8px; }
 .orc-opt:hover{ background:#fff3b0; }
 .orc-opt .mk{ color:var(--silver-lo); }
 .orc-opt[aria-checked="true"]{ background:#eef0f6; border-color:var(--rule-soft); color:var(--indigo); font-weight:700; }
 .orc-opt[aria-checked="true"] .mk{ color:var(--indigo); }
 .orc-about{ display:grid; grid-template-columns:max-content 1fr; gap:8px 12px; align-items:center;
-  margin:.9rem 0 .2rem; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; }
+  margin:.9rem 0 .2rem;  font-size:.8rem; }
 .orc-about .albl{ color:#55555c; text-align:right; white-space:nowrap; }
 .orc-about .grp{ display:flex; flex-wrap:wrap; gap:6px; }
 /* tribe chips are radio-semantic (aria-checked); give them the pressed bevel look too */
@@ -400,19 +400,19 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 .orc-cast{ margin:1rem 0 .2rem; display:flex; align-items:center; gap:13px; flex-wrap:wrap; }
 .orc-cast .go{ font-size:.92rem; padding:5px 16px; font-weight:700; color:var(--indigo); }
 .orc-cast .go[disabled]{ opacity:.45; cursor:not-allowed; color:#111; }
-.orc-hint{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.74rem; color:#6b6b72; }
+.orc-hint{  font-size:.74rem; color:#6b6b72; }
 /* results */
 .orc-results{ margin:.2rem 0 0; }
-.orc-speak{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.85rem; color:#33333a;
+.orc-speak{  font-size:.85rem; color:#33333a;
   background:var(--screen); color:var(--screen-ink); border:1px solid #000; padding:8px 11px; margin:.2rem 0 .8rem; }
 .orc-speak b{ color:var(--gold); font-weight:400; }
 .orc-lens{ margin:.2rem 0 .5rem; }
 .orc-seg-chips{ display:flex; flex-wrap:wrap; gap:6px; margin:.2rem 0 .5rem; }
 .orc-two{ display:grid; grid-template-columns:1fr 1fr; gap:24px; align-items:start; }
 @media (max-width:720px){ .orc-two{ grid-template-columns:1fr; gap:14px; } }
-.orc-cap{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.72rem; text-transform:uppercase;
+.orc-cap{  font-size:.72rem; text-transform:uppercase;
   letter-spacing:.05em; color:#55555c; border-bottom:1px solid var(--rule-soft); padding-bottom:3px; margin:0 0 9px; }
-.orc-bars{ display:flex; flex-direction:column; gap:9px; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.79rem; }
+.orc-bars{ display:flex; flex-direction:column; gap:9px;  font-size:.79rem; }
 .orc-bar{ display:flex; flex-direction:column; gap:3px; }
 .orc-bar .brow{ display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
 .orc-bar .bl{ color:#33333a; }
@@ -424,21 +424,21 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 .orc-bar.you .bf{ background:var(--indigo); }
 .orc-bar.you .yq{ color:var(--indigo); font-weight:700; margin-left:.4ch; }
 .orc-bar.dim .bf{ opacity:.42; }
-.orc-median{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; color:#55555c; margin:9px 0 0; }
+.orc-median{  font-size:.78rem; color:#55555c; margin:9px 0 0; }
 .orc-median b{ color:var(--indigo); }
-.orc-nrow{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.74rem; color:#6b6b72; margin:13px 0 0; }
+.orc-nrow{  font-size:.74rem; color:#6b6b72; margin:13px 0 0; }
 .orc-small{ color:var(--red); }
 /* compare tribes */
 .orc-cmp{ display:grid; grid-template-columns:repeat(auto-fill,minmax(152px,1fr)); gap:9px; margin:.3rem 0 0; }
 .orc-cmp-c{ border:1px solid var(--rule-soft); background:#fff; padding:7px 10px;
-  font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.76rem; }
+   font-size:.76rem; }
 .orc-cmp-c.you{ border-color:var(--indigo); }
 .orc-cmp-c .nm{ color:var(--indigo); font-weight:700; }
 .orc-cmp-c .nm .yb{ color:var(--indigo); }
 .orc-cmp-c .n{ color:#a6a6ae; font-weight:400; }
 .orc-cmp-c .md{ color:#111; margin:6px 0 2px; } .orc-cmp-c .md b{ color:var(--indigo); }
 .orc-cmp-c .ld{ color:#55555c; }
-.orc-revote{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; margin:15px 0 0; }
+.orc-revote{  font-size:.78rem; margin:15px 0 0; }
 .orc-revote a{ cursor:pointer; }
 </style>
 
@@ -1308,7 +1308,7 @@ function sourceLink(s){
   if(bits.length!==2||!bits.every(x=>/^[\w.-]+$/.test(x))) return esc(rawRepo||"source unavailable");
   const repo=bits.join("/"), commit=String(ref.commit!=null?ref.commit:(s.commit_sha||""));
   const path=commit?`/blob/${encodeURIComponent(commit)}/bot.py`:"";
-  return `<a href="https://github.com/${repo}${path}" target="_blank" rel="noopener">${esc(repo)}@${esc(commit.slice(0,7)||"commit")}</a>`;
+  return `<a class="src" href="https://github.com/${repo}${path}" target="_blank" rel="noopener">${esc(repo)}@${esc(commit.slice(0,7)||"commit")}</a>`;
 }
 function roleKeys(frontier){
   return [...new Set(frontier.map(x=>String(x.identity||"").split("-")[0]).filter(r=>ROLE_NAMES[r]))]
