@@ -200,8 +200,8 @@ def create_app(
         return read_baseline(store)
 
     @app.get("/progress")
-    def progress(objective: str | None = None, tier: str = "self-reported") -> dict[str, Any]:
-        return read_progress(store, objective=objective, tier=tier)
+    def progress(scope: str | None = None, tier: str = "self-reported") -> dict[str, Any]:
+        return read_progress(store, scope=scope, tier=tier)
 
     @app.get("/objectives")
     def list_objectives() -> list[dict[str, Any]]:

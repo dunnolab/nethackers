@@ -1484,7 +1484,7 @@ async function loadObjective(obj){
   BOARD_BY_OBJ[obj] = PROGRAMS;
   await loadHackers(obj);                               // the Hackers tally (union frontier)
   let series=[];
-  try{ const pr = await jget(`/progress?objective=val-dwa-law-fem&tier=${encodeURIComponent(curTier)}`); series = (pr && pr.series) || []; }
+  try{ const pr = await jget(`/progress?scope=val-dwa-law-fem&tier=${encodeURIComponent(curTier)}`); series = (pr && pr.series) || []; }
   catch(e){ series=[]; }
   PROGRESS = [
     {t:"autoascend", frontier: (BASELINE && BASELINE.overall!=null) ? BASELINE.overall : 0, ascensions:0, coverage:0 /*GAP: baseline cell-count not exposed*/, base:true},

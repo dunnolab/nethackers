@@ -1,8 +1,8 @@
 """Best-so-far progress time series for the website chart.
 
 `frontier` is the leaderboard's "best mean" tracked over time: for each day it
-is the running maximum, over programs, of a program's mean progression on the
-objective (mean over that program's atoms registered up to that day). It never
+is the running maximum, over programs, of a program's mean progression in
+scope (mean over that program's atoms registered up to that day). It never
 drops. `ascensions` and `coverage` (distinct identity|milestone cells lit) are
 cumulative. Reads created_at directly -- a DB column, not an Atom field -- so
 this is raw SQL, not iter_atoms.
@@ -22,10 +22,10 @@ _ATOMS_BY_IDENTITY_SQL = (
 )
 
 
-def read_progress(store: Store, *, objective: str | None = None,
+def read_progress(store: Store, *, scope: str | None = None,
                   tier: str = "self-reported") -> dict[str, Any]:
-    if objective:
-        rows = store.conn.execute(_ATOMS_BY_IDENTITY_SQL, (tier, objective)).fetchall()
+    if scope:
+        rows = store.conn.execute(_ATOMS_BY_IDENTITY_SQL, (tier, scope)).fetchall()
     else:
         rows = store.conn.execute(_ATOMS_SQL, (tier,)).fetchall()
     if not rows:
