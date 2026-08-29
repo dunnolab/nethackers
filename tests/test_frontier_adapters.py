@@ -143,8 +143,8 @@ def test_champion_reads_the_generalist_board_not_random():
     seen = []
 
     class _Spy:
-        def board(self, objective):
-            seen.append(objective)
+        def board(self, scope):
+            seen.append(scope)
             return [{"rank": 1, "program_id": "prog_top", "owner": "sam"}]
 
     result = champion(_Spy())
