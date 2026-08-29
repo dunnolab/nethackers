@@ -259,7 +259,7 @@ This is the one endpoint we evolve additively rather than cutting over.
 - `GET /programs/{id}/identities` → `{generated_at, program_id, rows:[{identity, progression, episodes}]}`
 - **`scope`** (on `/board`, `/elites`, `/hackers`) ∈ `{ generalist, role:<r>, race:<r>, align:<a>, gender:<g>, <identity> }` — the four facets decompose each `role-race-align-gender` identity (facet sets already in `hub/objectives.py`). rank 1 of a facet scope = the best program (or hacker) for that value.
 - `GET /board?scope=&tier=` → `{generated_at, scope, tier, rows:[{rank, program_id, owner, reference:{repo,commit}, coverage, identities_total, ascensions, mean_progression, median_progression, deepest}]}` (identity scope: `coverage=identities_total=1`)
-- `GET /elites?scope=&tier=` → `{generated_at, scope, tier, rows:[{rank, identity, program_id, owner, score}]}`
+- `GET /elites?scope=&tier=` → `{generated_at, scope, tier, rows:[{rank, identity, program_id, owner, score, reference:{repo,commit}}]}` (`reference` mirrors `/board`; the harness cold-start `select.py` pulls the elite from it)
 - `GET /hackers?scope=&tier=` → `{generated_at, scope, tier, rows:[{rank, owner, coverage, identities_total, mean_progression}]}`
 - `GET /hackers/random?n=` → `{generated_at, n, rows:[<handle strings>]}` (sampler; the web wall reads `.rows`)
 - `GET /hackers/leaders?by=role|race|align|gender` → `{generated_at, by, rows:[{value, owner, score, coverage}]}` — best hacker per value of the facet (the "for each role/race/alignment/gender" view)
