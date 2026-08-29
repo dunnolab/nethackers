@@ -245,3 +245,35 @@ def test_poll_iter_is_anonymized_and_roundtrips_roles(tmp_path):
     assert b["roles"] == ["eng", "enth"] and b["xp"] == "never"
     a = next(v for v in votes if v["method"] == "llm")
     assert a["roles"] == [] and a["xp"] is None
+
+
+from nethackers.hub.ids import program_id
+
+
+def _seed_one(store, digest="github.com/o/r@abc123"):
+    store.upsert_solution(digest, repo="github.com/o/r", commit_sha="abc123",
+                          owner="sam", root=".", entrypoint="bot.py",
+                          registered_at="2026-01-01T00:00:00Z")
+    return digest
+
+
+def test_upsert_stamps_program_id_and_lookup_round_trips(tmp_path):
+    store = Store(tmp_path / "h.sqlite3"); store.init_schema()
+    digest = _seed_one(store)
+    pid = program_id(digest)
+    assert store.digest_for_program_id(pid) == digest
+    assert store.digest_for_program_id("prog_doesnotexist") is None
+
+
+def test_migration_backfills_legacy_null_rows(tmp_path):
+    store = Store(tmp_path / "h.sqlite3"); store.init_schema()
+    # Simulate a legacy row written before program_id existed.
+    store.conn.execute(
+        "INSERT INTO solutions (digest, repo, commit_sha, owner, root, entrypoint, registered_at)"
+        " VALUES ('github.com/o/r@legacy', 'github.com/o/r', 'legacy', 'sam', '.', 'bot.py', 'x')")
+    store.conn.execute("UPDATE solutions SET program_id = NULL WHERE digest = 'github.com/o/r@legacy'")
+    store.conn.commit()
+
+    store.init_schema()  # idempotent re-run must backfill the NULL row by pure function
+
+    assert store.digest_for_program_id(program_id("github.com/o/r@legacy")) == "github.com/o/r@legacy"

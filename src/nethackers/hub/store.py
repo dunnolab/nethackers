@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any
 
 from nethackers.contracts.models import Atom
+from nethackers.hub.ids import program_id
 
 # The whole DDL (task-5-context.md), verbatim. CREATE TABLE IF NOT EXISTS
 # throughout makes init_schema() idempotent.
@@ -176,6 +177,27 @@ def _migrate_drop_objectives_table(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_add_program_id(conn: sqlite3.Connection) -> None:
+    """Additively add the indexed ``program_id`` column and backfill every
+    row by pure function of its ``digest`` (which is the ``repo@commit``
+    reference). Idempotent: the ADD is guarded on the column's absence and
+    the backfill only touches rows still NULL, so re-running init_schema is
+    a no-op once every row is stamped. sqlite has no sha256(), so the
+    backfill runs in Python."""
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(solutions)")]
+    if "program_id" not in cols:
+        conn.execute("ALTER TABLE solutions ADD COLUMN program_id TEXT")
+    rows = conn.execute(
+        "SELECT digest FROM solutions WHERE program_id IS NULL").fetchall()
+    for (digest,) in rows:
+        conn.execute("UPDATE solutions SET program_id = ? WHERE digest = ?",
+                     (program_id(digest), digest))
+    conn.execute(
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_solutions_program_id"
+        " ON solutions(program_id)")
+    conn.commit()
+
+
 class Store:
     """A single-connection sqlite3 data layer over the hub's schema.
 
@@ -207,6 +229,7 @@ class Store:
         self._conn.commit()
         _migrate_drop_objective_digest(self._conn)
         _migrate_drop_objectives_table(self._conn)
+        _migrate_add_program_id(self._conn)
 
     def upsert_solution(
         self,
@@ -221,17 +244,19 @@ class Store:
     ) -> None:
         self._conn.execute(
             """
-            INSERT INTO solutions (digest, repo, commit_sha, owner, root, entrypoint, registered_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            INSERT INTO solutions
+                (digest, repo, commit_sha, owner, root, entrypoint, registered_at, program_id)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(digest) DO UPDATE SET
                 repo = excluded.repo,
                 commit_sha = excluded.commit_sha,
                 owner = excluded.owner,
                 root = excluded.root,
                 entrypoint = excluded.entrypoint,
-                registered_at = excluded.registered_at
+                registered_at = excluded.registered_at,
+                program_id = excluded.program_id
             """,
-            (digest, repo, commit_sha, owner, root, entrypoint, registered_at),
+            (digest, repo, commit_sha, owner, root, entrypoint, registered_at, program_id(digest)),
         )
         self._conn.commit()
 
@@ -244,6 +269,11 @@ class Store:
         if row is None:
             return None
         return dict(zip(_SOLUTION_COLUMNS, row, strict=True))
+
+    def digest_for_program_id(self, program_id: str) -> str | None:
+        row = self._conn.execute(
+            "SELECT digest FROM solutions WHERE program_id = ?", (program_id,)).fetchone()
+        return row[0] if row is not None else None
 
     def random_owners(self, n: int) -> list[str]:
         """Up to ``n`` random distinct hacker handles -- the ``owner``s in
