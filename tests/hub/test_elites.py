@@ -217,14 +217,15 @@ def test_read_elites_empty_when_no_atoms(tmp_path):
 
 
 def test_entries_carry_owner_for_trust_aware_select(tmp_path):
-    # Each entry is enriched with the registered solution's owner (LEFT JOIN
-    # solutions ON solution_digest = solutions.digest), and program_id
-    # replaces the old solution_digest. NOTE: repo/commit_sha/tier are no
-    # longer part of this row -- Part 2's row shape is exactly {rank,
-    # identity, program_id, owner, score}, narrower than the old elite_pool
-    # entries, which also carried repo/commit_sha/tier for
-    # harness/select.py's trust-aware SELECT (per_identity_elites). See the
-    # Task 2 report for the concern this raises for that consumer.
+    # Each entry is enriched with the registered solution's owner AND
+    # reference (both via the same LEFT JOIN solutions ON solution_digest =
+    # solutions.digest), and program_id replaces the old solution_digest.
+    # NOTE: repo/commit_sha are no longer bare row fields (they're nested
+    # under reference) and tier is gone entirely -- Part 2's row shape is
+    # {rank, identity, program_id, owner, score}; Task 2b adds reference
+    # back (repo/commit only, nested) specifically for harness/select.py's
+    # trust-aware SELECT (per_identity_elites), which resolves the elite's
+    # tree on disk and needs a git pointer.
     store = _new_store(tmp_path)
     atoms = [_atom(solution_digest="sha256:solution-a", seed=0, progression=0.5)]
     _seed(store, atoms, owner="dev", repo="github.com/dev/nethacker-runs", commit_sha="d" * 40)
@@ -237,4 +238,5 @@ def test_entries_carry_owner_for_trust_aware_select(tmp_path):
     assert entry["identity"] == IDENTITY
     assert entry["program_id"] == program_id("sha256:solution-a")
     assert entry["rank"] == 1
-    assert set(entry) == {"rank", "identity", "program_id", "owner", "score"}
+    assert entry["reference"] == {"repo": "github.com/dev/nethacker-runs", "commit": "d" * 40}
+    assert set(entry) == {"rank", "identity", "program_id", "owner", "score", "reference"}

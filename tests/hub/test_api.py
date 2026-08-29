@@ -320,8 +320,11 @@ def test_elites_scope_generalist_enveloped_uniform_row_schema(tmp_path: Any) -> 
     assert set(body) >= {"generated_at", "scope", "tier", "rows"}
     row = next(r for r in body["rows"] if r["identity"] == IDENTITY)
     assert row["program_id"] == program_id("sha256:s") and "solution_digest" not in row
-    assert {"rank", "identity", "program_id", "owner", "score"} <= set(row)
+    assert {"rank", "identity", "program_id", "owner", "score", "reference"} <= set(row)
     assert row["rank"] == 1
+    # reference:{repo,commit} -- harness/select.py's cold-start pull pointer
+    # (Task 2b); nested, not the old bare repo/commit_sha row fields.
+    assert row["reference"] == {"repo": "r", "commit": "c"}
 
 
 def test_elites_scope_role_narrows_to_that_roles_identities(tmp_path: Any) -> None:

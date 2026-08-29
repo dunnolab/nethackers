@@ -23,13 +23,13 @@ single global top-k -- the deliberate anti-monoculture choice
 (task-8-context.md): one identity's elites must never crowd out every
 other identity's.
 
-Each row is ``{rank, identity, program_id, owner, score}`` -- narrower than
-the old ``elite_pool`` entries, which also carried ``repo``/``commit_sha``/
-``tier`` for ``harness/select.py``'s trust-aware cold-start SELECT
-(``per_identity_elites``). That consumer is NOT in this redesign's file list
-and still reads those fields directly (some via ``entry["solution_digest"]``,
-a hard ``KeyError`` on this row shape) -- see the Task 2 report for the
-concern raised about it; nothing here papers over that gap.
+Each row is ``{rank, identity, program_id, owner, score, reference}`` --
+narrower than the old ``elite_pool`` entries (no ``tier``, and
+``solution_digest`` is now ``program_id``), but ``reference: {repo, commit}``
+is carried back in (Task 2b) specifically for ``harness/select.py``'s
+trust-aware cold-start SELECT (``per_identity_elites``), the one consumer
+that resolves an elite's tree on disk and so needs a git pointer, not just
+an opaque id.
 """
 
 from __future__ import annotations
@@ -57,7 +57,7 @@ WITH agg AS (
     PARTITION BY identity ORDER BY score DESC, ascensions DESC, first_at ASC
   ) AS rank FROM agg
 )
-SELECT r.identity, r.solution_digest, r.score, r.rank, s.owner
+SELECT r.identity, r.solution_digest, r.score, r.rank, s.owner, s.repo, s.commit_sha
 FROM ranked r LEFT JOIN solutions s ON r.solution_digest = s.digest
 WHERE r.rank <= ? ORDER BY r.rank, r.identity
 """
@@ -71,8 +71,9 @@ def read_elites(
     Raises ``ValueError`` for an unknown ``scope`` (``resolve_scope`` --
     mapping that to a 404 is the caller's job, same as ``/board``).
 
-    Each row: ``{rank, identity, program_id, owner, score}``. ``owner``
-    comes from a ``LEFT JOIN`` onto the registered ``solutions`` row (the FK
+    Each row: ``{rank, identity, program_id, owner, score, reference}``.
+    ``owner`` and ``reference`` (``{repo, commit}``) both come from the same
+    ``LEFT JOIN`` onto the registered ``solutions`` row (the FK
     ``insert_atoms`` enforces means this always resolves in practice), and
     ``program_id`` (``nethackers.hub.ids.program_id``) replaces the old
     ``solution_digest``.
@@ -88,6 +89,7 @@ def read_elites(
             "program_id": program_id(row[1]),
             "owner": row[4],
             "score": row[2],
+            "reference": {"repo": row[5], "commit": row[6]},
         }
         for row in rows
     ]
