@@ -61,6 +61,18 @@ async def test_backfill_renders_the_runs_accumulated_state():
         assert "#seed" in str(mon.query_one("#lineage").render())  # seed0 -> #seed
 
 
+def test_backfill_reschedules_when_tables_pane_absent():
+    from textual.css.query import NoMatches
+    mon = RunMonitor(_populated_run())
+    scheduled: list = []
+    mon.call_after_refresh = lambda fn, *a, **k: scheduled.append(fn)   # capture the retry
+    def _no_tables(*a, **k):
+        raise NoMatches("no #tables yet")
+    mon.query_one = _no_tables
+    mon._backfill()                        # guard must catch NoMatches, not raise
+    assert scheduled == [mon._backfill]    # rescheduled itself for the next frame
+
+
 async def test_backfill_renders_local_only_reason_instead_of_registered():
     # A win that never reached the hub must read "local-only: <reason>" in
     # the ledger, not the plain (misleadingly complete-sounding) "registered".

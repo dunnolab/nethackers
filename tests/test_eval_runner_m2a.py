@@ -12,7 +12,10 @@ results.json there itself -- one dict per batch episode, in batch order.
 """
 
 import json
+import subprocess
 from pathlib import Path
+
+import pytest
 
 from nethackers.contracts.models import ObjectiveSpec
 from nethackers.eval.runner import eval_batch
@@ -219,3 +222,30 @@ def test_eval_batch_streams_per_episode_when_on_episode_given(tmp_path):
     assert events[1]["progress"] == 1.0 and events[1]["depth"] == 30
     # Authoritative aggregate still comes from results.json.
     assert ev.episodes == 2 and ev.ascensions == 1
+
+
+def test_eval_batch_attaches_docker_stderr_on_nonzero_exit(tmp_path):
+    sol = tmp_path / "sol"
+    sol.mkdir()
+    (sol / "bot.py").write_text("x")
+    lines = [
+        "arena · running 2 episode(s)…\n",
+        "Unable to find image 'img:dev' locally\n",
+        "docker: Error response from daemon: pull access denied for img.\n",
+    ]
+
+    class _FailProc:
+        def __init__(self) -> None:
+            self.stderr = iter(lines)
+        def wait(self) -> int:
+            return 125
+
+    def fake_popen(cmd, *, stdout, stderr, text, bufsize):
+        return _FailProc()
+
+    with pytest.raises(subprocess.CalledProcessError) as ei:
+        eval_batch(sol, _SPEC, "img:dev", now="2026-08-09T00:00:00Z",
+                   on_episode=lambda e: None, popen=fake_popen,
+                   image_digest_resolver=lambda img: "img@sha256:x")
+    assert ei.value.returncode == 125
+    assert "pull access denied" in (ei.value.stderr or "")
