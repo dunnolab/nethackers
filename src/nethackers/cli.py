@@ -523,6 +523,20 @@ def _unknown_scope(name: str) -> str:
     )
 
 
+def _arena_preflight(image: str) -> str | None:
+    """The arena-only gate ``eval``/``submit`` share: a working container
+    runtime, then the (already-resolved) image itself, built/pulled if
+    missing. ``None`` on success, else the first failing check's styled
+    message. Deliberately calls ONLY ``preflight_runtime`` -- never
+    ``preflight_operator`` -- the arena has no operator, so a plain
+    eval/submit must never demand a codex/claude login (spec S5.5's "two
+    separate gates")."""
+    rt_err = preflight_runtime()
+    if rt_err is not None:
+        return rt_err
+    return ensure_image(image, "arena", on_line=lambda ln: err.print(f"[dim]{ln}[/]"))
+
+
 def _run(argv: list[str] | None) -> int:
     """Parse args and dispatch one subcommand. May raise -- ``main`` is the
     single place that turns any failure into a clean message, so nothing here
@@ -602,18 +616,10 @@ def _run(argv: list[str] | None) -> int:
         if spec is None:
             err.print(_unknown_objective(args.objective))
             return 2
-        # A plain eval only ever scores in the arena sandbox -- no operator
-        # (codex/claude) involved -- so this checks ONLY the runtime gate,
-        # never preflight_operator (spec S5.5's "two separate gates").
-        rt_err = preflight_runtime()
-        if rt_err is not None:
-            err.print(rt_err)
-            return 1
         image = resolve_image(args.image, "arena")
-        img_err = ensure_image(image, "arena",
-                               on_line=lambda ln: err.print(f"[dim]{ln}[/]"))
-        if img_err is not None:
-            err.print(img_err)
+        pf_err = _arena_preflight(image)
+        if pf_err is not None:
+            err.print(pf_err)
             return 1
         evidence = eval_batch(
             Path(args.solution), spec, image, now=_now(),
@@ -870,15 +876,10 @@ def _run(argv: list[str] | None) -> int:
             return 2
         # self-reported score: evaluate the local solution on the objective's
         # batch. Same arena-only gate as `eval` -- no operator/login involved.
-        rt_err = preflight_runtime()
-        if rt_err is not None:
-            err.print(rt_err)
-            return 1
         image = resolve_image(args.image, "arena")
-        img_err = ensure_image(image, "arena",
-                               on_line=lambda ln: err.print(f"[dim]{ln}[/]"))
-        if img_err is not None:
-            err.print(img_err)
+        pf_err = _arena_preflight(image)
+        if pf_err is not None:
+            err.print(pf_err)
             return 1
         evidence = eval_batch(
             Path(args.solution_dir), spec, image, now=_now(),
