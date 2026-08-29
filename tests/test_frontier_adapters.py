@@ -106,16 +106,16 @@ def test_universe_scores_empty_elites_returns_empty_map():
 # --- champion: board("generalist")[0] ----------------------------------------
 
 
-def test_champion_returns_digest_and_owner_from_top_board_row():
+def test_champion_returns_program_id_and_owner_from_top_board_row():
     rows = [
-        {"rank": 1, "solution_digest": "sha256:top", "owner": "sam"},
-        {"rank": 2, "solution_digest": "sha256:second", "owner": "alex"},
+        {"rank": 1, "program_id": "prog_top", "owner": "sam"},
+        {"rank": 2, "program_id": "prog_second", "owner": "alex"},
     ]
     client = _FakeClient(board=rows)
 
     result = champion(client)
 
-    assert result == ("sha256:top", "sam")
+    assert result == ("prog_top", "sam")
 
 
 def test_champion_returns_none_for_empty_board():
@@ -130,11 +130,11 @@ def test_champion_reads_the_generalist_board_not_random():
     class _Spy:
         def board(self, objective):
             seen.append(objective)
-            return [{"rank": 1, "solution_digest": "sha256:top", "owner": "sam"}]
+            return [{"rank": 1, "program_id": "prog_top", "owner": "sam"}]
 
     result = champion(_Spy())
 
-    assert result == ("sha256:top", "sam")
+    assert result == ("prog_top", "sam")
     assert seen == ["generalist"]
 
 

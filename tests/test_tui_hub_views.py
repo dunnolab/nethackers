@@ -331,7 +331,7 @@ async def test_boards_view_renders_entry_content(monkeypatch):
     fake_entries = [
         {
             "rank": 1,
-            "solution_digest": "abc123def456",
+            "program_id": "prog_abc123def456",
             "owner": "testuser",
             "ascensions": 5,
             "median_progression": 0.75,
@@ -370,7 +370,7 @@ def _fake_elites_rank_spread(self, objective: str) -> list:
 
 
 def _fake_board_with_champion(self, *a, **k) -> list:
-    return [{"rank": 1, "owner": "vale", "solution_digest": "abc123def456",
+    return [{"rank": 1, "owner": "vale", "program_id": "abc123def456",
              "mean_progression": 0.5}]
 
 

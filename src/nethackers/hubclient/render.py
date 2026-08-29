@@ -44,17 +44,17 @@ from nethackers.hubclient.client import _num, _short_digest
 # which add_column's Literal-typed `justify` parameter then rejects).
 _GRADING_COLUMNS: tuple[tuple[str, JustifyMethod], ...] = (
     ("rank", "right"),
-    ("solution", "left"),
+    ("program", "left"),
     ("owner", "left"),
     ("asc", "right"),
     ("median", "right"),
     ("mean", "right"),
 )
 _COVERAGE_COLUMNS: tuple[tuple[str, JustifyMethod], ...] = (
-    ("rank", "right"), ("solution", "left"), ("owner", "left"), ("cells", "right"),
+    ("rank", "right"), ("program", "left"), ("owner", "left"), ("cells", "right"),
 )
 _FIRSTS_COLUMNS: tuple[tuple[str, JustifyMethod], ...] = (
-    ("rank", "right"), ("solution", "left"), ("owner", "left"), ("firsts", "right"),
+    ("rank", "right"), ("program", "left"), ("owner", "left"), ("firsts", "right"),
 )
 
 # A 5-stop viridis-ish gradient (dark purple -> teal -> yellow): low values
@@ -158,18 +158,19 @@ def render_board(entries: list[dict[str, Any]], *, you: str | None = None) -> Re
     detection exactly, so ``-o table``/``-o plain`` never disagree on
     which columns a given response gets):
 
-    - grading board (entries carry ``ascensions``): ``rank | solution |
-      owner | asc | median | mean``, ``median``/``mean`` colored via
-      ``ramp``.
-    - coverage board (entries carry ``cells_held``): ``rank | solution |
-      owner | cells``.
-    - firsts board (entries carry ``firsts``): ``rank | solution | owner |
-      firsts``.
+    - grading board (``/board``'s one row shape -- entries carry
+      ``ascensions``): ``rank | program | owner | asc | median | mean``,
+      ``median``/``mean`` colored via ``ramp``.
+    - coverage board (``/achievements/coverage`` -- entries carry
+      ``cells_held``): ``rank | program | owner | cells``.
+    - firsts board (``/achievements/firsts`` -- entries carry ``firsts``):
+      ``rank | program | owner | firsts``.
     - unknown shape: falls back to the first entry's own (sorted) keys.
 
-    Numeric columns right-aligned, ``solution`` shortened via
-    ``_short_digest``, bold header, faint zebra striping. Empty -> a
-    friendly one-line message, never a bare header."""
+    Numeric columns right-aligned, ``program`` the opaque ``program_id``
+    shown verbatim (already short -- no ``_short_digest`` truncation),
+    bold header, faint zebra striping. Empty -> a friendly one-line
+    message, never a bare header."""
     if not entries:
         return _empty("no board entries yet.")
 
@@ -182,7 +183,7 @@ def render_board(entries: list[dict[str, Any]], *, you: str | None = None) -> Re
         for e in entries:
             table.add_row(
                 str(e.get("rank", "")),
-                _short_digest(str(e.get("solution_digest", ""))),
+                str(e.get("program_id", "")),
                 _gh_user(e.get("owner", ""), you=you),
                 str(e.get("ascensions", "")),
                 _colored_num(e.get("median_progression", "")),
@@ -194,7 +195,7 @@ def render_board(entries: list[dict[str, Any]], *, you: str | None = None) -> Re
         for e in entries:
             table.add_row(
                 str(e.get("rank", "")),
-                _short_digest(str(e.get("solution_digest", ""))),
+                str(e.get("program_id", "")),
                 _gh_user(e.get("owner", ""), you=you),
                 str(e.get("cells_held", "")),
             )
@@ -204,7 +205,7 @@ def render_board(entries: list[dict[str, Any]], *, you: str | None = None) -> Re
         for e in entries:
             table.add_row(
                 str(e.get("rank", "")),
-                _short_digest(str(e.get("solution_digest", ""))),
+                str(e.get("program_id", "")),
                 _gh_user(e.get("owner", ""), you=you),
                 str(e.get("firsts", "")),
             )

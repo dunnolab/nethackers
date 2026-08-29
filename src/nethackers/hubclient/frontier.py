@@ -29,7 +29,7 @@ def champion(client: Any) -> tuple[str, str] | None:
     if not board:
         return None
     top = board[0]
-    return str(top["solution_digest"]), str(top.get("owner", ""))
+    return str(top["program_id"]), str(top.get("owner", ""))
 
 
 def champion_scores(client: Any, digest: str) -> dict[str, float]:

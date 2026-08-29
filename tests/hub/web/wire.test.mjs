@@ -8,8 +8,9 @@
  *   (cd /tmp/js && npm i jsdom) && NODE_PATH=/tmp/js/node_modules node tests/hub/web/wire.test.mjs
  *
  * It stubs window.fetch with canned JSON matching the FastAPI endpoint shapes
- * (/board?objective=<identity|generalist|role>, /hackers, /baseline, /elites,
- * /solutions/{d}/frontier, /progress, /objectives, /stats), runs the page's
+ * (/board?scope=<identity|generalist|role> (enveloped, program_id rows),
+ * /hackers, /baseline, /elites, /programs/{id}/identities (enveloped),
+ * /progress, /objectives, /stats), runs the page's
  * boot(), and asserts the reworked render:
  *   pass 1 (generalist scope): grouped picker (87 options, 3 groups), the
  *     Hackers-primary union view (coverage+mean+Δ, NO firsts) + its AutoAscend
@@ -67,19 +68,19 @@ const ELITES_ALL = TOUCHED.map((id, i) => ({
 }));
 
 const GENERALIST_BOARD = [
-  { rank: 1, solution_digest: "sha256:aaa", owner: "dun", coverage: 20, total: 73, mean_progression: 0.2, ascensions: 0, deepest: "Mines' End" },
-  { rank: 2, solution_digest: "sha256:bbb", owner: "ako", coverage: 8, total: 73, mean_progression: 0.31, ascensions: 0, deepest: "Sokoban" },
+  { rank: 1, program_id: "prog_aaa", owner: "dun", coverage: 20, identities_total: 73, mean_progression: 0.2, median_progression: 0.2, ascensions: 0, deepest: "Mines' End" },
+  { rank: 2, program_id: "prog_bbb", owner: "ako", coverage: 8, identities_total: 73, mean_progression: 0.31, median_progression: 0.31, ascensions: 0, deepest: "Sokoban" },
 ];
 const GENERALIST_HACKERS = [
   { rank: 1, owner: "dun", coverage: 24, total: 73, mean_progression: 0.19 },
   { rank: 2, owner: "ako", coverage: 8, total: 73, mean_progression: 0.31 },
 ];
 const IDENTITY_BOARD = [
-  { rank: 1, solution_digest: "sha256:aaa", owner: "dun", episodes: 15, ascensions: 0, median_progression: 0.3, mean_progression: 0.3, deepest: "Mines' End" },
+  { rank: 1, program_id: "prog_aaa", owner: "dun", coverage: 1, identities_total: 1, ascensions: 0, median_progression: 0.3, mean_progression: 0.3, deepest: "Mines' End" },
 ];
 const IDENTITY_HACKERS = [{ rank: 1, owner: "dun", coverage: 1, total: 1, mean_progression: 0.3 }];
 const ROLE_BOARD = [
-  { rank: 1, solution_digest: "sha256:aaa", owner: "dun", coverage: 3, total: 3, mean_progression: 0.24, ascensions: 0, deepest: "Mines' End" },
+  { rank: 1, program_id: "prog_aaa", owner: "dun", coverage: 3, identities_total: 3, mean_progression: 0.24, median_progression: 0.24, ascensions: 0, deepest: "Mines' End" },
 ];
 const ROLE_HACKERS = [{ rank: 1, owner: "dun", coverage: 3, total: 3, mean_progression: 0.24 }];
 const FRONTIER = TOUCHED.map((id) => ({ identity: id, progression: 0.2 }));
@@ -88,21 +89,22 @@ function router(path) {
   const [route, query] = path.split("?");
   const params = new URLSearchParams(query || "");
   const obj = params.get("objective");
+  const scope = params.get("scope");
   if (route === "/stats") return { programs: 2, hackers: 2, ascensions: 0, last_registered_at: "2026-08-27T09:30:00+00:00" };
   if (route === "/baseline") return BASELINE;
   if (route === "/objectives") return IDENTITIES.map((n) => ({ name: n, episodes: 15 }));
   if (route === "/elites") return ELITES_ALL;
   if (route === "/progress") return { series: [] };
-  if (route.startsWith("/solutions/")) return FRONTIER; // /solutions/{d}/frontier
+  if (route.startsWith("/programs/") && route.endsWith("/identities")) return { rows: FRONTIER };
   if (route === "/hackers") {
     if (obj === "generalist" || obj == null) return GENERALIST_HACKERS;
     if (obj === "val") return ROLE_HACKERS;
     return IDENTITY_HACKERS;
   }
   if (route === "/board") {
-    if (obj === "generalist") return GENERALIST_BOARD;
-    if (obj === "val") return ROLE_BOARD;
-    return IDENTITY_BOARD; // an identity token
+    if (scope === "generalist") return { rows: GENERALIST_BOARD };
+    if (scope === "val") return { rows: ROLE_BOARD };
+    return { rows: IDENTITY_BOARD }; // an identity token
   }
   throw new Error("unrouted " + path);
 }

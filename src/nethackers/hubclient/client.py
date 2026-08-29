@@ -121,12 +121,9 @@ class HubClient:
         """``GET /elites?objective=...``."""
         return self._get("/elites", {"objective": objective})
 
-    def board(self, objective: str | None = None, metric: str | None = None) -> Any:
-        """``GET /board``, with whichever of ``?objective=``/``?metric=``
-        was given (the server requires exactly one; this method just passes
-        through whatever the caller supplied)."""
-        params = {k: v for k, v in (("objective", objective), ("metric", metric)) if v}
-        return self._get("/board", params)
+    def board(self, scope: str = "generalist", tier: str = "self-reported") -> Any:
+        """``GET /board?scope=`` -- the ranked rows (envelope unwrapped)."""
+        return (self._get("/board", {"scope": scope, "tier": tier}) or {}).get("rows", [])
 
     def search(self, owner: str | None = None, limit: int = 50, offset: int = 0) -> Any:
         """``GET /search``, with ``?owner=`` only when given and
@@ -358,15 +355,16 @@ def render_elites(entries: list[dict[str, Any]]) -> str:
 
 def render_board(entries: list[dict[str, Any]]) -> str:
     """A table of board entries, shape-aware over which metric produced
-    them (``solution`` is always a short digest):
+    them (``program`` is the opaque ``program_id`` -- already short,
+    verbatim, never truncated):
 
-    - grading board (``asc_median_mean``/``mean`` aggregation -- entries
-      carry ``ascensions``): ``rank | solution | owner | asc | median |
-      mean`` (``median``/``mean`` via ``_num``).
-    - coverage board (entries carry ``cells_held``): ``rank | solution |
-      owner | cells``.
-    - firsts board (entries carry ``firsts``): ``rank | solution | owner |
-      firsts``.
+    - grading board (``/board``'s one row shape -- entries carry
+      ``ascensions``): ``rank | program | owner | asc | median | mean``
+      (``median``/``mean`` via ``_num``).
+    - coverage board (``/achievements/coverage`` -- entries carry
+      ``cells_held``): ``rank | program | owner | cells``.
+    - firsts board (``/achievements/firsts`` -- entries carry ``firsts``):
+      ``rank | program | owner | firsts``.
 
     A friendly one-line message instead of a bare header when
     ``entries == []`` (there's no shape to detect from zero rows anyway --
@@ -377,11 +375,11 @@ def render_board(entries: list[dict[str, Any]]) -> str:
 
     first = entries[0]
     if "ascensions" in first:
-        headers = ["rank", "solution", "owner", "asc", "median", "mean"]
+        headers = ["rank", "program", "owner", "asc", "median", "mean"]
         rows = [
             [
                 str(e.get("rank", "")),
-                _short_digest(str(e.get("solution_digest", ""))),
+                str(e.get("program_id", "")),
                 str(e.get("owner", "")),
                 str(e.get("ascensions", "")),
                 _num(e.get("median_progression", "")),
@@ -390,22 +388,22 @@ def render_board(entries: list[dict[str, Any]]) -> str:
             for e in entries
         ]
     elif "cells_held" in first:
-        headers = ["rank", "solution", "owner", "cells"]
+        headers = ["rank", "program", "owner", "cells"]
         rows = [
             [
                 str(e.get("rank", "")),
-                _short_digest(str(e.get("solution_digest", ""))),
+                str(e.get("program_id", "")),
                 str(e.get("owner", "")),
                 str(e.get("cells_held", "")),
             ]
             for e in entries
         ]
     elif "firsts" in first:
-        headers = ["rank", "solution", "owner", "firsts"]
+        headers = ["rank", "program", "owner", "firsts"]
         rows = [
             [
                 str(e.get("rank", "")),
-                _short_digest(str(e.get("solution_digest", ""))),
+                str(e.get("program_id", "")),
                 str(e.get("owner", "")),
                 str(e.get("firsts", "")),
             ]

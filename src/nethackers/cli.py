@@ -29,8 +29,8 @@ and ``-o``/``--output`` (default ``"auto"``, overridable via
 ``$NETHACKERS_OUTPUT``; replaces the old boolean ``--json``) both live on a
 shared parent parser (``_common_parser``) carried by every subcommand, so
 either flag works whether given before or after the subcommand name --
-e.g. both ``nethackers --hub URL board --objective random`` and
-``nethackers board --objective random --hub URL`` work; argparse only
+e.g. both ``nethackers --hub URL board --scope generalist`` and
+``nethackers board --scope generalist --hub URL`` work; argparse only
 re-applies a parent's default when the attribute isn't already set on the
 namespace, so whichever position actually supplies the flag wins.
 tests/test_cli_m2a.py exercises this wiring with ``HubClient``
@@ -74,6 +74,7 @@ from nethackers.harness.sandbox_preflight import (
 )
 from nethackers.hub.objectives import CATALOG
 from nethackers.hub.selector import resolve
+from nethackers.hub.views.boards import resolve_scope
 from nethackers.hubclient import credentials as _cred
 from nethackers.hubclient.auth import AuthError, TokenSource
 from nethackers.hubclient.client import (
@@ -445,11 +446,12 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
     b = sub.add_parser(
         "leaderboard", aliases=["board"], parents=[common],
         formatter_class=RichHelpFormatter,
-        help="Show the leaderboard — solutions ranked on an objective.",
+        help="Show the leaderboard — solutions ranked by scope.",
     )
-    b.add_argument("--objective", default=None, help="A catalog objective name.")
     b.add_argument(
-        "--metric", default=None, help="'coverage' or 'firsts' (instead of --objective)."
+        "--scope", default="generalist",
+        help="'generalist', a role (e.g. 'val'), a facet (e.g. 'race:elf'), "
+        "or a full identity (default: %(default)s).",
     )
 
     se = sub.add_parser(
@@ -506,6 +508,13 @@ def _unknown_objective(name: str) -> str:
         f"unknown objective {name!r}. Use a full identity such as "
         f"'wiz-elf-cha-mal', a role (e.g. 'wiz'), a comma list, or a glob like "
         f"'*-elf-*-*' (the hub catalog has {len(CATALOG)} objectives)."
+    )
+
+
+def _unknown_scope(name: str) -> str:
+    return (
+        f"unknown scope {name!r}. Use 'generalist', a role (e.g. 'val'), "
+        f"a facet (e.g. 'race:elf'), or a full identity (e.g. 'wiz-elf-cha-mal')."
     )
 
 
@@ -749,11 +758,13 @@ def _run(argv: list[str] | None) -> int:
         return 0
 
     if args.cmd in ("leaderboard", "board"):
-        if args.objective is not None and args.objective not in CATALOG:
-            err.print(_unknown_objective(args.objective))
+        try:
+            resolve_scope(args.scope)
+        except ValueError:
+            err.print(_unknown_scope(args.scope))
             return 2
         client = HubClient(args.hub)
-        emit(client.board(args.objective, args.metric), args.output,
+        emit(client.board(scope=args.scope), args.output,
              table=rich_board, plain=plain_board)
         return 0
 

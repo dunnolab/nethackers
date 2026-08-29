@@ -24,7 +24,7 @@ token.
 **Catalog-injection scope:** the injected ``catalog`` drives only this
 module's own listing/resolution endpoints -- ``GET /objectives``,
 ``GET /objectives/{name}/batch``, and the name->spec resolution
-``GET /board``'s ``?objective=`` branch needs. ``GET /elites`` delegates
+``GET /board``'s ``?scope=`` branch needs. ``GET /elites`` delegates
 straight to ``views.elites.read_elites``, which resolves against the
 *module* ``nethackers.hub.objectives.CATALOG`` -- not whatever ``catalog``
 this app was built with. In normal use (the default ``catalog=CATALOG``)
@@ -68,13 +68,7 @@ from nethackers.hub.views.achievements import (
 )
 from nethackers.hub.views.attainment import read_attainment
 from nethackers.hub.views.baseline import read_baseline
-from nethackers.hub.views.boards import (
-    aggregate_board,
-    board,
-    coverage_board,
-    firsts_board,
-    resolve_scope,
-)
+from nethackers.hub.views.boards import aggregate_board, board, resolve_scope
 from nethackers.hub.views.elites import read_elites
 from nethackers.hub.views.hackers import hacker_board, leaders as hackers_leaders
 from nethackers.hub.views.programs import get_program, list_programs
@@ -253,32 +247,28 @@ def create_app(
 
     @app.get("/board")
     def get_board(
-        objective: str | None = None,
-        metric: str | None = None,
+        scope: str = "generalist",
         tier: str = "self-reported",
-    ) -> list[dict[str, Any]]:
-        if (objective is None) == (metric is None):
+        metric: str | None = None,
+    ) -> dict[str, Any]:
+        # ?metric= (coverage/firsts) is retired -- those now live at
+        # /achievements/coverage|/firsts (Part 1). Reject explicitly rather
+        # than silently ignoring it and returning the (unrelated) ?scope=
+        # board, which would mask a caller still on the old contract.
+        if metric is not None:
             raise HTTPException(
-                status_code=400, detail="specify exactly one of ?objective= or ?metric="
+                status_code=400,
+                detail="?metric= is gone; use /achievements/coverage or /achievements/firsts",
             )
-        if objective is not None:
-            # only identities are single-objective boards; random/all are
-            # retired (Task A1) and generalist/role are always a
-            # macro-average over their identity set.
-            if objective in catalog and catalog[objective].kind == "identity":
-                return board(store, catalog[objective], tier=tier)
+        if scope in catalog and catalog[scope].kind == "identity":
+            rows = board(store, catalog[scope], tier=tier)
+        else:
             try:
-                _kind, ids = resolve_scope(objective)
+                _kind, ids = resolve_scope(scope)
             except ValueError as e:
-                raise HTTPException(
-                    status_code=404, detail=f"unknown objective: {objective!r}"
-                ) from e
-            return aggregate_board(store, ids, tier=tier)
-        if metric == "coverage":
-            return coverage_board(store)
-        if metric == "firsts":
-            return firsts_board(store)
-        raise HTTPException(status_code=400, detail=f"unknown metric: {metric!r}")
+                raise HTTPException(status_code=404, detail=f"unknown scope: {scope!r}") from e
+            rows = aggregate_board(store, ids, tier=tier)
+        return envelope(rows, scope=scope, tier=tier)
 
     @app.get("/hackers")
     def hackers(

@@ -18,6 +18,7 @@ import pytest
 
 from nethackers.arena.progress import ACHIEVEMENTS
 from nethackers.contracts.models import Atom, ObjectiveSpec
+from nethackers.hub.ids import program_id
 from nethackers.hub.objectives import CATALOG, IDENTITIES
 from nethackers.hub.store import Store
 from nethackers.hub.views.attainment import update_attainment
@@ -107,18 +108,21 @@ def test_asc_median_mean_ranks_by_ascensions_then_median_then_mean_not_by_mean_a
 
     entries = board(store, spec)
 
-    by_digest = {e["solution_digest"]: e for e in entries}
+    id_a, id_b = program_id("sha256:a"), program_id("sha256:b")
+    by_id = {e["program_id"]: e for e in entries}
+    assert "solution_digest" not in entries[0]
     # The disagreement, made explicit: B's plain mean is higher than A's.
-    assert by_digest["sha256:b"]["mean_progression"] > by_digest["sha256:a"]["mean_progression"]
+    assert by_id[id_b]["mean_progression"] > by_id[id_a]["mean_progression"]
     # Yet asc_median_mean ranks A first, because A has more ascensions.
-    assert [e["solution_digest"] for e in entries] == ["sha256:a", "sha256:b"]
+    assert [e["program_id"] for e in entries] == [id_a, id_b]
     assert [e["rank"] for e in entries] == [1, 2]
-    assert by_digest["sha256:a"]["ascensions"] == 1
-    assert by_digest["sha256:b"]["ascensions"] == 0
-    assert by_digest["sha256:a"]["median_progression"] == 0.4
-    assert by_digest["sha256:a"]["mean_progression"] == 0.4
-    assert by_digest["sha256:a"]["episodes"] == 2
-    assert by_digest["sha256:a"]["owner"] == "sam"
+    assert by_id[id_a]["ascensions"] == 1
+    assert by_id[id_b]["ascensions"] == 0
+    assert by_id[id_a]["median_progression"] == 0.4
+    assert by_id[id_a]["mean_progression"] == 0.4
+    assert by_id[id_a]["owner"] == "sam"
+    assert by_id[id_a]["coverage"] == 1 and by_id[id_a]["identities_total"] == 1
+    assert by_id[id_a]["reference"] == {"repo": "r", "commit": "c"}
 
 
 def test_mean_aggregation_ranks_purely_by_mean_progression(tmp_path):
@@ -135,7 +139,9 @@ def test_mean_aggregation_ranks_purely_by_mean_progression(tmp_path):
 
     entries = board(store, spec)
 
-    assert [e["solution_digest"] for e in entries] == ["sha256:high", "sha256:low"]
+    assert [e["program_id"] for e in entries] == [
+        program_id("sha256:high"), program_id("sha256:low"),
+    ]
     assert [e["rank"] for e in entries] == [1, 2]
     assert entries[0]["mean_progression"] == 0.9
     assert entries[1]["mean_progression"] == 0.2
@@ -151,8 +157,8 @@ def test_board_groups_atoms_by_identity_not_objective_digest(tmp_path):
     ]
     _seed(store, atoms)
     (entry,) = board(store, CATALOG[IDENTITY])
-    assert entry["episodes"] == 2
     assert abs(entry["mean_progression"] - 0.5) < 1e-9
+    assert entry["coverage"] == 1 and entry["identities_total"] == 1
 
 
 # NOTE: test_all_rollup_aggregates_across_every_objectives_atoms was removed
@@ -311,9 +317,12 @@ def test_aggregate_board_is_coverage_first_then_mean(tmp_path):
 
     rows = aggregate_board(store, VAL_IDS)
 
-    assert [r["solution_digest"] for r in rows] == ["sha256:broad", "sha256:narrow"]
-    assert rows[0]["coverage"] == 3 and rows[0]["total"] == 3
+    assert [r["program_id"] for r in rows] == [
+        program_id("sha256:broad"), program_id("sha256:narrow"),
+    ]
+    assert rows[0]["coverage"] == 3 and rows[0]["identities_total"] == 3
     assert abs(rows[0]["mean_progression"] - 0.2) < 1e-9
+    assert rows[0]["median_progression"] == rows[0]["mean_progression"]  # constant per-id means
     assert rows[1]["coverage"] == 1
     assert [r["rank"] for r in rows] == [1, 2]
 

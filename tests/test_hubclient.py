@@ -111,22 +111,31 @@ def test_elites_sends_objective_param():
     assert http.calls == [("GET", "http://localhost:8000/elites", {"objective": "random"})]
 
 
-def test_board_with_objective_sends_objective_param():
-    http = _FakeHttp(response=[])
+def test_board_sends_scope_and_tier_params():
+    http = _FakeHttp(response={"rows": []})
     client = HubClient("http://localhost:8000", http=http)
 
-    client.board(objective="random")
+    client.board(scope="val", tier="verified")
 
-    assert http.calls == [("GET", "http://localhost:8000/board", {"objective": "random"})]
+    assert http.calls == [
+        ("GET", "http://localhost:8000/board", {"scope": "val", "tier": "verified"})
+    ]
 
 
-def test_board_with_metric_sends_metric_param():
-    http = _FakeHttp(response=[])
+def test_board_defaults_to_generalist_and_unwraps_the_envelopes_rows():
+    rows = [{"rank": 1, "program_id": "prog_abc", "owner": "sam"}]
+    http = _FakeHttp(response={
+        "generated_at": "t", "scope": "generalist", "tier": "self-reported", "rows": rows,
+    })
     client = HubClient("http://localhost:8000", http=http)
 
-    client.board(metric="coverage")
+    result = client.board()
 
-    assert http.calls == [("GET", "http://localhost:8000/board", {"metric": "coverage"})]
+    assert result == rows
+    assert http.calls == [
+        ("GET", "http://localhost:8000/board",
+         {"scope": "generalist", "tier": "self-reported"})
+    ]
 
 
 def test_search_default_params():
