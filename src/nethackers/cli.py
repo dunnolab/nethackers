@@ -90,15 +90,7 @@ from nethackers.hubclient.credentials import Credentials, whoami_from_token
 from nethackers.hubclient.frontier import champion, champion_scores, overall_mean, universe_scores
 from nethackers.hubclient.live import EpisodeStream
 from nethackers.hubclient.output import emit, err
-from nethackers.hubclient.publish import (
-    PublishError,
-    ensure_repo,
-    gh_login,  # noqa: F401 -- unused directly; submit/evolve now read gh_state(),
-    # but this keeps `cli.gh_login` a valid monkeypatch target for callers/tests
-    # written against the older single-state check.
-    gh_state,
-    publish_solution,
-)
+from nethackers.hubclient.publish import PublishError, ensure_repo, gh_state, publish_solution
 from nethackers.hubclient.pull import pull
 from nethackers.hubclient.register import device_login, refresh_access_token
 from nethackers.hubclient.render import (
