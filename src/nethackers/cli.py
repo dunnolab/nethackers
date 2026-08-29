@@ -90,7 +90,15 @@ from nethackers.hubclient.credentials import Credentials, whoami_from_token
 from nethackers.hubclient.frontier import champion, champion_scores, overall_mean, universe_scores
 from nethackers.hubclient.live import EpisodeStream
 from nethackers.hubclient.output import emit, err
-from nethackers.hubclient.publish import PublishError, ensure_repo, gh_login, publish_solution
+from nethackers.hubclient.publish import (
+    PublishError,
+    ensure_repo,
+    gh_login,  # noqa: F401 -- unused directly; submit/evolve now read gh_state(),
+    # but this keeps `cli.gh_login` a valid monkeypatch target for callers/tests
+    # written against the older single-state check.
+    gh_state,
+    publish_solution,
+)
 from nethackers.hubclient.pull import pull
 from nethackers.hubclient.register import device_login, refresh_access_token
 from nethackers.hubclient.render import (
@@ -676,6 +684,16 @@ def _run(argv: list[str] | None) -> int:
                 "[dim]not logged in — running offline "
                 "(publishing needs `nethackers login`)[/]"
             )
+        elif not args.offline:
+            # Hub-logged-in but gh not ready ⇒ wins evolve, are found, and
+            # silently stay LOCAL (PublishError at push time). Warn up front.
+            _gh_login, _gh_state = gh_state()
+            if _gh_state == "missing":
+                err.print("[yellow]wins won't publish[/] — install the GitHub CLI "
+                          "(`gh`), then run `gh auth login`")
+            elif _gh_state == "unauthed":
+                err.print("[yellow]wins won't publish[/] — run `gh auth login` "
+                          "(separate from `nethackers login`)")
 
         # Preflight only when a model is pinned: harness-default has nothing to
         # validate, and this keeps the model=None path (the common case + every
@@ -808,9 +826,14 @@ def _run(argv: list[str] | None) -> int:
         if creds is None:
             err.print("[yellow]not logged in[/] — run `nethackers login`")
             return 1
-        gh = gh_login()
+        gh, gh_st = gh_state()
         if gh is None:
-            err.print("[yellow]gh unavailable[/] — install the GitHub CLI and run `gh auth login`")
+            if gh_st == "missing":
+                err.print("[yellow]gh not installed[/] — install the GitHub CLI "
+                          "(`gh`), then run `gh auth login`")
+            else:  # unauthed
+                err.print("[yellow]gh not authed[/] — run `gh auth login` "
+                          "(separate from `nethackers login`)")
             return 1
         if gh != creds.login:
             err.print(f"gh is authed as [b]@{gh}[/] but you're logged in as "
