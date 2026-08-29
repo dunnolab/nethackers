@@ -20,6 +20,7 @@ from nethackers.contracts.models import Atom, Evidence, Objective, TrajectoryRes
 from nethackers.hub.api import create_app
 from nethackers.hub.auth import LocalStubAuth
 from nethackers.hub.github import GitHubReadError
+from nethackers.hub.ids import program_id
 from nethackers.hub.objectives import CATALOG
 from nethackers.hub.store import Store
 
@@ -159,12 +160,38 @@ def test_register_link_ok(tmp_path: Any) -> None:
     payload = response.json()
     assert payload["solution_id"] == f"{REPO}@{SHA}"
     assert payload["owner"] == OWNER
+    assert payload["program_id"] == program_id(payload["solution_id"])
 
     row = store.get_solution(f"{REPO}@{SHA}")
     assert row is not None
     assert row["owner"] == OWNER
     assert row["commit_sha"] == SHA
     assert row["root"] == "bot"
+
+
+def test_register_link_ok_without_root_entrypoint(tmp_path: Any) -> None:
+    # manifest.root/entrypoint are no longer required -- a manifest omitting
+    # them still registers, and the stored columns fall back to defaults.
+    client, store = _app(tmp_path)
+
+    body = _register_body()
+    body["manifest"] = {}
+
+    response = client.post(
+        "/register",
+        json=body,
+        headers=_auth_headers(),
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["solution_id"] == f"{REPO}@{SHA}"
+    assert payload["program_id"] == program_id(payload["solution_id"])
+
+    row = store.get_solution(f"{REPO}@{SHA}")
+    assert row is not None
+    assert row["root"] == "."
+    assert row["entrypoint"] == "bot.py"
 
 
 def test_register_requires_token(tmp_path: Any) -> None:
