@@ -3,9 +3,11 @@ dataset (M2a Task 14) used both here and by ``create_default_app``'s
 optional dev/demo seeding. See task-14-context.md, which governs:
 ``load_fixtures(store, now=...)`` is fully deterministic (a fixed default
 ``now``; every atom's progression is either a literal or an
-``ACHIEVEMENTS[...]`` lookup), so ``GET /attainment`` and
-``GET /board?objective=random`` over a freshly-loaded store always match
-the committed snapshots in ``fixtures/hub/``.
+``ACHIEVEMENTS[...]`` lookup), so ``GET /achievements/milestones`` (Task 7:
+repointed from the retired ``GET /attainment``, which served the same
+``read_attainment`` rows unenveloped and keyed by raw digest) over a
+freshly-loaded store always matches the committed snapshot in
+``fixtures/hub/`` once remapped onto ``first_program_id``.
 
 Snapshot comparisons are normalized (sorted on a stable key) before
 comparing -- not relying on dict/list/row order, per task-14-context.md.
@@ -27,6 +29,7 @@ from fastapi.testclient import TestClient
 from nethackers.hub.api import create_app
 from nethackers.hub.auth import LocalStubAuth
 from nethackers.hub.fixtures import ALPHA, BETA, GAMMA, IDENTITY_A, IDENTITY_B, load_fixtures
+from nethackers.hub.ids import program_id
 from nethackers.hub.store import Store
 
 REPO_ROOT = Path(__file__).parents[2]
@@ -53,14 +56,26 @@ def _normalize_board(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(entries, key=lambda e: e["solution_digest"])
 
 
+def _remap_snapshot_cell(cell: dict[str, Any]) -> dict[str, Any]:
+    """The committed snapshot was captured off the retired ``/attainment``,
+    keyed by raw ``first_solution`` digest -- mirror ``views.achievements.
+    milestones``'s own remap so it compares against the live
+    ``/achievements/milestones`` shape (``first_program_id``)."""
+    row = dict(cell)
+    row["first_program_id"] = program_id(row.pop("first_solution"))
+    return row
+
+
 def test_attainment_matches_committed_snapshot(tmp_path: Any) -> None:
     client = _client(tmp_path)
 
-    response = client.get("/attainment")
+    response = client.get("/achievements/milestones")
 
     assert response.status_code == 200
-    live = _normalize_attainment(response.json())
-    snapshot = _normalize_attainment(_load_snapshot("attainment.json"))
+    live = _normalize_attainment(response.json()["rows"])
+    snapshot = _normalize_attainment(
+        [_remap_snapshot_cell(cell) for cell in _load_snapshot("attainment.json")]
+    )
     assert live == snapshot
 
 
@@ -81,11 +96,11 @@ def test_identity_a_dlvl10_cell_has_a_single_holder(tmp_path: Any) -> None:
     # one holder: ALPHA/alice.
     client = _client(tmp_path)
 
-    cells = client.get("/attainment", params={"identity": IDENTITY_A}).json()
+    cells = client.get("/achievements/milestones", params={"identity": IDENTITY_A}).json()["rows"]
     cell = next(c for c in cells if c["milestone"] == "Dlvl:10")
 
     assert cell["holder_count"] == 1
-    assert cell["first_solution"] == ALPHA
+    assert cell["first_program_id"] == program_id(ALPHA)
     assert cell["first_owner"] == "alice"
 
 
@@ -96,11 +111,11 @@ def test_identity_b_ascend_cell_is_lit_only_by_the_ascended_solution(tmp_path: A
     # holder: BETA/bob.
     client = _client(tmp_path)
 
-    cells = client.get("/attainment", params={"identity": IDENTITY_B}).json()
+    cells = client.get("/achievements/milestones", params={"identity": IDENTITY_B}).json()["rows"]
     cell = next(c for c in cells if c["milestone"] == "You ascend t")
 
     assert cell["holder_count"] == 1
-    assert cell["first_solution"] == BETA
+    assert cell["first_program_id"] == program_id(BETA)
     assert cell["first_owner"] == "bob"
 
 
@@ -111,11 +126,11 @@ def test_identity_b_shallow_cell_is_held_by_both_gamma_and_beta(tmp_path: Any) -
     # fixtures.py's atom list, so it wins the same-``now`` first-ratchet.
     client = _client(tmp_path)
 
-    cells = client.get("/attainment", params={"identity": IDENTITY_B}).json()
+    cells = client.get("/achievements/milestones", params={"identity": IDENTITY_B}).json()["rows"]
     cell = next(c for c in cells if c["milestone"] == "Dlvl:2")
 
     assert cell["holder_count"] == 2
-    assert cell["first_solution"] == GAMMA
+    assert cell["first_program_id"] == program_id(GAMMA)
     assert cell["first_owner"] == "carol"
 
 
@@ -125,7 +140,7 @@ def test_no_milestone_none_atom_leaks_into_attainment(tmp_path: Any) -> None:
     # it can never surface as a lit cell.
     client = _client(tmp_path)
 
-    cells = client.get("/attainment", params={"identity": IDENTITY_B}).json()
+    cells = client.get("/achievements/milestones", params={"identity": IDENTITY_B}).json()["rows"]
 
     assert cells != []
     assert all(c["milestone"] is not None for c in cells)

@@ -273,13 +273,23 @@ def test_register_github_error_502(tmp_path: Any) -> None:
 # --- read endpoints (score views stay empty in M1, but still resolve) -------
 
 
-def test_unknown_solution_digest_404(tmp_path: Any) -> None:
+def test_retired_routes_404(tmp_path: Any) -> None:
+    # Task 7 cutover: /search, /solutions/{digest}[/frontier], /attainment,
+    # and /objectives/{name}/batch are gone for good -- replaced by
+    # /programs*, /achievements/*, and nothing (no consumer ever needed the
+    # raw published batch over HTTP). A generic framework 404 (unmatched
+    # route), not a handler-level one.
     client, _store = _app(tmp_path)
-    response = client.get("/solutions/sha256:does-not-exist")
-    assert response.status_code == 404
+    assert client.get("/search").status_code == 404
+    assert client.get("/solutions/sha256:anything").status_code == 404
+    assert client.get("/solutions/sha256:anything/frontier").status_code == 404
+    assert client.get("/attainment").status_code == 404
+    assert client.get(f"/objectives/{IDENTITY}/batch").status_code == 404
 
 
-def test_objectives_list_and_batch(tmp_path: Any) -> None:
+def test_objectives_list(tmp_path: Any) -> None:
+    # GET /objectives/{name}/batch is retired (Task 7) -- the catalog listing
+    # itself lives on; see test_retired_routes_404 for the batch route.
     client, _store = _app(tmp_path)
 
     objectives = client.get("/objectives")
@@ -289,23 +299,14 @@ def test_objectives_list_and_batch(tmp_path: Any) -> None:
     assert entries[IDENTITY]["episodes"] == BATCH_SIZE
     assert "random" in entries
 
-    batch = client.get(f"/objectives/{IDENTITY}/batch")
-    assert batch.status_code == 200
-    payload = batch.json()
-    assert payload["name"] == IDENTITY
-    assert len(payload["batch"]) == BATCH_SIZE
-    assert payload["batch"][0] == [0, IDENTITY]
 
-    unknown = client.get("/objectives/not-a-real-objective/batch")
-    assert unknown.status_code == 404
-
-
-def test_attainment_reads_empty(tmp_path: Any) -> None:
-    # No atoms are ever written in M1, so attainment is an empty list.
+def test_achievements_milestones_reads_empty(tmp_path: Any) -> None:
+    # No atoms are ever written in M1, so milestones is an empty list.
+    # (Repointed from the retired /attainment -- Task 7.)
     client, _store = _app(tmp_path)
-    response = client.get("/attainment")
+    response = client.get("/achievements/milestones")
     assert response.status_code == 200
-    assert response.json() == []
+    assert response.json()["rows"] == []
 
 
 def test_elites_scope_generalist_enveloped_uniform_row_schema(tmp_path: Any) -> None:
@@ -427,11 +428,13 @@ def test_board_rejects_retired_random_and_all(tmp_path: Any) -> None:
         assert client.get("/board", params={"scope": token}).status_code == 404
 
 
-def test_search_lists_and_owner_filter(tmp_path: Any) -> None:
-    # After registering a link, /search lists it and filters by owner. The
-    # ``digest`` column now holds the repo@commit solution id.
+def test_programs_lists_and_owner_filter(tmp_path: Any) -> None:
+    # After registering a link, /programs lists it and filters by owner.
+    # (Repointed from the retired /search -- Task 7 -- onto the opaque
+    # program id instead of the raw digest.)
     client, _store = _app(tmp_path)
     solution_id = f"{REPO}@{SHA}"
+    pid = program_id(solution_id)
 
     registered = client.post(
         "/register",
@@ -440,17 +443,17 @@ def test_search_lists_and_owner_filter(tmp_path: Any) -> None:
     )
     assert registered.status_code == 200
 
-    listed = client.get("/search")
+    listed = client.get("/programs")
     assert listed.status_code == 200
-    assert solution_id in [row["digest"] for row in listed.json()]
+    assert pid in [row["id"] for row in listed.json()["rows"]]
 
-    mine = client.get("/search", params={"owner": OWNER})
+    mine = client.get("/programs", params={"owner": OWNER})
     assert mine.status_code == 200
-    assert [row["digest"] for row in mine.json()] == [solution_id]
+    assert [row["id"] for row in mine.json()["rows"]] == [pid]
 
-    someone_elses = client.get("/search", params={"owner": "not-an-owner"})
+    someone_elses = client.get("/programs", params={"owner": "not-an-owner"})
     assert someone_elses.status_code == 200
-    assert someone_elses.json() == []
+    assert someone_elses.json()["rows"] == []
 
 
 def test_root_serves_the_dungeon_viz(tmp_path: Any) -> None:

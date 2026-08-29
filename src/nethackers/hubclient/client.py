@@ -104,15 +104,6 @@ class HubClient:
         """``GET /objectives`` -- the catalog listing."""
         return self._get("/objectives")
 
-    def objective_batch(self, name: str) -> Any:
-        """``GET /objectives/{name}/batch`` -- that objective's published
-        ``(seed, character)`` pairs."""
-        return self._get(f"/objectives/{name}/batch")
-
-    def attainment(self, identity: str | None = None) -> Any:
-        """``GET /attainment``, optionally narrowed to one ``?identity=``."""
-        return self._get("/attainment", {"identity": identity} if identity else None)
-
     def baseline(self) -> Any:
         """``GET /baseline`` -- AutoAscend's per-identity reference floor."""
         return self._get("/baseline")
@@ -143,9 +134,10 @@ class HubClient:
 
     def program_identities(self, program_id: str) -> Any:
         """``GET /programs/{id}/identities`` -- that program's per-identity
-        mean progression rows (envelope unwrapped). Renamed from the retired
-        ``solution_frontier``/``/solutions/{digest}/frontier``, which only
-        ever understood a real solution digest, not an opaque ``program_id``."""
+        mean progression rows (envelope unwrapped). Takes an opaque
+        ``program_id``, never a raw solution digest -- the retired
+        ``solution_frontier`` method this replaced only ever understood the
+        latter."""
         return (self._get(f"/programs/{program_id}/identities") or {}).get("rows", [])
 
     def hub_mode(self) -> str | None:

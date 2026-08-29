@@ -22,12 +22,11 @@ The hub holds no GitHub secret: every GitHub read uses the caller's own
 token.
 
 **Catalog-injection scope:** the injected ``catalog`` drives only this
-module's own listing/resolution endpoints -- ``GET /objectives``,
-``GET /objectives/{name}/batch``, and the name->spec resolution
-``GET /board``'s ``?scope=`` identity-kind branch needs. ``GET /elites``
-resolves its own ``?scope=`` purely via ``views.boards.resolve_scope``
-(roles/facets/identities/``"generalist"``) -- it never touches ``catalog``
-at all, injected or module-level.
+module's own listing/resolution endpoints -- ``GET /objectives`` and the
+name->spec resolution ``GET /board``'s ``?scope=`` identity-kind branch
+needs. ``GET /elites`` resolves its own ``?scope=`` purely via
+``views.boards.resolve_scope`` (roles/facets/identities/``"generalist"``)
+-- it never touches ``catalog`` at all, injected or module-level.
 """
 
 from __future__ import annotations
@@ -65,7 +64,6 @@ from nethackers.hub.views.achievements import (
     firsts as achievements_firsts,
     milestones as achievements_milestones,
 )
-from nethackers.hub.views.attainment import read_attainment
 from nethackers.hub.views.baseline import read_baseline
 from nethackers.hub.views.boards import aggregate_board, board, resolve_scope
 from nethackers.hub.views.elites import read_elites
@@ -87,13 +85,6 @@ def _dict_audio_path() -> Path:
         "NETHACKERS_DICT_AUDIO",
         str(Path(__file__).parent / "web" / "dictionary.mp3"),
     ))
-
-# GET /search's column list, local to this module -- the context calls for
-# keeping this one small SELECT in api.py rather than adding a store.py
-# method for it.
-_SEARCH_COLUMNS: tuple[str, ...] = (
-    "digest", "repo", "commit_sha", "owner", "root", "entrypoint", "registered_at",
-)
 
 
 class RegisterRequest(BaseModel):
@@ -215,17 +206,6 @@ def create_app(
             for spec in catalog.values()
         ]
 
-    @app.get("/objectives/{name}/batch")
-    def objective_batch(name: str) -> dict[str, Any]:
-        spec = catalog.get(name)
-        if spec is None:
-            raise HTTPException(status_code=404, detail=f"unknown objective: {name!r}")
-        return {"name": name, "batch": [[seed, character] for seed, character in spec.batch]}
-
-    @app.get("/attainment")
-    def attainment(identity: str | None = None) -> list[dict[str, Any]]:
-        return read_attainment(store, identity=identity)
-
     @app.get("/achievements/milestones")
     def achievements_milestones_route(identity: str | None = None) -> dict[str, Any]:
         return envelope(achievements_milestones(store, identity=identity), identity=identity)
@@ -293,38 +273,6 @@ def create_app(
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e)) from e
         return envelope(rows, by=by, tier=tier)
-
-    # ``:path`` (not the default converter) so a link-registered digest --
-    # ``github.com/owner/repo@commit``, which carries slashes -- matches; the
-    # default one only spans a single path segment, 404ing such a digest at
-    # routing before the handler runs (this is what broke the Frontier
-    # "Program" tab). The greedy ``:path`` means the ``/frontier`` route must be
-    # registered BEFORE the bare one, else it swallows the ``/frontier`` suffix.
-    @app.get("/solutions/{digest:path}/frontier")
-    def solution_frontier(digest: str) -> list[dict[str, Any]]:
-        if store.get_solution(digest) is None:
-            raise HTTPException(status_code=404, detail=f"unknown solution digest: {digest!r}")
-        return read_solution_frontier(store, digest)
-
-    @app.get("/solutions/{digest:path}")
-    def get_solution(digest: str) -> dict[str, Any]:
-        solution = store.get_solution(digest)
-        if solution is None:
-            raise HTTPException(status_code=404, detail=f"unknown solution digest: {digest!r}")
-        return solution
-
-    @app.get("/search")
-    def search(owner: str | None = None, limit: int = 50, offset: int = 0) -> list[dict[str, Any]]:
-        columns_sql = ", ".join(_SEARCH_COLUMNS)
-        sql = f"SELECT {columns_sql} FROM solutions"
-        params: list[Any] = []
-        if owner is not None:
-            sql += " WHERE owner = ?"
-            params.append(owner)
-        sql += " ORDER BY registered_at DESC LIMIT ? OFFSET ?"
-        params.extend([limit, offset])
-        rows = store.conn.execute(sql, params).fetchall()
-        return [dict(zip(_SEARCH_COLUMNS, row, strict=True)) for row in rows]
 
     @app.get("/programs")
     def programs(owner: str | None = None, limit: int = 50, offset: int = 0) -> dict[str, Any]:

@@ -64,35 +64,6 @@ def test_objectives_gets_objectives_with_no_params():
     assert http.calls == [("GET", "http://localhost:8000/objectives", None)]
 
 
-def test_objective_batch_gets_named_path():
-    http = _FakeHttp(response={"name": "random", "batch": []})
-    client = HubClient("http://localhost:8000", http=http)
-
-    client.objective_batch("random")
-
-    assert http.calls == [("GET", "http://localhost:8000/objectives/random/batch", None)]
-
-
-def test_attainment_without_identity_sends_no_params():
-    http = _FakeHttp(response=[])
-    client = HubClient("http://localhost:8000", http=http)
-
-    client.attainment()
-
-    assert http.calls == [("GET", "http://localhost:8000/attainment", None)]
-
-
-def test_attainment_with_identity_sends_identity_param():
-    http = _FakeHttp(response=[])
-    client = HubClient("http://localhost:8000", http=http)
-
-    client.attainment("val-dwa-law-fem")
-
-    assert http.calls == [
-        ("GET", "http://localhost:8000/attainment", {"identity": "val-dwa-law-fem"})
-    ]
-
-
 def test_baseline_gets_baseline_with_no_params():
     payload = {"owner": "autoascend", "per_identity": {}, "overall": None}
     http = _FakeHttp(response=payload)
