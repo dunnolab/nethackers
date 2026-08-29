@@ -242,7 +242,6 @@ class _FakeHubClient:
         self.base_url = base_url
         self.timeout = timeout
         self.board_calls: list[tuple] = []
-        self.attainment_calls: list[tuple] = []
         self.elites_calls: list[tuple] = []
         _FakeHubClient.instances.append(self)
 
@@ -252,10 +251,6 @@ class _FakeHubClient:
         # an empty-state message on []).
         return [{"rank": 1, "owner": "vale", "mean_progression": 0.5,
                  "solution_digest": "a" * 12}]
-
-    def attainment(self, identity: str | None = None) -> list:
-        self.attainment_calls.append((identity,))
-        return []
 
     def elites(self, scope: str) -> list:
         self.elites_calls.append((scope,))

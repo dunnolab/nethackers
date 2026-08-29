@@ -420,7 +420,7 @@ def render_search(results: list[dict[str, Any]]) -> str:
     real git object unlike the retired content-hash digest). A friendly
     one-line message instead of a bare header when ``results == []``."""
     if not results:
-        return "no solutions found."
+        return "no programs found."
     headers = ["program", "owner", "repo", "commit", "registered"]
     rows = [
         [
@@ -444,7 +444,7 @@ def render_show(program: dict[str, Any]) -> str:
     friendly one-line message instead of an empty block when ``program`` is
     empty/missing."""
     if not program:
-        return "no such solution."
+        return "no such program."
     reference = program.get("reference") or {}
     flat = {
         "id": program.get("id", ""),

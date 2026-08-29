@@ -292,6 +292,8 @@ def create_app(
             raise HTTPException(status_code=404, detail=f"unknown program id: {program_id!r}")
         return prog
 
+    # TODO(launch): /atoms is an unbounded full-table read -- paginate before
+    # public exposure (see hub security audit).
     @app.get("/atoms")
     def atoms(program: str | None = None, identity: str | None = None,
               tier: str | None = None) -> dict[str, Any]:

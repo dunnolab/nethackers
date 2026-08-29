@@ -719,7 +719,7 @@ def test_rich_render_search_contains_expected_cells():
 
 
 def test_rich_render_search_empty_is_friendly_not_bare_header():
-    assert _render_text(rich_search([])).strip() == "no solutions found."
+    assert _render_text(rich_search([])).strip() == "no programs found."
 
 
 def test_rich_render_show_contains_expected_cells():
@@ -739,7 +739,7 @@ def test_rich_render_show_contains_expected_cells():
 
 
 def test_rich_render_show_empty_is_friendly_not_bare_block():
-    assert _render_text(rich_show({})).strip() == "no such solution."
+    assert _render_text(rich_show({})).strip() == "no such program."
 
 
 def test_rich_renderers_hyperlink_owner_and_repo_to_github():
@@ -1125,8 +1125,8 @@ def test_plain_render_board_empty_is_friendly_not_bare_header():
 
 
 def test_plain_render_search_empty_is_friendly_not_bare_header():
-    assert plain_search([]) == "no solutions found."
+    assert plain_search([]) == "no programs found."
 
 
 def test_plain_render_show_empty_is_friendly_not_bare_header():
-    assert plain_show({}) == "no such solution."
+    assert plain_show({}) == "no such program."

@@ -52,10 +52,6 @@ def _normalize_attainment(cells: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(cells, key=lambda c: (c["identity"], c["milestone"]))
 
 
-def _normalize_board(entries: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return sorted(entries, key=lambda e: e["solution_digest"])
-
-
 def _remap_snapshot_cell(cell: dict[str, Any]) -> dict[str, Any]:
     """The committed snapshot was captured off the retired ``/attainment``,
     keyed by raw ``first_solution`` digest -- mirror ``views.achievements.

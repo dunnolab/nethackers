@@ -37,7 +37,7 @@ class _FakeClient:
     def elites(self, objective):
         return self._elites
 
-    def board(self, objective):
+    def board(self, scope):
         return self._board
 
     def program_identities(self, program_id):

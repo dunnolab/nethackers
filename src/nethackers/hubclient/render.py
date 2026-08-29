@@ -413,7 +413,7 @@ def render_search(results: list[dict[str, Any]]) -> RenderableType:
     content-hash digest). Empty -> a friendly one-line message, never a
     bare header."""
     if not results:
-        return _empty("no solutions found.")
+        return _empty("no programs found.")
 
     table = Table(header_style="bold", row_styles=["", "on grey11"])
     for name in ("program", "owner", "repo", "commit", "registered"):
@@ -441,7 +441,7 @@ def render_show(program: dict[str, Any]) -> RenderableType:
     ``owner`` linked via ``_gh_user``. Empty/missing -> a friendly one-line
     message, never an empty block."""
     if not program:
-        return _empty("no such solution.")
+        return _empty("no such program.")
 
     reference = program.get("reference") or {}
     repo = str(reference.get("repo", ""))

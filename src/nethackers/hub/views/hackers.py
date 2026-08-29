@@ -9,7 +9,7 @@ import statistics
 from collections.abc import Sequence
 from typing import Any
 
-from nethackers.hub.objectives import ALIGNMENTS, GENDERS, RACES, ROLES
+from nethackers.hub.objectives import FACETS
 from nethackers.hub.store import Store
 from nethackers.hub.views.boards import resolve_scope
 
@@ -48,17 +48,14 @@ def hacker_board(
     return [{"rank": rank, **entry} for rank, entry in enumerate(unranked, start=1)]
 
 
-_FACET_VALUES = {"role": ROLES, "race": RACES, "align": ALIGNMENTS, "gender": GENDERS}
-
-
 def leaders(store: Store, by: str, *, tier: str = "self-reported") -> list[dict[str, Any]]:
     """Best hacker for each value of facet ``by`` (role/race/align/gender):
     for each value, the rank-1 owner of the facet-scoped hacker board. Values
     with no scored hackers are omitted. Raises ValueError on an unknown facet."""
-    if by not in _FACET_VALUES:
+    if by not in FACETS:
         raise ValueError(f"unknown facet: {by!r}")
     rows: list[dict[str, Any]] = []
-    for value in _FACET_VALUES[by]:
+    for value in FACETS[by]:
         _kind, ids = resolve_scope(f"{by}:{value}")
         board = hacker_board(store, ids, tier=tier)
         if board:

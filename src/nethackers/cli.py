@@ -287,7 +287,7 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
             "NetHackers — a distributed effort to 'solve' NetHack by evolving "
             "deterministic symbolic players (built on AutoAscend), coordinated through "
             "a shared hub. This CLI browses the hub — the attainment map, ranking "
-            "boards, and elite solutions — and lets you evaluate and register your own. "
+            "boards, and elite programs — and lets you evaluate and register your own. "
             "Reads print a rich table in a terminal and JSON when piped; use -o to "
             "force a format."
         ),
@@ -449,7 +449,7 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
     b = sub.add_parser(
         "leaderboard", aliases=["board"], parents=[common],
         formatter_class=RichHelpFormatter,
-        help="Show the leaderboard — solutions ranked by scope.",
+        help="Show the leaderboard — programs ranked by scope.",
     )
     b.add_argument(
         "--scope", default="generalist",
@@ -459,7 +459,7 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
 
     se = sub.add_parser(
         "search", parents=[common], formatter_class=RichHelpFormatter,
-        help="Search registered solutions.",
+        help="Search registered programs.",
     )
     se.add_argument("--owner", default=None, help="Narrow to one owner login.")
     se.add_argument("--limit", type=int, default=50)
@@ -473,7 +473,7 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
 
     r = sub.add_parser(
         "register", parents=[common], formatter_class=RichHelpFormatter,
-        help="Register a repo@commit solution link with the hub (uses your stored login).",
+        help="Register a repo@commit program link with the hub (uses your stored login).",
     )
     r.add_argument("--repo", required=True, help="e.g. github.com/owner/name")
     r.add_argument("--commit", required=True, help="40-hex commit sha")
