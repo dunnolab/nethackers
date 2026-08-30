@@ -73,6 +73,8 @@ import json
 import os
 import sys
 import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -97,6 +99,7 @@ from nethackers.diagnostics import (
 from nethackers.eval.runner import eval_batch
 from nethackers.harness.discovery import ModelInfo, list_models, preflight_model
 from nethackers.harness.launch import EvolveParams, _now, prepare_evolve
+from nethackers.harness.pull_events import PullEvent, render_cli_line
 from nethackers.harness.sandbox_preflight import (
     ensure_image,
     image_present,
@@ -611,6 +614,30 @@ def _arena_preflight(image: str) -> str | None:
     return ensure_image(image, "arena", on_line=lambda ln: err.print(f"[dim]{ln}[/]"))
 
 
+@contextmanager
+def _pull_progress() -> Iterator[Callable[[PullEvent], None]]:
+    """A ``PullEvent`` consumer for CLI sandbox provisioning -- the CLI half
+    of the shared typed pull-progress seam (spec S5.5; the TUI has its own
+    consumer). While attached to a real terminal, renders ``render_cli_line``
+    as a single rewriting status line via ``rich.live.Live`` (the same
+    in-place-update convention ``EpisodeStream`` below already uses for the
+    per-episode table, ``transient=True`` here since the surrounding
+    "checking/pulling…"/"✓ ready" prints already bracket it with a permanent
+    record). Redirected output (no tty, e.g. ``-o json``/CI logs) instead
+    gets plain sequential lines -- rewriting a line only makes sense on a
+    real terminal. Deliberately minimal: a compact one-liner, not a
+    progress bar."""
+    if not err.is_terminal:
+        def _on_event_plain(event: PullEvent) -> None:
+            err.print(f"[dim]{render_cli_line(event)}[/]")
+        yield _on_event_plain
+        return
+    with Live(console=err, auto_refresh=False, transient=True) as live:
+        def _on_event_live(event: PullEvent) -> None:
+            live.update(f"[dim]{render_cli_line(event)}[/]", refresh=True)
+        yield _on_event_live
+
+
 def _run(argv: list[str] | None) -> int:
     """Parse args and dispatch one subcommand. May raise -- ``main`` is the
     single place that turns any failure into a clean message, so nothing here
@@ -715,7 +742,9 @@ def _run(argv: list[str] | None) -> int:
             for kind in ("arena", "mutator"):
                 ref = resolve_image(None, kind)
                 err.print(f"[dim]checking/pulling {kind} sandbox ({ref})…[/]")
-                perr = ensure_image(ref, kind, on_line=lambda ln: err.print(f"[dim]{ln}[/]"))
+                with _pull_progress() as on_event:
+                    perr = ensure_image(ref, kind, on_line=lambda ln: err.print(f"[dim]{ln}[/]"),
+                                        on_event=on_event)
                 if perr is not None:
                     err.print(perr)
         # Named distinctly from `evolve`'s own `results` local below -- both
@@ -798,8 +827,9 @@ def _run(argv: list[str] | None) -> int:
                 continue
             err.print(f"[yellow]setting up the {_kind} sandbox[/] (first run — this "
                       "can take a few minutes)…")
-            ierr = ensure_image(_ref, _kind,
-                                on_line=lambda ln: err.print(f"[dim]{ln}[/]"))
+            with _pull_progress() as on_event:
+                ierr = ensure_image(_ref, _kind, on_line=lambda ln: err.print(f"[dim]{ln}[/]"),
+                                    on_event=on_event)
             if ierr is not None:
                 err.print(ierr)
                 return 1
