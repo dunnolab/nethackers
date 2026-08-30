@@ -112,12 +112,41 @@ def test_root_serves_the_page(tmp_path: Any) -> None:
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
     assert "NetHackers" in resp.text
-    assert 'id="scBody"' in resp.text
+    assert 'id="rolegrid"' in resp.text
+    assert 'id="recordholders"' in resp.text
     # The marquee count and the freshness stamp are live (JS from /stats); the
     # old hardcoded literals must never creep back into the served page. (The
     # full behavior lives in the manual jsdom harness tests/hub/web/wire.test.mjs.)
     assert "3 programs registered" not in resp.text
     assert 'id="updated"' in resp.text
+
+
+def test_site_uses_identity_boards_and_concrete_contributor_recognition(tmp_path: Any) -> None:
+    client, _store = _app(tmp_path)
+    body = client.get("/").text
+
+    assert 'data-view="programs"' not in body
+    assert 'id="scBody"' not in body
+    assert 'id="recordholders"' in body
+    assert 'id="breakthroughs"' in body
+    assert 'id="hackers"' in body
+    assert 'id="people"' not in body
+    assert 'data-fame-more="keepers"' in body
+    assert 'data-fame-more="breakthroughs"' in body
+    assert 'id="activityfeed"' not in body
+    assert 'class="frontierrow"' in body
+    assert "async function openIdentity(identity)" in body
+    assert "async function openHacker(owner)" in body
+    assert "async function openBreakthrough(event)" in body
+    assert 'data-breakthrough="${i}"' in body
+    for detail in (
+        "same canonical seed batch",
+        "registered programs",
+        "roles evaluated",
+        "latest registration",
+        "best identity",
+    ):
+        assert detail in body
 
 
 def test_root_injects_the_real_package_version(tmp_path: Any) -> None:
@@ -144,6 +173,15 @@ def test_stats_reads_empty(tmp_path: Any) -> None:
         "best": 0.0,
         "last_registered_at": None,
     }
+
+
+def test_recognition_reads_empty(tmp_path: Any) -> None:
+    client, _store = _app(tmp_path)
+    response = client.get("/recognition")
+    assert response.status_code == 200
+    body = response.json()
+    assert body.pop("generated_at")  # ISO 8601 as-of, present on every response
+    assert body == {"keepers": [], "breakthroughs": []}
 
 
 def test_register_link_ok(tmp_path: Any) -> None:

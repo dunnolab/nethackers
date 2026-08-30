@@ -1,12 +1,7 @@
 <title>NetHackers</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<!-- Metric-identical fallbacks for Times New Roman (Tinos) + Courier New (Cousine):
-     they render ONLY where the real system fonts are missing (e.g. Android, Linux),
-     so the Web 1.0 look is guaranteed on every device. On Mac/Windows the real
-     Courier New / Times New Roman are used first and nothing downloads. -->
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Cousine:ital,wght@0,400;0,700;1,400;1,700&family=Tinos:ital,wght@0,400;0,700;1,400;1,700&display=swap">
+<!-- Web 1.0 typography: system Times New Roman + Courier New only, no web-font
+     downloads (Liberation / Nimbus are metric-compatible fallbacks for Linux). -->
 <style>
 /* ==========================================================================
    NetHackers  &mdash;  a 1998 research-group homepage for solving NetHack.
@@ -44,13 +39,13 @@
 html{ scroll-behavior:smooth; }
 body{
   margin:0; background:var(--ground); color:var(--ink);
-  font-family:"Times New Roman","Tinos","Liberation Serif","Nimbus Roman",Times,serif;
+  font-family:"Times New Roman","Liberation Serif","Nimbus Roman",Times,serif;
   font-size:17px; line-height:1.5;
   background-image:
     linear-gradient(rgba(255,255,255,.35),rgba(255,255,255,.35)),
     repeating-linear-gradient(0deg,transparent 0 3px,rgba(0,0,0,.012) 3px 4px);
 }
-.mono{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; }
+.mono, .masthead, #demo, #demoMsg, .msgbar, #dictbar, .orc-speak, .orc-cap, .orc-bars, .orc-median, .orc-nrow, .orc-cmp, .od span, h2.sec .glyph, table.grid, table.fr, table.dtable, .identityboard, .term, .tomb, .refpop pre.ra, .wayh .wl, .src{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; }
 a{ color:var(--indigo); text-decoration:underline; text-underline-offset:2px; }
 a:visited{ color:var(--violet); }
 a:hover{ color:var(--red); background:#fff3b0; }
@@ -60,26 +55,25 @@ img{ max-width:100%; }
 /* the document window ------------------------------------------------------ */
 .page{
   max-width:1000px; margin:74px auto 104px; background:var(--paper); position:relative; z-index:1;
-  border:1px solid var(--silver-lo); box-shadow:4px 4px 0 rgba(60,58,50,.35);
 }
 .pad{ padding:0 18px; }
 
 /* MASTHEAD ----------------------------------------------------------------- */
 .masthead{ background:var(--screen); color:var(--screen-ink); position:relative; overflow:hidden;
-  font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; padding:14px 16px 12px; }
+   padding:14px 16px 12px; }
 .masthead pre{ margin:0; font-size:clamp(9px,2.1vw,15px); line-height:1.05; color:var(--gold);
   overflow-x:auto; white-space:pre; position:relative; z-index:1; }
 .masthead .sub{ margin-top:8px; font-size:.8rem; color:var(--screen-dim); position:relative; z-index:1; }
 /* ambient demo game: a faint dungeon behind the wordmark, with a tiny chase in progress */
 #demo{ position:absolute; top:10px; right:15px; margin:0; z-index:0; pointer-events:none;
-  font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:12px; line-height:1.12;
+   font-size:12px; line-height:1.12;
   color:var(--screen-dim); opacity:.34; white-space:pre; }
 #demo .you{ color:var(--gold); font-weight:700; }
 #demo .pet{ color:var(--green); font-weight:700; }
 #demo .gridbug{ color:var(--scr-red); font-weight:700; }
 #demo .corpse{ color:var(--scr-red); font-weight:700; }
 #demoMsg{ position:absolute; top:4px; right:18px; z-index:0; pointer-events:none; white-space:pre;
-  text-align:right; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace;
+  text-align:right; 
   font-size:10px; line-height:1.18; }
 #demoMsg.run{ color:var(--screen-dim); opacity:.34; }
 #demoMsg.yasd{ color:var(--scr-red); opacity:.55; font-weight:700; }
@@ -89,7 +83,7 @@ img{ max-width:100%; }
 @keyframes blink{ 50%{ opacity:0; } }
 
 /* marquee message line (the NetHack top line) ------------------------------ */
-.msgbar{ background:#000; color:var(--screen-ink); font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace;
+.msgbar{ background:#000; color:var(--screen-ink); 
   font-size:.82rem; border-top:1px solid #2a2a3a; overflow:hidden; white-space:nowrap; }
 .msgbar__in{ display:inline-block; padding:5px 0; white-space:nowrap;
   animation:scrollmsg 96s linear infinite; }
@@ -103,48 +97,54 @@ img{ max-width:100%; }
 .sidebar{ border-right:1px solid var(--rule-soft); padding:16px 14px; font-size:.86rem; }
 .main{ padding:14px 20px 4px; min-width:0; }
 
-.sidebar h4{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.7rem; letter-spacing:.12em;
+.sidebar h4{  font-size:.7rem; letter-spacing:.12em;
   text-transform:uppercase; color:var(--indigo); margin:0 0 6px; border-bottom:1px solid var(--rule-soft); padding-bottom:3px; }
-.idx{ list-style:none; margin:0 0 16px; padding:0; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.82rem; }
+.idx{ list-style:none; margin:0 0 16px; padding:0;  font-size:.82rem; }
 .idx li{ margin:2px 0; }
 .idx a{ text-decoration:none; }
 .idx a:hover{ text-decoration:underline; }
 .idx .k{ color:var(--red); }
 .ext{ list-style:none; margin:0 0 16px; padding:0; font-size:.85rem; }
 .ext li{ margin:3px 0; }
-.ext .c{ color:var(--indigo-2); font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; }
+.ext .c{ color:var(--indigo-2);  font-size:.8rem; }
 
 /* hit counter -------------------------------------------------------------- */
 .counter{ margin:0 0 6px; }
 .od{ display:inline-flex; gap:2px; background:#000; padding:3px; border:2px inset var(--silver); }
-.od span{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-weight:700; color:var(--gold);
+.od span{  font-weight:700; color:var(--gold);
   background:#111; padding:1px 3px; font-size:.9rem; }
-.counter .cap{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.68rem; color:var(--indigo-2); margin-top:3px; }
+.counter .cap{  font-size:.68rem; color:var(--indigo-2); margin-top:3px; }
 .reg{ display:flex; flex-direction:column; gap:6px; margin:2px 0 14px; }
 .regrow{ display:flex; align-items:center; gap:8px; }
 .reg .od span{ font-size:.82rem; }
-.reglbl{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.72rem; color:var(--indigo-2); }
-.updated{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.72rem; color:#6b6b72; margin:10px 0 14px; }
+.reglbl{  font-size:.72rem; color:var(--indigo-2); }
+.updated{  font-size:.72rem; color:#6b6b72; margin:10px 0 14px; }
 
 /* badges ------------------------------------------------------------------- */
 .badges{ display:flex; flex-direction:column; gap:6px; margin-top:8px; }
-.badge{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.62rem; line-height:1.25; color:#fff;
+.badge{  font-size:.62rem; line-height:1.25; color:#fff;
   padding:4px 6px; border:1px solid #000; text-align:center; text-decoration:none; display:block; }
 .badge.b1:hover{ background:var(--indigo-2); }
 .badge.b1{ background:var(--indigo); }
 .badge.b2{ background:#111; color:var(--green); }
 .badge.b3{ background:var(--red); }
 .badge b{ font-weight:700; }
+/* old-style YouTube banner (external video link) -- pixel-art wordmark (embedded PNG) */
+.badge.yt{ background:#fff; color:#282828; padding:7px 6px 8px; }
+.badge.yt:hover{ background:#fff3b0; }
+.badge.yt .ytlogo{ image-rendering:pixelated; image-rendering:crisp-edges; display:block; height:16px; width:auto; margin:0 auto 5px; }
+.badge.yt .yt-title{ display:block; font-weight:700; }
+.badge.yt .yt-cap{ display:block; font-size:.58rem; color:#6b6b72; margin-top:2px; }
 
 /* MAIN sections ------------------------------------------------------------ */
 .main section{ scroll-margin-top:12px; }
 h2.sec{ font-size:1.5rem; color:var(--indigo); margin:.2rem 0 .1rem; }
-h2.sec .glyph{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; color:var(--red); }
+h2.sec .glyph{  color:var(--red); }
 .lead{ margin:.3rem 0 .8rem; }
 .lead b{ color:var(--indigo); }
-.note{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; color:#5c5c64; }
+.note{  font-size:.78rem; color:#5c5c64; }
 hr.rule{ border:0; height:0; border-top:1px solid var(--silver-lo); border-bottom:1px solid var(--silver-hi); margin:22px 0; }
-.new{ color:var(--red); font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-weight:700; font-size:.68rem; }
+.new{ color:var(--red);  font-weight:700; font-size:.68rem; }
 .blink{ animation:blink2 1.2s steps(1) infinite; }
 @keyframes blink2{ 50%{ opacity:.25; } }
 
@@ -153,17 +153,17 @@ hr.rule{ border:0; height:0; border-top:1px solid var(--silver-lo); border-botto
 ul.hard{ margin:.4rem 0 .3rem; padding-left:1.25rem; }
 ul.hard li{ margin:.4rem 0; }
 ul.hard li b{ color:var(--indigo); }
-.sig{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.82rem; color:var(--indigo-2); }
-.factoids{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; margin:.6rem 0 0; padding-left:1.1rem; }
+.sig{  font-size:.82rem; color:var(--indigo-2); }
+.factoids{  font-size:.8rem; margin:.6rem 0 0; padding-left:1.1rem; }
 .factoids li{ margin:2px 0; }
 
 /* controls (retro) */
 .controls{ display:grid; grid-template-columns:max-content 1fr; gap:7px 14px; align-items:center;
-  margin:.6rem 0 .8rem; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; max-width:600px; }
+  margin:.6rem 0 .8rem;  font-size:.8rem; max-width:600px; }
 .controls .lbl{ color:#55555c; text-align:right; white-space:nowrap; }
 .controls .grp{ display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
 .bevel{ background:var(--silver); border:2px solid; border-color:var(--silver-hi) var(--silver-lo) var(--silver-lo) var(--silver-hi);
-  padding:3px 10px; cursor:pointer; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; color:#111; }
+  padding:3px 10px; cursor:pointer;  font-size:.78rem; color:#111; }
 .bevel:active,.bevel[aria-pressed="true"]{ border-color:var(--silver-lo) var(--silver-hi) var(--silver-hi) var(--silver-lo);
   background:#b6b6b1; }
 .bevel[aria-pressed="true"]{ color:var(--indigo); font-weight:700; }
@@ -172,7 +172,7 @@ select.bevel{ padding:3px 4px; }
 
 /* high-score TABLE --------------------------------------------------------- */
 .tablewrap{ overflow-x:auto; border:1px solid var(--silver-lo); }
-table.grid{ width:100%; border-collapse:collapse; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.83rem; background:#fff; }
+table.grid{ width:100%; border-collapse:collapse;  font-size:.83rem; background:#fff; }
 table.grid caption{ text-align:left; background:var(--indigo); color:#fff; font-weight:700; padding:4px 8px;
   font-size:.78rem; letter-spacing:.04em; }
 .grid th{ background:var(--silver); border:1px solid var(--silver-lo); padding:3px 8px; text-align:right;
@@ -193,24 +193,35 @@ table.grid caption{ text-align:left; background:var(--indigo); color:#fff; font-
 .cov .tot{ color:#9a9aa6; }
 .base td{ background:#eef0f6 !important; color:#6a6a72; }
 .base .tag{ font-size:.64rem; border:1px solid var(--silver-lo); padding:0 3px; }
-.more{ text-align:center; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; color:var(--indigo);
+.more{ text-align:center;  font-size:.8rem; color:var(--indigo);
   cursor:pointer; padding:6px; user-select:none; background:#f0f0f4; border:1px solid var(--silver-lo); border-top:0; }
 .more:hover{ background:#fff3b0; color:var(--red); }
 
+/* RECOGNITION ------------------------------------------------------------- */
+.famedesc{ color:#55555c; font-size:.92rem; margin:.25rem 0 .55rem; }
+.fametable .owner{ color:var(--indigo); font-weight:700; text-decoration:underline; }
+.fametable .roles{ white-space:normal; text-align:left; min-width:190px; }
+.famelog{ font-size:.75rem !important; }
+.famelog td{ font-variant-numeric:tabular-nums; }
+.emptyblock{ color:#777780;  font-size:.78rem; }
+
 /* FRONTIER heatmap --------------------------------------------------------- */
 .frtop{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:.3rem 0 .7rem; }
-.regime{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; }
+.regime{  font-size:.8rem; }
 .regime label{ cursor:pointer; margin-right:12px; }
-.gridnote{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; color:#55555c; margin:.2rem 0 .8rem; }
+.gridnote{  font-size:.78rem; color:#55555c; margin:.2rem 0 .8rem; }
 .gridnote b{ color:var(--indigo); }
 .rolegrid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(238px,1fr)); gap:10px; align-items:start; }
-table.fr{ width:100%; table-layout:fixed; border-collapse:collapse; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.76rem; }
+table.fr{ width:100%; table-layout:fixed; border-collapse:collapse;  font-size:.76rem; }
 .fr col.c1{ width:44%; } .fr col.c2{ width:28%; } .fr col.c3{ width:28%; }
 .fr td.vn{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
 .fr tr.frhead td{ background:#eeeef2; border-color:var(--silver-lo); }
 .fr tr.frhead td.rn{ color:var(--indigo); font-weight:700; }
 .fr tr.frhead td.hval{ font-weight:700; color:#2a2a30; }
 .fr td{ border:1px solid #e2e2e8; padding:2px 6px; }
+.fr tr.frontierrow{ cursor:pointer; }
+.fr tr.frontierrow:hover td,.fr tr.frontierrow:focus td{ background:#fff3b0 !important; color:#111 !important; }
+.fr tr.frontierrow:focus{ outline:2px solid var(--indigo); outline-offset:-2px; }
 .fr td.vn{ color:#55555c; } .fr td.vv{ text-align:right; font-variant-numeric:tabular-nums; color:#111; }
 .fr td.empty{ color:#c2c2c8; }
 .fr td.floor{ color:#9a9aa6; font-style:italic; }
@@ -220,42 +231,31 @@ table.fr{ width:100%; table-layout:fixed; border-collapse:collapse; font-family:
 .fr td.dpos,.fr .dpos{ color:#1a7a2e; } .fr td.dneg,.fr .dneg{ color:var(--red); } .fr td.dz,.fr .dz{ color:#9a9aa6; }
 .fr .aachip{ color:#9a9aa6; font-style:normal; font-size:.64rem; letter-spacing:.08em; }
 .legend{ display:flex; flex-wrap:wrap; gap:8px 16px; align-items:center; margin-top:12px;
-  font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.72rem; color:#55555c; }
+   font-size:.72rem; color:#55555c; }
 .legend .ramp{ display:inline-flex; height:11px; width:120px; border:1px solid var(--silver-lo); }
 .legend .ramp i{ flex:1; } .legend .sw{ display:inline-block; width:11px; height:11px; border:1px solid #000; vertical-align:-1px; }
 
-/* PROGRESS ascii chart ----------------------------------------------------- */
-.chartbox{ background:var(--screen); border:1px solid #000; padding:12px 14px; overflow-x:auto; }
-.chartbox pre{ margin:0; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; line-height:1.35;
-  color:var(--screen-ink); white-space:pre; }
-.chartbox .bar{ color:var(--indigo-2); }
-.chartbox .barhi{ color:var(--gold); }
-.chartbox .base{ color:var(--scr-red); }
-.chartbox .lbl3{ color:var(--screen-dim); }
-.chartbox .val{ color:#fff; }
-.chartcap{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.74rem; color:#55555c; margin-top:8px; }
-
 /* CONTRIBUTE --------------------------------------------------------------- */
-.menu2{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.9rem; margin:.4rem 0 1rem; }
+.menu2{  font-size:.9rem; margin:.4rem 0 1rem; }
 .menu2 div{ margin:5px 0; }
 .menu2 .k{ color:var(--red); font-weight:700; }
 .menu2 .d{ color:#55555c; }
-.wayh{ font-family:"Times New Roman","Tinos","Liberation Serif","Nimbus Roman",Times,serif; font-weight:700; color:var(--indigo); font-size:1.2rem; margin:1.3rem 0 .3rem; }
-.wayh .wl{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; color:var(--red); margin-right:.35rem; }
-#contribute p a{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.86rem; }
+.wayh{ font-family:"Times New Roman","Liberation Serif","Nimbus Roman",Times,serif; font-weight:700; color:var(--indigo); font-size:1.2rem; margin:1.3rem 0 .3rem; }
+.wayh .wl{  color:var(--red); margin-right:.35rem; }
+#contribute p a{  font-size:.86rem; }
 #contribute .term{ max-width:660px; }
 .term{ background:var(--screen); color:var(--screen-ink); border:1px solid #000; padding:9px 11px;
-  font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; line-height:1.65; overflow-x:auto; white-space:pre; }
+   font-size:.78rem; line-height:1.65; overflow-x:auto; white-space:pre; }
 .term .p{ color:var(--gold); } .term .c{ color:var(--screen-dim); }
-.linkbtn{ display:inline-block; margin-top:8px; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.82rem; }
-.card .kicker{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.7rem; letter-spacing:.08em; text-transform:uppercase; color:var(--red); }
+.linkbtn{ display:inline-block; margin-top:8px;  font-size:.82rem; }
+.card .kicker{  font-size:.7rem; letter-spacing:.08em; text-transform:uppercase; color:var(--red); }
 
 /* inline subhead within a prose section */
-.subh{ font-family:"Times New Roman","Tinos","Liberation Serif","Nimbus Roman",Times,serif; font-weight:700; color:var(--indigo);
+.subh{ font-family:"Times New Roman","Liberation Serif","Nimbus Roman",Times,serif; font-weight:700; color:var(--indigo);
   font-size:1.14rem; margin:1.2rem 0 .3rem; }
 
 /* the "state of the dungeon" record table (static, left-aligned) */
-table.dtable{ width:100%; border-collapse:collapse; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace;
+table.dtable{ width:100%; border-collapse:collapse; 
   font-size:.78rem; background:#fff; margin:.8rem 0 .3rem; }
 table.dtable caption{ text-align:left; background:var(--indigo); color:#fff; font-weight:700;
   padding:4px 8px; font-size:.74rem; letter-spacing:.03em; }
@@ -265,11 +265,11 @@ table.dtable caption{ text-align:left; background:var(--indigo); color:#fff; fon
 .dtable td.a{ text-align:center; font-weight:700; white-space:nowrap; }
 .dtable td.a.z{ color:var(--red); }
 .dtable tbody tr:nth-child(even) td{ background:#f6f6fa; }
-.dfn{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.72rem; color:#55555c; margin:6px 0 0; }
+.dfn{  font-size:.72rem; color:#55555c; margin:6px 0 0; }
 .dfn b{ color:var(--indigo); }
 
 /* the D1-D5 "what solving means" ladder */
-dl.ladder{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.82rem; margin:.5rem 0 .2rem;
+dl.ladder{  font-size:.82rem; margin:.5rem 0 .2rem;
   display:grid; grid-template-columns:max-content 1fr; gap:3px 12px; }
 dl.ladder dt{ color:var(--indigo); font-weight:700; }
 dl.ladder dd{ margin:0; color:#33333a; }
@@ -278,55 +278,83 @@ dl.ladder dd{ margin:0; color:#33333a; }
 .ref{ border-bottom:1px dotted var(--indigo-2); cursor:help; }
 .ref:hover,.ref:focus{ background:#fff3b0; outline:none; }
 .refpop{ position:absolute; z-index:80; max-width:340px; background:#fffdf5; color:var(--ink);
-  border:1px solid var(--indigo); box-shadow:4px 4px 0 rgba(47,54,119,.18); padding:9px 12px 10px;
-  font-family:"Times New Roman","Tinos","Liberation Serif","Nimbus Roman",Times,serif; font-size:.86rem; line-height:1.45; display:none; }
+  border:1px solid var(--indigo); padding:9px 12px 10px;
+  font-family:"Times New Roman","Liberation Serif","Nimbus Roman",Times,serif; font-size:.86rem; line-height:1.45; display:none; }
 .refpop.show{ display:block; }
-.refpop .rt{ display:block; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-weight:700; color:var(--indigo);
+.refpop .rt{ display:block;  font-weight:700; color:var(--indigo);
   font-size:.74rem; text-transform:uppercase; letter-spacing:.05em; margin-bottom:5px; }
 .refpop .rd{ margin:0; }
-.refpop pre.ra{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.74rem; line-height:1.12; color:var(--indigo-2);
+.refpop pre.ra{  font-size:.74rem; line-height:1.12; color:var(--indigo-2);
   background:#f3f2ea; border:1px solid var(--rule-soft); padding:6px 8px; margin:7px 0 3px; white-space:pre; overflow-x:auto; }
-.refpop .rs{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.74rem; margin-top:7px; border-top:1px solid var(--rule-soft); padding-top:5px; }
+.refpop .rs{  font-size:.74rem; margin-top:7px; border-top:1px solid var(--rule-soft); padding-top:5px; }
 .refpop .rs a{ display:block; margin:2px 0; color:var(--indigo); }
 .refpop .rs a:hover{ color:var(--red); }
 
 /* audience signpost box */
 .signpost{ border:1px solid var(--rule-soft); background:#f6f5ee; padding:9px 13px; margin:16px 0 2px; }
 .signpost>b{ color:var(--indigo); }
-.signpost .who{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.82rem; margin:6px 0 0; line-height:1.5; }
+.signpost .who{  font-size:.82rem; margin:6px 0 0; line-height:1.5; }
 .signpost .who .arr{ color:var(--red); font-weight:700; }
 
 /* FOOTER ------------------------------------------------------------------- */
 footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px 22px;
   background:#efefe9; }
 .footgrid{ display:grid; grid-template-columns:minmax(300px,.8fr) 1.4fr; gap:22px; align-items:center; }
-.tomb{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.64rem; line-height:1.12; color:#3a3a42;
+.tomb{  font-size:.64rem; line-height:1.12; color:#3a3a42;
   margin:0; white-space:pre; overflow-x:auto; justify-self:center; }
 .tomb .epi{ color:var(--red); }
-.footinfo{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.76rem; color:#55555c; }
+.footinfo{  font-size:.76rem; color:#55555c; }
 .footinfo a{ }
 .footinfo .row{ margin:3px 0; }
 .footinfo .disc{ margin-top:8px; color:#6a6a72; max-width:52ch; }
 .footinfo .disc b{ color:var(--indigo); }
 
-/* POPUP modal (faux window) ------------------------------------------------ */
-.modal{ position:fixed; inset:0; z-index:60; display:none; place-items:center; padding:16px;
+/* POPUP: the original faux-window modal -- silver window, indigo title bar,
+   framed white body. Soft raised silver bevel (NOT the harsh #000 one that read
+   as a shadow) and NO drop shadow. Scoped to #detail so the page's own .win
+   (a green table cell) is untouched. */
+.detailmodal{ position:fixed; inset:0; z-index:60; display:none; place-items:center; padding:16px;
   background:rgba(20,20,28,.5); }
-.modal[open]{ display:grid; }
-.win{ width:min(560px,96vw); max-height:88vh; overflow:hidden; background:var(--silver);
-  border:2px solid; border-color:var(--silver-hi) #000 #000 var(--silver-hi); box-shadow:5px 5px 0 rgba(0,0,0,.4);
+.detailmodal[open]{ display:grid; }
+.detailmodal .win{ width:min(560px,96vw); max-height:88vh; overflow:hidden; background:var(--silver);
+  border:2px solid; border-color:var(--silver-hi) var(--silver-lo) var(--silver-lo) var(--silver-hi);
   display:flex; flex-direction:column; }
+.detailmodal .win.identitydetail{ width:min(980px,96vw); }
 .win__title{ display:flex; align-items:center; gap:8px; background:var(--indigo); color:#fff;
-  font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; font-weight:700; padding:3px 6px; }
-.win__title .x{ margin-left:auto; width:18px; height:18px; line-height:16px; text-align:center; cursor:pointer;
-  background:var(--silver); color:#000; border:2px solid; border-color:var(--silver-hi) #000 #000 var(--silver-hi); font-weight:700; }
-.win__body{ background:#fff; margin:3px; padding:12px; overflow:auto; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; }
+  font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; font-weight:700; padding:4px 8px; }
+.win__title .x{ margin-left:auto; width:18px; height:18px; line-height:15px; text-align:center; cursor:pointer;
+  background:var(--silver); color:#000; border:2px solid; border-color:var(--silver-hi) var(--silver-lo) var(--silver-lo) var(--silver-hi); font-weight:700; }
+.win__title .x:hover,.win__title .x:focus{ color:var(--red); outline:none; }
+.win__body{ background:#fff; margin:3px; padding:12px 14px; overflow:auto; }
 .kv{ display:grid; grid-template-columns:max-content 1fr; gap:3px 12px; font-size:.82rem; margin-bottom:12px; }
+.hackerhead{ display:flex; gap:16px; align-items:flex-start; margin-bottom:6px; }
+.hackerhead .kv{ margin-bottom:0; }
+.ghavatar{ width:72px; height:72px; flex:0 0 auto; border:1px solid var(--silver-lo); position:relative; overflow:hidden; }
+.ghavatar .dungeon{ position:absolute; inset:0; margin:0; display:flex; align-items:center; justify-content:center; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:11px; line-height:8px; letter-spacing:0; white-space:pre; color:var(--indigo-2);
+  animation:dpulse 1.5s ease-in-out infinite; clip-path:polygon(0 0,100% 0,100% 100%,0 100%); transition:clip-path .55s ease; }
+@keyframes dpulse{ 0%,100%{ opacity:.4 } 50%{ opacity:.92 } }
+.ghavatar.loaded .dungeon,.ghavatar.noavatar .dungeon{ clip-path:polygon(100% 100%,100% 100%,100% 100%,100% 100%); animation:none; }
+.ghavatar img{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; clip-path:polygon(0 0,0 0,0 0); transition:clip-path .55s ease; will-change:clip-path; backface-visibility:hidden; }
+.ghavatar.loaded img{ clip-path:polygon(0 0,250% 0,0 250%); }
+.ghavatar.noavatar::before{ content:"@"; position:absolute; inset:0; display:grid; place-items:center; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:44px; font-weight:700; color:var(--indigo); }
+@media (prefers-reduced-motion:reduce){ .ghavatar .dungeon{ animation:none; } .ghavatar img,.ghavatar .dungeon{ transition:none; } }
 .kv .k{ color:#55555c; } .kv .v{ color:#111; } .kv .v a{ word-break:break-all; }
 .minihead{ font-size:.74rem; color:#55555c; margin:.2rem 0 .5rem; }
 .minigrid{ display:grid; grid-template-columns:1fr 1fr; gap:2px; }
 .minicell{ display:flex; justify-content:space-between; gap:8px; font-size:.74rem; padding:2px 6px; border:1px solid #e2e2e8; }
 .minicell .mn{ color:#55555c; } .minicell.asc .mv{ color:var(--red); font-weight:700; }
+.hackerrow{ cursor:pointer; }
+.hackerrow:hover td,.hackerrow:focus td{ background:#fff2a8; }
+.hackerrow:focus{ outline:2px solid var(--indigo); outline-offset:-2px; }
+.clickhint{ color:#777780; font-size:.72rem; margin:-5px 0 10px; }
+.popupstatus{ color:#66666e; font-size:.8rem; }
+.identityboard{ width:100%; border-collapse:collapse; font-size:.74rem; }
+.identityboard caption{ text-align:left; background:var(--indigo); color:#fff; font-weight:700; padding:4px 8px; font-size:.72rem; }
+.identityboard th{ text-align:left; background:var(--silver); border:1px solid var(--silver-lo); padding:3px 6px; }
+.identityboard th.num,.identityboard td.num{ text-align:right; }
+.identityboard td{ border:1px solid #dddde2; padding:3px 6px; white-space:nowrap; }
+.identityboard tbody tr:nth-child(even) td{ background:#f5f5f8; }
+.identityboard .ownerlink{ color:var(--indigo); text-decoration:underline; cursor:pointer; }
 
 @media (prefers-reduced-motion: reduce){
   html{ scroll-behavior:auto; }
@@ -341,7 +369,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
   /* --- The Nethack Dictionary: audio-reactive dungeon wall around the page frame --- */
   #dictviz{ position:fixed; inset:0; width:100%; height:100%; z-index:0; pointer-events:none; display:block; }
   #dictbar{ position:fixed; left:0; right:0; bottom:0; z-index:40; background:var(--screen); color:var(--screen-ink);
-    border-top:2px solid #000; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace;
+    border-top:2px solid #000; 
     font-size:.84rem; display:flex; align-items:center; justify-content:center; gap:14px; padding:7px 14px; flex-wrap:wrap; }
   #dictbar .dplay{ cursor:pointer; min-width:40px; font:inherit; padding:2px 9px; }
   #dictbar .dplay.loading{ color:var(--gold); animation:dpulse .9s ease-in-out infinite; }
@@ -361,19 +389,19 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 .orc{ margin:.5rem 0 0; }
 .orc-ballot{ border:1px solid var(--rule-soft); background:#fbfbf7; padding:2px 15px 14px; }
 .orc-q{ margin:.7rem 0 .2rem; }
-.orc-q .qh{ font-family:"Times New Roman","Tinos","Liberation Serif","Nimbus Roman",Times,serif; font-weight:700; color:var(--indigo);
+.orc-q .qh{ font-family:"Times New Roman","Liberation Serif","Nimbus Roman",Times,serif; font-weight:700; color:var(--indigo);
   font-size:1.08rem; margin:.7rem 0 .5rem; }
-.orc-q .qh .qn{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; color:var(--red); font-size:.82rem; margin-right:.4ch; }
+.orc-q .qh .qn{  color:var(--red); font-size:.82rem; margin-right:.4ch; }
 .orc-opts{ display:flex; flex-direction:column; gap:2px; }
 .orc-opt{ display:flex; align-items:baseline; gap:9px; width:100%; text-align:left; cursor:pointer;
-  font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.86rem; color:#26262c;
+   font-size:.86rem; color:#26262c;
   background:transparent; border:1px solid transparent; padding:3px 8px; }
 .orc-opt:hover{ background:#fff3b0; }
 .orc-opt .mk{ color:var(--silver-lo); }
 .orc-opt[aria-checked="true"]{ background:#eef0f6; border-color:var(--rule-soft); color:var(--indigo); font-weight:700; }
 .orc-opt[aria-checked="true"] .mk{ color:var(--indigo); }
 .orc-about{ display:grid; grid-template-columns:max-content 1fr; gap:8px 12px; align-items:center;
-  margin:.9rem 0 .2rem; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.8rem; }
+  margin:.9rem 0 .2rem;  font-size:.8rem; }
 .orc-about .albl{ color:#55555c; text-align:right; white-space:nowrap; }
 .orc-about .grp{ display:flex; flex-wrap:wrap; gap:6px; }
 /* tribe chips are radio-semantic (aria-checked); give them the pressed bevel look too */
@@ -382,19 +410,19 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 .orc-cast{ margin:1rem 0 .2rem; display:flex; align-items:center; gap:13px; flex-wrap:wrap; }
 .orc-cast .go{ font-size:.92rem; padding:5px 16px; font-weight:700; color:var(--indigo); }
 .orc-cast .go[disabled]{ opacity:.45; cursor:not-allowed; color:#111; }
-.orc-hint{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.74rem; color:#6b6b72; }
+.orc-hint{  font-size:.74rem; color:#6b6b72; }
 /* results */
 .orc-results{ margin:.2rem 0 0; }
-.orc-speak{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.85rem; color:#33333a;
+.orc-speak{  font-size:.85rem; color:#33333a;
   background:var(--screen); color:var(--screen-ink); border:1px solid #000; padding:8px 11px; margin:.2rem 0 .8rem; }
 .orc-speak b{ color:var(--gold); font-weight:400; }
 .orc-lens{ margin:.2rem 0 .5rem; }
 .orc-seg-chips{ display:flex; flex-wrap:wrap; gap:6px; margin:.2rem 0 .5rem; }
 .orc-two{ display:grid; grid-template-columns:1fr 1fr; gap:24px; align-items:start; }
 @media (max-width:720px){ .orc-two{ grid-template-columns:1fr; gap:14px; } }
-.orc-cap{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.72rem; text-transform:uppercase;
+.orc-cap{  font-size:.72rem; text-transform:uppercase;
   letter-spacing:.05em; color:#55555c; border-bottom:1px solid var(--rule-soft); padding-bottom:3px; margin:0 0 9px; }
-.orc-bars{ display:flex; flex-direction:column; gap:9px; font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.79rem; }
+.orc-bars{ display:flex; flex-direction:column; gap:9px;  font-size:.79rem; }
 .orc-bar{ display:flex; flex-direction:column; gap:3px; }
 .orc-bar .brow{ display:flex; justify-content:space-between; align-items:baseline; gap:10px; }
 .orc-bar .bl{ color:#33333a; }
@@ -406,21 +434,21 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 .orc-bar.you .bf{ background:var(--indigo); }
 .orc-bar.you .yq{ color:var(--indigo); font-weight:700; margin-left:.4ch; }
 .orc-bar.dim .bf{ opacity:.42; }
-.orc-median{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; color:#55555c; margin:9px 0 0; }
+.orc-median{  font-size:.78rem; color:#55555c; margin:9px 0 0; }
 .orc-median b{ color:var(--indigo); }
-.orc-nrow{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.74rem; color:#6b6b72; margin:13px 0 0; }
+.orc-nrow{  font-size:.74rem; color:#6b6b72; margin:13px 0 0; }
 .orc-small{ color:var(--red); }
 /* compare tribes */
 .orc-cmp{ display:grid; grid-template-columns:repeat(auto-fill,minmax(152px,1fr)); gap:9px; margin:.3rem 0 0; }
 .orc-cmp-c{ border:1px solid var(--rule-soft); background:#fff; padding:7px 10px;
-  font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.76rem; }
-.orc-cmp-c.you{ border-color:var(--indigo); box-shadow:2px 2px 0 rgba(47,54,119,.28); }
+   font-size:.76rem; }
+.orc-cmp-c.you{ border-color:var(--indigo); }
 .orc-cmp-c .nm{ color:var(--indigo); font-weight:700; }
 .orc-cmp-c .nm .yb{ color:var(--indigo); }
 .orc-cmp-c .n{ color:#a6a6ae; font-weight:400; }
 .orc-cmp-c .md{ color:#111; margin:6px 0 2px; } .orc-cmp-c .md b{ color:var(--indigo); }
 .orc-cmp-c .ld{ color:#55555c; }
-.orc-revote{ font-family:"Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; margin:15px 0 0; }
+.orc-revote{  font-size:.78rem; margin:15px 0 0; }
 .orc-revote a{ cursor:pointer; }
 </style>
 
@@ -451,12 +479,11 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
       <ol class="idx">
         <li><span class="k">[1]</span> <a href="#about">What it is?</a></li>
         <li><span class="k">[2]</span> <a href="#why">Why care</a></li>
-        <li><span class="k">[3]</span> <a href="#scores">Leaderboard</a></li>
-        <li><span class="k">[4]</span> <a href="#frontier">The Frontier</a></li>
-        <li><span class="k">[5]</span> <a href="#progress">Progress</a></li>
-        <li><span class="k">[6]</span> <a href="#oracle">The Oracle</a> <span class="new">NEW!</span></li>
-        <li><span class="k">[7]</span> <a href="#contribute">Contribute</a></li>
-        <li><span class="k">[8]</span> <a href="#faq">FAQ</a></li>
+        <li><span class="k">[3]</span> <a href="#frontier">The Frontier</a></li>
+        <li><span class="k">[4]</span> <a href="#hackers">Hackers</a></li>
+        <li><span class="k">[5]</span> <a href="#oracle">The Oracle</a> <span class="new">VOTE!</span></li>
+        <li><span class="k">[6]</span> <a href="#contribute">Contribute</a></li>
+        <li><span class="k">[7]</span> <a href="#faq">FAQ</a></li>
       </ol>
 
       <h4>Registered</h4>
@@ -474,6 +501,11 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 
       <div class="badges">
         <a class="badge b1" href="https://dunnolab.ai/">powered by<br><b>dunnolab.ai</b></a>
+        <a class="badge yt" href="https://www.youtube.com/watch?v=zjEDWA8uQEw" target="_blank" rel="noopener">
+          <img class="ytlogo" alt="YouTube" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAC4AAAAJCAYAAABNEB65AAAEfElEQVR4nE1UXWgUVxT+7p3ZnWx+TLP1lwRjNNnNajZqiohFH4oWoYIEyYMYoVASX7UE+tCHPgkiQqXVPm4RpErrY7H+xkbRhEgkQuju5qdqYkRofjBms9mZnXtOuXcnmmGG2fvds+ee8833HZFIJHYLIf5Jp9NFAEgmk5+4rrthbGwsC0ACEBoHQAA4WItgrS9pQCGon7mtJhpNiXXrWotEAkoJYdsmyJuaAnkewFx6pE4NMBHKW1rgvnwJKhRMYlYqSK2zS50bzEwhIijgFgHdkpn7iehsUBR7nve7EOKnVQWr4NH75qxVRZuGJEDPDx2qsIDfNnZ27mq4fx/xhw/F9pERNPX2ovHOHZTv2QOfqFR0UDARQToOYg8eoOrAAXhKgXTRonS0kNLE+UrptyxKiSrgCAO/iubm5m8ty/oxn89vLCsrS1qWdY+I9qbT6aeNjY1OOBz+goiWs9nsQ50sFoutZeZ14+PjGc1Hctu23SNtbc+Hb9z4LAwMFiIRBcexoseOYUsqhXRrKwpTU+BcDpFEAt70NIrv3sGpq4MIh1F88wY75+bw6sQJFHM5iOVlvB8YgJTSNBZpaEBk1y7kh4ZQeP0aUgiymaXMZrMXfd8fcBznBjOnisXiL0HRdaFQ6Ckz/yCEuJxIJO5qEizL+kZK2aub2LFjR60KhYYwMRFrBPK+5tPzpC5MLSwYdv35efj6N4D448eIHj8OD0DtuXNouHIF5LrgfB61589jU08Pmu7exeaLF+ERYX13N+L9/fi0qwvNg4OItrdDMUvfsthoWEr5tZTyAIBiZWXldxqzbft7Zo5mMpnPy8vL9wL4MhaLHVVKLQIIa7Zd1w1r/QEIhQEWWl5C30InMJ9chEKltda0lIblFRy2bXRnVVcj9+QJRo4cwevTp7HhzBlU1Nai7sIFzF+7hmxHBxb7+tBw9WpJv0TCOCSTyYwrpf5l5r+fPXuW1xJk5u3MPKD3NUZE41LKnVLKFc2TUirHzAqWZTSvbVcSMOvkH40Y6BrM4OVlkH5ro+qYAH9/+zYsAEtDQ2DfR6S52WxFkknEr183RPx36ZKZFjpjydolI5YDqFxlykdCiK/i8XhVIpFosm27iZkfMbNn2/Z6jTmO02nbtgVmoRnXHK8Yd4XxD9NDKcNyxf79qIrFUH348IeDNR49edJ8jZqODoMv6gYKBRTGxjDa3o7ZVMo0SwCFtEqC/7IQ4oUQYiqYGpbjOOcB/CWlfAzgT6XUz6Ojo31EdE8ppTX+B4BNRd/vayoUfAATeWBsDbOl+fZnZlB8+xa0uGhY0kab7ulBxb59qD97Fgs3byI/PGyKXB4Z0eZBS28v1p46hcmuLngLC3jR2Yk1Bw+iZXAQmy9fhjczQ9WA9IW4vTKTeevWrdVKKXdycrKwggUG3Oa6rjsxMTG9Gq+vry8LYjWgueUhoM0BUgpo9aUUdk2N8OfmPs5NzYhtg3zfJJGl+YxQNApvfh5lW7aAcjm4s7OwhdBGNPFl8TjcV6+Il5a0nG75QPf/SmY6Pr8QUq4AAAAASUVORK5CYII=">
+          <span class="yt-title">17 minutes to feel the dungeons</span>
+          <span class="yt-cap">never played? watch the intro &#9654;</span>
+        </a>
       </div>
     </nav>
 
@@ -483,12 +515,11 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
       <!-- ABOUT -->
       <section id="about" class="about">
         <h2 class="sec"><span class="glyph">@</span> What it is?</h2>
-        <p class="lead"><b>NetHackers is an open contest to build the first program that can
+        <p class="lead"><b>NetHackers is an open effort to build the first program that can
           reliably win NetHack&nbsp;3.6.6.</b> Write the bot by hand, evolve it with coding agents, improve the thing
-          that improves it, or recurse until something interesting happens. Whatever path you take, the contest
-          evaluates the same result: the symbolic bot that comes out of the loop.</p>
-        <p>The ultimate goal is an <span class="ref" data-k="ascension"><b>ascension</b></span>; until then, the
-          board measures how far each bot gets.</p>
+          that improves it, or recurse until something interesting happens. Whatever path you take, the evaluation
+          is the same: the symbolic bot that comes out of the loop. The ultimate goal is an
+          <span class="ref" data-k="ascension"><b>ascension</b></span>; until then, the board measures how far each bot gets.</p>
 
         <div class="subh">The challenge</div>
         <p><b>NetHack</b> (1987) is among the oldest <b>unsolved</b> challenges in games.
@@ -525,7 +556,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           human winners of <span class="ref" data-k="satlution">SAT-solver competitions</span>, and turn up
           <span class="ref" data-k="alphaevolve">new, provably-correct algorithms</span>. The pattern is consistent:
           <b>a model that cannot reliably do the task itself can write a program that does.</b></p>
-        <p>NetHack is where that pattern has never held. The researchers behind the
+        <p>NetHack is where that pattern has not yet held. The researchers behind the
           <span class="ref" data-k="nle">NetHack Learning Environment</span> put it forward as
           <span class="ref" data-k="grandchallenge">a grand challenge for AI</span>, and it is still unsolved years
           later; NLE co-author <span class="ref" data-k="rockt">Tim Rockt&auml;schel marks the anniversary</span> each year with "AI still
@@ -542,7 +573,6 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           best <span class="ref" data-k="elite"><b>elites</b></span>; anyone can pull one, improve it, and register the result &mdash; so <b>one
           contributor's improvement becomes everyone's parent.</b> The hub never runs your search and assigns
           no work; how you make bots is entirely up to you.</p>
-
       </section>
 
       <hr class="rule">
@@ -586,54 +616,12 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 
       <hr class="rule">
 
-      <!-- HIGH SCORES -->
-      <section id="scores">
-        <h2 class="sec"><span class="glyph">$</span> Leaderboard</h2>
-        <p class="lead">Every <b>hacker</b>, ranked by the union of their programs' best on the chosen objective &mdash; toggle
-          to <b>Programs</b> for the individual solutions behind them. Pick a single <span class="ref" data-k="identities"><b>identity</b></span>
-          for a same-seeds specialist board, a <b>role</b> or the <b>generalist</b> for a macro-average across many identities. Each program
-          was produced through the shared evolution, its author's own <span class="ref" data-k="harness">harness</span>, or any other means &mdash;
-          the platform scores it and never asks how it was made. <span class="ref" data-k="challenge"><b>AutoAscend</b></span> is the yardstick
-          floor in every table &mdash; the &Delta; column is how far past it we've gotten.</p>
-        <div class="controls">
-          <span class="lbl">objective:</span>
-          <span class="grp"><select class="bevel" id="objSelect" aria-label="Objective"></select></span>
-          <span class="lbl">tally:</span>
-          <span class="grp">
-            <button class="bevel" data-view="people" aria-pressed="true">Hackers</button>
-            <button class="bevel" data-view="programs" aria-pressed="false">Programs</button>
-          </span>
-          <span class="lbl">tier:</span>
-          <span class="grp">
-            <button class="bevel" data-tier="self-reported" aria-pressed="true">Self-reported</button>
-            <button class="bevel" data-tier="verified" aria-pressed="false">Verified</button>
-          </span>
-        </div>
-        <p class="note" style="margin:0 0 .7rem">Two tiers, by design: <b>self-reported</b> lands the instant you register,
-          so search is never bottlenecked on our compute; <b>verified</b> is the trusted tier &mdash; the hub re-runs the
-          program on <span class="ref" data-k="heldout">held-out seeds</span>. Verification (M2b) isn't live yet, so today every result is self-reported.</p>
-        <div class="tablewrap">
-          <table class="grid">
-            <caption id="scCap">LEADERBOARD &mdash; VALKYRIE DWA-LAW-FEM &mdash; self-reported*</caption>
-            <thead id="scHead"></thead><tbody id="scBody"></tbody>
-          </table>
-        </div>
-        <div class="more" id="scMore">[ --More-- ]</div>
-      </section>
-
-      <hr class="rule">
-
       <!-- FRONTIER -->
       <section id="frontier">
         <h2 class="sec"><span class="glyph">&lt;</span> The Frontier</h2>
         <p class="lead">Mean <span class="ref" data-k="progression">progression</span> (0&ndash;100%) across all <span class="ref" data-k="identities">73 identities</span>, and how far each sits above the
-          <span class="ref" data-k="autoascend"><b>AutoAscend floor</b></span>. Touched cells are a program's best; the rest show the dim floor.</p>
+          <span class="ref" data-k="autoascend"><b>AutoAscend floor</b></span>. Click any identity for its directly comparable leaderboard, sources, episodes, dates, and current holder.</p>
         <div class="controls">
-          <span class="lbl">regime:</span>
-          <span class="grp regime" role="radiogroup" aria-label="Frontier regime">
-            <label><input type="radio" name="regime" value="universe" checked> <b>Universe</b> (best of all)</label>
-            <label><input type="radio" name="regime" value="program"> <b>Program</b> (champion)</label>
-          </span>
           <span class="lbl">tier:</span>
           <span class="grp">
             <button class="bevel" data-tier="self-reported" aria-pressed="true">Self-reported</button>
@@ -654,26 +642,17 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 
       <hr class="rule">
 
-      <!-- PROGRESS -->
-      <section id="progress">
-        <h2 class="sec"><span class="glyph">^</span> Progress</h2>
-        <p class="lead">The community frontier, best-so-far, week by week since AutoAscend set us going.
-          The red <span class="mono">AA&gt;</span> line is where we started. Up and to the right is the whole job.</p>
-        <div class="controls">
-          <span class="lbl">plot:</span>
-          <span class="grp">
-            <button class="bevel" data-metric="frontier" aria-pressed="true">Frontier mean</button>
-            <button class="bevel" data-metric="ascensions" aria-pressed="false">Ascensions</button>
-            <button class="bevel" data-metric="coverage" aria-pressed="false">Coverage</button>
-          </span>
-          <span class="lbl">tier:</span>
-          <span class="grp">
-            <button class="bevel" data-tier="self-reported" aria-pressed="true">Self-reported</button>
-            <button class="bevel" data-tier="verified" aria-pressed="false">Verified</button>
-          </span>
-        </div>
-        <div class="chartbox"><pre id="chart"></pre></div>
-        <div class="chartcap" id="chartcap"></div>
+
+      <!-- HACKERS -->
+      <section id="hackers">
+        <h2 class="sec"><span class="glyph">&amp;</span> Hackers moving the frontier</h2>
+        <p class="lead">Recognition is attached to concrete records, roles, and source commits &mdash; not collapsed into one global score.</p>
+        <div class="subh">Frontier Keepers</div>
+        <p class="famedesc">Current self-reported identity leaders above AutoAscend. Click a row for the hacker's complete contribution history.</p>
+        <div id="recordholders"><div class="emptyblock">Loading frontier keepers&hellip;</div></div>
+        <div class="subh">Greatest Breakthroughs</div>
+        <p class="famedesc">A newest-first log of every submission that advanced an identity frontier. Click a row for the exact submission.</p>
+        <div id="breakthroughs"><div class="emptyblock">Loading breakthroughs&hellip;</div></div>
       </section>
 
       <hr class="rule">
@@ -753,8 +732,8 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           validated win-rate, tokens per candidate, evals-to-first-win, cost per win. Conform to the
           <span class="ref" data-k="arenabot"><span class="mono">ArenaBot</span></span> contract and register a
           <span class="mono">repo@commit</span>. Our own hermetic coding-agent evolver is just the worked example.</p>
-        <div class="term"><span class="c"># your solution lives at a public repo@commit</span>
-<span class="p">$</span> nethackers submit ./my-solution --objective ...
+        <div class="term"><span class="c"># your program lives at a public repo@commit</span>
+<span class="p">$</span> nethackers submit ./my-program --objective ...
 <span class="c"># anyone can fetch and build on it, anywhere</span>
 <span class="p">$</span> nethackers pull github.com/you/nethacker@a1b2c3d</div>
         <p><a href="#">&raquo; Read the paper &amp; hub API</a></p>
@@ -841,13 +820,6 @@ __)/\_//(\/(/\)/\//\/\|_)__</pre>
 
 </div>
 
-<!-- ===================== POPUP ===================== -->
-<div class="modal" id="modal" aria-hidden="true">
-  <div class="win" role="dialog" aria-modal="true" aria-labelledby="mTitle">
-    <div class="win__title"><span id="mTitle">program.txt</span><span class="x" id="mX" role="button" aria-label="Close">x</span></div>
-    <div class="win__body" id="mBody"></div>
-  </div>
-</div>
 
 <div id="dictbar" role="group" aria-label="music volume">
   <button class="dplay bevel" aria-label="play or pause">&#9654;</button>
@@ -860,14 +832,13 @@ __)/\_//(\/(/\)/\//\/\|_)__</pre>
    These start empty and are populated from the hub's JSON endpoints on load.
    Where an endpoint does not carry a field the render wants, we render "—" /
    omit it -- never a fabricated value (honest standings is the whole point). */
-let PROGRAMS=[];                     // current objective's board rows (progRow shape, + fulldigest)
-let BOARD_BY_OBJ={};                 // {objective: PROGRAMS}
-let PEOPLE=[];                       // Hackers tally: {rank,owner,coverage,total,mean} from /hackers
+let STATS=null;                      // live platform totals from /stats
+let WALL_OF_FAME={keepers:[],breakthroughs:[]};
+const FAME_PAGE_SIZE=5;
+const FAME_LIMITS={keepers:FAME_PAGE_SIZE,breakthroughs:FAME_PAGE_SIZE};
+let PROGRAM_BY_ID={};                 // program registry index (by opaque id) for source/date cells
 let BASELINE={owner:"autoascend",per_identity:{},overall:null};  // raw /baseline
 let OBJ_EP={};                       // {objective: episodes} from /objectives (honest ep for tooltips)
-/* AutoAscend baseline row -- rebuilt from /baseline in rebuildAutoascend(). Safe default
-   (blank, 0.000) so an early render before boot resolves is honest, not fabricated. */
-let AUTOASCEND={digest:"autoascend",owner:"autoascend",score:0,med:0,ep:0,asc:0,deepest:"—",fr:{},base:true};
 const ROLE_NAMES={arc:"Archeologist",bar:"Barbarian",cav:"Caveman",hea:"Healer",kni:"Knight",mon:"Monk",
  pri:"Priest",ran:"Ranger",rog:"Rogue",sam:"Samurai",tou:"Tourist",val:"Valkyrie",wiz:"Wizard"};
 /* the real 73 starting identities, straight from GET /objectives */
@@ -886,14 +857,8 @@ const ROLE_VARS={
  val:["dwa-law-fem","hum-law-fem","hum-neu-fem"],
  wiz:["elf-cha-fem","elf-cha-mal","gno-neu-fem","gno-neu-mal","hum-cha-fem","hum-cha-mal","hum-neu-fem","hum-neu-mal","orc-cha-fem","orc-cha-mal"]};
 let UNIVERSE={};                     // /elites?scope=generalist -> rank-1 per identity {id:{v,o,d,ep}}
-let CHAMPION={digest:"",owner:"",scores:{}};  // /board?scope=generalist [0] + its /programs/{id}/identities
+let HONOR_UNIVERSE={};               // self-reported records, retained while viewing verified
 const ASC=0.8745866562925501;
-/* AutoAscend baseline bar first, then day-bucketed best-so-far from /progress */
-let PROGRESS=[];
-const METRICS={
- frontier:{label:"Best-so-far mean progression on val-dwa-law-fem (ascension sits at 0.875)",max:1.0,fmt:v=>v.toFixed(3)},
- ascensions:{label:"Ascensions -- still zero",max:1,fmt:v=>String(v)},
- coverage:{label:"Milestone cells lit on val-dwa-law-fem",max:40,fmt:v=>String(v)}};
 const MEMES=[
  "You enter the Dungeons of Doom.",
  "Yet Another Stupid Death: killed by a grid bug, while praying.","You hear someone counting money.",
@@ -1169,97 +1134,17 @@ function odo(el,n,digits){ if(!el) return; el.innerHTML=String(n).padStart(digit
   odo($("#odoPlay"), 0, 5);   /* hackers  -- set live from /stats in boot() */
 })();
 
-/* ===================== leaderboard ===================== */
-let curObj="generalist", curView="people", curTier="self-reported", curRegime="universe", curMetric="frontier";
-/* objective scope: the picker sends bare tokens -- "generalist", a role ("val"),
-   or an identity ("val-dwa-law-fem"). Each maps to a set of identities + a caption;
-   the board, the Hackers tally, and the AutoAscend floor all read it the same way. */
-function scopeKind(obj){ return obj==="generalist"?"generalist":(obj in ROLE_NAMES?"role":"identity"); }
-function scopeIds(obj){
-  const k=scopeKind(obj);
-  if(k==="generalist") return Object.keys(ROLE_VARS).flatMap(r=>ROLE_VARS[r].map(v=>r+"-"+v));
-  if(k==="role") return ROLE_VARS[obj].map(v=>obj+"-"+v);
-  return [obj];
-}
-function objCap(obj){ const k=scopeKind(obj);
-  return k==="generalist"?"GENERALIST":(k==="role"?ROLE_NAMES[obj].toUpperCase()+" (ROLE)":obj.toUpperCase()); }
+/* ===================== tier ===================== */
+let curTier="self-reported";
 const EMPTY_VERIFIED='No verified programs yet &mdash; verification (M2b) is not live. Everything above the floor is self-reported.';
-const EMPTY_SELF='No programs ranked here yet &mdash; be the first to register one.';
-const EMPTY_HACKERS='No hackers ranked here yet &mdash; be the first to register.';
-function setCap(){
-  $("#scCap").innerHTML=`LEADERBOARD &mdash; ${objCap(curObj)} &mdash; ${curView==="people"?"hackers":"programs"} &middot; ${curTier}${curTier==="self-reported"?"*":""}`;
-}
-/* AutoAscend floor for the current scope, from /baseline's per-identity values:
-   identity -> that identity; role/generalist -> mean over the scope's identities. */
-function aaScopeMean(){ const per=(BASELINE&&BASELINE.per_identity)||{};
-  const vals=scopeIds(curObj).map(id=>per[id]&&per[id].progression).filter(v=>v!=null);
-  return vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:null; }
-function deltaCell(v){ const aa=aaScopeMean();
-  if(aa==null||v==null) return `<td class="dz">&mdash;</td>`;
-  const d=+(v-aa).toFixed(3), cls=d>0.0005?"dpos":(d<-0.0005?"dneg":"dz");
-  return `<td class="num ${cls}">${(d>0?"+":"")+d.toFixed(3)}</td>`; }
-function covCell(n,t){ return `<td class="num cov">${n}<span class="tot">/${t}</span></td>`; }
-function progRow(p){
-  const agg = scopeKind(curObj)!=="identity";
-  const name=p.base?'autoascend <span class="tag">floor</span>':`nethacker@${p.digest} ${p.nu?'<span class="new">NEW!</span>':''}`;
-  const who=p.base?'<span class="dz">&mdash;</span>':`<span class="at">@</span>${esc(p.owner)}`;
-  const scoreCell = `<td class="num">${p.score!=null?p.score.toFixed(3):'&mdash;'}</td>`;
-  const metric = agg
-    ? `${covCell(p.coverage,p.total)}${scoreCell}`
-    : `<td class="l pend">${esc(p.deepest)}</td>${scoreCell}`;
-  const delta = p.base?'<td class="dz">&mdash;</td>':deltaCell(p.score);
-  return `<tr data-d="${p.digest}" class="${p.base?'base':''}">
-    <td class="l rk ${(!p.base&&p.rank<=3)?'top':''}">${p.base?'&middot;':p.rank}</td>
-    <td class="l nm">${name}</td>
-    <td class="l nm">${who}</td>
-    ${metric}
-    ${delta}
-    <td class="num star">${!p.base&&p.asc?p.asc+' &#9733;':'.'}</td></tr>`;
-}
-function renderBoard(view){
-  const head=$("#scHead"), body=$("#scBody"), verified=curTier==="verified";
-  const agg = scopeKind(curObj)!=="identity", n=scopeIds(curObj).length, aa=aaScopeMean();
-  if(view==="people"){
-    head.innerHTML = agg
-      ? `<tr><th class="l">#</th><th class="l">hacker</th><th>coverage</th><th>mean</th><th>&Delta; vs AA</th></tr>`
-      : `<tr><th class="l">#</th><th class="l">hacker</th><th>best mean</th><th>&Delta; vs AA</th></tr>`;
-    const rows=verified?[]:PEOPLE;
-    const cols=agg?5:4;
-    const rowsHTML=rows.length?rows.map(h=>`<tr>
-      <td class="l rk ${h.rank<=3?'top':''}">${h.rank}</td>
-      <td class="l nm"><span class="at">@</span>${esc(h.owner)}</td>
-      ${agg?covCell(h.coverage,h.total):""}
-      <td class="num">${h.mean.toFixed(3)}</td>
-      ${deltaCell(h.mean)}</tr>`).join("")
-      :`<tr><td class="l pend" colspan="${cols}" style="padding:10px 8px">${verified?EMPTY_VERIFIED:EMPTY_HACKERS}</td></tr>`;
-    body.innerHTML=rowsHTML+`<tr class="base"><td class="l rk">&middot;</td>
-      <td class="l nm">autoascend <span class="tag">floor</span></td>
-      ${agg?covCell(n,n):""}<td class="num">${aa!=null?aa.toFixed(3):'&mdash;'}</td><td class="dz">&mdash;</td></tr>`;
-    return;
-  }
-  head.innerHTML = agg
-    ? `<tr><th class="l">#</th><th class="l">program</th><th class="l">hacker</th><th>coverage</th><th>mean</th><th>&Delta; vs AA</th><th>&#9733;</th></tr>`
-    : `<tr><th class="l">#</th><th class="l">program</th><th class="l">hacker</th><th class="l">deepest reach</th><th>score</th><th>&Delta; vs AA</th><th>&#9733;</th></tr>`;
-  const rows=verified?[]:(BOARD_BY_OBJ[curObj]||[]);
-  const rowsHTML=rows.length?rows.map(progRow).join("")
-    :`<tr><td class="l pend" colspan="7" style="padding:10px 8px">${verified?EMPTY_VERIFIED:EMPTY_SELF}</td></tr>`;
-  body.innerHTML=rowsHTML+progRow(AUTOASCEND);
-  body.querySelectorAll("tr[data-d]").forEach(tr=>tr.addEventListener("click",()=>openProgram(tr.dataset.d)));
-}
-document.querySelectorAll("[data-view]").forEach(b=>b.addEventListener("click",()=>{
-  document.querySelectorAll("[data-view]").forEach(x=>x.setAttribute("aria-pressed","false"));
-  b.setAttribute("aria-pressed","true"); curView=b.dataset.view; renderBoard(curView); }));
 document.querySelectorAll("[data-tier]").forEach(b=>b.addEventListener("click",async()=>{
   curTier=b.dataset.tier;
   document.querySelectorAll("[data-tier]").forEach(x=>x.setAttribute("aria-pressed", x.dataset.tier===curTier?"true":"false"));
-  await loadObjective(curObj);
-  setCap(); renderBoard(curView); renderFrontier(curRegime); renderChart(curMetric); }));
-$("#objSelect").addEventListener("change",async e=>{ curObj=e.target.value; await loadObjective(curObj); setCap(); renderBoard(curView); renderChart(curMetric); });
-$("#scMore").addEventListener("click",function(){
-  this.textContent=this.textContent.indexOf("More")>=0?"[ that is everyone so far. yet another short list. ]":"[ --More-- ]"; });
+  await loadUniverse();
+  renderFrontier(); }));
 
 /* ===================== frontier heatmap ===================== */
-function renderFrontier(regime){
+function renderFrontier(){
   const grid=$("#rolegrid"), note=$("#gridnote"), verified=curTier==="verified";
   const per=(BASELINE&&BASELINE.per_identity)||{};
   /* per-identity datum: state 'prog' (a program's best, heat-tinted), 'floor' (the dim
@@ -1269,16 +1154,11 @@ function renderFrontier(regime){
     const aa=(per[id]&&per[id].progression!=null)?per[id].progression:null;
     if(verified) return {state:'none',v:null,aa};
     let v=null,floor=false;
-    if(regime==="program"){
-      if(id in CHAMPION.scores) v=CHAMPION.scores[id];   // the champion's own cell -- honest, may sit below AA
-    } else {
-      /* Universe = best of ALL, and AutoAscend is one of the competitors: take
-         max(best program, AA floor). A program shows only where it actually beats
-         the floor; otherwise AutoAscend leads and the cell reads as the floor. */
-      const pv=(id in UNIVERSE)?UNIVERSE[id].v:null;
-      if(pv!=null&&(aa==null||pv-aa>0.0005)) v=pv;
-      else if(aa!=null){ v=aa; floor=true; }
-    }
+    /* Community Frontier = best program for this identity, with AutoAscend as
+       the visible floor when no registered program beats it. */
+    const pv=(id in UNIVERSE)?UNIVERSE[id].v:null;
+    if(pv!=null&&(aa==null||pv-aa>0.0005)) v=pv;
+    else if(aa!=null){ v=aa; floor=true; }
     if(v==null) return {state:'none',v:null,aa};
     if(floor) return {state:'floor',v,aa};
     return {state:'prog',v,aa,delta:aa!=null?+(v-aa).toFixed(3):null};
@@ -1286,7 +1166,7 @@ function renderFrontier(regime){
   function rowTitle(id,d){
     if(d.v==null) return `${id} :: ${verified?'no verified result':'unexplored'}`;
     if(d.state==='floor') return `${id} :: AutoAscend floor ${pct(d.v)} -- best of all here`;
-    const who=(regime==="universe"&&UNIVERSE[id])?` :: @${UNIVERSE[id].o}, ${UNIVERSE[id].ep} ep`:"";
+    const who=UNIVERSE[id]?` :: program record @${UNIVERSE[id].o}, ${UNIVERSE[id].ep} ep`:"";
     const dl=d.delta!=null?` :: Δ ${fmtP(d.delta)} vs AutoAscend`:"";
     return `${id} :: ${pct(d.v)}${dl}${who}`;
   }
@@ -1322,7 +1202,7 @@ function renderFrontier(regime){
       +(roleLift!=null?dSigned(roleLift):(roleAvg!=null?aaTd:noTd))+`</tr>`;
     const body=ids.map(({v,id,d})=>{
       const dtd=d.state==='prog'?dSigned(d.delta):(d.state==='floor'?aaTd:noTd);
-      return `<tr title="${esc(rowTitle(id,d))}"><td class="vn">${esc(v)}</td>${valTd(d)}${dtd}</tr>`;
+      return `<tr class="frontierrow" data-identity="${esc(id)}" tabindex="0" role="button" aria-label="Open leaderboard for ${esc(id)}" title="${esc(rowTitle(id,d))}"><td class="vn">${esc(v)}</td>${valTd(d)}${dtd}</tr>`;
     }).join("");
     return `<table class="fr"><colgroup><col class="c1"><col class="c2"><col class="c3"></colgroup>${head}${body}</table>`;
   }).join("");
@@ -1332,198 +1212,265 @@ function renderFrontier(regime){
   const baseLine=bv?` &middot; AutoAscend overall <b>${bv}</b>`:` &middot; AutoAscend not computed yet`;
   note.innerHTML=(verified
     ? `<b>verified</b> tier &mdash; no verified results yet (M2b isn't live), so every cell is blank`
-    : (regime==="program"
-      ? `champion <b>nethacker@${esc(CHAMPION.digest)}</b> (<b>@${esc(CHAMPION.owner)}</b>) &mdash; overall <b>${overall}</b> over <b>${prog}</b> explored`
-      : `each cell = the <b>best result yet</b> &mdash; a program's mean where it beats <b>AutoAscend</b>, else the dim floor &middot; <b>${prog}</b> of <b>${total}</b> led by a program, <b>${floor}</b> at the AutoAscend floor`))+baseLine;
+    : `each cell = the <b>best result yet</b> for one identity &mdash; a program's mean where it beats <b>AutoAscend</b>, else the dim floor &middot; <b>${prog}</b> of <b>${total}</b> led by a program, <b>${floor}</b> at the AutoAscend floor`)+baseLine;
+  grid.querySelectorAll(".frontierrow").forEach(tr=>{
+    const open=()=>openIdentity(tr.dataset.identity);
+    tr.addEventListener("click",open);
+    tr.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } });
+  });
   if(window.__refs) window.__refs();
 }
-document.querySelectorAll('input[name="regime"]').forEach(r=>r.addEventListener("change",()=>{ curRegime=r.value; renderFrontier(curRegime); }));
 (function(){ const r=$("#ramp"); for(let i=0;i<22;i++){ const s=document.createElement("i"); s.style.background=tint(i/21); r.appendChild(s);} })();
 
-/* ===================== progress: ASCII horizontal bars ===================== */
-function renderChart(mk){
-  const m=METRICS[mk], W=42, verified=curTier==="verified";
-  const series=verified?PROGRESS.filter(d=>d.base):PROGRESS;
-  const rows=series.map((d,i)=>{
-    const v=d[mk], now=!d.base&&i===series.length-1;
-    const n=Math.round(v/m.max*W), cls=d.base?"base":(now?"barhi":"bar");
-    const bar=`<span class="${cls}">`+(d.base?"=":"#").repeat(n)+"</span>"+" ".repeat(Math.max(0,W-n));
-    const lbl=`<span class="${d.base?'base':'lbl3'}">${padr(d.t,10)}</span>`;
-    const val=`<span class="${now?'val':(d.base?'base':'lbl3')}">${m.fmt(v)}${now?'  &lt;-- now':(d.base?'  baseline':'')}</span>`;
-    return `${lbl} |${bar}| ${val}`;
-  });
-  const axis=`${" ".repeat(11)} 0${" ".repeat(W-4)}${m.fmt(m.max)}`;
-  $("#chart").innerHTML=rows.join("\n")+"\n"+`<span class="lbl3">${axis}</span>`;
-  $("#chartcap").textContent=verified
-    ? m.label+" -- verified tier: only the AutoAscend baseline so far (M2b isn't live)"
-    : m.label+" -- best-so-far -- self-reported (from the AutoAscend baseline)";
-}
-function padr(s,n){ s=String(s); return s.length>=n?s.slice(0,n):s+" ".repeat(n-s.length); }
-document.querySelectorAll("[data-metric]").forEach(b=>b.addEventListener("click",()=>{
-  document.querySelectorAll("[data-metric]").forEach(x=>x.setAttribute("aria-pressed","false"));
-  b.setAttribute("aria-pressed","true"); curMetric=b.dataset.metric; renderChart(curMetric); }));
-
-/* ===================== popup ===================== */
-async function openProgram(d){
-  const p = d==="autoascend" ? AUTOASCEND : PROGRAMS.find(x=>x.digest===d); if(!p) return;
-  /* lazily load this program's per-identity frontier (mean progression per identity) */
-  if(!p.base && !p.fr && p.fulldigest){
-    try{ const fr = await jget("/programs/"+encodeURIComponent(p.fulldigest)+"/identities");
-      p.fr = Object.fromEntries((fr.rows||[]).map(r=>[r.identity, r.progression])); }
-    catch(e){ p.fr = {}; }
+/* ===================== recognition ===================== */
+function renderRecognition(){
+  const holders=$("#recordholders"), breakthroughs=$("#breakthroughs");
+  if(holders){
+    const people=WALL_OF_FAME.keepers||[];
+    const visible=people.slice(0,FAME_LIMITS.keepers);
+    holders.innerHTML=people.length?`<div class="tablewrap"><table class="grid fametable"><caption>FRONTIER KEEPERS &middot; SELF-REPORTED*</caption>
+      <thead><tr><th>#</th><th class="l">hacker</th><th>frontiers</th><th class="l">roles represented</th><th>combined lift</th></tr></thead>
+      <tbody>${visible.map((p,i)=>`<tr data-owner="${esc(p.owner)}" tabindex="0" role="button" aria-label="Open contributions by @${esc(p.owner)}">
+        <td class="rk ${i<3?'top':''}">${i+1}</td><td class="l owner">@${esc(p.owner)}</td><td>${p.records}</td>
+        <td class="roles">${p.roles.map(r=>esc(ROLE_NAMES[r]||r)).join(', ')}</td><td class="dpos">+${(p.total_lift*100).toFixed(1)} pp</td></tr>`).join("")}</tbody></table></div>
+        ${visible.length<people.length?`<div class="more" data-fame-more="keepers" role="button" tabindex="0">[ --More-- ]</div>`:""}`
+      :`<div class="emptyblock">No participant is above AutoAscend yet.</div>`;
+    holders.querySelectorAll("tbody tr").forEach(row=>{
+      const open=()=>openHacker(row.dataset.owner);
+      row.addEventListener("click",open);
+      row.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } });
+    });
+    const more=holders.querySelector('[data-fame-more="keepers"]');
+    if(more){ const expand=()=>{ FAME_LIMITS.keepers+=FAME_PAGE_SIZE; renderRecognition(); };
+      more.addEventListener("click",expand);
+      more.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); expand(); } }); }
   }
-  $("#mTitle").textContent=p.base?"autoascend - the baseline":`nethacker@${d} - @${p.owner}`;
-  const scores=p.fr||{};
-  const cells=Object.keys(scores).length?Object.entries(scores).map(([id,v])=>{
-    const a=v>=ASC; return `<div class="minicell ${a?'asc':''}" style="background:${tint(v)};color:${tintText(v)}">
-      <span class="mn" ${v>=0.5?'style="color:#dfe0ee"':''}>${esc(id)}</span><span class="mv">${a?'&#9733;':''}${v.toFixed(3)}</span></div>`;}).join("")
-    :`<div style="color:#6a6a72">No per-identity atoms yet.</div>`;
-  $("#mBody").innerHTML=`<div class="kv">
-    <span class="k">deepest reach</span><span class="v">${esc(p.deepest)}</span>
-    <span class="k">mean progression</span><span class="v">${p.score!=null?p.score.toFixed(3):'&mdash;'}</span>
-    <span class="k">median</span><span class="v">${p.med!=null?p.med.toFixed(3):'&mdash;'}</span>
-    <span class="k">episodes</span><span class="v">${p.ep!=null?p.ep:'&mdash;'}</span>
-    <span class="k">ascensions</span><span class="v" style="color:#cc0000">${p.asc}</span>
-    <span class="k">source</span><span class="v">${p.base?'the AutoAscend baseline &mdash; where this effort started':`<a href="#">github.com/${esc(p.owner)}/nethacker@${d}</a>`}</span>
-    <span class="k">tier</span><span class="v">${p.base?'baseline':'self-reported*'}</span></div>
-    <div class="minihead">program frontier -- mean progression per identity:</div>
-    <div class="minigrid">${cells}</div>`;
-  const mo=$("#modal"); mo.setAttribute("open",""); mo.setAttribute("aria-hidden","false");
+  if(breakthroughs){
+    const people=WALL_OF_FAME.breakthroughs||[];
+    const visible=people.slice(0,FAME_LIMITS.breakthroughs);
+    breakthroughs.innerHTML=people.length?`<div class="tablewrap"><table class="grid fametable famelog"><caption>GREATEST BREAKTHROUGHS &middot; NEWEST FIRST</caption>
+      <thead><tr><th class="l">registered</th><th class="l">hacker</th><th class="l">identity</th><th>before</th><th>result</th><th>advance</th></tr></thead>
+      <tbody>${visible.map((p,i)=>`<tr data-breakthrough="${i}" tabindex="0" role="button" aria-label="Open breakthrough submission by @${esc(p.owner)}">
+        <td class="l">${esc(fmtDate(p.at))}</td><td class="l owner">@${esc(p.owner)}</td><td class="l">${esc(p.identity)}</td>
+        <td>${(p.previous*100).toFixed(1)}%</td><td>${(p.score*100).toFixed(1)}%</td><td class="dpos">+${(p.gain*100).toFixed(1)} pp</td></tr>`).join("")}</tbody></table></div>
+        ${visible.length<people.length?`<div class="more" data-fame-more="breakthroughs" role="button" tabindex="0">[ --More-- ]</div>`:""}`
+      :`<div class="emptyblock">No breakthroughs above AutoAscend yet.</div>`;
+    breakthroughs.querySelectorAll("tbody tr").forEach(row=>{
+      const open=()=>openBreakthrough(people[Number(row.dataset.breakthrough)]);
+      row.addEventListener("click",open);
+      row.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } });
+    });
+    const more=breakthroughs.querySelector('[data-fame-more="breakthroughs"]');
+    if(more){ const expand=()=>{ FAME_LIMITS.breakthroughs+=FAME_PAGE_SIZE; renderRecognition(); };
+      more.addEventListener("click",expand);
+      more.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); expand(); } }); }
+  }
 }
-$("#mX").addEventListener("click",closeModal);
-$("#modal").addEventListener("click",e=>{ if(e.target.id==="modal") closeModal(); });
-document.addEventListener("keydown",e=>{ if(e.key==="Escape") closeModal(); });
-function closeModal(){ const mo=$("#modal"); mo.removeAttribute("open"); mo.setAttribute("aria-hidden","true"); }
+
+/* ===================== identity + hacker popups ===================== */
+/* Stacked detail popups: each open pushes a fresh cascading window on top;
+   closing it (x / backdrop / Esc) reveals the one beneath. */
+let _detailZ=60;
+function pushDetail(title, wide){
+  const depth=document.querySelectorAll(".detailmodal").length;
+  const mo=document.createElement("div");
+  mo.className="modal detailmodal"; mo.style.zIndex=String(++_detailZ); mo.setAttribute("open","");
+  if(depth) mo.style.background="transparent";   // only the first popup dims the page; the rest cascade clean
+  mo.innerHTML=`<div class="win${wide?' identitydetail':''}" role="dialog" aria-modal="true" style="transform:translate(${depth*26}px,${depth*26}px)">`
+    +`<div class="win__title"><span>${esc(title)}</span><span class="x" role="button" tabindex="0" aria-label="Close">x</span></div>`
+    +`<div class="win__body"></div></div>`;
+  const pbody=mo.querySelector(".win__body"), x=mo.querySelector(".x");
+  const close=()=>{ mo.remove(); _detailZ=Math.max(60,_detailZ-1); };
+  x.addEventListener("click",close);
+  x.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); close(); } });
+  mo.addEventListener("click",e=>{ if(e.target===mo) close(); });
+  document.body.appendChild(mo);
+  return pbody;
+}
+document.addEventListener("keydown",e=>{ if(e.key==="Escape"){ const a=document.querySelectorAll(".detailmodal"); if(a.length) a[a.length-1].querySelector(".x").click(); } });
+function identityDelta(v,aa){
+  if(v==null||aa==null) return {text:"—",cls:"dz"};
+  const d=v-aa; return {text:(d>0?"+":"")+d.toFixed(3),cls:d>0.0005?"dpos":(d<-0.0005?"dneg":"dz")};
+}
+async function openIdentity(identity){
+  const aa=BASELINE&&BASELINE.per_identity&&BASELINE.per_identity[identity];
+  const pbody=pushDetail(`Frontier: ${identity}`, true);
+  pbody.innerHTML=`<div class="popupstatus">Loading same-seed results&hellip;</div>`;
+  try{
+    const resp=curTier==="verified"?{rows:[]}:await jget(`/board?scope=${encodeURIComponent(identity)}&tier=${encodeURIComponent(curTier)}`);
+    const rows=resp.rows||[];
+    const baseline=aa&&aa.progression!=null?aa.progression:null;
+    const body=rows.length?rows.map(r=>{
+      const meta=PROGRAM_BY_ID[r.program_id]||{reference:{repo:"",commit:""},registered_at:null,owner:r.owner};
+      const delta=identityDelta(r.mean_progression,baseline);
+      return `<tr><td class="num ${r.rank<=3?'top':''}">${r.rank}</td>
+        <td><span class="ownerlink" data-owner="${esc(r.owner)}">@${esc(r.owner)}</span></td>
+        <td>${sourceLink(meta)}</td><td class="num">${r.mean_progression.toFixed(3)}</td>
+        <td class="num">${r.median_progression.toFixed(3)}</td><td class="num">${OBJ_EP[identity]!=null?OBJ_EP[identity]:'—'}</td>
+        <td>${esc(r.deepest||'—')}</td><td class="num ${delta.cls}">${delta.text}</td>
+        <td class="num ${r.ascensions?'star':''}">${r.ascensions||'·'}</td><td>${esc(fmtDate(meta.registered_at))}</td></tr>`;
+    }).join(""):`<tr><td colspan="10" class="pend">${curTier==="verified"?EMPTY_VERIFIED:'No program has evaluated this identity yet.'}</td></tr>`;
+    const aaRow=baseline!=null?`<tr class="base"><td class="num">&middot;</td><td>autoascend</td><td>reference floor</td><td class="num">${baseline.toFixed(3)}</td><td class="num">&mdash;</td><td class="num">${aa.episodes||'—'}</td><td>${esc(aa.deepest||'—')}</td><td class="num dz">&mdash;</td><td class="num">&middot;</td><td>&mdash;</td></tr>`:"";
+    pbody.innerHTML=`<div class="tablewrap"><table class="identityboard"><caption>same canonical seed batch &middot; ${curTier.toUpperCase()}${curTier==="self-reported"?'*':''}</caption><thead><tr><th class="num">#</th><th>hacker</th><th>program</th><th class="num">mean</th><th class="num">median</th><th class="num">ep</th><th>deepest</th><th class="num">&Delta; AA</th><th class="num">&#9733;</th><th>registered</th></tr></thead><tbody>${body}${aaRow}</tbody></table></div>`;
+    pbody.querySelectorAll(".ownerlink").forEach(x=>x.addEventListener("click",()=>openHacker(x.dataset.owner)));
+  }catch(e){ pbody.innerHTML=`<div class="popupstatus">Could not load this identity leaderboard.</div>`; }
+}
+function fmtDate(iso){
+  const d=iso?new Date(iso):null;
+  if(!d||isNaN(d)) return "date unknown";
+  return `${d.getUTCDate()} ${_MON[d.getUTCMonth()]} ${d.getUTCFullYear()}, ${String(d.getUTCHours()).padStart(2,"0")}:${String(d.getUTCMinutes()).padStart(2,"0")} UTC`;
+}
+function sourceLink(s){
+  // repo/commit now arrive inside reference{repo,commit}; the arena hard-codes the
+  // entrypoint (bot.py at the repo root), so there is no root/entrypoint to join.
+  const ref=s.reference||{};
+  const rawRepo=ref.repo!=null?ref.repo:s.repo;
+  const raw=String(rawRepo||"").replace(/^https?:\/\/github\.com\//i,"").replace(/^github\.com\//i,"").replace(/\.git$/i,"");
+  const bits=raw.split("/").filter(Boolean);
+  if(bits.length!==2||!bits.every(x=>/^[\w.-]+$/.test(x))) return esc(rawRepo||"source unavailable");
+  const repo=bits.join("/"), commit=String(ref.commit!=null?ref.commit:(s.commit_sha||""));
+  const path=commit?`/blob/${encodeURIComponent(commit)}/bot.py`:"";
+  return `<a class="src" href="https://github.com/${repo}${path}" target="_blank" rel="noopener">${esc(repo)}@${esc(commit.slice(0,7)||"commit")}</a>`;
+}
+function roleKeys(frontier){
+  return [...new Set(frontier.map(x=>String(x.identity||"").split("-")[0]).filter(r=>ROLE_NAMES[r]))]
+    .sort((a,b)=>ROLE_NAMES[a].localeCompare(ROLE_NAMES[b]));
+}
+// A churning dungeon of NetHack glyphs -- the avatar's loading state. Fills the
+// square, re-rolls ~9x/s, breathes via CSS, then wipes out diagonally as the
+// real avatar wipes in (on load) -- or resolves to "@" (no avatar). NOT music-tied.
+const NHGLYPHS='@dfx&;:eFD)[(!?/="*$%.#|-<>^{}'.split("");
+function ghAvatar(owner){
+  const box=document.createElement("span"); box.className="ghavatar loading";
+  const pre=document.createElement("pre"); pre.className="dungeon"; box.appendChild(pre);
+  const COLS=10, ROWS=9, still=matchMedia("(prefers-reduced-motion:reduce)").matches;
+  const churn=()=>{ const rows=[]; for(let y=0;y<ROWS;y++){ let r=""; for(let x=0;x<COLS;x++) r+=NHGLYPHS[(Math.random()*NHGLYPHS.length)|0]; rows.push(r); } pre.textContent=rows.join(String.fromCharCode(10)); };
+  churn();
+  const timer=still?0:setInterval(()=>{ if(!box.isConnected){ clearInterval(timer); return; } churn(); },110);
+  const img=new Image(); img.alt="";
+  // leave the (now-clipped, behind-image) glyph layer in the DOM: removing it forces a
+  // relayout that repaints the image's compositing layer -> the occasional post-reveal blink.
+  const finish=cls=>{ if(timer) clearInterval(timer); box.classList.remove("loading"); box.classList.add(cls); };
+  img.onload=()=>{ box.appendChild(img); requestAnimationFrame(()=>finish("loaded")); };
+  img.onerror=()=>finish("noavatar");
+  img.src="https://github.com/"+encodeURIComponent(owner)+".png?size=120";
+  return box;
+}
+function programRow(s){
+  const loaded=Array.isArray(s.frontier), fr=loaded?s.frontier:[], roles=roleKeys(fr);
+  const episodes=fr.reduce((sum,x)=>sum+(x.episodes||0),0);
+  const best=fr.reduce((winner,x)=>!winner||x.progression>winner.progression?x:winner,null);
+  const records=Object.entries(HONOR_UNIVERSE).filter(([,x])=>x.d===s.id).map(([id])=>id);
+  return `<tr>
+    <td>${sourceLink(s)}</td>
+    <td>${loaded?(roles.length?roles.map(r=>esc(ROLE_NAMES[r]||r)).join(", "):"&mdash;"):"unavailable"}</td>
+    <td class="num">${loaded?`${fr.length}/73`:"&mdash;"}</td>
+    <td class="num">${loaded?episodes:"&mdash;"}</td>
+    <td class="num">${records.length||"&middot;"}</td>
+    <td>${best?`${esc(best.identity)} &middot; ${best.progression.toFixed(3)}`:"&mdash;"}</td>
+    <td>${esc(fmtDate(s.registered_at))}</td></tr>`;
+}
+async function openBreakthrough(event){
+  const pbody=pushDetail(`${event.identity} - breakthrough submission`);
+  pbody.innerHTML=`<div class="popupstatus">Loading the exact registered submission&hellip;</div>`;
+  try{
+    const cached=PROGRAM_BY_ID[event.program_id];
+    const solution=cached||await jget("/programs/"+encodeURIComponent(event.program_id));
+    const frontier=(await jget("/programs/"+encodeURIComponent(event.program_id)+"/identities")).rows||[];
+    const roles=roleKeys(frontier), episodes=frontier.reduce((sum,x)=>sum+(x.episodes||0),0);
+    pbody.innerHTML=`<div class="kv">
+      <span class="k">hacker</span><span class="v">@${esc(event.owner)}</span>
+      <span class="k">source</span><span class="v">${sourceLink(solution)}</span>
+      <span class="k">registered</span><span class="v">${esc(fmtDate(solution.registered_at||event.at))}</span>
+      <span class="k">breakthrough identity</span><span class="v">${esc(event.identity)}</span>
+      <span class="k">frontier before</span><span class="v">${(event.previous*100).toFixed(1)}%</span>
+      <span class="k">submission result</span><span class="v">${(event.score*100).toFixed(1)}%</span>
+      <span class="k">frontier advance</span><span class="v dpos">+${(event.gain*100).toFixed(1)} pp</span>
+      <span class="k">roles evaluated</span><span class="v">${roles.length?roles.map(r=>esc(ROLE_NAMES[r]||r)).join(", "):"—"}</span>
+      <span class="k">identities evaluated</span><span class="v">${frontier.length} of 73</span>
+      <span class="k">evaluation episodes</span><span class="v">${episodes}</span>
+      <span class="k">tier</span><span class="v">self-reported*</span>
+    </div>
+    <div class="clickhint">This submission moved ${esc(event.identity)} from ${(event.previous*100).toFixed(1)}% to ${(event.score*100).toFixed(1)}%, measured against the community frontier that existed when it was registered.</div>`;
+  }catch(e){
+    pbody.innerHTML=`<div class="popupstatus">Could not load this breakthrough submission.</div>`;
+  }
+}
+async function openHacker(owner){
+  const pbody=pushDetail(`@${owner}`, true);
+  pbody.innerHTML=`<div class="popupstatus">Loading registered programs and per-identity results&hellip;</div>`;
+  try{
+    const solutions=(await jget(`/programs?owner=${encodeURIComponent(owner)}&limit=50`)).rows||[];
+    await Promise.all(solutions.map(async s=>{
+      try{ s.frontier=(await jget("/programs/"+encodeURIComponent(s.id)+"/identities")).rows||[]; }
+      catch(e){ s.frontier=null; }
+    }));
+    const loaded=solutions.filter(s=>Array.isArray(s.frontier));
+    // "Loves to roleplay": the roles this hacker's programs play most, top 3 with counts.
+    const roleCount={};
+    loaded.forEach(s=>roleKeys(s.frontier).forEach(r=>{ roleCount[r]=(roleCount[r]||0)+1; }));
+    const loves=Object.entries(roleCount).sort((a,b)=>b[1]-a[1]||(ROLE_NAMES[a[0]]||a[0]).localeCompare(ROLE_NAMES[b[0]]||b[0])).slice(0,3);
+    const newest=solutions.length?fmtDate(solutions[0].registered_at):"&mdash;";
+    pbody.innerHTML=`<div class="hackerhead">
+      <span class="ghavatar-slot"></span>
+      <div class="kv">
+        <span class="k">loves to roleplay</span><span class="v">${loves.length?loves.map(([r,n])=>`${esc(ROLE_NAMES[r]||r)} (${n})`).join(", "):"&mdash;"}</span>
+        <span class="k">registered programs</span><span class="v">${solutions.length}</span>
+        <span class="k">latest registration</span><span class="v">${esc(newest)}</span>
+      </div></div>
+    <div class="minihead">programs -- newest first:</div>
+    ${solutions.length?`<div class="tablewrap"><table class="identityboard"><caption>REGISTERED PROGRAMS &middot; SELF-REPORTED*</caption><thead><tr><th>program</th><th>roles</th><th class="num">identities</th><th class="num">episodes</th><th class="num">records</th><th>best identity</th><th>registered</th></tr></thead><tbody>${solutions.map(programRow).join("")}</tbody></table></div>`:'<div class="popupstatus">No registered programs found.</div>'}`;
+    pbody.querySelector(".ghavatar-slot").replaceWith(ghAvatar(owner));
+  }catch(e){
+    pbody.innerHTML=`<div class="popupstatus">Could not load this hacker's program details.</div>`;
+  }
+}
+
 
 /* ===================== live data: fetch + adapt hub JSON into the render state ===================== */
 const jget = async p => { const r = await fetch(p); if(!r.ok) throw new Error(p+" "+r.status); return r.json(); };
 
-/* AutoAscend baseline row, rebuilt from /baseline for the current objective. GAPs:
-   /baseline has no median (overall stands in) and no cell-count. deepest is the raw
-   milestone string (e.g. "Dlvl:3") or "—" when the endpoint has none -- never invented. */
-function rebuildAutoascend(){
-  const per = (BASELINE && BASELINE.per_identity) || {};
-  const n = scopeIds(curObj).length;
-  const aa = aaScopeMean();                   // scope-aware floor (identity / role / generalist)
-  const c = per[curObj];                      // present only for an identity scope
-  AUTOASCEND = {
-    digest:"autoascend", owner:"autoascend",
-    score: aa!=null ? aa : null,              // null (not 0) when no baseline -> renders "—", never a fake floor
-    med:   aa!=null ? aa : null,              // GAP: /baseline has no median
-    coverage: n, total: n,                    // AA is the reference floor over the whole scope
-    ep: c && c.episodes!=null ? c.episodes : 0,
-    asc: 0,
-    deepest: (scopeKind(curObj)==="identity" && c && c.deepest) ? c.deepest : "—",
-    fr: Object.fromEntries(Object.entries(per).map(([id,x])=>[id, x.progression])),
-    base: true,
-  };
-}
-
-/* PEOPLE (the Hackers tally): the union-frontier standings for the current scope,
-   from GET /hackers?scope= (enveloped -- .rows; coverage + mean, coverage-first).
-   The server does the aggregation across each owner's programs. Degrades to []
-   on failure. */
-async function loadHackers(obj){
-  try{
-    const hk = await jget(`/hackers?scope=${encodeURIComponent(obj)}&tier=${encodeURIComponent(curTier)}`);
-    const rows = hk.rows || [];
-    PEOPLE = rows.map(r=>({rank:r.rank, owner:r.owner, coverage:r.coverage, total:r.identities_total, mean:r.mean_progression}));
-  }catch(e){ PEOPLE = []; }
-}
-
-/* Frontier "universe": each identity's rank-1 elite, from GET /elites?scope=generalist
-   (enveloped -- .rows). /elites has no episodes, so ep comes from /objectives (the honest
-   per-identity batch size) -- falls back to the 15-episode identity batch if /objectives
-   was unavailable. */
+/* Frontier "universe": each identity's rank-1 elite. /elites has no episodes, so ep comes
+   from /objectives (the honest per-identity batch size) -- falls back to the 15-episode
+   identity batch if /objectives was unavailable. */
 async function loadUniverse(){
+  if(curTier==="verified"){ UNIVERSE={}; return; }
   try{
     const el = await jget("/elites?scope=generalist");
-    const rows = el.rows || [];
     const uni = {};
-    for(const r of rows){ if(r.rank===1) uni[r.identity] = {v:r.score, o:r.owner, d:r.program_id, ep: OBJ_EP[r.identity]!=null ? OBJ_EP[r.identity] : 15}; }
+    for(const r of (el.rows||[])){ if(r.rank===1) uni[r.identity] = {v:r.score, o:r.owner, d:r.program_id, ep:OBJ_EP[r.identity]!=null?OBJ_EP[r.identity]:15}; }
     UNIVERSE = uni;
+    HONOR_UNIVERSE = uni;
   }catch(e){ UNIVERSE = {}; }
 }
 
-/* Frontier "program" regime champion: the #1 solution on the generalist board
-   (coverage-first), with its per-identity frontier. Empty board -> CHAMPION stays
-   blank and the program regime honestly shows every cell "·". */
-async function loadChampion(){
+/* Program registry index, keyed by opaque program id -> {id, owner, reference{repo,commit}, registered_at}
+   (GET /programs). Feeds the identity-board source/date cells and the hacker/breakthrough popups. */
+async function loadProgramIndex(){
   try{
-    const board = await jget(`/board?scope=generalist&tier=${encodeURIComponent(curTier)}`);
-    const rnd = board.rows || [];
-    if(rnd.length){
-      const top = rnd[0]; let scores = {};
-      try{ const fr = await jget("/programs/"+encodeURIComponent(top.program_id)+"/identities");
-        scores = Object.fromEntries((fr.rows||[]).map(r=>[r.identity, r.progression])); }catch(e){ scores = {}; }
-      CHAMPION = {digest:top.program_id, owner:top.owner, scores};
-    } else { CHAMPION = {digest:"", owner:"", scores:{}}; }
-  }catch(e){ CHAMPION = {digest:"", owner:"", scores:{}}; }
+    const resp=await jget("/programs?limit=100");
+    PROGRAM_BY_ID=Object.fromEntries((resp.rows||[]).map(s=>[s.id,s]));
+  }catch(e){ PROGRAM_BY_ID={}; }
 }
 
-/* Per-objective + per-tier state: the board (its rows become PROGRAMS/BOARD_BY_OBJ),
-   PEOPLE, the baseline row, and the progress series. Called on load and on every
-   objective/tier change. Each fetch degrades to an honest empty state on failure. */
-async function loadObjective(obj){
-  rebuildAutoascend();                                  // floor row reflects this objective's scope
-  const agg = scopeKind(obj)!=="identity";
-  let rows=[];
-  try{ const board = await jget(`/board?scope=${encodeURIComponent(obj)}&tier=${encodeURIComponent(curTier)}`);
-    rows = board.rows || []; }
-  catch(e){ rows=[]; }                                  // unknown scope (404) / offline -> "be the first" empty state
-  PROGRAMS = rows.map(r=>({
-    // program_id is opaque and already short -- shown verbatim, no more short()/fulldigest split.
-    rank:r.rank, digest:r.program_id, fulldigest:r.program_id,
-    owner:r.owner, score:r.mean_progression,
-    med: r.median_progression!=null ? r.median_progression : null,   // identity board only
-    ep:  null,                          // /board's uniform row no longer carries episodes
-    coverage: agg ? r.coverage : null, total: agg ? r.identities_total : null,  // aggregate board only
-    asc:r.ascensions, deepest: r.deepest!=null ? r.deepest : "—",    // /board now carries deepest
-    fr:null,                                            // loaded lazily in openProgram
-  }));
-  BOARD_BY_OBJ[obj] = PROGRAMS;
-  await loadHackers(obj);                               // the Hackers tally (union frontier)
-  let series=[];
-  try{ const pr = await jget(`/progress?scope=val-dwa-law-fem&tier=${encodeURIComponent(curTier)}`); series = (pr && pr.series) || []; }
-  catch(e){ series=[]; }
-  PROGRESS = [
-    {t:"autoascend", frontier: (BASELINE && BASELINE.overall!=null) ? BASELINE.overall : 0, ascensions:0, coverage:0 /*GAP: baseline cell-count not exposed*/, base:true},
-    ...series.map(p=>({t:p.t, frontier:p.frontier, ascensions:p.ascensions, coverage:p.coverage})),
-  ];
-}
-
-/* Grouped objective picker: Generalist / Roles / Identities, built from the
-   identity tables so all 73 identities are pickable. Option values are the bare
-   backend tokens ("generalist", a role like "val", an identity). */
-function buildPicker(){
-  const sel=$("#objSelect"); if(!sel) return;
-  let html=`<optgroup label="Generalist"><option value="generalist">Generalist &mdash; all 73 identities</option></optgroup>`;
-  html+=`<optgroup label="Roles (macro-average)">`;
-  for(const r of Object.keys(ROLE_NAMES)) html+=`<option value="${r}">${ROLE_NAMES[r]} &mdash; all ${ROLE_VARS[r].length}</option>`;
-  html+=`</optgroup><optgroup label="Identities (same-seeds)">`;
-  for(const r of Object.keys(ROLE_VARS)) for(const v of ROLE_VARS[r]) html+=`<option value="${r}-${v}">${r}-${v}</option>`;
-  html+=`</optgroup>`;
-  sel.innerHTML=html; sel.value=curObj;
+async function loadRecognition(){
+  try{ WALL_OF_FAME=await jget("/recognition"); }
+  catch(e){ WALL_OF_FAME={keepers:[],breakthroughs:[]}; }
 }
 
 /* Bootstrap: fetch everything, adapt into the render state, then do the first render.
    Every fetch is guarded -- any failure keeps the page's friendly empty/error
    states; nothing ever throws to the console. */
 async function boot(){
-  buildPicker();                        // fill the objective menu before the first render
-  /* independent setup fetches run concurrently; the real dependencies are
-     awaited after (UNIVERSE needs OBJ_EP; the board/hackers need BASELINE).
-     Each is guarded, so any failure keeps a friendly state. */
   const statsP = jget("/stats")
-    .then(s=>{ odo($("#odoProg"), s.programs, 5); odo($("#odoPlay"), s.hackers, 5);
+    .then(s=>{ STATS=s; odo($("#odoProg"), s.programs, 5); odo($("#odoPlay"), s.hackers, 5);
                renderMarquee(marqueeStatsLine(s)); setUpdated(s.last_registered_at); })
-    .catch(()=>{ odo($("#odoProg"),0,5); odo($("#odoPlay"),0,5); });
+    .catch(()=>{ STATS=null; odo($("#odoProg"),0,5); odo($("#odoPlay"),0,5); });
   const baseP = jget("/baseline").then(b=>{ BASELINE = b; }).catch(()=>{ BASELINE = {owner:"autoascend", per_identity:{}, overall:null}; });
   const objP  = jget("/objectives").then(o=>{ OBJ_EP = Object.fromEntries(o.map(x=>[x.name, x.episodes])); }).catch(()=>{ OBJ_EP = {}; });
-  await Promise.all([statsP, baseP, objP, loadChampion()]);
-  await loadUniverse();                 // needs OBJ_EP (per-identity episode counts)
-  await loadObjective(curObj);          // needs BASELINE
-  setCap(); renderBoard(curView); renderFrontier(curRegime); renderChart(curMetric);
+  await Promise.all([statsP,baseP,objP,loadProgramIndex(),loadRecognition()]);
+  await loadUniverse();
+  renderFrontier(); renderRecognition();
 }
 boot();
 /* ===== The Nethack Dictionary: audio-reactive dungeon wall around the .page frame ===== */
@@ -1639,7 +1586,7 @@ boot();
   addEventListener("resize",resize); resize(); readTheme();
 
   function buildPer(){
-    const r=page.getBoundingClientRect(), gap=Math.round(ch*0.55);
+    const r=page.getBoundingClientRect(), gap=0;   // wall sits directly on the page edge (no frame moat)
     const L=r.left-gap, T=r.top-gap, R=r.right+gap, B=r.bottom+gap, per=[];
     const nx=Math.max(2,Math.round((R-L)/cw)), ny=Math.max(2,Math.round((B-T)/ch));
     for(let i=0;i<nx;i++){ const x=L+(i/(nx-1))*(R-L); per.push([x,T,0,-1, i===0?"┌":(i===nx-1?"┐":"─")]); }
@@ -1682,7 +1629,7 @@ boot();
     const per=buildPer(), N=per.length; if(!N) return;
     if(N!==lastN){ sm=new Float32Array(N); pk=new Float32Array(N); lastN=N; }
     const bins=analyser?analyser.frequencyBinCount:512, shuffle=Math.floor(t*2.4);
-    const vis=[]; g.font=ch+'px "Courier New","Cousine",monospace';
+    const vis=[]; g.font=ch+'px "Courier New",monospace';
     for(let k=0;k<N;k++){
       const x=per[k][0],y=per[k][1],dx=per[k][2],dy=per[k][3],base=per[k][4],pf=k/N;
       let m=0.015;                                // faint static outline at the very rest
@@ -1724,7 +1671,7 @@ boot();
     if(per.length){
       const GR=hexRGB(GROUND);                                                       // parchment, for the cleared patch
       const hch=Math.round(ch*TUNE.size), hcw=Math.max(1,Math.round(hch*0.6));
-      g.font="700 "+hch+'px "Courier New","Cousine","Liberation Mono","Nimbus Mono PS",Courier,monospace';
+      g.font="700 "+hch+'px "Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace';
       g.textAlign="center";
       const N=per.length;
       for(let k=0;k<RUNNERS.length;k++){

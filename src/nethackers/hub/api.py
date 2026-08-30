@@ -70,6 +70,7 @@ from nethackers.hub.views.elites import read_elites
 from nethackers.hub.views.hackers import hacker_board, leaders as hackers_leaders
 from nethackers.hub.views.programs import get_program, list_programs
 from nethackers.hub.views.progress import read_progress
+from nethackers.hub.views.recognition import read_recognition
 from nethackers.hub.views.solution import read_solution_frontier
 from nethackers.hub.views.stats import read_stats
 
@@ -189,6 +190,12 @@ def create_app(
     @app.get("/baseline")
     def baseline() -> dict[str, Any]:
         return read_baseline(store)
+
+    @app.get("/recognition")
+    def recognition() -> dict[str, Any]:
+        # Compound object -- {generated_at, keepers, breakthroughs} -- for the
+        # website "Wall of Fame". Deliberately self-reported-tier only.
+        return read_recognition(store)
 
     @app.get("/progress")
     def progress(scope: str | None = None, tier: str = "self-reported") -> dict[str, Any]:

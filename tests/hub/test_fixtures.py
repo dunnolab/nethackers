@@ -97,7 +97,7 @@ def test_identity_a_dlvl10_cell_has_a_single_holder(tmp_path: Any) -> None:
 
     assert cell["holder_count"] == 1
     assert cell["first_program_id"] == program_id(ALPHA)
-    assert cell["first_owner"] == "alice"
+    assert cell["first_owner"] == "howuhh"
 
 
 def test_identity_b_ascend_cell_is_lit_only_by_the_ascended_solution(tmp_path: Any) -> None:
@@ -112,7 +112,7 @@ def test_identity_b_ascend_cell_is_lit_only_by_the_ascended_solution(tmp_path: A
 
     assert cell["holder_count"] == 1
     assert cell["first_program_id"] == program_id(BETA)
-    assert cell["first_owner"] == "bob"
+    assert cell["first_owner"] == "vkurenkov"
 
 
 def test_identity_b_shallow_cell_is_held_by_both_gamma_and_beta(tmp_path: Any) -> None:
@@ -127,7 +127,7 @@ def test_identity_b_shallow_cell_is_held_by_both_gamma_and_beta(tmp_path: Any) -
 
     assert cell["holder_count"] == 2
     assert cell["first_program_id"] == program_id(GAMMA)
-    assert cell["first_owner"] == "carol"
+    assert cell["first_owner"] == "vlomshakov"
 
 
 def test_no_milestone_none_atom_leaks_into_attainment(tmp_path: Any) -> None:
