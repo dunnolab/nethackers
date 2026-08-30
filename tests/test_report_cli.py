@@ -3,9 +3,9 @@ read-only and offline, unlike every hub-facing subcommand elsewhere in this
 file. Hermetic throughout: ``cli.crashfile.latest``/``load`` are
 monkeypatched, so no real crash directory is ever read by this file -- see
 tests/test_crashfile.py for the module's own (non-CLI) tests, and
-tests/test_cli.py for the `main()` top-level guard that actually WRITES a
-crash file on an unexpected error (this file only covers displaying one that
-already exists).
+tests/test_crash_wiring.py for the `main()` top-level guard that actually
+WRITES a crash file on an unexpected error (this file only covers displaying
+one that already exists).
 """
 from __future__ import annotations
 
