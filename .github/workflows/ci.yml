@@ -32,31 +32,34 @@ jobs:
     if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout (full history -- needed to diff against the PR base)
+      - name: Checkout (full history + tags -- needed for git describe)
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
         with:
           fetch-depth: 0
+          fetch-tags: true
 
       - name: Fail if image inputs changed without a re-pin
-        env:
-          BASE_REF: ${{ github.base_ref }}
         run: |
           # design doc docs/superpowers/specs/2026-08-28-sandbox-image-distribution-design.md
           # section 5.12 / D12: these paths feed the arena/mutator image
           # contents (see src/nethackers/_image_pins.py's own docstring and
-          # the sandbox-images.yml bootstrap). A PR that touches one of them
-          # without also touching the pins file leaves _image_pins.py
-          # describing images that no longer match what these inputs would
-          # actually build -- catch that here, at review time, rather than as
-          # a confusing runtime image mismatch later.
-          changed=$(git diff --name-only "origin/${BASE_REF}...HEAD")
+          # the sandbox-images.yml bootstrap). Diffed against the last
+          # RELEASED tag (not just this PR's base branch), per D12/section
+          # 5.12, so drift accumulated across merged-but-unreleased PRs -- or
+          # a direct push to main -- is still caught, not only drift
+          # introduced by this one PR. `--match 'v*'` restricts to actual
+          # release tags (hub-image.yml/publish-pypi.yml's own convention),
+          # in case any non-release tag ever exists in this repo.
+          base="$(git describe --tags --abbrev=0 --match 'v*')"
+          echo "diffing against last released tag: $base"
+          changed=$(git diff --name-only "${base}...HEAD")
           image_inputs='^(Dockerfile\.mutator|nle-base/Dockerfile|arena/Dockerfile|uv\.lock)$|^(src/nethackers/arena/|src/nethackers/contracts/)'
 
           if echo "$changed" | grep -qE "$image_inputs" && ! echo "$changed" | grep -qx 'src/nethackers/_image_pins\.py'; then
-            echo "::error::image-input paths changed without re-pinning src/nethackers/_image_pins.py"
+            echo "::error::image-input paths changed (since $base) without re-pinning src/nethackers/_image_pins.py"
             echo "$changed" | grep -E "$image_inputs"
             echo "fix: run .github/workflows/sandbox-images.yml, then paste the new digests into src/nethackers/_image_pins.py (spec section 8)"
             exit 1
           fi
 
-          echo "ok -- no image-input drift, or the pins were updated alongside it"
+          echo "ok -- no image-input drift since $base, or the pins were updated alongside it"
