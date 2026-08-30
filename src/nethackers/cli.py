@@ -52,6 +52,18 @@ package version + ``harness.version.RUN_SCHEMA_VERSION`` + the two pinned
 sandbox image refs via ``nethackers.diagnostics.version_info``, never
 Docker or the hub). Its output is data, not human chrome, so it goes to
 stdout like every other data render and honors ``-o json`` the same way.
+
+``doctor`` (spec 5.6) answers "is my machine set up to do X?" per
+**capability** (``eval``/``evolve``/``publish``/``browse``): it runs
+``nethackers.diagnostics.run_checks`` (which never raises -- every probe is
+wrapped) and prints either the grouped human summary or ``to_json``'s
+``{checks, capabilities, env}`` via the same ``emit`` every read subcommand
+uses, then exits via ``exit_code`` -- 0 iff ``--for``'s capability (default
+``eval``) is ready; soft warnings never flip it. ``--pull`` is the one
+mutating flag (acquires both sandbox images, streaming progress to
+``err``, then re-checks). The hub/login checks reuse ``whoami``'s own
+``HubClient(...).hub_mode()``/``_load_creds`` primitives -- one source of
+truth (INV5), not a second implementation.
 """
 
 from __future__ import annotations
@@ -72,7 +84,15 @@ from rich_argparse import RichHelpFormatter
 
 from nethackers import clipboard, config
 from nethackers.config import Stage, load_stage
-from nethackers.diagnostics import version_info
+from nethackers.diagnostics import (
+    CAPABILITIES,
+    exit_code,
+    render_human,
+    render_plain,
+    run_checks,
+    to_json,
+    version_info,
+)
 from nethackers.eval.runner import eval_batch
 from nethackers.harness.discovery import ModelInfo, list_models, preflight_model
 from nethackers.harness.launch import EvolveParams, _now, prepare_evolve
@@ -353,6 +373,26 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
     sub.add_parser(
         "whoami", parents=[common], formatter_class=RichHelpFormatter,
         help="Show the currently logged-in identity.",
+    )
+
+    do = sub.add_parser(
+        "doctor", parents=[common], formatter_class=RichHelpFormatter,
+        help="Check whether this machine is set up to eval/evolve/publish/browse.",
+    )
+    do.add_argument(
+        "--for", dest="for_capability", choices=list(CAPABILITIES), default=None,
+        help="Check readiness for one capability only, and exit accordingly "
+        "(default: eval -- the minimum useful).",
+    )
+    do.add_argument(
+        "--pull", action="store_true",
+        help="Pull the arena+mutator sandbox images first (progress on stderr), "
+        "then re-check.",
+    )
+    do.add_argument(
+        "--operator", choices=["codex", "claude"], default="claude",
+        help="Which operator's host login to check (default: %(default)s, "
+        "matching evolve's own default).",
     )
 
     e = sub.add_parser(
@@ -656,6 +696,33 @@ def _run(argv: list[str] | None) -> int:
         else:
             err.print(_where_line(stage, ident, hub_mode, unreachable=unreachable))
         return 0 if c is not None else 1
+
+    if args.cmd == "doctor":
+        if args.pull:
+            # Acquire both sandbox images unconditionally -- ensure_image
+            # itself no-ops when a ref is already present, so this is cheap
+            # on a machine that's already set up. Never bails early on one
+            # failure: attempt both, stream each to stderr, then re-check
+            # regardless -- the checks below give an accurate post-attempt
+            # picture either way (this is doctor's one mutating path; every
+            # other branch here is read-only).
+            for kind in ("arena", "mutator"):
+                ref = resolve_image(None, kind)
+                err.print(f"[dim]checking/pulling {kind} sandbox ({ref})…[/]")
+                perr = ensure_image(ref, kind, on_line=lambda ln: err.print(f"[dim]{ln}[/]"))
+                if perr is not None:
+                    err.print(perr)
+        # Named distinctly from `evolve`'s own `results` local below -- both
+        # live in this same un-annotated function scope (Python has no
+        # per-`if`-block scoping), and mypy widens a bare local's inferred
+        # type across every assignment to that name in the whole function.
+        checks = run_checks(operator=args.operator, hub=args.hub)
+        emit(
+            to_json(checks), args.output,
+            table=lambda _d: render_human(checks),
+            plain=lambda _d: render_plain(checks),
+        )
+        return exit_code(checks, args.for_capability)
 
     if args.cmd == "eval":
         spec = CATALOG.get(args.objective)

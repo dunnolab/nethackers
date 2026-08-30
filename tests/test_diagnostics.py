@@ -1,0 +1,244 @@
+"""Pure unit tests for ``nethackers doctor``'s diagnostics core
+(``diagnostics.py``): ``run_checks``/``capability_ready``/``exit_code``/
+``to_json``. Every probe ``run_checks`` uses is injected as a fake here --
+no real docker/network call is ever made by this file.
+
+``capability_ready``/``exit_code`` (the pure fold) are also table-tested
+directly against hand-built ``CheckResult`` lists at the bottom, independent
+of ``run_checks`` -- that's the exhaustive hard-fail/soft-warn/soft-fail x
+capability matrix spec S5.6/INV6 describes.
+
+See ``tests/test_doctor_cli.py`` for the CLI wiring (``cli.main(["doctor",
+...])``), which fakes ``cli.run_checks`` wholesale rather than these
+lower-level probes.
+"""
+from __future__ import annotations
+
+import pytest
+
+from nethackers.diagnostics import (
+    CAPABILITIES,
+    CheckResult,
+    capability_ready,
+    exit_code,
+    run_checks,
+    to_json,
+)
+from nethackers.hubclient.client import HubUnreachable
+from nethackers.hubclient.credentials import Credentials
+
+# --- run_checks: fakes for every injectable probe, all "healthy" by default -
+
+
+def _ref(explicit, kind):
+    # Mimics resolve_image's real shape (a GHCR digest-pin ref) closely enough
+    # for the "@sha256:" branch in _check_image's fix-text selection to exercise
+    # the pin path, not the local-dev-tag path.
+    return f"ghcr.io/dunnolab/nethackers-{kind}@sha256:{'a' * 64}"
+
+
+def _unreachable_hub(hub):
+    raise HubUnreachable(hub)
+
+
+def _healthy_kwargs(**overrides):
+    kwargs = dict(
+        operator="claude",
+        hub="https://example.invalid",
+        docker_available=lambda: True,
+        resolve_image=_ref,
+        image_present=lambda ref: True,
+        manifest_reachable=lambda ref: True,
+        preflight_operator=lambda operator: None,
+        hub_mode=lambda hub: "github",
+        load_creds=lambda: Credentials("castiel", "tok"),
+        gh_state=lambda: ("castiel", "authed"),
+    )
+    kwargs.update(overrides)
+    return kwargs
+
+
+def test_run_checks_returns_one_result_per_check_id():
+    results = run_checks(**_healthy_kwargs())
+    ids = {r.id for r in results}
+    assert ids == {
+        "container_runtime", "arena_image", "mutator_image",
+        "hub", "hub_login", "gh", "operator",
+    }
+
+
+def test_all_ok_every_capability_ready_and_exit_zero():
+    results = run_checks(**_healthy_kwargs())
+    for cap in CAPABILITIES:
+        assert capability_ready(results, cap) is True, cap
+        assert exit_code(results, cap) == 0, cap
+    assert exit_code(results, None) == 0
+
+
+def test_everything_down_gates_every_capability():
+    results = run_checks(**_healthy_kwargs(
+        docker_available=lambda: False,
+        image_present=lambda ref: False,
+        manifest_reachable=lambda ref: False,
+        preflight_operator=lambda operator: "not logged in",
+        hub_mode=_unreachable_hub,
+        load_creds=lambda: None,
+        gh_state=lambda: (None, "missing"),
+    ))
+    assert exit_code(results, None) == 1
+    for cap in CAPABILITIES:
+        assert capability_ready(results, cap) is False, cap
+
+
+def test_gh_unauthed_only_gates_publish_not_eval():
+    results = run_checks(**_healthy_kwargs(gh_state=lambda: (None, "unauthed")))
+    assert exit_code(results, None) == 0  # eval still ready (the bare default)
+    caps = {cap: capability_ready(results, cap) for cap in CAPABILITIES}
+    assert caps == {"eval": True, "evolve": True, "publish": False, "browse": True}
+
+
+def test_a_raising_probe_becomes_a_failed_check_not_an_exception():
+    def _boom():
+        raise RuntimeError("docker vanished")
+
+    results = run_checks(**_healthy_kwargs(docker_available=_boom))
+    by_id = {r.id: r for r in results}
+    assert by_id["container_runtime"].status == "fail"
+    # the crash is isolated to its own check -- every other check still
+    # computed normally, not skipped/short-circuited.
+    assert by_id["arena_image"].status == "ok"
+    assert by_id["operator"].status == "ok"
+
+
+def test_gh_three_states_get_distinct_fixes():
+    missing = run_checks(**_healthy_kwargs(gh_state=lambda: (None, "missing")))
+    unauthed = run_checks(**_healthy_kwargs(gh_state=lambda: (None, "unauthed")))
+    authed = run_checks(**_healthy_kwargs(gh_state=lambda: ("castiel", "authed")))
+    gh_missing = next(r for r in missing if r.id == "gh")
+    gh_unauthed = next(r for r in unauthed if r.id == "gh")
+    gh_authed = next(r for r in authed if r.id == "gh")
+
+    assert gh_missing.status == "fail" and "install" in gh_missing.fix.lower()
+    assert gh_unauthed.status == "fail" and "gh auth login" in gh_unauthed.fix
+    assert gh_authed.status == "ok" and gh_authed.fix is None
+    # never collapse "not installed" and "installed but unauthed" into the
+    # same message (spec S5.6) -- distinct fix text for distinct fixes.
+    assert gh_missing.fix != gh_unauthed.fix
+
+
+def test_operator_check_uses_the_given_operator_name():
+    seen = []
+    results = run_checks(**_healthy_kwargs(
+        operator="codex",
+        preflight_operator=lambda operator: seen.append(operator) or "nope",
+    ))
+    assert seen == ["codex"]
+    op = next(r for r in results if r.id == "operator")
+    assert op.status == "fail" and op.severity == "hard" and "codex" in op.fix
+
+
+def test_image_present_vs_pullable_vs_unreachable_statuses():
+    present = run_checks(**_healthy_kwargs())
+    pullable = run_checks(**_healthy_kwargs(
+        image_present=lambda ref: False, manifest_reachable=lambda ref: True))
+    unreachable = run_checks(**_healthy_kwargs(
+        image_present=lambda ref: False, manifest_reachable=lambda ref: False))
+
+    assert next(r for r in present if r.id == "arena_image").status == "ok"
+    assert next(r for r in pullable if r.id == "arena_image").status == "warn"
+    assert next(r for r in unreachable if r.id == "arena_image").status == "fail"
+    # pullable/unreachable are still HARD -> not capability-ready, even though
+    # "pullable" isn't a hard failure exactly (docs: needs `--pull` first).
+    assert capability_ready(pullable, "eval") is False
+    assert capability_ready(unreachable, "eval") is False
+
+
+def test_hub_check_ok_and_unreachable():
+    ok = run_checks(**_healthy_kwargs())
+    down = run_checks(**_healthy_kwargs(hub_mode=_unreachable_hub))
+
+    assert next(r for r in ok if r.id == "hub").status == "ok"
+    hub_fail = next(r for r in down if r.id == "hub")
+    assert hub_fail.status == "fail" and hub_fail.severity == "soft"
+    assert capability_ready(down, "browse") is False
+    assert capability_ready(down, "eval") is True  # hub unreachable never touches eval
+
+
+def test_hub_login_check_ok_and_not_logged_in():
+    ok = run_checks(**_healthy_kwargs())
+    out = run_checks(**_healthy_kwargs(load_creds=lambda: None))
+
+    assert next(r for r in ok if r.id == "hub_login").status == "ok"
+    hl = next(r for r in out if r.id == "hub_login")
+    assert hl.status == "fail" and "login" in hl.fix
+    assert capability_ready(out, "publish") is False
+
+
+def test_to_json_shape():
+    results = run_checks(**_healthy_kwargs())
+    data = to_json(results)
+
+    assert set(data) == {"checks", "capabilities", "env"}
+    assert len(data["checks"]) == len(results)
+    assert data["capabilities"] == dict.fromkeys(CAPABILITIES, True)
+    assert isinstance(data["checks"][0]["capabilities"], list)  # JSON-safe, not a bare tuple
+    env = data["env"]
+    assert {"nethackers", "run_schema_version", "images", "os", "arch", "python"} <= set(env)
+
+
+# --- exit_code / capability_ready: the pure fold, table-tested directly ----
+#
+# Independent of run_checks -- hand-built CheckResult lists, exercising the
+# hard-vs-soft contract directly: a HARD check gates every capability it's
+# tagged with, full stop. A capability with NO hard checks of its own
+# (publish, in the real 7-check table) falls back to its own soft checks,
+# where only "fail" gates it -- "warn" never gates ANY capability, hard- or
+# soft-only alike (INV6: "soft warnings never flip it").
+
+
+def _cr(id_, status, severity, caps):
+    return CheckResult(id=id_, status=status, severity=severity, detail="d", fix=None,
+                       capabilities=caps)
+
+
+_BASE_HARD = [
+    _cr("container_runtime", "ok", "hard", ("eval", "evolve")),
+    _cr("arena_image", "ok", "hard", ("eval", "evolve")),
+    _cr("mutator_image", "ok", "hard", ("evolve",)),
+    _cr("operator", "ok", "hard", ("evolve",)),
+]
+_BASE_SOFT = [
+    _cr("hub", "ok", "soft", ("browse", "publish")),
+    _cr("hub_login", "ok", "soft", ("publish",)),
+    _cr("gh", "ok", "soft", ("publish",)),
+]
+
+
+@pytest.mark.parametrize("cap", [None, "eval", "evolve", "publish"])
+def test_fold_hard_fail_gates_its_own_capabilities(cap):
+    hards = [r if r.id != "container_runtime" else
+            _cr("container_runtime", "fail", "hard", ("eval", "evolve")) for r in _BASE_HARD]
+    results = hards + _BASE_SOFT
+    expect_ready = cap == "publish"  # container_runtime doesn't tag publish at all
+    assert exit_code(results, cap) == (0 if expect_ready else 1)
+
+
+@pytest.mark.parametrize("cap", [None, "eval", "evolve", "publish"])
+def test_fold_soft_warn_never_flips_exit_code(cap):
+    softs = [_cr(r.id, "warn", "soft", r.capabilities) for r in _BASE_SOFT]
+    results = _BASE_HARD + softs
+    assert exit_code(results, cap) == 0
+
+
+@pytest.mark.parametrize("cap", [None, "eval", "evolve", "publish"])
+def test_fold_soft_fail_gates_only_the_soft_only_capability(cap):
+    softs = [r if r.id != "gh" else _cr("gh", "fail", "soft", ("publish",)) for r in _BASE_SOFT]
+    results = _BASE_HARD + softs
+    expect_ready = cap != "publish"  # eval/evolve are hard-gated; gh can't touch them
+    assert exit_code(results, cap) == (0 if expect_ready else 1)
+
+
+def test_capability_ready_matches_exit_code_for_named_capabilities():
+    results = _BASE_HARD + _BASE_SOFT
+    for cap in CAPABILITIES:
+        assert exit_code(results, cap) == (0 if capability_ready(results, cap) else 1)
