@@ -40,6 +40,7 @@ from nethackers.harness.sandbox_preflight import (
 )
 from nethackers.hub.selector import resolve
 from nethackers.hubclient.credentials import Credentials
+from nethackers.hubclient.publish import gh_state
 from nethackers.tui.identity_grid import IdentityGrid
 
 if TYPE_CHECKING:
@@ -58,6 +59,30 @@ def _seed_roots() -> list[str]:
             if child.is_dir() and (child / "nethackers.solution.json").exists():
                 found.append(child.as_posix())
     return found or ["roots/autoascend"]
+
+
+def _publish_warning(owner: str) -> str:
+    """The Start-time publish-readiness note, mirroring the CLI's three
+    branches VERBATIM (``cli.py:823-842``) so both surfaces read identically.
+    A hub-logged-in but `gh`-unauthed contestant would otherwise evolve, win,
+    and have the win silently stay local (spec 5.6) -- warn up front instead.
+    Advisory only: the caller writes this into ``#f_publish_warn`` and
+    launches the run regardless of what comes back (including ``""``, the
+    all-clear "authed" case) -- a local elite is kept either way.
+
+    The form has no ``--offline`` flag (it's interactive), so the CLI's
+    ``not args.offline`` guard collapses to just the owner check here."""
+    if owner == OFFLINE_OWNER:
+        return ("[dim]not logged in — running offline "
+                "(publishing needs `nethackers login`)[/]")
+    _gh_login, state = gh_state()
+    if state == "missing":
+        return ("[yellow]wins won't publish[/] — install the GitHub CLI "
+                "(`gh`), then run `gh auth login`")
+    if state == "unauthed":
+        return ("[yellow]wins won't publish[/] — run `gh auth login` "
+                "(separate from `nethackers login`)")
+    return ""  # authed -- nothing to warn about
 
 
 def _version_line(backend: str, cli: CliInfo) -> str:
@@ -130,6 +155,10 @@ class EvolveForm(Vertical):
     EvolveForm #f_startbar { height: auto; margin-top: 1; }
     EvolveForm #f_start { width: auto; min-width: 18; }
     EvolveForm #f_err { width: 1fr; height: auto; color: #c04040; padding: 0 2; }
+    /* persists through the run (unlike #f_err, which _provision_then_launch
+       overwrites with progress text) -- own full-width row, no fixed color:
+       its three states (dim/yellow/none) come entirely from inline markup. */
+    EvolveForm #f_publish_warn { height: auto; padding: 0 2; margin-top: 1; }
     EvolveForm #f_model_custom { display: none; }  /* shown only for Custom… */
     """
 
@@ -178,6 +207,10 @@ class EvolveForm(Vertical):
         with Horizontal(id="f_startbar"):
             yield Button("Start", id="f_start", variant="success")
             yield Static("", id="f_err")
+        # separate from #f_err (own row, own id) so a publish warning survives
+        # provisioning overwriting #f_err with progress text -- see
+        # _publish_warning.
+        yield Static("", id="f_publish_warn")
 
     def on_mount(self) -> None:
         self.query_one("#f_readiness", Static).border_title = "What evolve needs"
@@ -421,6 +454,11 @@ class EvolveForm(Vertical):
         if msg is not None:
             self.query_one("#f_err", Static).update(msg)
             return
+        # Publish-readiness pre-check (spec 5.6): advisory only -- it NEVER
+        # gates the launch below. Written into its own #f_publish_warn (not
+        # #f_err) so it's still on screen after Start, through provisioning
+        # and the run -- a win is kept as a local elite either way.
+        self.query_one("#f_publish_warn", Static).update(_publish_warning(params.owner))
         # Both sandbox images are auto-provisioned: if either isn't built/
         # pulled yet, acquire it (off the UI thread, streaming progress into
         # #f_err) and launch once ready -- the user never runs `make`/`docker

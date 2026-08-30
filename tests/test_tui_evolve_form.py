@@ -465,3 +465,81 @@ async def test_grid_is_a_nav_target_but_scroll_pane_is_not():
         targets = app._nav_targets()
         assert app.query_one("#f_obj_grid", IdentityGrid) in targets  # the grid is reachable
         assert app.query_one("#f_objective") not in targets           # its subwindow pane isn't
+
+
+# ---------------------------------------------------------------------------
+# Publish-readiness pre-check at Start (spec 5.6): a hub-logged-in but
+# `gh`-unauthed contestant evolves, wins, and the win silently stays local.
+# The CLI already warns at evolve Start (cli.py:823-842); this mirrors its
+# three branches VERBATIM into the form's own `#f_publish_warn` -- a line
+# that must survive past Start (unlike `#f_err`, which provisioning
+# overwrites with progress text). The warning is advisory only: it never
+# blocks the launch, in any of the three states.
+# ---------------------------------------------------------------------------
+
+async def test_publish_warning_shows_gh_unauthed_but_run_still_launches(monkeypatch):
+    """Hub-logged-in (a real owner) but `gh auth login` was never run: the
+    #1 'wins won't register' onboarding gap (spec 5.6). Must warn AND must
+    still launch -- publishing failure is not a reason to block the run."""
+    monkeypatch.setattr(ef, "prepare_evolve", lambda *a, **k: _Plan())
+    monkeypatch.setattr(ef, "gh_state", lambda: ("", "unauthed"))
+    app = _Host(Credentials("castiel", "tok"))
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        warn = str(app.query_one("#f_publish_warn", Static).render())
+        assert "wins won't publish" in warn
+        assert "gh auth login" in warn
+        assert isinstance(app.started, _Plan)   # non-blocking: the run still launched
+
+
+async def test_publish_warning_shows_gh_missing_install_hint(monkeypatch):
+    """`gh` isn't even on PATH -- a different fix (install it) from merely
+    unauthed, so the CLI (and this mirror) distinguish the two messages."""
+    monkeypatch.setattr(ef, "prepare_evolve", lambda *a, **k: _Plan())
+    monkeypatch.setattr(ef, "gh_state", lambda: (None, "missing"))
+    app = _Host(Credentials("castiel", "tok"))
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        warn = str(app.query_one("#f_publish_warn", Static).render())
+        assert "wins won't publish" in warn
+        assert "install the github cli" in warn.lower()
+        assert isinstance(app.started, _Plan)
+
+
+async def test_no_publish_warning_when_gh_authed(monkeypatch):
+    """Hub-logged-in AND `gh` authed: publishing will actually work, so no
+    warning belongs on screen."""
+    monkeypatch.setattr(ef, "prepare_evolve", lambda *a, **k: _Plan())
+    monkeypatch.setattr(ef, "gh_state", lambda: ("x", "authed"))
+    app = _Host(Credentials("castiel", "tok"))
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        warn = str(app.query_one("#f_publish_warn", Static).render()).strip()
+        assert warn == ""
+        assert isinstance(app.started, _Plan)
+
+
+async def test_publish_warning_shows_offline_note_when_not_logged_in(monkeypatch):
+    """No hub login at all (the form's own `OFFLINE_OWNER` backstop) is a
+    different, dimmer note than the gh-specific ones -- and `gh_state` isn't
+    even worth calling in that case (mirrors the CLI's `elif` chain, which
+    only reaches `gh_state()` when NOT already reporting the offline note)."""
+    gh_calls: list[None] = []
+    monkeypatch.setattr(ef, "prepare_evolve", lambda *a, **k: _Plan())
+    monkeypatch.setattr(ef, "gh_state", lambda: (gh_calls.append(None), ("x", "authed"))[1])
+    app = _Host(None)   # no creds -> owner defaults to OFFLINE_OWNER
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        warn = str(app.query_one("#f_publish_warn", Static).render())
+        assert "running offline" in warn
+        assert "nethackers login" in warn
+        assert gh_calls == []                   # gh_state was never even consulted
+        assert isinstance(app.started, _Plan)
