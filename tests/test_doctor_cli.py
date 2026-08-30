@@ -97,6 +97,29 @@ def test_doctor_plain_output_has_no_rich_markup(monkeypatch, capsys):
     assert "[green]" not in out and "[/]" not in out
 
 
+def test_doctor_shortens_a_real_digest_in_human_output_but_not_json(monkeypatch, capsys):
+    # End-to-end guard for the "147-char row breaks column alignment" defect
+    # (task-2 fix round 1, finding #1): a realistic pinned-digest detail must
+    # not reach a human-facing render un-shortened, through the FULL
+    # cli.main -> emit -> render_human/render_plain pipeline -- not just the
+    # renderer functions in isolation (content-only assertions elsewhere in
+    # this file wouldn't have caught the original defect).
+    digest = "a" * 64
+    long_detail = f"present — ghcr.io/dunnolab/nethackers-arena@sha256:{digest}"
+    checks = [CheckResult(id="arena_image", status="ok", severity="hard", detail=long_detail,
+                          fix=None, capabilities=("eval", "evolve"))]
+    monkeypatch.setattr(cli, "run_checks", lambda **kw: checks)
+
+    cli.main(["doctor", "-o", "table"])
+    table_out = capsys.readouterr().out
+    assert digest not in table_out
+
+    cli.main(["doctor", "-o", "json"])
+    json_out = capsys.readouterr().out
+    assert digest in json_out
+    assert json.loads(json_out)["checks"][0]["detail"] == long_detail
+
+
 def test_doctor_pull_ensures_both_images_then_rechecks(monkeypatch, capsys):
     calls = []
     monkeypatch.setattr(cli, "ensure_image", lambda ref, kind, **kw: calls.append(kind))

@@ -14,18 +14,34 @@ lower-level probes.
 """
 from __future__ import annotations
 
+import re
+from pathlib import Path
+from types import SimpleNamespace
+
 import pytest
 
+import nethackers.diagnostics as diagnostics
 from nethackers.diagnostics import (
     CAPABILITIES,
+    CHECK_SPECS,
     CheckResult,
+    _short_digest,
     capability_ready,
     exit_code,
+    render_human,
+    render_plain,
     run_checks,
     to_json,
 )
 from nethackers.hubclient.client import HubUnreachable
 from nethackers.hubclient.credentials import Credentials
+
+_HEX64 = "a" * 64
+
+
+def _no_64_hex_run(text: str) -> bool:
+    return re.search(r"[0-9a-f]{64}", text) is None
+
 
 # --- run_checks: fakes for every injectable probe, all "healthy" by default -
 
@@ -34,7 +50,7 @@ def _ref(explicit, kind):
     # Mimics resolve_image's real shape (a GHCR digest-pin ref) closely enough
     # for the "@sha256:" branch in _check_image's fix-text selection to exercise
     # the pin path, not the local-dev-tag path.
-    return f"ghcr.io/dunnolab/nethackers-{kind}@sha256:{'a' * 64}"
+    return f"ghcr.io/dunnolab/nethackers-{kind}@sha256:{_HEX64}"
 
 
 def _unreachable_hub(hub):
@@ -49,6 +65,13 @@ def _healthy_kwargs(**overrides):
         resolve_image=_ref,
         image_present=lambda ref: True,
         manifest_reachable=lambda ref: True,
+        # "not a repo checkout" is the realistic default for the installed
+        # (non-repo) users this feature targets, and keeps this file fully
+        # hermetic -- without an explicit fake here, the unreachable-image
+        # branch would fall back to run_checks' own real `_repo_root`, which
+        # walks the real filesystem (and would find THIS repo's own
+        # Dockerfile.mutator/Makefile, since the suite runs from a checkout).
+        repo_root=lambda: None,
         preflight_operator=lambda operator: None,
         hub_mode=lambda hub: "github",
         load_creds=lambda: Credentials("castiel", "tok"),
@@ -104,10 +127,148 @@ def test_a_raising_probe_becomes_a_failed_check_not_an_exception():
     results = run_checks(**_healthy_kwargs(docker_available=_boom))
     by_id = {r.id: r for r in results}
     assert by_id["container_runtime"].status == "fail"
+    # the crash-path CheckResult still carries the RIGHT severity/capabilities
+    # for its id -- these come from CHECK_SPECS on the _safe(...) fallback
+    # path too, not just the happy-path builder, so a crash never silently
+    # under- or over-gates a capability.
+    assert by_id["container_runtime"].severity == CHECK_SPECS["container_runtime"][0]
+    assert by_id["container_runtime"].capabilities == CHECK_SPECS["container_runtime"][1]
     # the crash is isolated to its own check -- every other check still
     # computed normally, not skipped/short-circuited.
     assert by_id["arena_image"].status == "ok"
     assert by_id["operator"].status == "ok"
+
+
+# --- CHECK_SPECS: the single source for each check's (severity, capabilities)
+
+
+def test_check_specs_covers_exactly_the_seven_check_ids():
+    assert set(CHECK_SPECS) == {
+        "container_runtime", "arena_image", "mutator_image",
+        "hub", "hub_login", "gh", "operator",
+    }
+
+
+def test_run_checks_ids_match_check_specs():
+    results = run_checks(**_healthy_kwargs())
+    assert {r.id for r in results} == set(CHECK_SPECS)
+
+
+def test_run_checks_severity_and_capabilities_always_match_check_specs():
+    # Not just the crash path (above) -- the happy-path builders must also
+    # never drift from CHECK_SPECS, for every check, in a normal run.
+    results = run_checks(**_healthy_kwargs())
+    for r in results:
+        severity, caps = CHECK_SPECS[r.id]
+        assert r.severity == severity, r.id
+        assert r.capabilities == caps, r.id
+
+
+# --- operator: "notes the other" unchecked operator (spec S5.6) ------------
+
+
+def test_operator_ok_detail_notes_the_unchecked_alternate():
+    claude_results = run_checks(**_healthy_kwargs(operator="claude"))
+    codex_results = run_checks(**_healthy_kwargs(operator="codex"))
+    claude_op = next(r for r in claude_results if r.id == "operator")
+    codex_op = next(r for r in codex_results if r.id == "operator")
+
+    assert claude_op.status == "ok"
+    assert "codex" in claude_op.detail and "not checked" in claude_op.detail
+    assert "--operator codex" in claude_op.detail
+
+    assert codex_op.status == "ok"
+    assert "claude" in codex_op.detail and "not checked" in codex_op.detail
+    assert "--operator claude" in codex_op.detail
+
+
+# --- hub: the default reads the EFFECTIVE stage, not a frozen prod literal -
+
+
+def test_run_checks_hub_default_reads_effective_stage(monkeypatch):
+    fake_stage = SimpleNamespace(hub_url="http://effective.example")
+    monkeypatch.setattr(diagnostics, "load_stage", lambda: fake_stage)
+    seen = {}
+
+    def _capture_hub(hub):
+        seen["hub"] = hub
+        return "github"
+
+    kwargs = _healthy_kwargs(hub_mode=_capture_hub)
+    kwargs["hub"] = None  # the new sentinel default -- resolve via load_stage()
+
+    run_checks(**kwargs)
+
+    assert seen["hub"] == "http://effective.example"
+
+
+def test_run_checks_explicit_hub_never_consults_load_stage(monkeypatch):
+    def _boom():
+        raise AssertionError("load_stage() should not be called when hub= is given")
+
+    monkeypatch.setattr(diagnostics, "load_stage", _boom)
+    run_checks(**_healthy_kwargs(hub="https://example.invalid"))  # must not raise
+
+
+# --- image "unreachable" fix text: branches on repo presence, not ref shape
+
+
+def test_image_unreachable_fix_suggests_make_inside_a_repo_checkout():
+    results = run_checks(**_healthy_kwargs(
+        image_present=lambda ref: False, manifest_reachable=lambda ref: False,
+        repo_root=lambda: Path("/fake/repo"),
+    ))
+    arena = next(r for r in results if r.id == "arena_image")
+    assert arena.status == "fail"
+    assert "make arena" in arena.fix
+    assert "NETHACKERS_" not in arena.fix
+
+
+def test_image_unreachable_fix_suggests_network_override_outside_a_repo():
+    results = run_checks(**_healthy_kwargs(
+        image_present=lambda ref: False, manifest_reachable=lambda ref: False,
+        repo_root=lambda: None,
+    ))
+    arena = next(r for r in results if r.id == "arena_image")
+    assert arena.status == "fail"
+    assert "make" not in arena.fix
+    assert "NETHACKERS_ARENA_IMAGE" in arena.fix
+
+
+# --- digest shortening: display-only, JSON stays sacrosanct ----------------
+
+
+def test_short_digest_shortens_embedded_digest_and_keeps_surrounding_text():
+    text = f"present — ghcr.io/dunnolab/nethackers-arena@sha256:{_HEX64}"
+    shortened = _short_digest(text)
+
+    assert _no_64_hex_run(shortened)
+    assert shortened.startswith("present — ghcr.io/dunnolab/nethackers-arena@sha256:")
+    assert f"@sha256:{_HEX64[:19]}…" in shortened
+    assert shortened != text  # something actually changed
+
+
+def _image_check_result(detail: str) -> CheckResult:
+    return CheckResult(id="arena_image", status="ok", severity="hard", detail=detail,
+                       fix=None, capabilities=("eval", "evolve"))
+
+
+def test_render_human_and_plain_shorten_the_digest_in_detail():
+    detail = f"present — ghcr.io/dunnolab/nethackers-arena@sha256:{_HEX64}"
+    results = [_image_check_result(detail)]
+
+    assert _no_64_hex_run(render_human(results))
+    assert _no_64_hex_run(render_plain(results))
+
+
+def test_to_json_keeps_the_full_unshortened_digest():
+    detail = f"present — ghcr.io/dunnolab/nethackers-arena@sha256:{_HEX64}"
+    results = [_image_check_result(detail)]
+
+    data = to_json(results)
+
+    assert _HEX64 in data["checks"][0]["detail"]
+    assert data["checks"][0]["detail"] == detail  # byte-for-byte, not just "contains"
 
 
 def test_gh_three_states_get_distinct_fixes():

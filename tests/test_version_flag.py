@@ -21,3 +21,11 @@ def test_version_human_lists_all_three_regimes(capsys):
     cli.main(["--version"])
     out = capsys.readouterr().out
     assert "run-schema" in out and "arena" in out and "mutator" in out
+
+
+def test_short_pin_truncates_to_19_hex_digest_prefix():
+    # _short_pin now delegates its truncation length to
+    # diagnostics._short_digest (doctor's fix-1 round) -- this pins the
+    # observable behavior, so that refactor can't silently drift.
+    ref = f"ghcr.io/dunnolab/nethackers-arena@sha256:{'0' * 64}"
+    assert cli._short_pin(ref) == f"…@sha256:{'0' * 19}…"

@@ -23,13 +23,15 @@ importing ``cli`` itself (which imports FROM here -- that would cycle)."""
 from __future__ import annotations
 
 import platform
+import re
 import subprocess
 from collections.abc import Callable
 from dataclasses import dataclass
 from importlib.metadata import version as _pkg_version
+from pathlib import Path
 
 from nethackers import _image_pins
-from nethackers.config import Stage
+from nethackers.config import load_stage
 from nethackers.harness import sandbox_preflight
 from nethackers.harness.version import RUN_SCHEMA_VERSION
 from nethackers.hubclient.client import HubClient, HubUnreachable
@@ -56,6 +58,23 @@ def version_info() -> dict:
 # ============================================================================
 
 CAPABILITIES = ("eval", "evolve", "publish", "browse")
+
+# The single source for each check's (severity, capabilities) -- id -> (sev,
+# caps). `run_checks` reads this per id and passes both values to BOTH the
+# `_safe(...)` crash-path wrapper and the corresponding `_check_*` builder,
+# so neither can drift out of sync with the other (previously each was a
+# separately hand-written literal at two call sites). Also the constant a
+# future exhaustive fold-table test reads, rather than re-deriving the same
+# 7-row table a third time.
+CHECK_SPECS: dict[str, tuple[str, tuple[str, ...]]] = {
+    "container_runtime": ("hard", ("eval", "evolve")),
+    "arena_image": ("hard", ("eval", "evolve")),
+    "mutator_image": ("hard", ("evolve",)),
+    "hub": ("soft", ("browse", "publish")),
+    "hub_login": ("soft", ("publish",)),
+    "gh": ("soft", ("publish",)),
+    "operator": ("hard", ("evolve",)),
+}
 
 
 @dataclass(frozen=True)
@@ -109,98 +128,115 @@ def _default_hub_mode(hub: str) -> str | None:
     return HubClient(hub).hub_mode()
 
 
-def _check_container_runtime(*, docker_available: Callable[[], bool]) -> CheckResult:
-    caps = ("eval", "evolve")
+def _check_container_runtime(
+    *, severity: str, caps: tuple[str, ...], docker_available: Callable[[], bool],
+) -> CheckResult:
     if docker_available():
-        return CheckResult(id="container_runtime", status="ok", severity="hard",
+        return CheckResult(id="container_runtime", status="ok", severity=severity,
                            detail="a working container runtime is available",
                            fix=None, capabilities=caps)
-    return CheckResult(id="container_runtime", status="fail", severity="hard",
+    return CheckResult(id="container_runtime", status="fail", severity=severity,
                        detail="no working container runtime found",
                        fix=sandbox_preflight.sandbox_hint(), capabilities=caps)
 
 
 def _check_image(
     kind: str,
-    caps: tuple[str, ...],
     *,
+    severity: str,
+    caps: tuple[str, ...],
     resolve_image: Callable[[str | None, str], str],
     image_present: Callable[[str], bool],
     manifest_reachable: Callable[[str], bool],
+    repo_root: Callable[[], Path | None],
 ) -> CheckResult:
     """``present`` (already local) / ``warn``-``pullable`` (not local, but
     the registry has it -- ``nethackers doctor --pull`` fetches it) /
     ``fail``-``unreachable`` (neither) -- spec S5.6. The "unreachable" fix
-    text differs by ref shape: a GHCR digest pin names a *network* problem
-    (check connectivity, or override the ref); a bare local dev tag (a repo
-    checkout with nothing built yet) names a *build* problem instead
-    (``make``, which ``eval``/``evolve`` also run automatically)."""
+    text branches on whether this is actually a repo checkout
+    (``repo_root() is not None``) -- mirroring ``ensure_image``'s own real
+    branch order -- rather than inferring that from the ref's shape: a repo
+    checkout can build locally (``make``, which ``eval``/``evolve`` also run
+    automatically) regardless of what ref happens to be resolved; outside a
+    repo (the installed-user path, or a hand-set ``NETHACKERS_*_IMAGE``
+    override with no checkout to build from) the only path is the
+    network/registry, so the fix names that instead."""
     check_id = f"{kind}_image"
     ref = resolve_image(None, kind)
     if image_present(ref):
-        return CheckResult(id=check_id, status="ok", severity="hard",
+        return CheckResult(id=check_id, status="ok", severity=severity,
                            detail=f"present — {ref}", fix=None, capabilities=caps)
     if manifest_reachable(ref):
-        return CheckResult(id=check_id, status="warn", severity="hard",
+        return CheckResult(id=check_id, status="warn", severity=severity,
                            detail=f"not local yet, but pullable — {ref}",
                            fix="run `nethackers doctor --pull` to fetch it now",
                            capabilities=caps)
-    if "@sha256:" in ref:
+    if repo_root() is not None:
+        fix = f"run `make {kind}` (or just `nethackers eval`/`evolve`, which auto-builds it)"
+    else:
         fix = (f"check your network connection, or set NETHACKERS_{kind.upper()}_IMAGE "
               "to a reachable ref")
-    else:
-        fix = f"run `make {kind}` (or just `nethackers eval`/`evolve`, which auto-builds it)"
-    return CheckResult(id=check_id, status="fail", severity="hard",
+    return CheckResult(id=check_id, status="fail", severity=severity,
                        detail=f"unreachable — {ref}", fix=fix, capabilities=caps)
 
 
-def _check_hub(hub: str, *, hub_mode: Callable[[str], str | None]) -> CheckResult:
-    caps = ("browse", "publish")
+def _check_hub(
+    hub: str, *, severity: str, caps: tuple[str, ...], hub_mode: Callable[[str], str | None],
+) -> CheckResult:
     try:
         mode = hub_mode(hub)
     except HubUnreachable:
-        return CheckResult(id="hub", status="fail", severity="soft",
+        return CheckResult(id="hub", status="fail", severity=severity,
                            detail=f"hub unreachable at {hub}",
                            fix=f"check --hub {hub} is correct, or your network connection",
                            capabilities=caps)
     detail = "reachable" if mode is None else f"reachable — auth={mode}"
-    return CheckResult(id="hub", status="ok", severity="soft", detail=detail, fix=None,
+    return CheckResult(id="hub", status="ok", severity=severity, detail=detail, fix=None,
                        capabilities=caps)
 
 
-def _check_hub_login(*, load_creds: Callable[[], Credentials | None]) -> CheckResult:
+def _check_hub_login(
+    *, severity: str, caps: tuple[str, ...], load_creds: Callable[[], Credentials | None],
+) -> CheckResult:
     creds = load_creds()
     if creds is not None:
-        return CheckResult(id="hub_login", status="ok", severity="soft",
-                           detail=f"logged in as @{creds.login}", fix=None,
-                           capabilities=("publish",))
-    return CheckResult(id="hub_login", status="fail", severity="soft", detail="not logged in",
-                       fix="run `nethackers login`", capabilities=("publish",))
+        return CheckResult(id="hub_login", status="ok", severity=severity,
+                           detail=f"logged in as @{creds.login}", fix=None, capabilities=caps)
+    return CheckResult(id="hub_login", status="fail", severity=severity, detail="not logged in",
+                       fix="run `nethackers login`", capabilities=caps)
 
 
-def _check_gh(*, gh_state: Callable[[], tuple[str | None, str]]) -> CheckResult:
+def _check_gh(
+    *, severity: str, caps: tuple[str, ...], gh_state: Callable[[], tuple[str | None, str]],
+) -> CheckResult:
     login, state = gh_state()
     if state == "authed":
-        return CheckResult(id="gh", status="ok", severity="soft", detail=f"authed as @{login}",
-                           fix=None, capabilities=("publish",))
+        return CheckResult(id="gh", status="ok", severity=severity, detail=f"authed as @{login}",
+                           fix=None, capabilities=caps)
     if state == "unauthed":
-        return CheckResult(id="gh", status="fail", severity="soft",
+        return CheckResult(id="gh", status="fail", severity=severity,
                            detail="gh is installed but not authed",
                            fix="run `gh auth login` (separate from `nethackers login`)",
-                           capabilities=("publish",))
-    return CheckResult(id="gh", status="fail", severity="soft", detail="gh is not installed",
+                           capabilities=caps)
+    return CheckResult(id="gh", status="fail", severity=severity, detail="gh is not installed",
                        fix="install the GitHub CLI (`gh`), then run `gh auth login`",
-                       capabilities=("publish",))
+                       capabilities=caps)
+
+
+_OTHER_OPERATOR = {"codex": "claude", "claude": "codex"}
 
 
 def _check_operator(
-    operator: str, *, mutator_present: bool, preflight_operator: Callable[[str], str | None],
+    operator: str, *, severity: str, caps: tuple[str, ...], mutator_present: bool,
+    preflight_operator: Callable[[str], str | None],
 ) -> CheckResult:
+    other = _OTHER_OPERATOR.get(operator, "the other operator")
     msg = preflight_operator(operator)
     if msg is None:
-        return CheckResult(id="operator", status="ok", severity="hard",
-                           detail=f"{operator}: host login resolvable", fix=None,
-                           capabilities=("evolve",))
+        detail = (f"{operator}: host login resolvable "
+                  f"({other} not checked — pass --operator {other})")
+        return CheckResult(id="operator", status="ok", severity=severity, detail=detail,
+                           fix=None, capabilities=caps)
     if mutator_present:
         fix = f"run `{operator} login`"
     else:
@@ -210,9 +246,9 @@ def _check_operator(
         # trusting an unverifiable host-only signal.
         fix = (f"run `{operator} login` -- or `nethackers doctor --pull` to pull the "
               "sandbox and verify inside it")
-    return CheckResult(id="operator", status="fail", severity="hard",
+    return CheckResult(id="operator", status="fail", severity=severity,
                        detail=f"no resolvable {operator} login on this host", fix=fix,
-                       capabilities=("evolve",))
+                       capabilities=caps)
 
 
 def _safe(
@@ -234,11 +270,12 @@ def _safe(
 def run_checks(
     *,
     operator: str = "codex",
-    hub: str = Stage().hub_url,
+    hub: str | None = None,
     docker_available: Callable[[], bool] = sandbox_preflight.docker_available,
     resolve_image: Callable[[str | None, str], str] = sandbox_preflight.resolve_image,
     image_present: Callable[[str], bool] = sandbox_preflight.image_present,
     manifest_reachable: Callable[[str], bool] = _manifest_reachable,
+    repo_root: Callable[[], Path | None] = sandbox_preflight._repo_root,
     preflight_operator: Callable[[str], str | None] = sandbox_preflight.preflight_operator,
     hub_mode: Callable[[str], str | None] = _default_hub_mode,
     load_creds: Callable[[], Credentials | None] = _default_load_creds,
@@ -250,31 +287,60 @@ def run_checks(
     default, so a bare call is a genuine (if possibly slow/networked)
     doctor run, and a test call substitutes fakes for every one of them --
     no real docker/network call is made by this function's own test suite.
+
+    ``hub=None`` (the default) resolves the EFFECTIVE stage's hub
+    (``load_stage().hub_url`` -- the same late-bound pattern ``launch.py``'s
+    ``EvolveParams`` default factories use) rather than freezing the bare
+    prod URL at import time -- a future bare call (the TUI evolve panel,
+    INV5) must see a worktree's ``.env.stack``/env-configured hub, not
+    always prod. ``cli.py``'s handler still always passes ``hub=args.hub``
+    explicitly (already resolved through the full flag/env/file ladder), so
+    this only matters for a caller that omits ``hub=`` entirely.
     """
+    effective_hub = hub if hub is not None else load_stage().hub_url
     results: list[CheckResult] = []
 
-    results.append(_safe("container_runtime", "hard", ("eval", "evolve"),
-                         lambda: _check_container_runtime(docker_available=docker_available)))
-    results.append(_safe("arena_image", "hard", ("eval", "evolve"),
-                         lambda: _check_image("arena", ("eval", "evolve"),
+    severity, caps = CHECK_SPECS["container_runtime"]
+    results.append(_safe("container_runtime", severity, caps,
+                         lambda: _check_container_runtime(severity=severity, caps=caps,
+                                                          docker_available=docker_available)))
+
+    severity, caps = CHECK_SPECS["arena_image"]
+    results.append(_safe("arena_image", severity, caps,
+                         lambda: _check_image("arena", severity=severity, caps=caps,
                                               resolve_image=resolve_image,
                                               image_present=image_present,
-                                              manifest_reachable=manifest_reachable)))
-    mutator_result = _safe("mutator_image", "hard", ("evolve",),
-                           lambda: _check_image("mutator", ("evolve",),
+                                              manifest_reachable=manifest_reachable,
+                                              repo_root=repo_root)))
+
+    severity, caps = CHECK_SPECS["mutator_image"]
+    mutator_result = _safe("mutator_image", severity, caps,
+                           lambda: _check_image("mutator", severity=severity, caps=caps,
                                                 resolve_image=resolve_image,
                                                 image_present=image_present,
-                                                manifest_reachable=manifest_reachable))
+                                                manifest_reachable=manifest_reachable,
+                                                repo_root=repo_root))
     results.append(mutator_result)
     mutator_present = mutator_result.status == "ok"
 
-    results.append(_safe("hub", "soft", ("browse", "publish"),
-                         lambda: _check_hub(hub, hub_mode=hub_mode)))
-    results.append(_safe("hub_login", "soft", ("publish",),
-                         lambda: _check_hub_login(load_creds=load_creds)))
-    results.append(_safe("gh", "soft", ("publish",), lambda: _check_gh(gh_state=gh_state)))
-    results.append(_safe("operator", "hard", ("evolve",),
-                         lambda: _check_operator(operator, mutator_present=mutator_present,
+    severity, caps = CHECK_SPECS["hub"]
+    results.append(_safe("hub", severity, caps,
+                         lambda: _check_hub(effective_hub, severity=severity, caps=caps,
+                                            hub_mode=hub_mode)))
+
+    severity, caps = CHECK_SPECS["hub_login"]
+    results.append(_safe("hub_login", severity, caps,
+                         lambda: _check_hub_login(severity=severity, caps=caps,
+                                                  load_creds=load_creds)))
+
+    severity, caps = CHECK_SPECS["gh"]
+    results.append(_safe("gh", severity, caps,
+                         lambda: _check_gh(severity=severity, caps=caps, gh_state=gh_state)))
+
+    severity, caps = CHECK_SPECS["operator"]
+    results.append(_safe("operator", severity, caps,
+                         lambda: _check_operator(operator, severity=severity, caps=caps,
+                                                 mutator_present=mutator_present,
                                                  preflight_operator=preflight_operator)))
     return results
 
@@ -324,6 +390,29 @@ def to_json(results: list[CheckResult]) -> dict:
     }
 
 
+_SHA256_RE = re.compile(r"@sha256:[0-9a-f]{64}")
+_DIGEST_PREFIX_LEN = 19  # matches cli.py:_short_pin's prefix length exactly
+
+
+def _short_digest(text: str) -> str:
+    """Shorten every ``@sha256:<64 lowercase-hex>`` substring found in
+    ``text`` to ``@sha256:<first 19 hex>…``, leaving all surrounding text
+    untouched -- display-only. A pinned-digest image ref (``present —
+    ghcr.io/dunnolab/nethackers-arena@sha256:<64 hex>``) is ~147 characters
+    in ``CheckResult.detail``, breaking column alignment on any normal
+    terminal; that's the DEFAULT experience for every installed (non-repo)
+    user, since a repo checkout's local dev tags are short and never trigger
+    this. Applied ONLY at render time (``render_human``/``render_plain``
+    below) -- never to ``CheckResult.detail`` itself and never to
+    ``to_json``, which must always carry the full, unmodified digest
+    (``hubclient/output.py``'s own "never a stringified table" rule).
+    ``cli.py:_short_pin`` (``--version``'s equivalent truncation) reuses this
+    as its single source of the 19-char prefix length, so the two can never
+    drift apart."""
+    keep = len("@sha256:") + _DIGEST_PREFIX_LEN
+    return _SHA256_RE.sub(lambda m: m.group()[:keep] + "…", text)
+
+
 _GLYPH = {"ok": "[green]✓[/]", "warn": "[yellow]⚠[/]", "fail": "[red]✗[/]"}
 _PLAIN_GLYPH = {"ok": "OK", "warn": "WARN", "fail": "FAIL"}
 _CAP_LABEL = {
@@ -348,7 +437,7 @@ def render_human(results: list[CheckResult]) -> str:
             continue
         lines.append(f"[b]to {_CAP_LABEL[cap]}[/]")
         for r in rows:
-            line = f"  {_GLYPH[r.status]} {r.id:<17} {r.detail}"
+            line = f"  {_GLYPH[r.status]} {r.id:<17} {_short_digest(r.detail)}"
             if r.fix and r.status != "ok":
                 line += f"  [dim]→ {r.fix}[/]"
             lines.append(line)
@@ -367,7 +456,7 @@ def render_plain(results: list[CheckResult]) -> str:
             continue
         lines.append(f"to {cap}:")
         for r in rows:
-            line = f"  [{_PLAIN_GLYPH[r.status]}] {r.id}: {r.detail}"
+            line = f"  [{_PLAIN_GLYPH[r.status]}] {r.id}: {_short_digest(r.detail)}"
             if r.fix and r.status != "ok":
                 line += f" -> {r.fix}"
             lines.append(line)

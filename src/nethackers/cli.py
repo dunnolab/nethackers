@@ -86,6 +86,7 @@ from nethackers import clipboard, config
 from nethackers.config import Stage, load_stage
 from nethackers.diagnostics import (
     CAPABILITIES,
+    _short_digest,
     exit_code,
     render_human,
     render_plain,
@@ -586,9 +587,14 @@ def _short_pin(ref: str) -> str:
     illegible on a terminal line, so both are elided behind a leading/
     trailing ellipsis, keeping only a 19-char digest prefix -- e.g.
     ``…@sha256:0000000000000000000…``. ``-o json`` (``version_info()``)
-    always carries the untruncated ref -- this truncation is display-only."""
-    digest = ref.partition("@sha256:")[2]
-    return f"…@sha256:{digest[:19]}…"
+    always carries the untruncated ref -- this truncation is display-only.
+
+    Delegates the actual digest-shortening to ``diagnostics._short_digest``
+    (``doctor``'s own display-layer truncation, spec 5.6) so the two share
+    one source of truth for the prefix length -- only the leading ellipsis
+    (eliding the repo path too, fine here but wrong for ``doctor``, where
+    the repo path is useful context mid-sentence) is added on top."""
+    return "…" + _short_digest(ref[ref.index("@sha256:"):])
 
 
 def _arena_preflight(image: str) -> str | None:
