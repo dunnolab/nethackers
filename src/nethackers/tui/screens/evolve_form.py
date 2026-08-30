@@ -324,15 +324,24 @@ class EvolveForm(Vertical):
         # `operator` is captured on the main thread by the caller (on_mount) --
         # same pattern as `_refresh_models(backend)` -- so this worker never
         # touches a Textual widget off-thread. `manifest_reachable=lambda ref:
-        # False` is load-bearing: it guarantees run_checks NEVER makes a GHCR
-        # round-trip just because the user opened this tab (spec 5.8) -- the
-        # image checks fall back to local `docker image inspect` only. Off the
-        # UI thread for the same reason as `_refresh_models`: run_checks shells
-        # out (docker, host CLI login probes).
+        # False` is load-bearing: it guarantees the image checks NEVER make a
+        # GHCR round-trip just because the user opened this tab (spec 5.8) --
+        # they fall back to local `docker image inspect` only. `only=
+        # evolve_ids` is equally load-bearing and NOT redundant with that: it
+        # is what stops run_checks from running the other 3 checks (hub/
+        # hub_login/gh) AT ALL -- those touch a real hub HTTPS call, a
+        # creds-file read, and a `gh` subprocess, none of which
+        # `manifest_reachable` has anything to do with, and `_apply_readiness`
+        # only ever displays the evolve-tagged rows anyway. Off the UI thread
+        # for the same reason as `_refresh_models`: run_checks shells out
+        # (docker, host CLI login probes).
         from nethackers import diagnostics
+        evolve_ids = [cid for cid, (_sev, caps) in diagnostics.CHECK_SPECS.items()
+                     if "evolve" in caps]
         results = diagnostics.run_checks(
             operator=operator,
             manifest_reachable=lambda ref: False,
+            only=evolve_ids,
         )
         self.app.call_from_thread(self._apply_readiness, results)
 

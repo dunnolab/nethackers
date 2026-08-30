@@ -25,7 +25,7 @@ from __future__ import annotations
 import platform
 import re
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Collection
 from dataclasses import dataclass
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
@@ -280,6 +280,7 @@ def run_checks(
     hub_mode: Callable[[str], str | None] = _default_hub_mode,
     load_creds: Callable[[], Credentials | None] = _default_load_creds,
     gh_state: Callable[[], tuple[str | None, str]] = _default_gh_state,
+    only: Collection[str] | None = None,
 ) -> list[CheckResult]:
     """The 7 checks behind ``nethackers doctor`` (spec S5.6). NEVER raises,
     regardless of what any injected probe does (each check runs under its
@@ -296,52 +297,81 @@ def run_checks(
     always prod. ``cli.py``'s handler still always passes ``hub=args.hub``
     explicitly (already resolved through the full flag/env/file ladder), so
     this only matters for a caller that omits ``hub=`` entirely.
+
+    ``only``, when given, restricts execution to just the named check ids
+    (keys of ``CHECK_SPECS``) -- every other check is skipped ENTIRELY: its
+    probe is never called, not merely hidden from the returned list. ``None``
+    (the default) runs all 7, byte-for-byte unchanged for every existing
+    caller (the ``doctor`` CLI, the schema/conformance tests). This exists
+    for a targeted, DISPLAY-ONLY caller that only ever shows a subset of the
+    7 checks and must not trigger the others' network/subprocess calls just
+    to throw the results away -- e.g. the TUI's evolve-readiness strip, which
+    must never make a hub HTTPS round-trip / ``gh`` subprocess / creds-file
+    read just because the user opened that tab (spec S5.8). A filtered
+    result must NEVER be passed to ``to_json``: its ``capabilities`` map
+    assumes all 7 checks ran, so an un-run capability's tagged checks would
+    simply be absent from ``results`` and ``capability_ready`` would read it
+    as vacuously ready (INV6's fold has nothing to gate on).
     """
     effective_hub = hub if hub is not None else load_stage().hub_url
     results: list[CheckResult] = []
 
-    severity, caps = CHECK_SPECS["container_runtime"]
-    results.append(_safe("container_runtime", severity, caps,
-                         lambda: _check_container_runtime(severity=severity, caps=caps,
-                                                          docker_available=docker_available)))
+    def _wanted(check_id: str) -> bool:
+        return only is None or check_id in only
 
-    severity, caps = CHECK_SPECS["arena_image"]
-    results.append(_safe("arena_image", severity, caps,
-                         lambda: _check_image("arena", severity=severity, caps=caps,
-                                              resolve_image=resolve_image,
-                                              image_present=image_present,
-                                              manifest_reachable=manifest_reachable,
-                                              repo_root=repo_root)))
+    if _wanted("container_runtime"):
+        severity, caps = CHECK_SPECS["container_runtime"]
+        results.append(_safe("container_runtime", severity, caps,
+                             lambda: _check_container_runtime(severity=severity, caps=caps,
+                                                              docker_available=docker_available)))
 
-    severity, caps = CHECK_SPECS["mutator_image"]
-    mutator_result = _safe("mutator_image", severity, caps,
-                           lambda: _check_image("mutator", severity=severity, caps=caps,
-                                                resolve_image=resolve_image,
-                                                image_present=image_present,
-                                                manifest_reachable=manifest_reachable,
-                                                repo_root=repo_root))
-    results.append(mutator_result)
-    mutator_present = mutator_result.status == "ok"
+    if _wanted("arena_image"):
+        severity, caps = CHECK_SPECS["arena_image"]
+        results.append(_safe("arena_image", severity, caps,
+                             lambda: _check_image("arena", severity=severity, caps=caps,
+                                                  resolve_image=resolve_image,
+                                                  image_present=image_present,
+                                                  manifest_reachable=manifest_reachable,
+                                                  repo_root=repo_root)))
 
-    severity, caps = CHECK_SPECS["hub"]
-    results.append(_safe("hub", severity, caps,
-                         lambda: _check_hub(effective_hub, severity=severity, caps=caps,
-                                            hub_mode=hub_mode)))
+    # `mutator_present` feeds `operator`'s fix text below -- default to the
+    # safe "absent" assumption when `mutator_image` itself was filtered out of
+    # `only`, rather than referencing a result that was never computed.
+    mutator_present = False
+    if _wanted("mutator_image"):
+        severity, caps = CHECK_SPECS["mutator_image"]
+        mutator_result = _safe("mutator_image", severity, caps,
+                               lambda: _check_image("mutator", severity=severity, caps=caps,
+                                                    resolve_image=resolve_image,
+                                                    image_present=image_present,
+                                                    manifest_reachable=manifest_reachable,
+                                                    repo_root=repo_root))
+        results.append(mutator_result)
+        mutator_present = mutator_result.status == "ok"
 
-    severity, caps = CHECK_SPECS["hub_login"]
-    results.append(_safe("hub_login", severity, caps,
-                         lambda: _check_hub_login(severity=severity, caps=caps,
-                                                  load_creds=load_creds)))
+    if _wanted("hub"):
+        severity, caps = CHECK_SPECS["hub"]
+        results.append(_safe("hub", severity, caps,
+                             lambda: _check_hub(effective_hub, severity=severity, caps=caps,
+                                                hub_mode=hub_mode)))
 
-    severity, caps = CHECK_SPECS["gh"]
-    results.append(_safe("gh", severity, caps,
-                         lambda: _check_gh(severity=severity, caps=caps, gh_state=gh_state)))
+    if _wanted("hub_login"):
+        severity, caps = CHECK_SPECS["hub_login"]
+        results.append(_safe("hub_login", severity, caps,
+                             lambda: _check_hub_login(severity=severity, caps=caps,
+                                                      load_creds=load_creds)))
 
-    severity, caps = CHECK_SPECS["operator"]
-    results.append(_safe("operator", severity, caps,
-                         lambda: _check_operator(operator, severity=severity, caps=caps,
-                                                 mutator_present=mutator_present,
-                                                 preflight_operator=preflight_operator)))
+    if _wanted("gh"):
+        severity, caps = CHECK_SPECS["gh"]
+        results.append(_safe("gh", severity, caps,
+                             lambda: _check_gh(severity=severity, caps=caps, gh_state=gh_state)))
+
+    if _wanted("operator"):
+        severity, caps = CHECK_SPECS["operator"]
+        results.append(_safe("operator", severity, caps,
+                             lambda: _check_operator(operator, severity=severity, caps=caps,
+                                                     mutator_present=mutator_present,
+                                                     preflight_operator=preflight_operator)))
     return results
 
 

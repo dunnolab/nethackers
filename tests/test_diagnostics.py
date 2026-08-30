@@ -120,6 +120,67 @@ def test_gh_unauthed_only_gates_publish_not_eval():
     assert caps == {"eval": True, "evolve": True, "publish": False, "browse": True}
 
 
+def test_only_filters_results_to_exactly_the_requested_check_ids():
+    results = run_checks(**_healthy_kwargs(only={"container_runtime", "arena_image"}))
+    assert {r.id for r in results} == {"container_runtime", "arena_image"}
+
+
+def test_only_none_default_is_unchanged_and_runs_all_seven():
+    # Backward compatibility is the whole point of `only`: every existing
+    # caller (the `doctor` CLI, this file's own healthy-path tests above)
+    # omits it, and must see byte-for-byte the same 7-check behavior as
+    # before `only` existed.
+    results = run_checks(**_healthy_kwargs())
+    assert {r.id for r in results} == set(CHECK_SPECS)
+
+
+def test_only_never_invokes_the_excluded_checks_probes():
+    """The regression guard: `only` is not a result-list filter bolted on
+    after the fact -- the excluded checks' own probes must never be called at
+    all. This is the exact contract the TUI evolve-readiness strip depends on
+    (spec 5.8, "no round-trip on navigation"): scoping to the 4 local evolve
+    checks must mean the `hub` HTTPS call / `gh` subprocess / creds-file read
+    never fire on mount, not just that their results get hidden from
+    display. Spies record every call AND raise if invoked -- either signal
+    (a nonzero count, or the extra id leaking into the result set) would
+    catch a regression even though `_safe` would otherwise swallow the raise
+    into an ordinary "fail" CheckResult."""
+    calls = {"hub_mode": 0, "gh_state": 0, "load_creds": 0}
+
+    def _spy_hub_mode(hub):
+        calls["hub_mode"] += 1
+        raise AssertionError("hub_mode must not be called when 'hub' is filtered out")
+
+    def _spy_gh_state():
+        calls["gh_state"] += 1
+        raise AssertionError("gh_state must not be called when 'gh' is filtered out")
+
+    def _spy_load_creds():
+        calls["load_creds"] += 1
+        raise AssertionError("load_creds must not be called when 'hub_login' is filtered out")
+
+    results = run_checks(**_healthy_kwargs(
+        only={"container_runtime", "arena_image"},
+        hub_mode=_spy_hub_mode, gh_state=_spy_gh_state, load_creds=_spy_load_creds,
+    ))
+
+    assert {r.id for r in results} == {"container_runtime", "arena_image"}
+    assert calls == {"hub_mode": 0, "gh_state": 0, "load_creds": 0}
+
+
+def test_only_with_operator_but_not_mutator_image_treats_mutator_as_absent():
+    # Brief's own general-case callout: if `operator` is requested without
+    # `mutator_image` also being in `only`, `_check_operator`'s
+    # `mutator_present` must not reference an unbuilt/skipped result -- it
+    # should behave as if the mutator image is absent (the safe default),
+    # not crash or silently reuse a stale value.
+    results = run_checks(**_healthy_kwargs(
+        only={"operator"}, preflight_operator=lambda operator: "not logged in"))
+    assert {r.id for r in results} == {"operator"}
+    op = next(r for r in results if r.id == "operator")
+    assert "sandbox" in op.fix   # the mutator-image-absent fix wording, not the plain-login one
+
+
 def test_a_raising_probe_becomes_a_failed_check_not_an_exception():
     def _boom():
         raise RuntimeError("docker vanished")

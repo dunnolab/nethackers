@@ -25,17 +25,22 @@ def _hermetic_tui_discovery(monkeypatch):
 @pytest.fixture(autouse=True)
 def _hermetic_tui_readiness(monkeypatch):
     # EvolveForm's on-mount readiness worker (spec 5.8) calls
-    # diagnostics.run_checks -- which, un-injected, shells out for real
-    # (docker, gh, a credentials-file read) and -- worse -- defaults `hub` to
-    # `load_stage().hub_url`, the literal PRODUCTION url
-    # (https://nethackers.dunnolab.ai) when no .env.stack overrides it, and
-    # makes a real HTTP call to it (`HubClient(hub).hub_mode()`). Stub it
-    # suite-wide by name, same hermetic-suite rule as `_hermetic_tui_discovery`
-    # above (`run_checks` is looked up as a fresh `diagnostics.run_checks`
-    # module attribute at call time, not a name bound into evolve_form's own
-    # namespace, so patching it here is the seam the form actually
-    # dereferences). The readiness tests in test_tui_evolve_form.py override
-    # this with their own fake.
+    # diagnostics.run_checks(..., only=evolve_ids) -- scoped to the 4 LOCAL
+    # evolve checks (container_runtime/arena_image/mutator_image/operator),
+    # so the network-touching checks (hub HTTPS, gh subprocess, creds-file
+    # read) are never even run -- that guarantee now lives at the source
+    # (diagnostics.run_checks' `only` filter + the worker's scoping to
+    # evolve_ids), not here. What's left un-injected even with `only` applied
+    # is still real local I/O though: `docker_available`/`image_present` (a
+    # real `docker` subprocess) and `preflight_operator` (a host CLI login
+    # probe). Stub it suite-wide by name, same hermetic-suite rule as
+    # `_hermetic_tui_discovery` above, so no OTHER test file that happens to
+    # mount EvolveForm/NetHackersApp shells out to docker on every mount just
+    # for a strip it never looks at (`run_checks` is looked up as a fresh
+    # `diagnostics.run_checks` module attribute at call time, not a name bound
+    # into evolve_form's own namespace, so patching it here is the seam the
+    # form actually dereferences). The readiness tests in
+    # test_tui_evolve_form.py override this with their own fake.
     monkeypatch.setattr(_diagnostics, "run_checks", lambda **k: [], raising=False)
 
 

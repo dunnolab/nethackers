@@ -405,6 +405,11 @@ async def test_readiness_strip_shows_evolve_checks_and_not_ready_verdict(monkeyp
     assert callable(captured["manifest_reachable"])
     # network-off: never says "pullable" by actually reaching the registry
     assert captured["manifest_reachable"]("ghcr.io/dunnolab/nethackers-mutator:dev") is False
+    # scoped to ONLY the evolve-tagged (local) checks -- so run_checks itself
+    # never even calls the hub/gh/hub_login probes (fix round 1: the strip
+    # must not touch the network just because run_checks CAN do more).
+    assert set(captured["only"]) == {
+        cid for cid, (_sev, caps) in diagnostics.CHECK_SPECS.items() if "evolve" in caps}
 
 
 async def test_model_select_degrades_when_mutator_image_is_absent(monkeypatch):
