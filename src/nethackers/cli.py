@@ -84,7 +84,7 @@ from rich.panel import Panel
 from rich.text import Text
 from rich_argparse import RichHelpFormatter
 
-from nethackers import clipboard, config
+from nethackers import clipboard, config, crashfile
 from nethackers.config import Stage, load_stage
 from nethackers.diagnostics import (
     CAPABILITIES,
@@ -199,6 +199,32 @@ def _models_table(operator: str, rows: list[dict[str, Any]]):
         # unexpected reasoning shape (see discovery._codex_reasoning).
         table.add_row(name, r["label"], ", ".join(str(x) for x in r["reasoning"]))
     return table
+
+
+def _report_summary(crash: dict[str, Any]) -> str:
+    """Human-readable rendering of one crash file for ``nethackers
+    report``'s default/table/plain output. Deliberately plain text, no rich
+    markup: this is meant to be read once, then copied verbatim into a
+    GitHub issue or a chat message -- not decorated. ``-o json`` bypasses
+    this entirely (``emit`` falls back to a raw ``json.dumps`` of the crash
+    dict itself, per the zero-telemetry "only DISPLAYS the local file, never
+    reshapes it for a person" contract)."""
+    doctor = crash.get("doctor")
+    caps = doctor.get("capabilities") if isinstance(doctor, dict) else None
+    lines = [
+        f"crash report — {crash.get('ts', 'unknown time')}",
+        f"  nethackers  {crash.get('nethackers_version', '?')}",
+        f"  python      {crash.get('python', '?')}",
+        f"  platform    {crash.get('platform', '?')}",
+        f"  command     {' '.join(crash.get('argv', []))}",
+        f"  error       {crash.get('exc_type', '?')}",
+    ]
+    if caps:
+        ready = ", ".join(f"{name}={'yes' if ok else 'no'}" for name, ok in caps.items())
+        lines.append(f"  ready to    {ready}")
+    else:
+        lines.append("  doctor      not available")
+    return "\n".join(lines)
 
 
 def _common_parser() -> argparse.ArgumentParser:
@@ -397,6 +423,12 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
         "--operator", choices=["codex", "claude"], default="claude",
         help="Which operator's host login to check (default: %(default)s, "
         "matching evolve's own default).",
+    )
+
+    sub.add_parser(
+        "report", parents=[common], formatter_class=RichHelpFormatter,
+        help="Show the most recent local crash report (read-only and offline -- "
+        "nothing is ever sent anywhere; share it yourself if you choose to).",
     )
 
     e = sub.add_parser(
@@ -766,6 +798,19 @@ def _run(argv: list[str] | None) -> int:
         )
         return exit_code(checks, args.for_capability)
 
+    if args.cmd == "report":
+        # Read-only and offline, unlike every other branch above/below that
+        # touches the hub: this only ever displays a file `write_crash`
+        # already wrote (main()'s top-level exception guard) -- it makes no
+        # network call and never triggers a fresh doctor probe itself.
+        path = crashfile.latest()
+        if path is None:
+            err.print("no crash reports found")
+            return 0
+        crash = crashfile.load(path)
+        emit(crash, args.output, table=_report_summary, plain=_report_summary)
+        return 0
+
     if args.cmd == "eval":
         spec = CATALOG.get(args.objective)
         if spec is None:
@@ -1100,6 +1145,23 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # never surface a raw traceback to a user
         if os.environ.get("NETHACKERS_DEBUG"):
             raise
+        # Belt-and-suspenders on top of write_crash's own internal guard
+        # (crashfile.py): the crash writer must never replace the ORIGINAL
+        # exception main() is already handling with a second one of its own.
+        # `manifest_reachable=lambda r: False` skips only the slow GHCR probe
+        # -- everything else is the full 7-check snapshot `to_json` expects
+        # (a filtered `only=` result would report vacuous "ready" for
+        # capabilities whose checks never ran); the whole enrich is
+        # best-effort regardless (write_crash nulls `doctor` on any failure).
+        try:
+            path = crashfile.write_crash(
+                exc, argv=sys.argv[1:],
+                enrich=lambda: to_json(run_checks(manifest_reachable=lambda r: False)),
+            )
+        except Exception:
+            path = None
         err.print(f"[red]nethackers: unexpected error[/]: {type(exc).__name__}: {exc}")
         err.print("[dim](set NETHACKERS_DEBUG=1 for the full traceback)[/]")
+        if path is not None:
+            err.print("[dim]wrote a crash report — run `nethackers report` to view/share it[/]")
         return 1
