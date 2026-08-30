@@ -245,7 +245,7 @@ class EvolveForm(Vertical):
         else:
             self._refresh_models(backend)
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, thread=True, exit_on_error=False)
     def _refresh_models(self, backend: str) -> None:
         # ONE container probe (probe_operator) runs the operator CLI INSIDE the
         # mutator image -- off the UI thread -- so version + the version-filtered
