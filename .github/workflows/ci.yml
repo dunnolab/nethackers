@@ -26,3 +26,37 @@ jobs:
 
       - name: Lint (ruff)
         run: uv run ruff check .
+
+  image-pins-tripwire:
+    name: image-pins staleness tripwire
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history -- needed to diff against the PR base)
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+        with:
+          fetch-depth: 0
+
+      - name: Fail if image inputs changed without a re-pin
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          # design doc docs/superpowers/specs/2026-08-28-sandbox-image-distribution-design.md
+          # section 5.12 / D12: these paths feed the arena/mutator image
+          # contents (see src/nethackers/_image_pins.py's own docstring and
+          # the sandbox-images.yml bootstrap). A PR that touches one of them
+          # without also touching the pins file leaves _image_pins.py
+          # describing images that no longer match what these inputs would
+          # actually build -- catch that here, at review time, rather than as
+          # a confusing runtime image mismatch later.
+          changed=$(git diff --name-only "origin/${BASE_REF}...HEAD")
+          image_inputs='^(Dockerfile\.mutator|nle-base/Dockerfile|arena/Dockerfile|uv\.lock)$|^(src/nethackers/arena/|src/nethackers/contracts/)'
+
+          if echo "$changed" | grep -qE "$image_inputs" && ! echo "$changed" | grep -qx 'src/nethackers/_image_pins\.py'; then
+            echo "::error::image-input paths changed without re-pinning src/nethackers/_image_pins.py"
+            echo "$changed" | grep -E "$image_inputs"
+            echo "fix: run .github/workflows/sandbox-images.yml, then paste the new digests into src/nethackers/_image_pins.py (spec section 8)"
+            exit 1
+          fi
+
+          echo "ok -- no image-input drift, or the pins were updated alongside it"

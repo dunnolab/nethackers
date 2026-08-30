@@ -1,0 +1,112 @@
+name: Sandbox images
+
+# Manual bootstrap / re-pin workflow (design doc
+# docs/superpowers/specs/2026-08-28-sandbox-image-distribution-design.md,
+# sections 5.3/5.4/8, decision D11). Builds `nle-base` once, then builds and
+# pushes BOTH `arena` and `mutator` multi-arch -- they share the exact
+# nle-base build, which is section 5.3's "pull both, fetch the base once"
+# precondition -- to GHCR, public, under a permanent `sha-<gitsha>` tag
+# (GHCR's GC deletes untagged digests, so the tag keeps a pinned digest
+# alive). This does NOT run on release/tag push: publishing an image is a
+# deliberate, occasional act. After a run, take the digests it writes to the
+# job summary and hand-paste them into src/nethackers/_image_pins.py -- the
+# re-pin ceremony, section 8 -- before the next release. Until that first
+# run, the placeholder digests already in _image_pins.py 404 for any
+# non-repo install by design.
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-push:
+    name: build + push arena/mutator (GHCR, multi-arch)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683            # v4.2.2
+
+      # arm64 emulation on the (amd64) runner -- the other half of "multi-arch".
+      - uses: docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf    # v3.0.0 -- SHA recalled offline; verify before first run
+        with:
+          platforms: arm64
+
+      - uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349  # v3.7.1
+
+      - uses: docker/login-action@9780b0c442fbb1117ed29e0efdff1e18412f7567         # v3.3.0
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # Built once, local only (no push, no --platform => native amd64,
+      # loaded straight into the runner's image store). Both multi-arch
+      # builds below point NLE_BASE at this exact tag, so nle-base -- the
+      # slow, compiled-NLE layer -- is genuinely built only once per run
+      # (section 5.3's "CI builds nle-base once" precondition).
+      #
+      # NOTE (unverified offline, no docker available in this authoring
+      # session): if the arm64 leg of a multi-platform build below can't
+      # resolve this local-only tag as its FROM base (depends on the buildx
+      # builder's access to the local image store), push nle-base to GHCR
+      # first and reference it by digest instead. Flag for whoever runs the
+      # first bootstrap -- not exercised here.
+      - name: Build nle-base (shared base, local only)
+        run: docker build -f nle-base/Dockerfile -t nethackers/nle-base:ci .
+
+      - id: meta-arena
+        uses: docker/metadata-action@8e5442c4ef9f78752691e2d8f8d19755c6f78e81      # v5.5.1
+        with:
+          images: ghcr.io/dunnolab/nethackers-arena
+          flavor: latest=false
+          tags: type=sha
+
+      - id: build-arena
+        uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75    # v6.9.0
+        with:
+          context: .
+          file: arena/Dockerfile
+          build-args: NLE_BASE=nethackers/nle-base:ci
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta-arena.outputs.tags }}
+          labels: ${{ steps.meta-arena.outputs.labels }}
+
+      - id: meta-mutator
+        uses: docker/metadata-action@8e5442c4ef9f78752691e2d8f8d19755c6f78e81      # v5.5.1
+        with:
+          images: ghcr.io/dunnolab/nethackers-mutator
+          flavor: latest=false
+          tags: type=sha
+
+      - id: build-mutator
+        uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75    # v6.9.0
+        with:
+          context: .
+          file: Dockerfile.mutator
+          build-args: NLE_BASE=nethackers/nle-base:ci
+          platforms: linux/amd64,linux/arm64
+          push: true
+          tags: ${{ steps.meta-mutator.outputs.tags }}
+          labels: ${{ steps.meta-mutator.outputs.labels }}
+
+      # Manifest-list digests (D4 glossary) -- the correct thing to pin: a
+      # client pulling `...@<this digest>` gets Docker/OCI to auto-select the
+      # right platform image. This workflow never hand-edits
+      # _image_pins.py itself -- D11's ceremony keeps that a reviewed, human
+      # commit.
+      - name: Write digests to the job summary
+        run: |
+          {
+            echo "### Sandbox image digests"
+            echo
+            echo "Paste these into \`src/nethackers/_image_pins.py\` (re-pin ceremony, spec section 8):"
+            echo
+            echo '```python'
+            echo "ARENA_IMAGE   = \"ghcr.io/dunnolab/nethackers-arena@${{ steps.build-arena.outputs.digest }}\""
+            echo "MUTATOR_IMAGE = \"ghcr.io/dunnolab/nethackers-mutator@${{ steps.build-mutator.outputs.digest }}\""
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
