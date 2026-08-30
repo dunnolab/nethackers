@@ -57,25 +57,27 @@ def test_downloading_and_extracting_count_as_seen_but_not_complete():
     assert ev2 is not None and ev2.layers_complete == 0
 
 
-def test_terminal_status_line_yields_done_with_running_counts():
+def test_terminal_status_downloaded_line_is_treated_as_noise():
+    # Fix round 1: Status: used to trigger its own "done" here, which meant a
+    # successful pull double-fired "done" (once from this line, once from
+    # _pull_image's own post-loop bracket). Now it's noise, same as Digest:
+    # -- _pull_image's final event (built from this function's own final
+    # state) is the SOLE authoritative "done" (see test_sandbox_preflight.py:
+    # test_pull_image_emits_typed_events_and_still_calls_on_line).
     state = PullParseState()
     state, _ = parse_pull_line(state, "1b930d010525: Pull complete", kind="arena", ref="img:tag")
     state, ev = parse_pull_line(
         state, "Status: Downloaded newer image for img:tag", kind="arena", ref="img:tag"
     )
-    assert ev is not None and ev.phase == "done"
-    assert ev.layers_total == 1 and ev.layers_complete == 1
+    assert ev is None
 
 
-def test_terminal_status_up_to_date_also_yields_done():
+def test_terminal_status_up_to_date_is_treated_as_noise():
     state = PullParseState()
-    state, ev = parse_pull_line(
+    _, ev = parse_pull_line(
         state, "Status: Image is up to date for img:tag", kind="mutator", ref="img:tag"
     )
-    assert ev is not None and ev.phase == "done"
-    assert ev.kind == "mutator"
-    # No layer line was ever seen -- None, not a misleading 0.
-    assert ev.layers_total is None and ev.layers_complete is None
+    assert ev is None
 
 
 def test_noise_lines_yield_none():
@@ -84,6 +86,8 @@ def test_noise_lines_yield_none():
         "Using default tag: latest",
         "latest: Pulling from library/example",
         "Digest: sha256:" + "1" * 64,
+        "Status: Downloaded newer image for example:latest",
+        "Status: Image is up to date for example:latest",
         "docker.io/library/example:latest",
         "",
     ]
@@ -132,7 +136,7 @@ _SYNTHETIC_TRANSCRIPT = [
 ]
 
 
-def test_synthetic_transcript_final_tally_and_single_done():
+def test_synthetic_transcript_final_layer_tally_and_no_parser_done():
     state = PullParseState()
     events: list[PullEvent] = []
     for line in _SYNTHETIC_TRANSCRIPT:
@@ -150,9 +154,10 @@ def test_synthetic_transcript_final_tally_and_single_done():
     assert totals == sorted(totals)
     assert completes == sorted(completes)
 
-    done_events = [e for e in events if e.phase == "done"]
-    assert len(done_events) == 1
-    assert done_events[0].layers_total == 3 and done_events[0].layers_complete == 3
+    # The terminal Status: line is noise at the parser level (fix round 1) --
+    # parse_pull_line alone never produces "done"; only _pull_image's
+    # post-loop bracket does (covered in test_sandbox_preflight.py).
+    assert [e for e in events if e.phase == "done"] == []
 
 
 # ============================================================================
@@ -163,12 +168,12 @@ def test_synthetic_transcript_final_tally_and_single_done():
 # vocabulary above is grounded in: it never emits "Waiting" / "Verifying
 # Checksum" / "Extracting" / "Pull complete" for a freshly-downloaded layer,
 # only "Pulling fs layer" then "Download complete". Kept as real-world
-# regressions: the parser must handle them without crashing and must still
-# reach phase="done" off the terminal Status line either way -- that line is
-# the authoritative "did it finish" signal regardless of how detailed (or
-# not) the per-layer reporting was, which is exactly why _pull_image also
-# emits its own final done/error event rather than relying on the per-line
-# parse alone (see sandbox_preflight._final_pull_event).
+# regressions: the parser must handle them without crashing, and (fix round
+# 1) the terminal Status: line is noise here just like everywhere else --
+# "did it finish" is answered by _pull_image's own post-loop done/error
+# event, not by anything parse_pull_line itself produces (see
+# sandbox_preflight._final_pull_event and its dedicated tests in
+# test_sandbox_preflight.py).
 # ============================================================================
 
 _REAL_HELLO_WORLD_FRESH_PULL = [
@@ -189,31 +194,33 @@ _REAL_ALPINE_ALREADY_CURRENT = [
 ]
 
 
-def test_real_containerd_snapshotter_fresh_pull_still_reaches_done():
+def test_real_containerd_snapshotter_fresh_pull_layer_tally_only():
     state = PullParseState()
     events: list[PullEvent] = []
     for line in _REAL_HELLO_WORLD_FRESH_PULL:
         state, event = parse_pull_line(state, line, kind="arena", ref="hello-world:latest")
         if event is not None:
             events.append(event)
-    assert events[-1].phase == "done"
+    # No "done" from the parser (fix round 1) -- every event here is "layer".
+    assert events and all(e.phase == "layer" for e in events)
     assert events[-1].layers_total == 1  # the one "Pulling fs layer" line
     # This driver never prints "Pull complete" -- documented under-report,
     # not a crash or a wrong phase.
     assert events[-1].layers_complete == 0
 
 
-def test_real_already_current_pull_has_no_layer_lines_at_all():
+def test_real_already_current_pull_yields_no_parser_events_at_all():
+    # No layer lines AND the terminal Status: line is now noise too (fix
+    # round 1) -- a fully-cached pull produces literally nothing from the
+    # parser. _pull_image's own post-loop "done" bracket still fires exactly
+    # once regardless (tested in test_sandbox_preflight.py).
     state = PullParseState()
     events: list[PullEvent] = []
     for line in _REAL_ALPINE_ALREADY_CURRENT:
         state, event = parse_pull_line(state, line, kind="arena", ref="alpine:3.19")
         if event is not None:
             events.append(event)
-    assert len(events) == 1
-    assert events[0].phase == "done"
-    assert events[0].layers_total is None
-    assert events[0].layers_complete is None
+    assert events == []
 
 
 # ============================================================================

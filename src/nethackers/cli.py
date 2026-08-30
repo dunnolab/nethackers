@@ -626,7 +626,15 @@ def _pull_progress() -> Iterator[Callable[[PullEvent], None]]:
     record). Redirected output (no tty, e.g. ``-o json``/CI logs) instead
     gets plain sequential lines -- rewriting a line only makes sense on a
     real terminal. Deliberately minimal: a compact one-liner, not a
-    progress bar."""
+    progress bar.
+
+    Used INSTEAD OF the raw ``on_line`` docker-text dump at its two call
+    sites below (fix round 1) -- passing both would show the user the full
+    raw transcript AND a redundant compact line underneath it, which
+    defeats the point of a compact typed surface. ``on_line`` itself stays
+    a valid parameter on ``ensure_image``/``_pull_image``/``_build_image``
+    for any other caller (e.g. ``_arena_preflight``) that still wants the
+    raw text."""
     if not err.is_terminal:
         def _on_event_plain(event: PullEvent) -> None:
             err.print(f"[dim]{render_cli_line(event)}[/]")
@@ -743,8 +751,7 @@ def _run(argv: list[str] | None) -> int:
                 ref = resolve_image(None, kind)
                 err.print(f"[dim]checking/pulling {kind} sandbox ({ref})…[/]")
                 with _pull_progress() as on_event:
-                    perr = ensure_image(ref, kind, on_line=lambda ln: err.print(f"[dim]{ln}[/]"),
-                                        on_event=on_event)
+                    perr = ensure_image(ref, kind, on_event=on_event)
                 if perr is not None:
                     err.print(perr)
         # Named distinctly from `evolve`'s own `results` local below -- both
@@ -828,8 +835,7 @@ def _run(argv: list[str] | None) -> int:
             err.print(f"[yellow]setting up the {_kind} sandbox[/] (first run — this "
                       "can take a few minutes)…")
             with _pull_progress() as on_event:
-                ierr = ensure_image(_ref, _kind, on_line=lambda ln: err.print(f"[dim]{ln}[/]"),
-                                    on_event=on_event)
+                ierr = ensure_image(_ref, _kind, on_event=on_event)
             if ierr is not None:
                 err.print(ierr)
                 return 1

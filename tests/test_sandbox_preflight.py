@@ -153,6 +153,59 @@ def test_build_mutator_image_errors_outside_the_repo(monkeypatch, tmp_path):
     assert err is not None and "repo" in err.lower()
 
 
+# --- _build_image: on_event start/done/error bracket (spec S5.5) -----------
+# build_mutator_image (the public wrapper exercised above) doesn't forward
+# on_event -- these call _build_image directly, exactly like ensure_image's
+# own branch 3 does.
+
+
+def test_build_image_emits_start_then_done_bracket(monkeypatch, tmp_path):
+    (tmp_path / "Dockerfile.mutator").write_text("x")
+    (tmp_path / "Makefile").write_text("x")
+    monkeypatch.setattr(sp.Path, "cwd", classmethod(lambda cls: tmp_path))
+    events = []
+
+    err = sp._build_image(
+        "my/mut:tag", "mutator", on_event=events.append,
+        popen=lambda *a, **k: _FakeProc(["step 1/10"], 0),
+    )
+
+    assert err is None
+    assert [e.phase for e in events] == ["start", "done"]
+    # No layer concept on the make path -- always None/None, never 0/0.
+    assert all(e.layers_total is None and e.layers_complete is None for e in events)
+    assert all(e.kind == "mutator" and e.ref == "my/mut:tag" for e in events)
+
+
+def test_build_image_emits_error_event_on_build_failure(monkeypatch, tmp_path):
+    (tmp_path / "Dockerfile.mutator").write_text("x")
+    (tmp_path / "Makefile").write_text("x")
+    monkeypatch.setattr(sp.Path, "cwd", classmethod(lambda cls: tmp_path))
+    events = []
+
+    err = sp._build_image("img", "mutator", on_event=events.append,
+                          popen=lambda *a, **k: _FakeProc([], 2))
+
+    assert err is not None and "setup failed" in err.lower()
+    assert [e.phase for e in events] == ["start", "error"]
+    assert events[-1].layers_total is None and events[-1].layers_complete is None
+
+
+def test_build_image_emits_no_events_when_outside_the_repo(monkeypatch, tmp_path):
+    # The "no repo checkout" early-return (sandbox_preflight.py's
+    # _build_image, before the on_event(start) call) fires before the
+    # bracket even opens -- zero events, not a dangling "start" with no
+    # matching terminal event.
+    monkeypatch.setattr(sp.Path, "cwd", classmethod(lambda cls: tmp_path))
+    events = []
+
+    err = sp._build_image("img", "mutator", on_event=events.append,
+                          popen=lambda *a, **k: _FakeProc([], 0))
+
+    assert err is not None and "repo" in err.lower()
+    assert events == []
+
+
 # --- _pull_image: typed PullEvents alongside the raw on_line (spec S5.5) ----
 
 
@@ -184,6 +237,11 @@ def test_pull_image_emits_typed_events_and_still_calls_on_line():
     assert phases[0] == "start"
     assert "layer" in phases
     assert phases[-1] == "done"  # the final bracketing event _pull_image adds itself
+    # Fix round 1: the Status: line is noise at the parser level now, so this
+    # final bracket is the ONLY "done" -- a successful pull must never
+    # double-fire it (it used to, once from parse_pull_line's Status: line
+    # and once from this bracket).
+    assert phases.count("done") == 1
     layer_events = [e for e in on_events if e.phase == "layer"]
     assert layer_events[-1].layers_total == 1
     assert layer_events[-1].layers_complete == 1
@@ -201,8 +259,34 @@ def test_pull_image_emits_error_event_on_registry_failure():
         ),
     )
     assert err is not None and "stale ghcr login" in err.lower()
-    assert on_events[0].phase == "start"
-    assert on_events[-1].phase == "error"
+    phases = [e.phase for e in on_events]
+    assert phases[0] == "start"
+    assert phases[-1] == "error"
+    assert phases.count("error") == 1  # exactly one error, not one per line
+    # No layer line was ever seen in this transcript -- None, not 0 (same
+    # None-not-zero convention as parse_pull_line's own "nothing seen" case).
+    assert on_events[-1].layers_total is None
+    assert on_events[-1].layers_complete is None
+
+
+def test_pull_image_emits_error_event_when_popen_raises():
+    # The except (OSError, subprocess.SubprocessError) branch: popen() itself
+    # blows up before a single line is read. Exactly one "error" event still
+    # reaches on_event (state is initialized before the try, so there's no
+    # UnboundLocalError risk), and the function still returns a mapped,
+    # styled message rather than letting the exception propagate.
+    def _raising_popen(*a, **k):
+        raise OSError("boom")
+
+    on_events = []
+    err = sp._pull_image("img:tag", "arena", on_event=on_events.append, popen=_raising_popen)
+
+    assert err is not None and "couldn't reach the registry" in err.lower()
+    phases = [e.phase for e in on_events]
+    assert phases == ["start", "error"]
+    assert on_events[-1].layers_total is None
+    assert on_events[-1].layers_complete is None
+    assert on_events[-1].detail == "boom"
 
 
 def test_pull_image_works_with_on_event_omitted():

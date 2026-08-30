@@ -195,13 +195,14 @@ def _pull_image(ref: str, kind: str, *, on_line=None,
     into typed ``PullEvent``s for ``on_event`` (spec S5.5) -- the two
     callbacks are independent and both fire off the same read loop.
     ``on_event`` additionally gets a ``phase="start"`` event before anything
-    is read, and one final ``phase="done"``/``phase="error"`` event once the
-    process exits, regardless of what the per-line parse already reported
-    (docker's own ``Status: ...`` terminal line already yields its own
-    ``"done"`` via ``parse_pull_line`` on a successful pull -- this final
-    one is a deliberate, harmless second "done" so a caller that only
-    watches for the bracketing events, not every mid-stream one, still
-    always sees exactly one on every path including failure).
+    is read, and exactly one final ``phase="done"``/``phase="error"`` event
+    once the process exits (via ``_final_pull_event``, built from the
+    loop's final accumulated ``state``) -- ``parse_pull_line`` itself never
+    produces a ``"done"``/``"error"`` event (its terminal ``Status: ...``
+    line is deliberately treated as noise, same as ``Digest:``; see its own
+    docstring), so this one post-loop event is the SOLE done/error signal
+    on every path, pull success, pull failure, or a ``popen``/read
+    exception.
 
     ``None`` on success, else one of the styled, one-runnable-command
     messages (spec S5.5 / INV9) mapped from the registry's failure shape."""

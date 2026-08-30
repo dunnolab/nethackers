@@ -37,7 +37,6 @@ from dataclasses import dataclass, field
 
 _LAYER_LINE_RE = re.compile(r"^([0-9a-f]{12}): (.*)$")
 _DONE_STATUSES = {"Pull complete", "Already exists"}
-_STATUS_PREFIX = "Status: "
 
 
 @dataclass(frozen=True)
@@ -60,9 +59,8 @@ class PullEvent:
       or not applicable (the ``make``-build path has no layer concept at
       all, so every event on that path carries ``None``/``None``).
     ``detail``: a short, human-oriented scrap of context for this specific
-      event (a layer's raw status word, the docker CLI's own terminal
-      ``Status: ...`` line, an error's raw text, or ``""`` when there's
-      nothing beyond what ``phase`` already says). Not re-parsed by
+      event (a layer's raw status word, an error's raw text, or ``""`` when
+      there's nothing beyond what ``phase`` already says). Not re-parsed by
       anything -- purely for a consumer that wants more than the aggregate
       counts.
     """
@@ -96,18 +94,19 @@ def parse_pull_line(
     the ``(new_state, event)`` it implies -- ``event`` is ``None`` for a
     line that carries no progress-relevant information (most of the
     header/footer chatter: ``Using default tag: ...``, ``<tag>: Pulling
-    from ...``, the ``Digest: sha256:...`` line, the final bare
-    ``registry/name:tag`` echo). Pure: ``state`` itself is never mutated in
-    place -- a fresh instance is always returned, and the one passed in
-    remains valid.
+    from ...``, the ``Digest: sha256:...`` line, the terminal ``Status:
+    ...`` line, the final bare ``registry/name:tag`` echo). Pure: ``state``
+    itself is never mutated in place -- a fresh instance is always
+    returned, and the one passed in remains valid.
 
-    Recognizes exactly two line shapes -- docker's own stable status
-    vocabulary (spec S5.5's ground truth), NOT the in-place byte-progress
-    text (``Downloading [==>    ]  3MB/12MB``) that only ever appears when
-    docker itself is attached to a real terminal; captured through a pipe
-    (always true here -- see ``sandbox_preflight._pull_image``) docker
-    prints the plain discrete-line form instead, one line per status
-    change, which is exactly what this matches:
+    Recognizes exactly one line shape -- docker's own stable per-layer
+    status vocabulary (spec S5.5's ground truth), NOT the in-place
+    byte-progress text (``Downloading [==>    ]  3MB/12MB``) that only ever
+    appears when docker itself is attached to a real terminal; captured
+    through a pipe (always true here -- see
+    ``sandbox_preflight._pull_image``) docker prints the plain
+    discrete-line form instead, one line per status change, which is
+    exactly what this matches:
 
     * ``"<12-hex layer id>: <status>"`` -- a per-layer status line. The id
       counts toward ``layers_total`` the first time it's seen, whatever
@@ -117,20 +116,20 @@ def parse_pull_line(
       yet complete); a status of exactly ``"Pull complete"`` or ``"Already
       exists"`` additionally counts it toward ``layers_complete``. Yields
       ``phase="layer"``.
-    * ``"Status: Downloaded newer image for ..."`` / ``"Status: Image is
-      up to date for ..."`` -- the one line docker always prints exactly
-      once, right at the end of a successful pull (the ``Digest:`` line
-      just before it is deliberately treated as noise, not a second
-      trigger -- ``Status:`` is the one line guaranteed to appear exactly
-      once). Yields ``phase="done"`` with the running counts as they
-      stand (by now usually ``layers_complete == layers_total``, though a
-      docker daemon using the containerd snapshotter has been observed to
-      report far fewer per-layer transitions than the classic engine --
-      see ``tests/test_pull_events.py`` -- so don't assume equality).
 
-    A caller that wants ``phase="start"``/``"error"`` events gets them
-    directly from ``sandbox_preflight._pull_image`` (before/after this
-    per-line loop), never from here.
+    Everything else -- including the terminal ``"Status: Downloaded newer
+    image for ..."``/``"Status: Image is up to date for ..."`` line -- is
+    noise: ``(state, None)``. ``Status:`` used to trigger its own
+    ``phase="done"`` event here, but that meant a successful pull
+    double-fired ``"done"`` (once from this line, once from
+    ``_pull_image``'s own post-loop bracket -- see ``_final_pull_event``).
+    Fix round 1 (spec S5.5) makes ``Status:`` noise, same treatment as
+    ``Digest:`` right before it, so there is exactly one authoritative
+    ``"done"``/``"error"`` per acquisition, always emitted by
+    ``sandbox_preflight._pull_image`` (built from this function's own final
+    accumulated ``state``) rather than by this per-line parse. A caller
+    that wants ``phase="start"``/``"done"``/``"error"`` events gets them
+    directly from ``_pull_image``, never from here.
     """
     line = line.rstrip()
     m = _LAYER_LINE_RE.match(line)
@@ -142,12 +141,6 @@ def parse_pull_line(
         event = PullEvent(kind=kind, ref=ref, phase="layer", layers_total=len(seen),
                           layers_complete=len(complete), detail=status)
         return new_state, event
-    if line.startswith(_STATUS_PREFIX):
-        total = len(state.seen) if state.seen else None
-        complete_n = len(state.complete) if state.seen else None
-        event = PullEvent(kind=kind, ref=ref, phase="done", layers_total=total,
-                          layers_complete=complete_n, detail=line)
-        return state, event
     return state, None
 
 
