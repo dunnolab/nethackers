@@ -45,6 +45,25 @@ def _hermetic_tui_readiness(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _hermetic_tui_publish(monkeypatch):
+    # EvolveForm's Start handler (spec 5.6's publish-readiness pre-check) now
+    # also calls gh_state() -- a real `gh` subprocess that, on any box where
+    # `gh` is installed and authenticated (true of a developer's own machine,
+    # and possibly a CI runner with a GH_TOKEN in its env), makes a live call
+    # to the GitHub API. Reachable from EVERY test in test_tui_evolve_form.py
+    # that presses Start with a real (non-offline) owner, not just the ones
+    # that test the warning itself. Stub it suite-wide by name (same
+    # hermetic-suite rule as `_hermetic_tui_discovery` above, patched on
+    # evolve_form's own imported binding, which is the seam
+    # `_publish_warning` actually dereferences): default to "authed" so a
+    # test that presses Start without caring about publish-readiness sees
+    # today's behavior (no #f_publish_warn text, same as before this check
+    # existed). Tests that exercise the warning itself override this with
+    # their own fake.
+    monkeypatch.setattr(_ef, "gh_state", lambda: ("stub", "authed"), raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _hermetic_provenance(monkeypatch):
     # launch.prepare_evolve's provenance fields (arena/mutator image digest,
     # operator version) fall back to _default_image_digest/
