@@ -150,6 +150,9 @@ function makeDom(fetchImpl, errors) {
       // jsdom implements neither of these; the page's masthead/audio code touches
       // matchMedia at top level, so stub it (reduced-motion off) before parse.
       window.matchMedia = () => ({ matches: false, addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {} });
+      // jsdom's Element.scrollIntoView throws "not implemented"; the inline detail
+      // section calls it on open, so stub it to a no-op (real browsers have it).
+      window.Element.prototype.scrollIntoView = function () {};
     },
   });
 }
@@ -185,29 +188,40 @@ async function pass1() {
   q('[data-fame-more="breakthroughs"]').click();
   ok(qa("#breakthroughs tbody tr").length === 7, "breakthroughs More control reveals the next page");
 
-  // click-through 1: a frontier row opens the identity leaderboard (/board?scope=)
+  // Detail popups are dynamic + STACKABLE: each open pushes a fresh .detailmodal on top.
+  const top = () => [...document.querySelectorAll(".detailmodal")].pop();
+  const nDetail = () => document.querySelectorAll(".detailmodal").length;
+
+  // click-through 1: a frontier row opens a popup (/board?scope=)
   q("#rolegrid tr.frontierrow").click();
   await sleep(40);
-  ok(document.querySelector("#modal").hasAttribute("open"), "clicking a frontier row opens the identity modal");
-  const idBody = q("#mBody").textContent;
-  ok(/@dun/.test(idBody) && /Mines' End/.test(idBody), "identity leaderboard shows the program row (@dun, Mines' End)");
-  ok(/github\.com\/dun\/bot/.test(q("#mBody").innerHTML), "identity source cell resolves reference{repo} to a github link");
-  q("#mX").click();
+  ok(nDetail() === 1, "clicking a frontier row opens a popup");
+  const idBody = top().querySelector(".win__body");
+  ok(/@dun/.test(idBody.textContent) && /Mines' End/.test(idBody.textContent), "identity leaderboard shows the program row (@dun, Mines' End)");
+  ok(/github\.com\/dun\/bot/.test(idBody.innerHTML), "identity source cell resolves reference{repo} to a github link");
+  // clicking an @owner INSIDE the popup stacks a SECOND popup on top
+  top().querySelector(".ownerlink").click();
+  await sleep(40);
+  ok(nDetail() === 2, "clicking @owner inside a popup stacks a second popup on top");
+  ok(/^@dun/.test(top().querySelector(".win__title span").textContent.trim()), "the stacked popup is the hacker (@owner title)");
+  top().querySelector(".x").click();
+  ok(nDetail() === 1, "closing the top popup reveals the one beneath");
+  top().querySelector(".x").click();
+  ok(nDetail() === 0, "closing again dismisses the stack");
 
-  // click-through 2: a breakthrough row opens the exact submission (/programs/{id} + /identities)
+  // click-through 2: a breakthrough row opens a popup (/programs/{id} + /identities)
   q("#breakthroughs tbody tr").click();
   await sleep(40);
-  const bBody = q("#mBody").textContent;
-  ok(/breakthrough/i.test(q("#mTitle").textContent), "breakthrough modal titled for the identity");
-  ok(/frontier advance/i.test(bBody) && /github\.com/.test(q("#mBody").innerHTML), "breakthrough submission shows advance + source link");
-  q("#mX").click();
+  ok(/breakthrough/i.test(top().querySelector(".win__title span").textContent), "breakthrough popup titled for the identity");
+  ok(/frontier advance/i.test(top().querySelector(".win__body").textContent), "breakthrough submission shows the advance");
+  top().querySelector(".x").click();
 
-  // click-through 3: a keeper row opens the hacker's contributions (/programs?owner= + /identities)
+  // click-through 3: a keeper row opens the hacker popup (/programs?owner= + /identities)
   q("#recordholders tbody tr").click();
   await sleep(40);
-  ok(/contributions/i.test(q("#mTitle").textContent), "keeper row opens the hacker contributions modal");
-  ok(/registered solutions/i.test(q("#mBody").textContent), "hacker modal lists registered solutions");
-  q("#mX").click();
+  ok(/^@keeper/.test(top().querySelector(".win__title span").textContent.trim()), "keeper row opens the hacker popup titled just @username");
+  ok(/registered programs/i.test(top().querySelector(".win__body").textContent), "hacker popup lists registered programs");
+  top().querySelector(".x").click();
 
   ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
   dom.window.close();

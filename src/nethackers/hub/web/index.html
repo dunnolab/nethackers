@@ -45,7 +45,7 @@ body{
     linear-gradient(rgba(255,255,255,.35),rgba(255,255,255,.35)),
     repeating-linear-gradient(0deg,transparent 0 3px,rgba(0,0,0,.012) 3px 4px);
 }
-.mono, .masthead, #demo, #demoMsg, .msgbar, .od span, h2.sec .glyph, table.grid, table.fr, table.dtable, .identityboard, .term, .tomb, .refpop pre.ra, .wayh .wl, .src{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; }
+.mono, .masthead, #demo, #demoMsg, .msgbar, #dictbar, .orc-speak, .orc-cap, .orc-bars, .orc-median, .orc-nrow, .orc-cmp, .od span, h2.sec .glyph, table.grid, table.fr, table.dtable, .identityboard, .term, .tomb, .refpop pre.ra, .wayh .wl, .src{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; }
 a{ color:var(--indigo); text-decoration:underline; text-underline-offset:2px; }
 a:visited{ color:var(--violet); }
 a:hover{ color:var(--red); background:#fff3b0; }
@@ -55,7 +55,6 @@ img{ max-width:100%; }
 /* the document window ------------------------------------------------------ */
 .page{
   max-width:1000px; margin:74px auto 104px; background:var(--paper); position:relative; z-index:1;
-  border:1px solid var(--silver-lo);
 }
 .pad{ padding:0 18px; }
 
@@ -130,6 +129,12 @@ img{ max-width:100%; }
 .badge.b2{ background:#111; color:var(--green); }
 .badge.b3{ background:var(--red); }
 .badge b{ font-weight:700; }
+/* old-style YouTube banner (external video link) -- pixel-art wordmark (embedded PNG) */
+.badge.yt{ background:#fff; color:#282828; padding:7px 6px 8px; }
+.badge.yt:hover{ background:#fff3b0; }
+.badge.yt .ytlogo{ image-rendering:pixelated; image-rendering:crisp-edges; display:block; height:16px; width:auto; margin:0 auto 5px; }
+.badge.yt .yt-title{ display:block; font-weight:700; }
+.badge.yt .yt-cap{ display:block; font-size:.58rem; color:#6b6b72; margin-top:2px; }
 
 /* MAIN sections ------------------------------------------------------------ */
 .main section{ scroll-margin-top:12px; }
@@ -304,20 +309,35 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 .footinfo .disc{ margin-top:8px; color:#6a6a72; max-width:52ch; }
 .footinfo .disc b{ color:var(--indigo); }
 
-/* POPUP modal (faux window) ------------------------------------------------ */
-.modal{ position:fixed; inset:0; z-index:60; display:none; place-items:center; padding:16px;
+/* POPUP: the original faux-window modal -- silver window, indigo title bar,
+   framed white body. Soft raised silver bevel (NOT the harsh #000 one that read
+   as a shadow) and NO drop shadow. Scoped to #detail so the page's own .win
+   (a green table cell) is untouched. */
+.detailmodal{ position:fixed; inset:0; z-index:60; display:none; place-items:center; padding:16px;
   background:rgba(20,20,28,.5); }
-.modal[open]{ display:grid; }
-.win{ width:min(560px,96vw); max-height:88vh; overflow:hidden; background:var(--silver);
-  border:2px solid; border-color:var(--silver-hi) #000 #000 var(--silver-hi);
+.detailmodal[open]{ display:grid; }
+.detailmodal .win{ width:min(560px,96vw); max-height:88vh; overflow:hidden; background:var(--silver);
+  border:2px solid; border-color:var(--silver-hi) var(--silver-lo) var(--silver-lo) var(--silver-hi);
   display:flex; flex-direction:column; }
-.win.identitydetail{ width:min(980px,96vw); }
+.detailmodal .win.identitydetail{ width:min(980px,96vw); }
 .win__title{ display:flex; align-items:center; gap:8px; background:var(--indigo); color:#fff;
-   font-size:.78rem; font-weight:700; padding:3px 6px; }
-.win__title .x{ margin-left:auto; width:18px; height:18px; line-height:16px; text-align:center; cursor:pointer;
-  background:var(--silver); color:#000; border:2px solid; border-color:var(--silver-hi) #000 #000 var(--silver-hi); font-weight:700; }
-.win__body{ background:#fff; margin:3px; padding:12px; overflow:auto;  }
+  font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:.78rem; font-weight:700; padding:4px 8px; }
+.win__title .x{ margin-left:auto; width:18px; height:18px; line-height:15px; text-align:center; cursor:pointer;
+  background:var(--silver); color:#000; border:2px solid; border-color:var(--silver-hi) var(--silver-lo) var(--silver-lo) var(--silver-hi); font-weight:700; }
+.win__title .x:hover,.win__title .x:focus{ color:var(--red); outline:none; }
+.win__body{ background:#fff; margin:3px; padding:12px 14px; overflow:auto; }
 .kv{ display:grid; grid-template-columns:max-content 1fr; gap:3px 12px; font-size:.82rem; margin-bottom:12px; }
+.hackerhead{ display:flex; gap:16px; align-items:flex-start; margin-bottom:6px; }
+.hackerhead .kv{ margin-bottom:0; }
+.ghavatar{ width:72px; height:72px; flex:0 0 auto; border:1px solid var(--silver-lo); position:relative; overflow:hidden; }
+.ghavatar .dungeon{ position:absolute; inset:0; margin:0; display:flex; align-items:center; justify-content:center; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:11px; line-height:8px; letter-spacing:0; white-space:pre; color:var(--indigo-2);
+  animation:dpulse 1.5s ease-in-out infinite; clip-path:polygon(0 0,100% 0,100% 100%,0 100%); transition:clip-path .55s ease; }
+@keyframes dpulse{ 0%,100%{ opacity:.4 } 50%{ opacity:.92 } }
+.ghavatar.loaded .dungeon,.ghavatar.noavatar .dungeon{ clip-path:polygon(100% 100%,100% 100%,100% 100%,100% 100%); animation:none; }
+.ghavatar img{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; clip-path:polygon(0 0,0 0,0 0); transition:clip-path .55s ease; will-change:clip-path; backface-visibility:hidden; }
+.ghavatar.loaded img{ clip-path:polygon(0 0,250% 0,0 250%); }
+.ghavatar.noavatar::before{ content:"@"; position:absolute; inset:0; display:grid; place-items:center; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; font-size:44px; font-weight:700; color:var(--indigo); }
+@media (prefers-reduced-motion:reduce){ .ghavatar .dungeon{ animation:none; } .ghavatar img,.ghavatar .dungeon{ transition:none; } }
 .kv .k{ color:#55555c; } .kv .v{ color:#111; } .kv .v a{ word-break:break-all; }
 .minihead{ font-size:.74rem; color:#55555c; margin:.2rem 0 .5rem; }
 .minigrid{ display:grid; grid-template-columns:1fr 1fr; gap:2px; }
@@ -327,19 +347,9 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 .hackerrow:hover td,.hackerrow:focus td{ background:#fff2a8; }
 .hackerrow:focus{ outline:2px solid var(--indigo); outline-offset:-2px; }
 .clickhint{ color:#777780; font-size:.72rem; margin:-5px 0 10px; }
-.solutionlist{ display:grid; gap:8px; }
-.solutioncard{ border:1px solid var(--rule-soft); background:#f7f7f2; padding:7px 9px; font-size:.76rem; }
-.solutioncard__head{ display:flex; justify-content:space-between; gap:10px; border-bottom:1px dotted #aaaab2; padding-bottom:4px; margin-bottom:5px; }
-.solutioncard__head a{ font-weight:700; }
-.solutioncard__date{ color:#66666e; white-space:nowrap; }
-.solutioncard__meta{ display:grid; grid-template-columns:max-content 1fr; gap:2px 10px; }
-.solutioncard__meta .k{ color:#66666e; }
-.rolechips{ display:flex; flex-wrap:wrap; gap:3px; }
-.rolechip{ border:1px solid #aaaab2; background:#fff; padding:0 4px; }
 .popupstatus{ color:#66666e; font-size:.8rem; }
-.identitysummary{ font-size:.78rem; color:#55555c; margin-bottom:9px; }
-.identitysummary b{ color:var(--indigo); }
 .identityboard{ width:100%; border-collapse:collapse; font-size:.74rem; }
+.identityboard caption{ text-align:left; background:var(--indigo); color:#fff; font-weight:700; padding:4px 8px; font-size:.72rem; }
 .identityboard th{ text-align:left; background:var(--silver); border:1px solid var(--silver-lo); padding:3px 6px; }
 .identityboard th.num,.identityboard td.num{ text-align:right; }
 .identityboard td{ border:1px solid #dddde2; padding:3px 6px; white-space:nowrap; }
@@ -471,7 +481,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
         <li><span class="k">[2]</span> <a href="#why">Why care</a></li>
         <li><span class="k">[3]</span> <a href="#frontier">The Frontier</a></li>
         <li><span class="k">[4]</span> <a href="#hackers">Hackers</a></li>
-        <li><span class="k">[5]</span> <a href="#oracle">The Oracle</a> <span class="new">NEW!</span></li>
+        <li><span class="k">[5]</span> <a href="#oracle">The Oracle</a> <span class="new">VOTE!</span></li>
         <li><span class="k">[6]</span> <a href="#contribute">Contribute</a></li>
         <li><span class="k">[7]</span> <a href="#faq">FAQ</a></li>
       </ol>
@@ -491,6 +501,11 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 
       <div class="badges">
         <a class="badge b1" href="https://dunnolab.ai/">powered by<br><b>dunnolab.ai</b></a>
+        <a class="badge yt" href="https://www.youtube.com/watch?v=zjEDWA8uQEw" target="_blank" rel="noopener">
+          <img class="ytlogo" alt="YouTube" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAC4AAAAJCAYAAABNEB65AAAEfElEQVR4nE1UXWgUVxT+7p3ZnWx+TLP1lwRjNNnNajZqiohFH4oWoYIEyYMYoVASX7UE+tCHPgkiQqXVPm4RpErrY7H+xkbRhEgkQuju5qdqYkRofjBms9mZnXtOuXcnmmGG2fvds+ee8833HZFIJHYLIf5Jp9NFAEgmk5+4rrthbGwsC0ACEBoHQAA4WItgrS9pQCGon7mtJhpNiXXrWotEAkoJYdsmyJuaAnkewFx6pE4NMBHKW1rgvnwJKhRMYlYqSK2zS50bzEwhIijgFgHdkpn7iehsUBR7nve7EOKnVQWr4NH75qxVRZuGJEDPDx2qsIDfNnZ27mq4fx/xhw/F9pERNPX2ovHOHZTv2QOfqFR0UDARQToOYg8eoOrAAXhKgXTRonS0kNLE+UrptyxKiSrgCAO/iubm5m8ty/oxn89vLCsrS1qWdY+I9qbT6aeNjY1OOBz+goiWs9nsQ50sFoutZeZ14+PjGc1Hctu23SNtbc+Hb9z4LAwMFiIRBcexoseOYUsqhXRrKwpTU+BcDpFEAt70NIrv3sGpq4MIh1F88wY75+bw6sQJFHM5iOVlvB8YgJTSNBZpaEBk1y7kh4ZQeP0aUgiymaXMZrMXfd8fcBznBjOnisXiL0HRdaFQ6Ckz/yCEuJxIJO5qEizL+kZK2aub2LFjR60KhYYwMRFrBPK+5tPzpC5MLSwYdv35efj6N4D448eIHj8OD0DtuXNouHIF5LrgfB61589jU08Pmu7exeaLF+ERYX13N+L9/fi0qwvNg4OItrdDMUvfsthoWEr5tZTyAIBiZWXldxqzbft7Zo5mMpnPy8vL9wL4MhaLHVVKLQIIa7Zd1w1r/QEIhQEWWl5C30InMJ9chEKltda0lIblFRy2bXRnVVcj9+QJRo4cwevTp7HhzBlU1Nai7sIFzF+7hmxHBxb7+tBw9WpJv0TCOCSTyYwrpf5l5r+fPXuW1xJk5u3MPKD3NUZE41LKnVLKFc2TUirHzAqWZTSvbVcSMOvkH40Y6BrM4OVlkH5ro+qYAH9/+zYsAEtDQ2DfR6S52WxFkknEr183RPx36ZKZFjpjydolI5YDqFxlykdCiK/i8XhVIpFosm27iZkfMbNn2/Z6jTmO02nbtgVmoRnXHK8Yd4XxD9NDKcNyxf79qIrFUH348IeDNR49edJ8jZqODoMv6gYKBRTGxjDa3o7ZVMo0SwCFtEqC/7IQ4oUQYiqYGpbjOOcB/CWlfAzgT6XUz6Ojo31EdE8ppTX+B4BNRd/vayoUfAATeWBsDbOl+fZnZlB8+xa0uGhY0kab7ulBxb59qD97Fgs3byI/PGyKXB4Z0eZBS28v1p46hcmuLngLC3jR2Yk1Bw+iZXAQmy9fhjczQ9WA9IW4vTKTeevWrdVKKXdycrKwggUG3Oa6rjsxMTG9Gq+vry8LYjWgueUhoM0BUgpo9aUUdk2N8OfmPs5NzYhtg3zfJJGl+YxQNApvfh5lW7aAcjm4s7OwhdBGNPFl8TjcV6+Il5a0nG75QPf/SmY6Pr8QUq4AAAAASUVORK5CYII=">
+          <span class="yt-title">17 minutes to feel the dungeons</span>
+          <span class="yt-cap">never played? watch the intro &#9654;</span>
+        </a>
       </div>
     </nav>
 
@@ -500,10 +515,10 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
       <!-- ABOUT -->
       <section id="about" class="about">
         <h2 class="sec"><span class="glyph">@</span> What it is?</h2>
-        <p class="lead"><b>NetHackers is an open contest to build the first program that can
+        <p class="lead"><b>NetHackers is an open effort to build the first program that can
           reliably win NetHack&nbsp;3.6.6.</b> Write the bot by hand, evolve it with coding agents, improve the thing
-          that improves it, or recurse until something interesting happens. Whatever path you take, the contest
-          evaluates the same result: the symbolic bot that comes out of the loop. The ultimate goal is an
+          that improves it, or recurse until something interesting happens. Whatever path you take, the evaluation
+          is the same: the symbolic bot that comes out of the loop. The ultimate goal is an
           <span class="ref" data-k="ascension"><b>ascension</b></span>; until then, the board measures how far each bot gets.</p>
 
         <div class="subh">The challenge</div>
@@ -541,7 +556,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           human winners of <span class="ref" data-k="satlution">SAT-solver competitions</span>, and turn up
           <span class="ref" data-k="alphaevolve">new, provably-correct algorithms</span>. The pattern is consistent:
           <b>a model that cannot reliably do the task itself can write a program that does.</b></p>
-        <p>NetHack is where that pattern has never held. The researchers behind the
+        <p>NetHack is where that pattern has not yet held. The researchers behind the
           <span class="ref" data-k="nle">NetHack Learning Environment</span> put it forward as
           <span class="ref" data-k="grandchallenge">a grand challenge for AI</span>, and it is still unsolved years
           later; NLE co-author <span class="ref" data-k="rockt">Tim Rockt&auml;schel marks the anniversary</span> each year with "AI still
@@ -626,6 +641,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
       </section>
 
       <hr class="rule">
+
 
       <!-- HACKERS -->
       <section id="hackers">
@@ -716,8 +732,8 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           validated win-rate, tokens per candidate, evals-to-first-win, cost per win. Conform to the
           <span class="ref" data-k="arenabot"><span class="mono">ArenaBot</span></span> contract and register a
           <span class="mono">repo@commit</span>. Our own hermetic coding-agent evolver is just the worked example.</p>
-        <div class="term"><span class="c"># your solution lives at a public repo@commit</span>
-<span class="p">$</span> nethackers submit ./my-solution --objective ...
+        <div class="term"><span class="c"># your program lives at a public repo@commit</span>
+<span class="p">$</span> nethackers submit ./my-program --objective ...
 <span class="c"># anyone can fetch and build on it, anywhere</span>
 <span class="p">$</span> nethackers pull github.com/you/nethacker@a1b2c3d</div>
         <p><a href="#">&raquo; Read the paper &amp; hub API</a></p>
@@ -804,13 +820,6 @@ __)/\_//(\/(/\)/\//\/\|_)__</pre>
 
 </div>
 
-<!-- ===================== POPUP ===================== -->
-<div class="modal" id="modal" aria-hidden="true">
-  <div class="win" role="dialog" aria-modal="true" aria-labelledby="mTitle">
-    <div class="win__title"><span id="mTitle">program.txt</span><span class="x" id="mX" role="button" aria-label="Close">x</span></div>
-    <div class="win__body" id="mBody"></div>
-  </div>
-</div>
 
 <div id="dictbar" role="group" aria-label="music volume">
   <button class="dplay bevel" aria-label="play or pause">&#9654;</button>
@@ -1259,22 +1268,36 @@ function renderRecognition(){
 }
 
 /* ===================== identity + hacker popups ===================== */
-function showModal(kind="hacker"){
-  const win=$("#modal .win"); win.classList.toggle("identitydetail",kind==="identity");
-  const mo=$("#modal"); mo.setAttribute("open",""); mo.setAttribute("aria-hidden","false");
+/* Stacked detail popups: each open pushes a fresh cascading window on top;
+   closing it (x / backdrop / Esc) reveals the one beneath. */
+let _detailZ=60;
+function pushDetail(title, wide){
+  const depth=document.querySelectorAll(".detailmodal").length;
+  const mo=document.createElement("div");
+  mo.className="modal detailmodal"; mo.style.zIndex=String(++_detailZ); mo.setAttribute("open","");
+  if(depth) mo.style.background="transparent";   // only the first popup dims the page; the rest cascade clean
+  mo.innerHTML=`<div class="win${wide?' identitydetail':''}" role="dialog" aria-modal="true" style="transform:translate(${depth*26}px,${depth*26}px)">`
+    +`<div class="win__title"><span>${esc(title)}</span><span class="x" role="button" tabindex="0" aria-label="Close">x</span></div>`
+    +`<div class="win__body"></div></div>`;
+  const pbody=mo.querySelector(".win__body"), x=mo.querySelector(".x");
+  const close=()=>{ mo.remove(); _detailZ=Math.max(60,_detailZ-1); };
+  x.addEventListener("click",close);
+  x.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); close(); } });
+  mo.addEventListener("click",e=>{ if(e.target===mo) close(); });
+  document.body.appendChild(mo);
+  return pbody;
 }
+document.addEventListener("keydown",e=>{ if(e.key==="Escape"){ const a=document.querySelectorAll(".detailmodal"); if(a.length) a[a.length-1].querySelector(".x").click(); } });
 function identityDelta(v,aa){
   if(v==null||aa==null) return {text:"—",cls:"dz"};
   const d=v-aa; return {text:(d>0?"+":"")+d.toFixed(3),cls:d>0.0005?"dpos":(d<-0.0005?"dneg":"dz")};
 }
 async function openIdentity(identity){
-  const request=++popupRequest, aa=BASELINE&&BASELINE.per_identity&&BASELINE.per_identity[identity];
-  $("#mTitle").textContent=`${identity} - identity leaderboard`;
-  $("#mBody").innerHTML=`<div class="popupstatus">Loading same-seed results&hellip;</div>`;
-  showModal("identity");
+  const aa=BASELINE&&BASELINE.per_identity&&BASELINE.per_identity[identity];
+  const pbody=pushDetail(`Frontier: ${identity}`, true);
+  pbody.innerHTML=`<div class="popupstatus">Loading same-seed results&hellip;</div>`;
   try{
     const resp=curTier==="verified"?{rows:[]}:await jget(`/board?scope=${encodeURIComponent(identity)}&tier=${encodeURIComponent(curTier)}`);
-    if(request!==popupRequest) return;
     const rows=resp.rows||[];
     const baseline=aa&&aa.progression!=null?aa.progression:null;
     const body=rows.length?rows.map(r=>{
@@ -1288,10 +1311,9 @@ async function openIdentity(identity){
         <td class="num ${r.ascensions?'star':''}">${r.ascensions||'·'}</td><td>${esc(fmtDate(meta.registered_at))}</td></tr>`;
     }).join(""):`<tr><td colspan="10" class="pend">${curTier==="verified"?EMPTY_VERIFIED:'No program has evaluated this identity yet.'}</td></tr>`;
     const aaRow=baseline!=null?`<tr class="base"><td class="num">&middot;</td><td>autoascend</td><td>reference floor</td><td class="num">${baseline.toFixed(3)}</td><td class="num">&mdash;</td><td class="num">${aa.episodes||'—'}</td><td>${esc(aa.deepest||'—')}</td><td class="num dz">&mdash;</td><td class="num">&middot;</td><td>&mdash;</td></tr>`:"";
-    $("#mBody").innerHTML=`<div class="identitysummary"><b>${esc(identity)}</b> &middot; every program below ran the same canonical seed batch &middot; tier <b>${esc(curTier)}${curTier==="self-reported"?'*':''}</b></div>
-      <div class="tablewrap"><table class="identityboard"><thead><tr><th class="num">#</th><th>hacker</th><th>solution</th><th class="num">mean</th><th class="num">median</th><th class="num">ep</th><th>deepest</th><th class="num">&Delta; AA</th><th class="num">&#9733;</th><th>registered</th></tr></thead><tbody>${body}${aaRow}</tbody></table></div>`;
-    $("#mBody").querySelectorAll(".ownerlink").forEach(x=>x.addEventListener("click",()=>openHacker(x.dataset.owner)));
-  }catch(e){ if(request===popupRequest) $("#mBody").innerHTML=`<div class="popupstatus">Could not load this identity leaderboard.</div>`; }
+    pbody.innerHTML=`<div class="tablewrap"><table class="identityboard"><caption>same canonical seed batch &middot; ${curTier.toUpperCase()}${curTier==="self-reported"?'*':''}</caption><thead><tr><th class="num">#</th><th>hacker</th><th>program</th><th class="num">mean</th><th class="num">median</th><th class="num">ep</th><th>deepest</th><th class="num">&Delta; AA</th><th class="num">&#9733;</th><th>registered</th></tr></thead><tbody>${body}${aaRow}</tbody></table></div>`;
+    pbody.querySelectorAll(".ownerlink").forEach(x=>x.addEventListener("click",()=>openHacker(x.dataset.owner)));
+  }catch(e){ pbody.innerHTML=`<div class="popupstatus">Could not load this identity leaderboard.</div>`; }
 }
 function fmtDate(iso){
   const d=iso?new Date(iso):null;
@@ -1314,36 +1336,49 @@ function roleKeys(frontier){
   return [...new Set(frontier.map(x=>String(x.identity||"").split("-")[0]).filter(r=>ROLE_NAMES[r]))]
     .sort((a,b)=>ROLE_NAMES[a].localeCompare(ROLE_NAMES[b]));
 }
-function solutionCard(s){
+// A churning dungeon of NetHack glyphs -- the avatar's loading state. Fills the
+// square, re-rolls ~9x/s, breathes via CSS, then wipes out diagonally as the
+// real avatar wipes in (on load) -- or resolves to "@" (no avatar). NOT music-tied.
+const NHGLYPHS='@dfx&;:eFD)[(!?/="*$%.#|-<>^{}'.split("");
+function ghAvatar(owner){
+  const box=document.createElement("span"); box.className="ghavatar loading";
+  const pre=document.createElement("pre"); pre.className="dungeon"; box.appendChild(pre);
+  const COLS=10, ROWS=9, still=matchMedia("(prefers-reduced-motion:reduce)").matches;
+  const churn=()=>{ const rows=[]; for(let y=0;y<ROWS;y++){ let r=""; for(let x=0;x<COLS;x++) r+=NHGLYPHS[(Math.random()*NHGLYPHS.length)|0]; rows.push(r); } pre.textContent=rows.join(String.fromCharCode(10)); };
+  churn();
+  const timer=still?0:setInterval(()=>{ if(!box.isConnected){ clearInterval(timer); return; } churn(); },110);
+  const img=new Image(); img.alt="";
+  // leave the (now-clipped, behind-image) glyph layer in the DOM: removing it forces a
+  // relayout that repaints the image's compositing layer -> the occasional post-reveal blink.
+  const finish=cls=>{ if(timer) clearInterval(timer); box.classList.remove("loading"); box.classList.add(cls); };
+  img.onload=()=>{ box.appendChild(img); requestAnimationFrame(()=>finish("loaded")); };
+  img.onerror=()=>finish("noavatar");
+  img.src="https://github.com/"+encodeURIComponent(owner)+".png?size=120";
+  return box;
+}
+function programRow(s){
   const loaded=Array.isArray(s.frontier), fr=loaded?s.frontier:[], roles=roleKeys(fr);
   const episodes=fr.reduce((sum,x)=>sum+(x.episodes||0),0);
   const best=fr.reduce((winner,x)=>!winner||x.progression>winner.progression?x:winner,null);
   const records=Object.entries(HONOR_UNIVERSE).filter(([,x])=>x.d===s.id).map(([id])=>id);
-  const chips=!loaded?"unavailable":(roles.length?roles.map(r=>`<span class="rolechip">${esc(ROLE_NAMES[r])}</span>`).join(""):"&mdash;");
-  return `<div class="solutioncard">
-    <div class="solutioncard__head"><span>${sourceLink(s)}</span><span class="solutioncard__date">${esc(fmtDate(s.registered_at))}</span></div>
-    <div class="solutioncard__meta">
-      <span class="k">roles</span><span class="rolechips">${chips}</span>
-      <span class="k">evaluated identities</span><span>${loaded?`${fr.length} of 73`:'unavailable'}</span>
-      <span class="k">evaluation episodes</span><span>${loaded?episodes:'unavailable'}</span>
-      <span class="k">current records</span><span>${records.length?`${records.length} identit${records.length===1?'y':'ies'}`:'&mdash;'}</span>
-      <span class="k">best identity</span><span>${best?`${esc(best.identity)} &middot; mean ${best.progression.toFixed(3)}`:(loaded?'&mdash;':'unavailable')}</span>
-      <span class="k">tier</span><span>self-reported*</span>
-    </div></div>`;
+  return `<tr>
+    <td>${sourceLink(s)}</td>
+    <td>${loaded?(roles.length?roles.map(r=>esc(ROLE_NAMES[r]||r)).join(", "):"&mdash;"):"unavailable"}</td>
+    <td class="num">${loaded?`${fr.length}/73`:"&mdash;"}</td>
+    <td class="num">${loaded?episodes:"&mdash;"}</td>
+    <td class="num">${records.length||"&middot;"}</td>
+    <td>${best?`${esc(best.identity)} &middot; ${best.progression.toFixed(3)}`:"&mdash;"}</td>
+    <td>${esc(fmtDate(s.registered_at))}</td></tr>`;
 }
-let popupRequest=0;
 async function openBreakthrough(event){
-  const request=++popupRequest;
-  $("#mTitle").textContent=`${event.identity} - breakthrough submission`;
-  $("#mBody").innerHTML=`<div class="popupstatus">Loading the exact registered submission&hellip;</div>`;
-  showModal();
+  const pbody=pushDetail(`${event.identity} - breakthrough submission`);
+  pbody.innerHTML=`<div class="popupstatus">Loading the exact registered submission&hellip;</div>`;
   try{
     const cached=PROGRAM_BY_ID[event.program_id];
     const solution=cached||await jget("/programs/"+encodeURIComponent(event.program_id));
     const frontier=(await jget("/programs/"+encodeURIComponent(event.program_id)+"/identities")).rows||[];
-    if(request!==popupRequest) return;
     const roles=roleKeys(frontier), episodes=frontier.reduce((sum,x)=>sum+(x.episodes||0),0);
-    $("#mBody").innerHTML=`<div class="kv">
+    pbody.innerHTML=`<div class="kv">
       <span class="k">hacker</span><span class="v">@${esc(event.owner)}</span>
       <span class="k">source</span><span class="v">${sourceLink(solution)}</span>
       <span class="k">registered</span><span class="v">${esc(fmtDate(solution.registered_at||event.at))}</span>
@@ -1358,44 +1393,39 @@ async function openBreakthrough(event){
     </div>
     <div class="clickhint">This submission moved ${esc(event.identity)} from ${(event.previous*100).toFixed(1)}% to ${(event.score*100).toFixed(1)}%, measured against the community frontier that existed when it was registered.</div>`;
   }catch(e){
-    if(request===popupRequest) $("#mBody").innerHTML=`<div class="popupstatus">Could not load this breakthrough submission.</div>`;
+    pbody.innerHTML=`<div class="popupstatus">Could not load this breakthrough submission.</div>`;
   }
 }
 async function openHacker(owner){
-  const request=++popupRequest;
-  $("#mTitle").textContent=`@${owner} - contributions`;
-  $("#mBody").innerHTML=`<div class="popupstatus">Loading registered solutions and per-identity results&hellip;</div>`;
-  showModal();
+  const pbody=pushDetail(`@${owner}`, true);
+  pbody.innerHTML=`<div class="popupstatus">Loading registered programs and per-identity results&hellip;</div>`;
   try{
     const solutions=(await jget(`/programs?owner=${encodeURIComponent(owner)}&limit=50`)).rows||[];
     await Promise.all(solutions.map(async s=>{
       try{ s.frontier=(await jget("/programs/"+encodeURIComponent(s.id)+"/identities")).rows||[]; }
       catch(e){ s.frontier=null; }
     }));
-    if(request!==popupRequest) return;
     const loaded=solutions.filter(s=>Array.isArray(s.frontier));
-    const allIds=new Set(loaded.flatMap(s=>s.frontier.map(x=>x.identity)));
-    const allRoles=roleKeys(loaded.flatMap(s=>s.frontier));
-    const records=Object.entries(HONOR_UNIVERSE).filter(([,x])=>x.o===owner).map(([id])=>id);
+    // "Loves to roleplay": the roles this hacker's programs play most, top 3 with counts.
+    const roleCount={};
+    loaded.forEach(s=>roleKeys(s.frontier).forEach(r=>{ roleCount[r]=(roleCount[r]||0)+1; }));
+    const loves=Object.entries(roleCount).sort((a,b)=>b[1]-a[1]||(ROLE_NAMES[a[0]]||a[0]).localeCompare(ROLE_NAMES[b[0]]||b[0])).slice(0,3);
     const newest=solutions.length?fmtDate(solutions[0].registered_at):"&mdash;";
-    $("#mBody").innerHTML=`<div class="kv">
-      <span class="k">current identity records</span><span class="v">${records.length}${records.length?` &middot; ${records.map(esc).join(', ')}`:''}</span>
-      <span class="k">registered solutions</span><span class="v">${solutions.length}</span>
-      <span class="k">roles evaluated</span><span class="v">${loaded.length?(allRoles.length?allRoles.map(r=>esc(ROLE_NAMES[r])).join(", "):'&mdash;'):'unavailable'}</span>
-      <span class="k">identities evaluated</span><span class="v">${loaded.length?`${allIds.size} of 73`:'unavailable'}</span>
-      <span class="k">latest registration</span><span class="v">${esc(newest)}</span>
-    </div>
-    <div class="clickhint">Episodes are individual seeded evaluations, summed across identities. Best identity is this solution's highest mean progression. Source links open the exact registered commit.</div>
-    <div class="minihead">solutions -- newest first:</div>
-    <div class="solutionlist">${solutions.length?solutions.map(solutionCard).join(""):'No registered solutions found.'}</div>`;
+    pbody.innerHTML=`<div class="hackerhead">
+      <span class="ghavatar-slot"></span>
+      <div class="kv">
+        <span class="k">loves to roleplay</span><span class="v">${loves.length?loves.map(([r,n])=>`${esc(ROLE_NAMES[r]||r)} (${n})`).join(", "):"&mdash;"}</span>
+        <span class="k">registered programs</span><span class="v">${solutions.length}</span>
+        <span class="k">latest registration</span><span class="v">${esc(newest)}</span>
+      </div></div>
+    <div class="minihead">programs -- newest first:</div>
+    ${solutions.length?`<div class="tablewrap"><table class="identityboard"><caption>REGISTERED PROGRAMS &middot; SELF-REPORTED*</caption><thead><tr><th>program</th><th>roles</th><th class="num">identities</th><th class="num">episodes</th><th class="num">records</th><th>best identity</th><th>registered</th></tr></thead><tbody>${solutions.map(programRow).join("")}</tbody></table></div>`:'<div class="popupstatus">No registered programs found.</div>'}`;
+    pbody.querySelector(".ghavatar-slot").replaceWith(ghAvatar(owner));
   }catch(e){
-    if(request===popupRequest) $("#mBody").innerHTML=`<div class="popupstatus">Could not load this hacker's solution details.</div>`;
+    pbody.innerHTML=`<div class="popupstatus">Could not load this hacker's program details.</div>`;
   }
 }
-$("#mX").addEventListener("click",closeModal);
-$("#modal").addEventListener("click",e=>{ if(e.target.id==="modal") closeModal(); });
-document.addEventListener("keydown",e=>{ if(e.key==="Escape") closeModal(); });
-function closeModal(){ popupRequest++; const mo=$("#modal"); mo.removeAttribute("open"); mo.setAttribute("aria-hidden","true"); }
+
 
 /* ===================== live data: fetch + adapt hub JSON into the render state ===================== */
 const jget = async p => { const r = await fetch(p); if(!r.ok) throw new Error(p+" "+r.status); return r.json(); };
@@ -1556,7 +1586,7 @@ boot();
   addEventListener("resize",resize); resize(); readTheme();
 
   function buildPer(){
-    const r=page.getBoundingClientRect(), gap=Math.round(ch*0.55);
+    const r=page.getBoundingClientRect(), gap=0;   // wall sits directly on the page edge (no frame moat)
     const L=r.left-gap, T=r.top-gap, R=r.right+gap, B=r.bottom+gap, per=[];
     const nx=Math.max(2,Math.round((R-L)/cw)), ny=Math.max(2,Math.round((B-T)/ch));
     for(let i=0;i<nx;i++){ const x=L+(i/(nx-1))*(R-L); per.push([x,T,0,-1, i===0?"┌":(i===nx-1?"┐":"─")]); }

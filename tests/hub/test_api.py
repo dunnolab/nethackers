@@ -141,10 +141,9 @@ def test_site_uses_identity_boards_and_concrete_contributor_recognition(tmp_path
     assert 'data-breakthrough="${i}"' in body
     for detail in (
         "same canonical seed batch",
-        "registered solutions",
+        "registered programs",
         "roles evaluated",
         "latest registration",
-        "entrypoint",
         "best identity",
     ):
         assert detail in body
