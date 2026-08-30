@@ -1,0 +1,89 @@
+name: Install smoke
+
+# Regression test for the shipped `[tool.uv] cache-keys` fix
+# (pyproject.toml:96-97, commit f37fc17) and the gap the onboarding testing
+# strategy flagged (docs/superpowers/specs/2026-08-29-onboarding-testing-
+# strategy.md, section 4): nothing installed the built wheel and checked it
+# actually runs.
+#
+# The load-bearing assertion: build the wheel once, install the ARTIFACT
+# (never the source tree, never `uv run`/editable) into an isolated `uv
+# tool` environment, then run `nethackers --version` from an EMPTY
+# directory and string-compare it to the version `uv build` actually cut.
+# This is the exact check that catches a stale-0.0.0 wheel, a shadowing
+# binary already on PATH, a refused upgrade, or an empty wheel -- none of
+# which a source-tree `uv run` test would ever see.
+#
+# Two matrix legs:
+#   - exact-artifact:  installs `./dist/nethackers-*.whl` (the literal
+#     wheel this run built) under uv's default "highest" resolution. This
+#     is the primary, load-bearing check described above.
+#   - declared-floors: proves the version floors declared in
+#     `[project.dependencies]` (pyproject.toml) actually resolve and run,
+#     via `--resolution lowest-direct`. This leg installs from `.` (the
+#     checked-out project directory) rather than the dist wheel -- verified
+#     by hand while writing this workflow: `uv tool install --resolution
+#     lowest-direct ./dist/*.whl` is a silent no-op, because uv only
+#     treats requirements named directly on the command line as "direct"
+#     for resolution purposes. When the wheel *file* is the thing named,
+#     nethackers' own httpx/rich/textual/rich-argparse floors are
+#     transitive to it and still resolve to "highest" regardless of the
+#     flag -- a green check that would prove nothing. Installing from `.`
+#     makes the project's own declared dependencies the direct
+#     requirements, so `lowest-direct` actually pins them to their floors.
+#     `.` is still a real (non-editable) wheel build + install, not a live
+#     source import -- it just isn't the specific `dist/` artifact from
+#     this run, which is fine: this leg's job is "do the floors work", not
+#     "is this exact wheel fresh" (the other leg already covers that).
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  install-smoke:
+    name: install smoke (${{ matrix.leg }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - leg: exact-artifact
+            resolution: highest
+            target: "./dist/nethackers-*.whl"
+          - leg: declared-floors
+            resolution: lowest-direct
+            target: "."
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39  # v3
+
+      - name: Build the wheel and capture its version
+        run: |
+          uv build
+          echo "BUILT_VERSION=$(uv version --short)" >> "$GITHUB_ENV"
+
+      - name: Install into an isolated tool env
+        env:
+          RESOLUTION: ${{ matrix.resolution }}
+          TARGET: ${{ matrix.target }}
+        # $TARGET is deliberately unquoted: the exact-artifact leg's target
+        # is a glob (./dist/nethackers-*.whl) that the shell must expand.
+        run: uv tool install --resolution "$RESOLUTION" $TARGET
+
+      - name: Assert a fresh install, run from an empty dir, reports the built version
+        run: |
+          OUT=$(cd "$(mktemp -d)" && nethackers --version | head -1)
+          echo "installed reports : $OUT"
+          echo "built version     : $BUILT_VERSION"
+          if [[ "$OUT" != *"$BUILT_VERSION"* ]]; then
+            echo "::error::fresh install of nethackers reports '$OUT', which does not contain the built version '$BUILT_VERSION' -- stale wheel, a shadowing binary on PATH, a refused upgrade, or an empty wheel"
+            exit 1
+          fi
+          echo "ok -- fresh install reports the built version"
