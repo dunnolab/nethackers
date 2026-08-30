@@ -7,8 +7,8 @@ seeding (``compose.yaml``). See task-14-context.md, which governs.
 thing in this module with a side effect -- importing it mutates nothing.
 It upserts 2 catalog objectives (one per identity -- Task A3 dropped the
 now-retired ``"random"`` objective's upsert; atoms don't reference the
-catalog at all any more), 3 solutions (distinct digests/owners, one lineage
-edge), and 9 atoms across them, then runs the same view-population call
+catalog at all any more), 4 solutions (distinct digests/owners, one lineage
+edge), and 11 atoms across them, then runs the same view-population call
 ``validate.register`` runs for a real registration (``update_attainment``)
 so the store comes out fully populated -- atoms plus every derived view --
 exactly as if these had all been registered for real. (``/elites`` is a
@@ -56,17 +56,23 @@ from nethackers.hub.views.attainment import update_attainment
 # identities", minus the "random" headline objective Task A1 retired.
 IDENTITY_A = "val-dwa-law-fem"
 IDENTITY_B = "wiz-elf-cha-mal"
+IDENTITY_C = "mon-hum-neu-mal"
 
-# Three solutions, distinct digests/owners/commits.
+# Four solutions, distinct digests/owners/commits. Owners are real GitHub handles so
+# the demo shows real avatars (the site ASCII-renders github.com/<owner>.png).
 ALPHA = "sha256:fixture-alpha"
 BETA = "sha256:fixture-beta"
 GAMMA = "sha256:fixture-gamma"
+DELTA = "sha256:fixture-delta"
 
-_OWNER_BY_DIGEST: dict[str, str] = {ALPHA: "alice", BETA: "bob", GAMMA: "carol"}
+_OWNER_BY_DIGEST: dict[str, str] = {
+    ALPHA: "howuhh", BETA: "vkurenkov", GAMMA: "vlomshakov", DELTA: "cinemere",
+}
 _COMMIT_BY_DIGEST: dict[str, str] = {
     ALPHA: "a1" * 20,  # 40 well-formed (if fake) hex chars, distinct per solution
     BETA: "b2" * 20,
     GAMMA: "c3" * 20,
+    DELTA: "d4" * 20,
 }
 _EVALUATOR_IMAGE = "nethackers/arena@sha256:" + "f" * 64
 
@@ -79,7 +85,7 @@ def load_fixtures(store: Store, *, now: str = "2026-01-01T00:00:00Z") -> None:
     side effect on ``store`` -- importing this module does nothing.
     ``/elites`` is a live query over ``atoms``, so there is nothing left to
     populate for it here."""
-    for digest in (ALPHA, BETA, GAMMA):
+    for digest in (ALPHA, BETA, GAMMA, DELTA):
         owner = _OWNER_BY_DIGEST[digest]
         store.upsert_solution(
             digest,
@@ -122,6 +128,11 @@ def load_fixtures(store: Store, *, now: str = "2026-01-01T00:00:00Z") -> None:
         # edge case above: an ascension -- lights IDENTITY_B's entire ladder
         _atom(BETA, identity=IDENTITY_B, seed=2, milestone="Dlvl:3",
               ascended=False, turns=200, steps=300),
+        # --- IDENTITY_C: cinemere's DELTA, a Monk run on its own identity. ---
+        _atom(DELTA, identity=IDENTITY_C, seed=0, milestone="Dlvl:6",
+              ascended=False, turns=340, steps=480),
+        _atom(DELTA, identity=IDENTITY_C, seed=1, milestone="Dlvl:3",
+              ascended=False, turns=180, steps=260),
     ]
     store.insert_atoms(atoms)
     update_attainment(store, atoms, now=now)
