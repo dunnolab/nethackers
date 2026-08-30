@@ -42,9 +42,11 @@ from nethackers.hub.selector import resolve
 from nethackers.hubclient.credentials import Credentials
 from nethackers.hubclient.publish import gh_state
 from nethackers.tui.identity_grid import IdentityGrid
+from nethackers.tui.status import _bar
 
 if TYPE_CHECKING:
     from nethackers.diagnostics import CheckResult
+    from nethackers.harness.pull_events import PullEvent
     from nethackers.tui.app import NetHackersApp
 
 
@@ -155,9 +157,15 @@ class EvolveForm(Vertical):
     EvolveForm #f_startbar { height: auto; margin-top: 1; }
     EvolveForm #f_start { width: auto; min-width: 18; }
     EvolveForm #f_err { width: 1fr; height: auto; color: #c04040; padding: 0 2; }
-    /* persists through the run (unlike #f_err, which _provision_then_launch
-       overwrites with progress text) -- own full-width row, no fixed color:
-       its three states (dim/yellow/none) come entirely from inline markup. */
+    /* pull-progress surface (Task 5, spec 5.5/5.8): phase-driven text from the
+       provisioning worker, updated via call_from_thread since the worker is
+       off the UI thread -- image + short digest + "one-time pull" + a layers
+       m/n meter. #f_err is reserved for genuine errors only now; this carries
+       progress instead. Own full-width row, no fixed color -- dim/green come
+       entirely from inline markup. */
+    EvolveForm #f_pull { height: auto; padding: 0 2; margin-top: 1; }
+    /* persists through the run -- own full-width row, no fixed color: its
+       three states (dim/yellow/none) come entirely from inline markup. */
     EvolveForm #f_publish_warn { height: auto; padding: 0 2; margin-top: 1; }
     EvolveForm #f_model_custom { display: none; }  /* shown only for Custom… */
     """
@@ -207,9 +215,12 @@ class EvolveForm(Vertical):
         with Horizontal(id="f_startbar"):
             yield Button("Start", id="f_start", variant="success")
             yield Static("", id="f_err")
-        # separate from #f_err (own row, own id) so a publish warning survives
-        # provisioning overwriting #f_err with progress text -- see
-        # _publish_warning.
+        # provisioning's typed pull-progress surface (Task 5) -- own row, own
+        # id, separate from #f_err (genuine errors only) so a mid-pull layer
+        # count is never mistaken for a failure -- see _apply_pull.
+        yield Static("", id="f_pull")
+        # separate from #f_err/#f_pull (own row, own id) so a publish warning
+        # survives past Start -- see _publish_warning.
         yield Static("", id="f_publish_warn")
 
     def on_mount(self) -> None:
@@ -460,17 +471,18 @@ class EvolveForm(Vertical):
         # and the run -- a win is kept as a local elite either way.
         self.query_one("#f_publish_warn", Static).update(_publish_warning(params.owner))
         # Both sandbox images are auto-provisioned: if either isn't built/
-        # pulled yet, acquire it (off the UI thread, streaming progress into
-        # #f_err) and launch once ready -- the user never runs `make`/`docker
-        # pull`. The arena image needs this exactly as much as the mutator:
-        # run_loop scores every iteration through it (harness/evaluate.py), so
-        # provisioning it only here -- not mid-loop -- keeps a missing/stale
-        # arena image a fail-fast Start-time error instead of a confusing
-        # mid-run stall. Already present -> launch straight.
+        # pulled yet, acquire it (off the UI thread, streaming typed progress
+        # into #f_pull -- see _apply_pull) and launch once ready -- the user
+        # never runs `make`/`docker pull`. The arena image needs this exactly
+        # as much as the mutator: run_loop scores every iteration through it
+        # (harness/evaluate.py), so provisioning it only here -- not mid-loop
+        # -- keeps a missing/stale arena image a fail-fast Start-time error
+        # instead of a confusing mid-run stall. Already present -> launch
+        # straight.
         if image_present(params.mutator_image) and image_present(params.image):
             self._launch(params)
         else:
-            self.query_one("#f_err", Static).update(
+            self.query_one("#f_pull", Static).update(
                 "[yellow]setting up the sandbox[/] (first run — a few minutes)…")
             self._provision_then_launch(params)
 
@@ -480,14 +492,56 @@ class EvolveForm(Vertical):
 
     @work(exclusive=True, thread=True)
     def _provision_then_launch(self, params: EvolveParams) -> None:
-        def _line(ln: str) -> None:
-            self.app.call_from_thread(
-                lambda: self.query_one("#f_err", Static).update(
-                    f"[yellow]setting up the sandbox…[/] [dim]{ln}[/]"))
+        """Acquire whichever sandbox image(s) Start found missing, then
+        launch. Runs off the UI thread (``@work(thread=True)``) -- every
+        widget touch below is marshaled back onto it via ``call_from_thread``.
+        ``ensure_image``'s ``on_event`` callback fires from THIS worker
+        thread (it's called synchronously inside ``ensure_image``, which we
+        called), never the UI thread, so it must never touch ``#f_pull``
+        directly -- only ever through ``_apply_pull`` via ``call_from_thread``
+        (spec S5.5/5.8's typed pull-progress seam, replacing the old raw
+        ``on_line`` text dump into ``#f_err``)."""
         for ref, kind in ((params.mutator_image, "mutator"), (params.image, "arena")):
-            err = ensure_image(ref, kind, on_line=_line)
+            err = ensure_image(
+                ref, kind, on_event=lambda e: self.app.call_from_thread(self._apply_pull, e))
             if err is not None:
                 self.app.call_from_thread(
                     lambda e=err: self.query_one("#f_err", Static).update(e))
                 return
         self.app.call_from_thread(self._launch, params)
+
+    def _apply_pull(self, event: PullEvent) -> None:
+        """Phase-driven ``#f_pull`` update from one ``PullEvent`` -- always
+        invoked on the UI thread via ``call_from_thread`` (see
+        ``_provision_then_launch``), never called directly from the worker.
+
+        Consent framing (spec 5.8/5.5): the Start click IS the consent to
+        pull, so ``"start"`` discloses exactly what's being acquired --
+        image + short digest + "one-time pull". NO size/GB anywhere (deferred
+        by ruling, not merely unimplemented -- never add one here).
+        ``"layer"`` shows a layers m/n meter; guarded for the ``make``-build
+        path, which has no layer concept at all (``layers_total`` is always
+        ``None`` there), so those events just leave "start"'s text standing.
+        ``"done"`` is a ✓ line for that kind. ``"error"`` goes to ``#f_err``
+        -- the genuine-error surface -- instead of here: ``#f_pull`` is
+        progress-only, and ``_provision_then_launch`` writes the real,
+        one-command-fix error text (``ensure_image``'s return value) into
+        ``#f_err`` right after this fires, superseding whatever's written
+        below."""
+        from nethackers import diagnostics
+        short_ref = diagnostics._short_digest(event.ref)
+        if event.phase == "start":
+            self.query_one("#f_pull", Static).update(
+                f"[dim]pulling {event.kind}  {short_ref}  — one-time pull[/]")
+        elif event.phase == "layer":
+            if event.layers_total is None or event.layers_complete is None:
+                return  # the make-build path has no layers -- "start"'s text stands
+            frac = event.layers_complete / event.layers_total
+            self.query_one("#f_pull", Static).update(
+                f"[dim]pulling {event.kind}  {_bar(frac)}  "
+                f"{event.layers_complete}/{event.layers_total} layers[/]")
+        elif event.phase == "done":
+            self.query_one("#f_pull", Static).update(
+                f"[green]✓ {event.kind} sandbox ready[/]  {short_ref}")
+        elif event.phase == "error":
+            self.query_one("#f_err", Static).update(f"[red]{event.detail or 'pull failed'}[/]")

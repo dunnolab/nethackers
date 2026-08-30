@@ -17,6 +17,7 @@ from textual.widgets import Button, Input, Select, Static
 import nethackers.tui.screens.evolve_form as ef
 from nethackers import diagnostics
 from nethackers.harness.discovery import CliInfo, ModelInfo
+from nethackers.harness.pull_events import PullEvent
 from nethackers.hubclient.credentials import Credentials
 from nethackers.tui.app import NetHackersApp
 from nethackers.tui.identity_grid import IdentityGrid
@@ -296,9 +297,10 @@ async def test_effort_options_follow_selected_model(monkeypatch):
 
 async def test_missing_image_builds_then_launches(monkeypatch):
     """When a sandbox image isn't built/pulled, Start acquires it (off the UI
-    thread, streaming progress into #f_err) and launches once ready -- the
-    user never runs `make`/`docker pull`. Both images (mutator + arena) go
-    through this."""
+    thread, streaming typed progress into #f_pull -- see
+    test_provisioning_renders_typed_pull_progress_not_raw_text for that
+    surface's own coverage) and launches once ready -- the user never runs
+    `make`/`docker pull`. Both images (mutator + arena) go through this."""
     seen: dict = {}
 
     def _fake_prepare(p, **k):
@@ -309,10 +311,11 @@ async def test_missing_image_builds_then_launches(monkeypatch):
     monkeypatch.setattr(ef, "image_present", lambda *a, **k: False)   # not built -> build path
     provisioned: list[tuple[str, str]] = []
 
-    def _ensure(ref, kind, on_line=None, **k):
+    def _ensure(ref, kind, on_event=None, **k):
         provisioned.append((ref, kind))
-        if on_line:
-            on_line("compiling nle…")     # exercises the streamed-progress path
+        if on_event:
+            on_event(PullEvent(kind=kind, ref=ref, phase="done",
+                               layers_total=None, layers_complete=None, detail=""))
         return None                        # success
 
     monkeypatch.setattr(ef, "ensure_image", _ensure)
@@ -327,6 +330,129 @@ async def test_missing_image_builds_then_launches(monkeypatch):
         assert kinds == {"mutator", "arena"}      # both images were auto-provisioned
         assert seen.get("prepared") is True       # prepare_evolve ran after provisioning
         assert isinstance(app.started, _Plan)     # and the plan reached start_run
+
+
+# ---------------------------------------------------------------------------
+# Typed pull-progress surface (Task 5, spec 5.5/5.8): #f_pull replaces the
+# raw `docker pull` text that used to be dumped into #f_err during
+# provisioning. Start is the consent to pull -- it discloses image + short
+# digest + "one-time pull" + a layers m/n meter. Size/GB is deferred by
+# ruling and must never appear. `ensure_image` is faked at `ef.ensure_image`
+# -- the exact name `_provision_then_launch` calls (a bare global lookup at
+# call time, not a bound default captured at def-time -- the "bound-default
+# trap" to watch for), so patching it here is the seam the form actually
+# dereferences; `provisioned`/`calls` below confirm the fake was really hit.
+# ---------------------------------------------------------------------------
+
+async def test_provisioning_renders_typed_pull_progress_not_raw_text(monkeypatch):
+    """Drive `_provision_then_launch` with `ensure_image` faked to emit a
+    scripted start -> layer -> layer -> done sequence for a realistic
+    long-digest ref, and check what `#f_pull` shows at each phase (captured
+    via a spy on the real `_apply_pull`, called -- like production -- only on
+    the UI thread via `call_from_thread`, so reading the widget from inside
+    the spy is safe)."""
+    monkeypatch.setattr(ef, "prepare_evolve", lambda *a, **k: _Plan())
+    monkeypatch.setattr(ef, "image_present", lambda *a, **k: False)
+
+    long_ref = "ghcr.io/dunnolab/nethackers-mutator@sha256:" + "a" * 64
+    scripted = [
+        PullEvent(kind="mutator", ref=long_ref, phase="start",
+                  layers_total=None, layers_complete=None, detail=""),
+        PullEvent(kind="mutator", ref=long_ref, phase="layer",
+                  layers_total=12, layers_complete=3, detail="Downloading"),
+        PullEvent(kind="mutator", ref=long_ref, phase="layer",
+                  layers_total=12, layers_complete=9, detail="Pull complete"),
+        PullEvent(kind="mutator", ref=long_ref, phase="done",
+                  layers_total=12, layers_complete=12, detail=""),
+    ]
+    calls: list[tuple[str, str, bool]] = []   # (ref, kind, on_line was passed)
+
+    def _ensure(ref, kind, on_line=None, on_event=None, **k):
+        calls.append((ref, kind, on_line is not None))
+        if kind == "mutator" and on_event is not None:
+            for ev in scripted:
+                on_event(ev)
+        return None   # both "images" acquired successfully
+
+    monkeypatch.setattr(ef, "ensure_image", _ensure)
+    app = _Host(None)
+    async with app.run_test(size=(100, 40)) as pilot:
+        form = app.query_one(ef.EvolveForm)
+        snapshots: list[str] = []
+        real_apply = form._apply_pull
+
+        def _spy(event):
+            real_apply(event)   # runs on the UI thread (via call_from_thread) --
+            snapshots.append(str(form.query_one("#f_pull", Static).render()))
+
+        form._apply_pull = _spy
+
+        form._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()   # the provision-then-launch worker
+        await pilot.pause()
+
+        # both images went through the real seam, and never asked for the
+        # raw on_line dump this surface replaces
+        assert {kind for _ref, kind, _ in calls} == {"mutator", "arena"}
+        assert all(not had_on_line for _ref, _kind, had_on_line in calls)
+        assert len(snapshots) == 4   # exactly mutator's scripted sequence (arena fired none)
+
+        start_text, _layer1_text, layer2_text, done_text = snapshots
+        short = diagnostics._short_digest(long_ref)
+
+        # "start": kind + shortened digest (no 64-hex run) + one-time-pull framing
+        assert "mutator" in start_text and short in start_text
+        assert "a" * 64 not in start_text          # the raw digest never leaks through
+        assert "one-time pull" in start_text
+
+        # "layer": an m/n layers indicator (from the second, 9/12, event)
+        assert "9/12" in layer2_text and "layers" in layer2_text
+
+        # "done": a checkmark for that kind
+        assert "✓" in done_text and "mutator" in done_text
+
+        # deferred by ruling: no size/GB string anywhere, at any phase
+        for text in snapshots:
+            assert "gb" not in text.lower()
+            assert "size" not in text.lower()
+
+        # #f_err stays untouched -- it's for genuine errors only now
+        assert str(app.query_one("#f_err", Static).render()).strip() == ""
+        assert isinstance(app.started, _Plan)      # provisioning still launches the run
+
+
+async def test_pull_error_phase_writes_to_f_err_not_f_pull(monkeypatch):
+    """A mid-pull `error`-phase `PullEvent` must surface in #f_err -- the
+    genuine-error surface -- not linger in #f_pull. The authoritative,
+    one-command-fix message is `ensure_image`'s own return value (mirroring
+    the CLI's error mapping), which `_provision_then_launch` writes into
+    #f_err right after -- so that's the final state this checks."""
+    monkeypatch.setattr(ef, "prepare_evolve", lambda *a, **k: _Plan())
+    monkeypatch.setattr(ef, "image_present", lambda *a, **k: False)
+
+    def _ensure(ref, kind, on_event=None, **k):
+        if kind == "mutator":
+            if on_event is not None:
+                on_event(PullEvent(kind="mutator", ref=ref, phase="start",
+                                   layers_total=None, layers_complete=None, detail=""))
+                on_event(PullEvent(kind="mutator", ref=ref, phase="error",
+                                   layers_total=2, layers_complete=1, detail="boom"))
+            return "[red]couldn't reach the registry[/] — only the first run needs the network"
+        return None
+
+    monkeypatch.setattr(ef, "ensure_image", _ensure)
+    app = _Host(None)
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        err_text = str(app.query_one("#f_err", Static).render())
+        assert "couldn't reach the registry" in err_text   # the mapped, authoritative message
+        assert app.started is None   # provisioning failed -- the run never launched
 
 
 async def test_operator_switch_uses_cache_second_time(monkeypatch):
