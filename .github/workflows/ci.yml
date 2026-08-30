@@ -27,6 +27,28 @@ jobs:
       - name: Lint (ruff)
         run: uv run ruff check .
 
+  docker-smoke:
+    name: docker compose smoke
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683  # v4.2.2
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39  # v3
+
+      # File-scoped, not `-m docker`: that marker also selects
+      # tests/test_mutator_image.py and tests/test_eval_parallel_smoke.py,
+      # which need the *built* arena/mutator sandbox images (not just a
+      # Docker daemon) and would fail on this bare runner. This job only
+      # runs test_compose_smoke.py, which self-manages its own compose
+      # lifecycle (project nethackers-smoke, port 8811, `down -v` in
+      # `finally`) via the hub's own Dockerfile/compose.yaml -- no
+      # `services:` block or pre-built images needed. A full sandbox-image
+      # CI job with a build step is a noted follow-up, out of scope here.
+      - name: Run docker compose smoke test
+        run: uv run pytest tests/test_compose_smoke.py -q
+
   image-pins-tripwire:
     name: image-pins staleness tripwire
     if: github.event_name == 'pull_request'
