@@ -44,6 +44,14 @@ goes to ``hubclient.output.err`` (a ``stderr``-bound ``rich`` ``Console``),
 never stdout, so stdout stays machine-clean (in particular, exactly the
 JSON payload and nothing else under ``-o json``) no matter what a
 subcommand does along the way.
+
+The top-level ``--version`` flag is handled in ``_run`` before any of the
+above -- before the stage announcement, subcommand dispatch, or the bare-
+TUI launch -- since it's a self-contained, offline diagnostic (reads the
+package version + ``harness.version.RUN_SCHEMA_VERSION`` + the two pinned
+sandbox image refs via ``nethackers.diagnostics.version_info``, never
+Docker or the hub). Its output is data, not human chrome, so it goes to
+stdout like every other data render and honors ``-o json`` the same way.
 """
 
 from __future__ import annotations
@@ -64,6 +72,7 @@ from rich_argparse import RichHelpFormatter
 
 from nethackers import clipboard, config
 from nethackers.config import Stage, load_stage
+from nethackers.diagnostics import version_info
 from nethackers.eval.runner import eval_batch
 from nethackers.harness.discovery import ModelInfo, list_models, preflight_model
 from nethackers.harness.launch import EvolveParams, _now, prepare_evolve
@@ -299,6 +308,13 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--version",
+        action="store_true",
+        help="Print the package version, run-schema version, and pinned "
+        "sandbox image digests, then exit (offline; honors -o json). Not "
+        "argparse's built-in version action -- that can't honor -o.",
+    )
+    parser.add_argument(
         "--hub",
         default=stage.hub_url,
         help="Hub API base URL (default: %(default)s; or $NETHACKERS_HUB).",
@@ -523,6 +539,18 @@ def _unknown_scope(name: str) -> str:
     )
 
 
+def _short_pin(ref: str) -> str:
+    """Format one pinned ``<repo>@sha256:<64-hex>`` image ref for
+    ``--version``'s human block (spec 5.7): the registry/repo path is long
+    and identical shape across both pins, and the full 64-hex digest is
+    illegible on a terminal line, so both are elided behind a leading/
+    trailing ellipsis, keeping only a 19-char digest prefix -- e.g.
+    ``…@sha256:0000000000000000000…``. ``-o json`` (``version_info()``)
+    always carries the untruncated ref -- this truncation is display-only."""
+    digest = ref.partition("@sha256:")[2]
+    return f"…@sha256:{digest[:19]}…"
+
+
 def _arena_preflight(image: str) -> str | None:
     """The arena-only gate ``eval``/``submit`` share: a working container
     runtime, then the (already-resolved) image itself, built/pulled if
@@ -544,6 +572,24 @@ def _run(argv: list[str] | None) -> int:
     stage = _stage_from_argv(argv)
     parser = _build_parser(stage)
     args = parser.parse_args(argv)
+
+    if args.version:
+        # Ahead of the stage announcement and every subcommand/TUI path --
+        # `--version` is a self-contained, offline diagnostic (spec 5.7/
+        # INV7: reports the pins this build was cut against, never touches
+        # Docker/network/hub) and must stay that way regardless of --hub or
+        # stage. `-o json` gets the untruncated refs on stdout; the human
+        # block shortens the two image digests for readability (see
+        # `_short_pin`) -- either way, nothing but this data hits stdout.
+        info = version_info()
+        if args.output == "json":
+            print(json.dumps(info))
+        else:
+            print(f"nethackers {info['nethackers']}")
+            print(f"run-schema {info['run_schema_version']}")
+            print(f"arena {_short_pin(info['images']['arena'])}")
+            print(f"mutator {_short_pin(info['images']['mutator'])}")
+        return 0
 
     if stage.name != "prod":
         # An ambient discovery visibility requirement: implicit .env.stack
