@@ -1,0 +1,74 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nethackers.dunnolab.ai/schemas/doctor.schema.json",
+  "title": "nethackers doctor -o json",
+  "description": "Complete bug-report shape for `nethackers doctor -o json` (design spec docs/superpowers/specs/2026-08-28-sandbox-image-distribution-design.md S5.6). checks[].id / checks[].severity / checks[].capabilities are a closed enum derived from nethackers.diagnostics.CHECK_SPECS -- any change to that table must be mirrored here, or tests/test_doctor_schema.py's drift gate fails.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["checks", "capabilities", "env"],
+  "properties": {
+    "checks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "status", "severity", "detail", "fix", "capabilities"],
+        "properties": {
+          "id": {
+            "type": "string",
+            "enum": [
+              "arena_image",
+              "container_runtime",
+              "gh",
+              "hub",
+              "hub_login",
+              "mutator_image",
+              "operator"
+            ]
+          },
+          "status": { "type": "string", "enum": ["ok", "warn", "fail"] },
+          "severity": { "type": "string", "enum": ["hard", "soft"] },
+          "detail": { "type": "string" },
+          "fix": { "type": ["string", "null"] },
+          "capabilities": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": ["eval", "evolve", "publish", "browse"]
+            }
+          }
+        }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "required": ["eval", "evolve", "publish", "browse"],
+      "properties": {
+        "eval": { "type": "boolean" },
+        "evolve": { "type": "boolean" },
+        "publish": { "type": "boolean" },
+        "browse": { "type": "boolean" }
+      }
+    },
+    "env": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["nethackers", "run_schema_version", "images", "os", "arch", "python"],
+      "properties": {
+        "nethackers": { "type": "string" },
+        "run_schema_version": { "type": "string" },
+        "images": {
+          "type": "object",
+          "required": ["arena", "mutator"],
+          "properties": {
+            "arena": { "type": "string" },
+            "mutator": { "type": "string" }
+          }
+        },
+        "os": { "type": "string" },
+        "arch": { "type": "string" },
+        "python": { "type": "string" }
+      }
+    }
+  }
+}

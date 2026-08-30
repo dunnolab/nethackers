@@ -347,59 +347,114 @@ def test_to_json_shape():
     assert {"nethackers", "run_schema_version", "images", "os", "arch", "python"} <= set(env)
 
 
-# --- exit_code / capability_ready: the pure fold, table-tested directly ----
+# --- exit_code / capability_ready: the pure fold, EXHAUSTIVELY table-tested -
 #
 # Independent of run_checks -- hand-built CheckResult lists, exercising the
 # hard-vs-soft contract directly: a HARD check gates every capability it's
 # tagged with, full stop. A capability with NO hard checks of its own
-# (publish, in the real 7-check table) falls back to its own soft checks,
-# where only "fail" gates it -- "warn" never gates ANY capability, hard- or
-# soft-only alike (INV6: "soft warnings never flip it").
+# (publish/browse, in the real 7-check table) falls back to its own soft
+# checks, where only "fail" gates it -- "warn" never gates ANY capability,
+# hard- or soft-only alike (INV6: "soft warnings never flip it").
+#
+# Every check starts "ok" (via `_ok_results`, built FROM `CHECK_SPECS` --
+# never a hand-copied second literal of the same id -> (severity,
+# capabilities) table, so a future CHECK_SPECS change is automatically
+# reflected here instead of leaving a stale duplicate). Each named scenario
+# below flips only the checks it names via `_flip`; every other check stays
+# "ok", isolating exactly the behavior the scenario is meant to demonstrate.
+# The capability axis is the full `{None, eval, evolve, publish, browse}` --
+# every one of `CAPABILITIES` plus the bare-doctor sentinel.
 
 
-def _cr(id_, status, severity, caps):
-    return CheckResult(id=id_, status=status, severity=severity, detail="d", fix=None,
-                       capabilities=caps)
+def _ok_results() -> list[CheckResult]:
+    return [
+        CheckResult(id=id_, status="ok", severity=severity, detail="d", fix=None,
+                    capabilities=caps)
+        for id_, (severity, caps) in CHECK_SPECS.items()
+    ]
 
 
-_BASE_HARD = [
-    _cr("container_runtime", "ok", "hard", ("eval", "evolve")),
-    _cr("arena_image", "ok", "hard", ("eval", "evolve")),
-    _cr("mutator_image", "ok", "hard", ("evolve",)),
-    _cr("operator", "ok", "hard", ("evolve",)),
-]
-_BASE_SOFT = [
-    _cr("hub", "ok", "soft", ("browse", "publish")),
-    _cr("hub_login", "ok", "soft", ("publish",)),
-    _cr("gh", "ok", "soft", ("publish",)),
-]
+def _flip(results: list[CheckResult], **status_by_id: str) -> list[CheckResult]:
+    """A copy of ``results`` with each named check's ``status`` replaced --
+    severity/capabilities/detail/fix untouched, so every override still
+    carries CHECK_SPECS-accurate metadata."""
+    return [
+        CheckResult(id=r.id, status=status_by_id.get(r.id, r.status), severity=r.severity,
+                    detail=r.detail, fix=r.fix, capabilities=r.capabilities)
+        for r in results
+    ]
 
 
-@pytest.mark.parametrize("cap", [None, "eval", "evolve", "publish"])
-def test_fold_hard_fail_gates_its_own_capabilities(cap):
-    hards = [r if r.id != "container_runtime" else
-            _cr("container_runtime", "fail", "hard", ("eval", "evolve")) for r in _BASE_HARD]
-    results = hards + _BASE_SOFT
-    expect_ready = cap == "publish"  # container_runtime doesn't tag publish at all
-    assert exit_code(results, cap) == (0 if expect_ready else 1)
+# {scenario: (results, {capability: expected exit_code})}, reasoned directly
+# from CHECK_SPECS (S5.6/INV6's fold rule), not from calling capability_ready
+# itself -- eval/evolve have hard checks only (container_runtime/arena_image,
+# plus mutator_image/operator for evolve) so soft status never touches them;
+# publish/browse have NO hard checks of their own, so they fall back to their
+# own soft checks (hub/hub_login/gh for publish, hub alone for browse), where
+# only "fail" gates -- "warn" never does, for any capability.
+_SCENARIOS: dict[str, tuple[list[CheckResult], dict[str | None, int]]] = {
+    "all_ok": (
+        _ok_results(),
+        {None: 0, "eval": 0, "evolve": 0, "publish": 0, "browse": 0},
+    ),
+    "one_hard_fail": (
+        # container_runtime tags BOTH eval and evolve at once -- the widest
+        # single-check blast radius among the 4 hard checks.
+        _flip(_ok_results(), container_runtime="fail"),
+        {None: 1, "eval": 1, "evolve": 1, "publish": 0, "browse": 0},
+    ),
+    "one_soft_warn": (
+        # All three soft checks warn at once -- still fully inert: a "warn"
+        # never gates anything, for any capability (INV6).
+        _flip(_ok_results(), hub="warn", hub_login="warn", gh="warn"),
+        {None: 0, "eval": 0, "evolve": 0, "publish": 0, "browse": 0},
+    ),
+    "one_soft_fail": (
+        # gh alone fails. gh tags ONLY publish (not browse) -- this is the
+        # scenario that actually distinguishes publish from browse: publish
+        # is gated (one of ITS soft checks failed) while browse is untouched
+        # (its only tagged check, hub, is still ok).
+        _flip(_ok_results(), gh="fail"),
+        {None: 0, "eval": 0, "evolve": 0, "publish": 1, "browse": 0},
+    ),
+    "hard_fail_and_soft_warn": (
+        # Combines the two independent behaviors above in one CheckResult
+        # list: the hard fail still gates eval/evolve/None, and the soft
+        # warns alongside it still gate nothing -- same shape as
+        # "one_hard_fail" alone, confirming the warns contribute nothing.
+        _flip(_ok_results(), container_runtime="fail", hub="warn", hub_login="warn", gh="warn"),
+        {None: 1, "eval": 1, "evolve": 1, "publish": 0, "browse": 0},
+    ),
+}
 
 
-@pytest.mark.parametrize("cap", [None, "eval", "evolve", "publish"])
-def test_fold_soft_warn_never_flips_exit_code(cap):
-    softs = [_cr(r.id, "warn", "soft", r.capabilities) for r in _BASE_SOFT]
-    results = _BASE_HARD + softs
-    assert exit_code(results, cap) == 0
+@pytest.mark.parametrize("cap", [None, "eval", "evolve", "publish", "browse"])
+@pytest.mark.parametrize("scenario", sorted(_SCENARIOS))
+def test_fold_exhaustive_status_x_capability(scenario, cap):
+    results, expected_by_cap = _SCENARIOS[scenario]
+    assert exit_code(results, cap) == expected_by_cap[cap]
+    # exit_code and capability_ready must never disagree (None resolves to
+    # "eval" -- the same bare-doctor default exit_code itself applies).
+    ready = capability_ready(results, cap if cap is not None else "eval")
+    assert ready == (expected_by_cap[cap] == 0)
 
 
-@pytest.mark.parametrize("cap", [None, "eval", "evolve", "publish"])
-def test_fold_soft_fail_gates_only_the_soft_only_capability(cap):
-    softs = [r if r.id != "gh" else _cr("gh", "fail", "soft", ("publish",)) for r in _BASE_SOFT]
-    results = _BASE_HARD + softs
-    expect_ready = cap != "publish"  # eval/evolve are hard-gated; gh can't touch them
-    assert exit_code(results, cap) == (0 if expect_ready else 1)
+def test_fold_probe_crash_matches_an_authored_hard_fail():
+    # The 5th scenario the brief names -- "probe-crash -> fail" -- has no
+    # hand-buildable CheckResult shape: there's no "crashed" status, only
+    # "ok"/"warn"/"fail". `_safe` (diagnostics.py) turns ANY raising probe
+    # into an ordinary status="fail" CheckResult, preserving the crashed
+    # check's severity/capabilities straight from CHECK_SPECS. So this drives
+    # the SAME docker_available crash as
+    # test_a_raising_probe_becomes_a_failed_check_not_an_exception (above)
+    # through the real run_checks -> exit_code pipeline, across every
+    # capability -- not just asserting the crashed CheckResult's own fields
+    # (already covered there), but that it gates EXACTLY like the hand-built
+    # "one_hard_fail" scenario above, for every capability.
+    def _boom():
+        raise RuntimeError("docker vanished")
 
-
-def test_capability_ready_matches_exit_code_for_named_capabilities():
-    results = _BASE_HARD + _BASE_SOFT
-    for cap in CAPABILITIES:
-        assert exit_code(results, cap) == (0 if capability_ready(results, cap) else 1)
+    results = run_checks(**_healthy_kwargs(docker_available=_boom))
+    _, expected_by_cap = _SCENARIOS["one_hard_fail"]
+    for cap, expected in expected_by_cap.items():
+        assert exit_code(results, cap) == expected, cap
