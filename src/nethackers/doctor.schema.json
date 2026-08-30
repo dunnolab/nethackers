@@ -42,6 +42,7 @@
     },
     "capabilities": {
       "type": "object",
+      "additionalProperties": false,
       "required": ["eval", "evolve", "publish", "browse"],
       "properties": {
         "eval": { "type": "boolean" },
@@ -59,6 +60,7 @@
         "run_schema_version": { "type": "string" },
         "images": {
           "type": "object",
+          "additionalProperties": false,
           "required": ["arena", "mutator"],
           "properties": {
             "arena": { "type": "string" },

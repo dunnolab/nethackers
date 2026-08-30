@@ -93,6 +93,7 @@ def _expected_schema() -> dict:
             },
             "capabilities": {
                 "type": "object",
+                "additionalProperties": False,
                 "required": caps,
                 "properties": {cap: {"type": "boolean"} for cap in caps},
             },
@@ -107,6 +108,7 @@ def _expected_schema() -> dict:
                     "run_schema_version": {"type": "string"},
                     "images": {
                         "type": "object",
+                        "additionalProperties": False,
                         "required": ["arena", "mutator"],
                         "properties": {
                             "arena": {"type": "string"},
