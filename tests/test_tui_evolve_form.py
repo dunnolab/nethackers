@@ -15,6 +15,7 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Input, Select, Static
 
 import nethackers.tui.screens.evolve_form as ef
+from nethackers import diagnostics
 from nethackers.harness.discovery import CliInfo, ModelInfo
 from nethackers.hubclient.credentials import Credentials
 from nethackers.tui.app import NetHackersApp
@@ -351,6 +352,80 @@ async def test_operator_switch_uses_cache_second_time(monkeypatch):
         form.query_one("#f_op", Select).value = "claude"     # cached -> NO re-probe
         await pilot.pause()
         assert calls == ["claude", "codex"]   # the switch back to claude hit the cache
+
+
+# ---------------------------------------------------------------------------
+# Readiness strip (spec 5.8: "on entering evolve you see what evolve needs").
+# `diagnostics.run_checks` is faked at its own module attribute -- the form
+# does a fresh `from nethackers import diagnostics; diagnostics.run_checks(
+# ...)` lookup at call time (not a name bound into evolve_form's own
+# namespace at import time), so patching `diagnostics.run_checks` directly is
+# the seam the form actually dereferences.
+# ---------------------------------------------------------------------------
+
+async def test_readiness_strip_shows_evolve_checks_and_not_ready_verdict(monkeypatch):
+    """On mount the form probes readiness scoped to the `evolve` capability,
+    off the UI thread, and -- critically -- NEVER over the network: the
+    worker must pass the always-False `manifest_reachable` so opening this
+    tab never triggers a GHCR round-trip (spec 5.8)."""
+    captured: dict = {}
+
+    def _fake_run_checks(**kwargs):
+        captured.update(kwargs)
+        return [
+            diagnostics.CheckResult(
+                id="container_runtime", status="ok", severity="hard",
+                detail="a working container runtime is available", fix=None,
+                capabilities=("eval", "evolve")),
+            diagnostics.CheckResult(
+                id="arena_image", status="ok", severity="hard",
+                detail="present — arena:dev", fix=None, capabilities=("eval", "evolve")),
+            diagnostics.CheckResult(
+                id="mutator_image", status="warn", severity="hard",
+                detail="not local yet, but pullable — mutator:dev",
+                fix="run `nethackers doctor --pull` to fetch it now", capabilities=("evolve",)),
+            diagnostics.CheckResult(
+                id="operator", status="ok", severity="hard",
+                detail="claude: host login resolvable", fix=None, capabilities=("evolve",)),
+        ]
+
+    monkeypatch.setattr(diagnostics, "run_checks", _fake_run_checks)
+    app = _Host(None)
+    async with app.run_test(size=(100, 50)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        text = str(app.query_one("#f_readiness", Static).render())
+        assert "✓" in text and "container_runtime" in text   # runtime ready
+        assert "✓" in text and "arena_image" in text          # arena ready
+        assert "⚠" in text and "mutator_image" in text         # mutator not ready
+        assert "not ready" in text.lower()                    # overall evolve verdict
+
+    assert captured["operator"] == "claude"        # the form's current (default) operator
+    assert callable(captured["manifest_reachable"])
+    # network-off: never says "pullable" by actually reaching the registry
+    assert captured["manifest_reachable"]("ghcr.io/dunnolab/nethackers-mutator:dev") is False
+
+
+async def test_model_select_degrades_when_mutator_image_is_absent(monkeypatch):
+    """`probe_operator`'s `installed=False` return is specifically the
+    mutator-image-absent case (discovery.py: `if not image_present(image):
+    return CliInfo(backend, False, None, None), None`). The curated static
+    model list is just as unverifiable in that state, so the picker should
+    say why instead of quietly offering "Harness default" (spec 5.8)."""
+    monkeypatch.setattr(
+        ef, "probe_operator",
+        lambda backend, **k: (CliInfo(backend, False, None, None), None))
+    app = _Host(None)
+    async with app.run_test(size=(100, 50)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        sel = app.query_one("#f_model", Select)
+        label = str(sel.query_one("#label", Static).render()).lower()
+        assert "pull the sandbox" in label
+        # still resolves to "no model pin", same as today's "Harness default"
+        assert app.query_one(ef.EvolveForm)._model() is None
 
 
 # ---------------------------------------------------------------------------

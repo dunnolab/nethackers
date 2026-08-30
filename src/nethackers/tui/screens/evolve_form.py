@@ -43,6 +43,7 @@ from nethackers.hubclient.credentials import Credentials
 from nethackers.tui.identity_grid import IdentityGrid
 
 if TYPE_CHECKING:
+    from nethackers.diagnostics import CheckResult
     from nethackers.tui.app import NetHackersApp
 
 
@@ -70,6 +71,22 @@ def _version_line(backend: str, cli: CliInfo) -> str:
     return f"[dim]{ver}[/]"
 
 
+# `probe_operator` returns `installed=False` ONLY when the mutator image itself
+# is absent (discovery.py: `if not image_present(image): return CliInfo(backend,
+# False, None, None), None`) -- the container that would run the backend can't
+# even start, so the curated static model list is exactly as unverifiable as a
+# live catalog would be. Name that in the picker instead of a silently generic
+# "Harness default" (spec 5.8). A value DISTINCT from "" is load-bearing, not
+# cosmetic: Select.value is a plain reactive that only redraws the visible
+# SelectCurrent label on an actual value change, and the static fallback this
+# replaces already leaves the picker at value=="" -- reassigning that same ""
+# would silently leave the stale "Harness default" text on screen even though
+# the option list underneath had changed. `_model()` maps this back onto "no
+# explicit pin", same as "".
+_NO_SANDBOX_MODEL_VALUE = "__no_sandbox__"
+_NO_SANDBOX_MODEL_LABEL = "pull the sandbox to see models"
+
+
 class EvolveForm(Vertical):
     """The ``⚔ Evolve`` tab: filter-and-pick an objective and operator, set
     iterations, and **Start** -- which builds an ``EvolveParams``, calls
@@ -87,6 +104,12 @@ class EvolveForm(Vertical):
     DEFAULT_CSS = """
     EvolveForm { layout: vertical; padding: 1 2; }
     EvolveForm Label { text-style: bold; color: #d2a24c; margin-top: 1; }
+    /* readiness strip: a full-width row above the two subwindows -- "what
+       evolve needs" is the first thing you see (spec 5.8). */
+    EvolveForm #f_readiness {
+        height: auto; border: round #7c745f; border-title-color: #d2a24c;
+        border-title-align: left; padding: 0 1; margin-bottom: 1;
+    }
     /* two side-by-side subwindows over a full-width start bar */
     EvolveForm #f_panels { height: 1fr; }
     EvolveForm #f_objective {
@@ -124,6 +147,7 @@ class EvolveForm(Vertical):
         self._probe_cache: dict[str, tuple[CliInfo, list[ModelInfo] | None]] = {}
 
     def compose(self) -> ComposeResult:
+        yield Static("[dim]checking readiness…[/]", id="f_readiness")
         with Horizontal(id="f_panels"):
             # left subwindow: the objective selection grid
             with VerticalScroll(id="f_objective"):
@@ -156,6 +180,13 @@ class EvolveForm(Vertical):
             yield Static("", id="f_err")
 
     def on_mount(self) -> None:
+        self.query_one("#f_readiness", Static).border_title = "What evolve needs"
+        # Capture the operator HERE, on the main thread -- `_refresh_readiness`
+        # runs in a worker thread, and touching a Textual widget (even just
+        # reading `.value`) off the UI thread is unsafe. Same pattern as
+        # `_maybe_refresh_models`/`_refresh_models` below.
+        self._refresh_readiness(str(self.query_one("#f_op", Select).value))
+
         # the two subwindows carry their own titles; their scroll panes are NOT
         # nav stops (their fields are), so blur them so a field never gets
         # shadowed by the whole-panel cursor. They still scroll via each
@@ -266,6 +297,15 @@ class EvolveForm(Vertical):
         if str(self.query_one("#f_op", Select).value) != backend:
             return   # operator changed since this fetch started -- stale, drop it
         self.query_one("#f_op_version", Static).update(_version_line(backend, cli))
+        if not cli.installed:
+            # The mutator image is absent -- there is no live catalog AND the
+            # curated static list is exactly as unverifiable, so say why
+            # instead of quietly offering "Harness default" (spec 5.8).
+            sel = self.query_one("#f_model", Select)
+            sel.set_options([(_NO_SANDBOX_MODEL_LABEL, _NO_SANDBOX_MODEL_VALUE),
+                             ("Custom…", "__custom__")])
+            sel.value = _NO_SANDBOX_MODEL_VALUE
+            return
         if not models:
             return   # keep the static fallback
         sel = self.query_one("#f_model", Select)
@@ -278,6 +318,35 @@ class EvolveForm(Vertical):
         valid = {m.id for m in models} | {"", "__custom__"}
         sel.value = current if current in valid else ""
         self._set_effort_options(str(sel.value))   # efforts now reflect the live model
+
+    @work(exclusive=True, thread=True, exit_on_error=False)
+    def _refresh_readiness(self, operator: str) -> None:
+        # `operator` is captured on the main thread by the caller (on_mount) --
+        # same pattern as `_refresh_models(backend)` -- so this worker never
+        # touches a Textual widget off-thread. `manifest_reachable=lambda ref:
+        # False` is load-bearing: it guarantees run_checks NEVER makes a GHCR
+        # round-trip just because the user opened this tab (spec 5.8) -- the
+        # image checks fall back to local `docker image inspect` only. Off the
+        # UI thread for the same reason as `_refresh_models`: run_checks shells
+        # out (docker, host CLI login probes).
+        from nethackers import diagnostics
+        results = diagnostics.run_checks(
+            operator=operator,
+            manifest_reachable=lambda ref: False,
+        )
+        self.app.call_from_thread(self._apply_readiness, results)
+
+    def _apply_readiness(self, results: list[CheckResult]) -> None:
+        from nethackers import diagnostics
+        rows = [r for r in results if "evolve" in r.capabilities]
+        lines: list[str] = []
+        for r in rows:
+            glyph = {"ok": "[green]✓[/]", "warn": "[yellow]⚠[/]", "fail": "[red]✗[/]"}[r.status]
+            lines.append(f"{glyph} {r.id}: {diagnostics._short_digest(r.detail)}")
+        ready = diagnostics.capability_ready(results, "evolve")
+        verdict = ("[green]ready to evolve[/]" if ready
+                  else "[yellow]evolve not ready — see above[/]")
+        self.query_one("#f_readiness", Static).update("\n".join(lines + [verdict]))
 
     def _effort_options(self, model_id: str) -> list[tuple[str, str]]:
         # Efforts the selected model actually supports (from live discovery);
@@ -299,6 +368,8 @@ class EvolveForm(Vertical):
         value = str(self.query_one("#f_model", Select).value)
         if value == "__custom__":
             return self.query_one("#f_model_custom", Input).value.strip() or None
+        if value == _NO_SANDBOX_MODEL_VALUE:
+            return None   # no sandbox to verify against -- same as unpinned
         return value or None  # "" (harness default) -> None
 
     def _effort(self) -> str | None:

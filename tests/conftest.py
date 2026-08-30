@@ -1,6 +1,7 @@
 """Suite-wide test fixtures."""
 import pytest
 
+import nethackers.diagnostics as _diagnostics
 import nethackers.harness.launch as _launch
 import nethackers.tui.screens.evolve_form as _ef
 from nethackers.harness.discovery import CliInfo
@@ -19,6 +20,23 @@ def _hermetic_tui_discovery(monkeypatch):
         _ef, "probe_operator",
         lambda backend, **k: (CliInfo(backend, True, f"{backend} 0.0.0", True), None),
         raising=False)
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_tui_readiness(monkeypatch):
+    # EvolveForm's on-mount readiness worker (spec 5.8) calls
+    # diagnostics.run_checks -- which, un-injected, shells out for real
+    # (docker, gh, a credentials-file read) and -- worse -- defaults `hub` to
+    # `load_stage().hub_url`, the literal PRODUCTION url
+    # (https://nethackers.dunnolab.ai) when no .env.stack overrides it, and
+    # makes a real HTTP call to it (`HubClient(hub).hub_mode()`). Stub it
+    # suite-wide by name, same hermetic-suite rule as `_hermetic_tui_discovery`
+    # above (`run_checks` is looked up as a fresh `diagnostics.run_checks`
+    # module attribute at call time, not a name bound into evolve_form's own
+    # namespace, so patching it here is the seam the form actually
+    # dereferences). The readiness tests in test_tui_evolve_form.py override
+    # this with their own fake.
+    monkeypatch.setattr(_diagnostics, "run_checks", lambda **k: [], raising=False)
 
 
 @pytest.fixture(autouse=True)
