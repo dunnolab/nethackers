@@ -527,7 +527,10 @@ async def test_readiness_strip_shows_evolve_checks_and_not_ready_verdict(monkeyp
         assert "⚠" in text and "mutator_image" in text         # mutator not ready
         assert "not ready" in text.lower()                    # overall evolve verdict
 
-    assert captured["operator"] == "claude"        # the form's current (default) operator
+    # the strip checks ALL registered agents now (operator not narrowed) and
+    # never over the network -- spec 5.8:
+    assert "operator" not in captured
+    assert captured["manifest_reachable"]("anyref") is False
     assert callable(captured["manifest_reachable"])
     # network-off: never says "pullable" by actually reaching the registry
     assert captured["manifest_reachable"]("ghcr.io/dunnolab/nethackers-mutator:dev") is False

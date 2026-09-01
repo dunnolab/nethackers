@@ -41,6 +41,7 @@ from nethackers.harness.sandbox_preflight import (
 from nethackers.hub.selector import resolve
 from nethackers.hubclient.credentials import Credentials
 from nethackers.hubclient.publish import gh_state
+from nethackers.operators import DEFAULT_OPERATOR, OPERATORS
 from nethackers.tui.identity_grid import IdentityGrid
 from nethackers.tui.status import _bar
 
@@ -198,12 +199,12 @@ class EvolveForm(Vertical):
             with VerticalScroll(id="f_operator"):
                 yield Label("Operator")
                 yield Select(
-                    [("claude", "claude"), ("codex", "codex")],
-                    value="claude", allow_blank=False, id="f_op",
+                    [(op, op) for op in OPERATORS],
+                    value=DEFAULT_OPERATOR, allow_blank=False, id="f_op",
                 )
                 yield Static("[dim]detecting…[/]", id="f_op_version")
                 yield Label("Model")
-                yield Select(self._model_options("claude"), value="",
+                yield Select(self._model_options(DEFAULT_OPERATOR), value="",
                              allow_blank=False, id="f_model")
                 yield Input(placeholder="custom model id…", id="f_model_custom")
                 yield Label("Reasoning effort")
@@ -225,11 +226,7 @@ class EvolveForm(Vertical):
 
     def on_mount(self) -> None:
         self.query_one("#f_readiness", Static).border_title = "What evolve needs"
-        # Capture the operator HERE, on the main thread -- `_refresh_readiness`
-        # runs in a worker thread, and touching a Textual widget (even just
-        # reading `.value`) off the UI thread is unsafe. Same pattern as
-        # `_maybe_refresh_models`/`_refresh_models` below.
-        self._refresh_readiness(str(self.query_one("#f_op", Select).value))
+        self._refresh_readiness()
 
         # the two subwindows carry their own titles; their scroll panes are NOT
         # nav stops (their fields are), so blur them so a field never gets
@@ -364,26 +361,24 @@ class EvolveForm(Vertical):
         self._set_effort_options(str(sel.value))   # efforts now reflect the live model
 
     @work(exclusive=True, thread=True, exit_on_error=False)
-    def _refresh_readiness(self, operator: str) -> None:
-        # `operator` is captured on the main thread by the caller (on_mount) --
-        # same pattern as `_refresh_models(backend)` -- so this worker never
-        # touches a Textual widget off-thread. `manifest_reachable=lambda ref:
-        # False` is load-bearing: it guarantees the image checks NEVER make a
-        # GHCR round-trip just because the user opened this tab (spec 5.8) --
-        # they fall back to local `docker image inspect` only. `only=
-        # evolve_ids` is equally load-bearing and NOT redundant with that: it
-        # is what stops run_checks from running the other 3 checks (hub/
-        # hub_login/gh) AT ALL -- those touch a real hub HTTPS call, a
-        # creds-file read, and a `gh` subprocess, none of which
-        # `manifest_reachable` has anything to do with, and `_apply_readiness`
-        # only ever displays the evolve-tagged rows anyway. Off the UI thread
-        # for the same reason as `_refresh_models`: run_checks shells out
-        # (docker, host CLI login probes).
+    def _refresh_readiness(self) -> None:
+        # The strip reports readiness for ALL registered coding agents
+        # (run_checks' `operator=None` default), not the currently-picked one:
+        # evolve drives one operator chosen at Start, so "what evolve needs" is
+        # "at least one agent logged in", and the operator row lists each. No
+        # widget is read here, so nothing needs capturing off the UI thread.
+        # `manifest_reachable=lambda ref: False` is load-bearing: the image
+        # checks NEVER make a GHCR round-trip just because the user opened this
+        # tab (spec 5.8) -- local `docker image inspect` only. `only=evolve_ids`
+        # stops run_checks from running the other 3 checks (hub/hub_login/gh) AT
+        # ALL -- those touch a hub HTTPS call, a creds read, and a `gh`
+        # subprocess, and `_apply_readiness` only displays evolve-tagged rows.
+        # Off the UI thread because run_checks shells out (docker, host login
+        # probes).
         from nethackers import diagnostics
         evolve_ids = [cid for cid, (_sev, caps) in diagnostics.CHECK_SPECS.items()
                      if "evolve" in caps]
         results = diagnostics.run_checks(
-            operator=operator,
             manifest_reachable=lambda ref: False,
             only=evolve_ids,
         )

@@ -146,9 +146,9 @@ def test_doctor_passes_operator_and_hub_flags_through(monkeypatch):
     assert seen["hub"] == "https://example.invalid"
 
 
-def test_doctor_default_operator_matches_evolve_default(monkeypatch):
-    # evolve's own --operator default is "claude" (cli.py); doctor's bare
-    # invocation should check the same operator evolve would actually use.
+def test_doctor_default_checks_all_registered_agents(monkeypatch):
+    # bare `doctor` checks EVERY registered coding agent (operator=None), not
+    # one -- the CLI passes operator=None straight through to run_checks.
     seen = {}
 
     def fake_run_checks(**kw):
@@ -157,7 +157,35 @@ def test_doctor_default_operator_matches_evolve_default(monkeypatch):
 
     monkeypatch.setattr(cli, "run_checks", fake_run_checks)
     cli.main(["doctor"])
-    assert seen["operator"] == "claude"
+    assert seen["operator"] is None
+
+
+def test_doctor_operator_flag_narrows_to_one(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(cli, "run_checks", lambda **kw: seen.update(kw) or _ALL_OK)
+    cli.main(["doctor", "--operator", "codex"])
+    assert seen["operator"] == "codex"
+
+
+def test_all_cli_operator_choices_derive_from_the_registry():
+    # Principled-centralization guard: every `--operator` choices= list in the
+    # CLI is exactly operators.OPERATORS, so the set can't silently re-scatter
+    # (the bug this fixed -- a hardcoded pair duplicated across three argparse
+    # blocks + the doctor check).
+    import argparse
+
+    from nethackers.config import load_stage
+    from nethackers.operators import OPERATORS
+
+    parser = cli._build_parser(load_stage())
+    subs = next(a for a in parser._actions if isinstance(a, argparse._SubParsersAction))
+    checked = set()
+    for name, sub in subs.choices.items():
+        for a in sub._actions:
+            if a.dest == "operator" and a.choices is not None:
+                assert list(a.choices) == list(OPERATORS), f"{name} --operator choices drifted"
+                checked.add(name)
+    assert {"doctor", "models", "evolve"} <= checked
 
 
 def test_doctor_never_raises_even_if_run_checks_returns_empty(monkeypatch, capsys):

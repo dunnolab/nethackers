@@ -135,6 +135,7 @@ from nethackers.hubclient.render import (
     render_search as rich_search,
     render_show as rich_show,
 )
+from nethackers.operators import DEFAULT_OPERATOR, OPERATORS
 from nethackers.tui.app import NetHackersApp
 
 # Time seam: tests monkeypatch ``cli._time_now`` to make credential
@@ -420,9 +421,9 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
         "then re-check.",
     )
     do.add_argument(
-        "--operator", choices=["codex", "claude"], default="claude",
-        help="Which operator's host login to check (default: %(default)s, "
-        "matching evolve's own default).",
+        "--operator", choices=list(OPERATORS), default=None,
+        help="Restrict the operator-readiness check to one agent "
+        "(default: all registered coding agents).",
     )
 
     sub.add_parser(
@@ -447,7 +448,7 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
         "models", parents=[common], formatter_class=RichHelpFormatter,
         help="List the models the operator CLI can serve inside the mutator sandbox image.",
     )
-    mo.add_argument("--operator", choices=["codex", "claude"], default="codex")
+    mo.add_argument("--operator", choices=list(OPERATORS), default="codex")
     mo.add_argument(
         "--mutator-image", default=stage.mutator_image,
         help="Probe this image's operator CLI (the one a run uses), not the host's "
@@ -469,7 +470,7 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
         help="Evaluate locally without publishing or registering (still reads "
         "the configured hub for cell-seeding).",
     )
-    evolve.add_argument("--operator", choices=["codex", "claude"], default="claude")
+    evolve.add_argument("--operator", choices=list(OPERATORS), default=DEFAULT_OPERATOR)
     evolve.add_argument(
         "--model", default=None,
         help="Pin the operator's model (e.g. claude-opus-5, gpt-5.6-sol); "

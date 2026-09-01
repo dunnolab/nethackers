@@ -228,19 +228,41 @@ def test_run_checks_severity_and_capabilities_always_match_check_specs():
 # --- operator: "notes the other" unchecked operator (spec S5.6) ------------
 
 
-def test_operator_ok_detail_notes_the_unchecked_alternate():
-    claude_results = run_checks(**_healthy_kwargs(operator="claude"))
-    codex_results = run_checks(**_healthy_kwargs(operator="codex"))
-    claude_op = next(r for r in claude_results if r.id == "operator")
-    codex_op = next(r for r in codex_results if r.id == "operator")
+def test_operator_checks_all_registered_agents_by_default():
+    # operator=None (the default) probes EVERY registered coding agent, not one
+    # + "note the other", and lists each agent's status.
+    from nethackers.operators import OPERATORS
+    seen = []
+    results = run_checks(**_healthy_kwargs(
+        operator=None, preflight_operator=lambda op: seen.append(op) or None))
+    op = next(r for r in results if r.id == "operator")
+    assert sorted(seen) == sorted(OPERATORS)          # every agent probed
+    assert op.status == "ok"
+    for agent in OPERATORS:
+        assert agent in op.detail                     # each agent's status shown
 
-    assert claude_op.status == "ok"
-    assert "codex" in claude_op.detail and "not checked" in claude_op.detail
-    assert "--operator codex" in claude_op.detail
 
-    assert codex_op.status == "ok"
-    assert "claude" in codex_op.detail and "not checked" in codex_op.detail
-    assert "--operator claude" in codex_op.detail
+def test_operator_ready_when_at_least_one_agent_logged_in():
+    # evolve uses ONE operator (picked at Start) -> ready if >=1 is logged in.
+    partial = run_checks(**_healthy_kwargs(
+        operator=None,
+        preflight_operator=lambda op: None if op == "claude" else "not logged in"))
+    op = next(r for r in partial if r.id == "operator")
+    assert op.status == "ok" and "claude" in op.detail
+    # a fully logged-out host fails, naming how to log in
+    out = run_checks(**_healthy_kwargs(
+        operator=None, preflight_operator=lambda op: "not logged in"))
+    op2 = next(r for r in out if r.id == "operator")
+    assert op2.status == "fail" and "login" in (op2.fix or "")
+
+
+def test_operator_narrows_to_a_single_named_agent():
+    seen = []
+    results = run_checks(**_healthy_kwargs(
+        operator="codex", preflight_operator=lambda op: seen.append(op) or None))
+    op = next(r for r in results if r.id == "operator")
+    assert seen == ["codex"]                           # ONLY codex probed
+    assert "codex" in op.detail and "claude" not in op.detail
 
 
 # --- hub: the default reads the EFFECTIVE stage, not a frozen prod literal -

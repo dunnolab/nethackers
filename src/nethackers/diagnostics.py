@@ -37,6 +37,7 @@ from nethackers.harness.version import RUN_SCHEMA_VERSION
 from nethackers.hubclient.client import HubClient, HubUnreachable
 from nethackers.hubclient.credentials import Credentials, load as _default_load_creds
 from nethackers.hubclient.publish import gh_state as _default_gh_state
+from nethackers.operators import OPERATORS
 
 
 def version_info() -> dict:
@@ -223,31 +224,34 @@ def _check_gh(
                        capabilities=caps)
 
 
-_OTHER_OPERATOR = {"codex": "claude", "claude": "codex"}
-
-
 def _check_operator(
-    operator: str, *, severity: str, caps: tuple[str, ...], mutator_present: bool,
-    preflight_operator: Callable[[str], str | None],
+    operators: tuple[str, ...], *, severity: str, caps: tuple[str, ...],
+    mutator_present: bool, preflight_operator: Callable[[str], str | None],
 ) -> CheckResult:
-    other = _OTHER_OPERATOR.get(operator, "the other operator")
-    msg = preflight_operator(operator)
-    if msg is None:
-        detail = (f"{operator}: host login resolvable "
-                  f"({other} not checked — pass --operator {other})")
-        return CheckResult(id="operator", status="ok", severity=severity, detail=detail,
+    """Host-login readiness across the registered coding agents. Probes EVERY
+    agent the caller asked about (``run_checks(operator=None)`` -> all of
+    ``operators.OPERATORS``; a single name -> just that one) rather than one
+    agent plus a "note the other": evolve drives ONE operator chosen at Start,
+    so this is ready as long as AT LEAST ONE agent is logged in, and the detail
+    lists each agent's status so the options are visible."""
+    status = {op: preflight_operator(op) for op in operators}  # None == logged in
+    ready = [op for op in operators if status[op] is None]
+    shown = " · ".join(
+        f"{op}: {'logged in' if status[op] is None else 'not logged in'}" for op in operators)
+    if ready:
+        return CheckResult(id="operator", status="ok", severity=severity,
+                           detail=f"{shown}  (evolve uses one — {', '.join(ready)} available)",
                            fix=None, capabilities=caps)
-    if mutator_present:
-        fix = f"run `{operator} login`"
-    else:
-        # The mutator image is what actually runs the operator, but we never
-        # force a pull just to double-check a host-side login (doctor is
-        # read-only outside `--pull`) -- name that option instead of silently
-        # trusting an unverifiable host-only signal.
-        fix = (f"run `{operator} login` -- or `nethackers doctor --pull` to pull the "
-              "sandbox and verify inside it")
+    logins = " or ".join(f"`{op} login`" for op in operators)
+    fix = f"log in to a coding agent — {logins}"
+    if not mutator_present:
+        # The mutator image is what actually runs the operator, but doctor never
+        # force-pulls it just to double-check a host login (read-only outside
+        # `--pull`) -- name that option rather than trust an unverifiable
+        # host-only signal.
+        fix += " — or `nethackers doctor --pull` to pull the sandbox and verify inside it"
     return CheckResult(id="operator", status="fail", severity=severity,
-                       detail=f"no resolvable {operator} login on this host", fix=fix,
+                       detail=f"{shown} — no coding agent logged in", fix=fix,
                        capabilities=caps)
 
 
@@ -269,7 +273,7 @@ def _safe(
 
 def run_checks(
     *,
-    operator: str = "codex",
+    operator: str | None = None,
     hub: str | None = None,
     docker_available: Callable[[], bool] = sandbox_preflight.docker_available,
     resolve_image: Callable[[str | None, str], str] = sandbox_preflight.resolve_image,
@@ -368,8 +372,11 @@ def run_checks(
 
     if _wanted("operator"):
         severity, caps = CHECK_SPECS["operator"]
+        # operator=None -> check every registered agent (evolve picks one at
+        # Start, so readiness = at least one logged in); a single name narrows.
+        ops = OPERATORS if operator is None else (operator,)
         results.append(_safe("operator", severity, caps,
-                             lambda: _check_operator(operator, severity=severity, caps=caps,
+                             lambda: _check_operator(ops, severity=severity, caps=caps,
                                                      mutator_present=mutator_present,
                                                      preflight_operator=preflight_operator)))
     return results
