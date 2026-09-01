@@ -30,10 +30,15 @@ class _FakeHub:
 
 
 def _wire_gh(monkeypatch, *, gh="sam", sha="c" * 40):
-    monkeypatch.setattr(cli, "gh_login", lambda: gh)
+    monkeypatch.setattr(cli, "gh_state", lambda: (gh, "authed"))
     monkeypatch.setattr(cli, "ensure_repo", lambda slug: None)
     monkeypatch.setattr(cli, "publish_solution", lambda d, slug, *, message: sha)
     monkeypatch.setattr(cli, "eval_batch", lambda *a, **k: _FakeEvidence())
+    # submit scores locally exactly like eval (self-reported), so it carries
+    # the same arena-only preflight (this task's acquisition gap) -- stub it
+    # green so this stays hermetic, never shelling out to Docker.
+    monkeypatch.setattr(cli, "preflight_runtime", lambda **kw: None)
+    monkeypatch.setattr(cli, "ensure_image", lambda *a, **kw: None)
 
 
 def test_submit_publishes_and_registers(monkeypatch, tmp_path, capsys, clean_stage):
@@ -77,23 +82,43 @@ def test_submit_not_logged_in(monkeypatch, tmp_path):
     assert cli.main(["submit", "x", "--objective", "random"]) == 1
 
 
-def test_submit_gh_unavailable(monkeypatch, tmp_path):
+def test_submit_gh_unavailable(monkeypatch, tmp_path, capsys):
+    # gh not installed: install-gh fix, distinct from the unauthed case below.
     _login(monkeypatch, tmp_path)
-    monkeypatch.setattr(cli, "gh_login", lambda: None)
-    assert cli.main(["submit", "x", "--objective", "random"]) == 1
+    monkeypatch.setattr(cli, "gh_state", lambda: (None, "missing"))
+    rc = cli.main(["submit", "x", "--objective", "random"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "gh not installed" in err and "install the GitHub CLI" in err
 
 
-def test_submit_gh_account_mismatch(monkeypatch, tmp_path):
+def test_submit_gh_unauthed(monkeypatch, tmp_path, capsys):
+    # gh installed but not logged in: `gh auth login` fix, distinct from the
+    # not-installed case above -- exactly the conflation this task splits.
+    _login(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli, "gh_state", lambda: (None, "unauthed"))
+    rc = cli.main(["submit", "x", "--objective", "random"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "gh not authed" in err and "gh auth login" in err
+
+
+def test_submit_gh_account_mismatch(monkeypatch, tmp_path, capsys):
     _login(monkeypatch, tmp_path, login="sam")
-    monkeypatch.setattr(cli, "gh_login", lambda: "eve")
-    assert cli.main(["submit", "x", "--objective", "random"]) == 1
+    monkeypatch.setattr(cli, "gh_state", lambda: ("eve", "authed"))
+    rc = cli.main(["submit", "x", "--objective", "random"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "sign in to the same account" in err
 
 
 def test_submit_publish_error_is_friendly(monkeypatch, tmp_path):
     _login(monkeypatch, tmp_path)
-    monkeypatch.setattr(cli, "gh_login", lambda: "sam")
+    monkeypatch.setattr(cli, "gh_state", lambda: ("sam", "authed"))
     monkeypatch.setattr(cli, "ensure_repo", lambda slug: None)
     monkeypatch.setattr(cli, "eval_batch", lambda *a, **k: _FakeEvidence())
+    monkeypatch.setattr(cli, "preflight_runtime", lambda **kw: None)
+    monkeypatch.setattr(cli, "ensure_image", lambda *a, **kw: None)
 
     def boom(d, slug, *, message):
         raise PublishError("gh is not installed")

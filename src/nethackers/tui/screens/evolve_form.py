@@ -33,15 +33,21 @@ from nethackers.harness.discovery import CliInfo, ModelInfo, probe_operator
 from nethackers.harness.launch import EvolveParams, prepare_evolve
 from nethackers.harness.models import EFFORTS, MODELS
 from nethackers.harness.sandbox_preflight import (
-    build_mutator_image,
+    ensure_image,
     image_present,
     preflight as sandbox_preflight,
+    resolve_image,
 )
 from nethackers.hub.selector import resolve
 from nethackers.hubclient.credentials import Credentials
+from nethackers.hubclient.publish import gh_state
+from nethackers.operators import DEFAULT_OPERATOR, OPERATORS
 from nethackers.tui.identity_grid import IdentityGrid
+from nethackers.tui.status import _bar
 
 if TYPE_CHECKING:
+    from nethackers.diagnostics import CheckResult
+    from nethackers.harness.pull_events import PullEvent
     from nethackers.tui.app import NetHackersApp
 
 
@@ -58,6 +64,30 @@ def _seed_roots() -> list[str]:
     return found or ["roots/autoascend"]
 
 
+def _publish_warning(owner: str) -> str:
+    """The Start-time publish-readiness note, mirroring the CLI's three
+    branches VERBATIM (``cli.py:823-842``) so both surfaces read identically.
+    A hub-logged-in but `gh`-unauthed contestant would otherwise evolve, win,
+    and have the win silently stay local (spec 5.6) -- warn up front instead.
+    Advisory only: the caller writes this into ``#f_publish_warn`` and
+    launches the run regardless of what comes back (including ``""``, the
+    all-clear "authed" case) -- a local elite is kept either way.
+
+    The form has no ``--offline`` flag (it's interactive), so the CLI's
+    ``not args.offline`` guard collapses to just the owner check here."""
+    if owner == OFFLINE_OWNER:
+        return ("[dim]not logged in — running offline "
+                "(publishing needs `nethackers login`)[/]")
+    _gh_login, state = gh_state()
+    if state == "missing":
+        return ("[yellow]wins won't publish[/] — install the GitHub CLI "
+                "(`gh`), then run `gh auth login`")
+    if state == "unauthed":
+        return ("[yellow]wins won't publish[/] — run `gh auth login` "
+                "(separate from `nethackers login`)")
+    return ""  # authed -- nothing to warn about
+
+
 def _version_line(backend: str, cli: CliInfo) -> str:
     """One muted status line for the detected operator CLI: version + auth
     state, or a clear 'not found' when the binary is missing from PATH."""
@@ -67,6 +97,22 @@ def _version_line(backend: str, cli: CliInfo) -> str:
     if cli.logged_in is False:
         return f"[dim]{ver}[/] · [#c04040]not logged in[/]"
     return f"[dim]{ver}[/]"
+
+
+# `probe_operator` returns `installed=False` ONLY when the mutator image itself
+# is absent (discovery.py: `if not image_present(image): return CliInfo(backend,
+# False, None, None), None`) -- the container that would run the backend can't
+# even start, so the curated static model list is exactly as unverifiable as a
+# live catalog would be. Name that in the picker instead of a silently generic
+# "Harness default" (spec 5.8). A value DISTINCT from "" is load-bearing, not
+# cosmetic: Select.value is a plain reactive that only redraws the visible
+# SelectCurrent label on an actual value change, and the static fallback this
+# replaces already leaves the picker at value=="" -- reassigning that same ""
+# would silently leave the stale "Harness default" text on screen even though
+# the option list underneath had changed. `_model()` maps this back onto "no
+# explicit pin", same as "".
+_NO_SANDBOX_MODEL_VALUE = "__no_sandbox__"
+_NO_SANDBOX_MODEL_LABEL = "pull the sandbox to see models"
 
 
 class EvolveForm(Vertical):
@@ -86,6 +132,12 @@ class EvolveForm(Vertical):
     DEFAULT_CSS = """
     EvolveForm { layout: vertical; padding: 1 2; }
     EvolveForm Label { text-style: bold; color: #d2a24c; margin-top: 1; }
+    /* readiness strip: a full-width row above the two subwindows -- "what
+       evolve needs" is the first thing you see (spec 5.8). */
+    EvolveForm #f_readiness {
+        height: auto; border: round #7c745f; border-title-color: #d2a24c;
+        border-title-align: left; padding: 0 1; margin-bottom: 1;
+    }
     /* two side-by-side subwindows over a full-width start bar */
     EvolveForm #f_panels { height: 1fr; }
     EvolveForm #f_objective {
@@ -106,6 +158,16 @@ class EvolveForm(Vertical):
     EvolveForm #f_startbar { height: auto; margin-top: 1; }
     EvolveForm #f_start { width: auto; min-width: 18; }
     EvolveForm #f_err { width: 1fr; height: auto; color: #c04040; padding: 0 2; }
+    /* pull-progress surface (Task 5, spec 5.5/5.8): phase-driven text from the
+       provisioning worker, updated via call_from_thread since the worker is
+       off the UI thread -- image + short digest + "one-time pull" + a layers
+       m/n meter. #f_err is reserved for genuine errors only now; this carries
+       progress instead. Own full-width row, no fixed color -- dim/green come
+       entirely from inline markup. */
+    EvolveForm #f_pull { height: auto; padding: 0 2; margin-top: 1; }
+    /* persists through the run -- own full-width row, no fixed color: its
+       three states (dim/yellow/none) come entirely from inline markup. */
+    EvolveForm #f_publish_warn { height: auto; padding: 0 2; margin-top: 1; }
     EvolveForm #f_model_custom { display: none; }  /* shown only for Custom… */
     """
 
@@ -123,6 +185,7 @@ class EvolveForm(Vertical):
         self._probe_cache: dict[str, tuple[CliInfo, list[ModelInfo] | None]] = {}
 
     def compose(self) -> ComposeResult:
+        yield Static("[dim]checking readiness…[/]", id="f_readiness")
         with Horizontal(id="f_panels"):
             # left subwindow: the objective selection grid
             with VerticalScroll(id="f_objective"):
@@ -136,12 +199,12 @@ class EvolveForm(Vertical):
             with VerticalScroll(id="f_operator"):
                 yield Label("Operator")
                 yield Select(
-                    [("claude", "claude"), ("codex", "codex")],
-                    value="claude", allow_blank=False, id="f_op",
+                    [(op, op) for op in OPERATORS],
+                    value=DEFAULT_OPERATOR, allow_blank=False, id="f_op",
                 )
                 yield Static("[dim]detecting…[/]", id="f_op_version")
                 yield Label("Model")
-                yield Select(self._model_options("claude"), value="",
+                yield Select(self._model_options(DEFAULT_OPERATOR), value="",
                              allow_blank=False, id="f_model")
                 yield Input(placeholder="custom model id…", id="f_model_custom")
                 yield Label("Reasoning effort")
@@ -153,8 +216,18 @@ class EvolveForm(Vertical):
         with Horizontal(id="f_startbar"):
             yield Button("Start", id="f_start", variant="success")
             yield Static("", id="f_err")
+        # provisioning's typed pull-progress surface (Task 5) -- own row, own
+        # id, separate from #f_err (genuine errors only) so a mid-pull layer
+        # count is never mistaken for a failure -- see _apply_pull.
+        yield Static("", id="f_pull")
+        # separate from #f_err/#f_pull (own row, own id) so a publish warning
+        # survives past Start -- see _publish_warning.
+        yield Static("", id="f_publish_warn")
 
     def on_mount(self) -> None:
+        self.query_one("#f_readiness", Static).border_title = "What evolve needs"
+        self._refresh_readiness()
+
         # the two subwindows carry their own titles; their scroll panes are NOT
         # nav stops (their fields are), so blur them so a field never gets
         # shadowed by the whole-panel cursor. They still scroll via each
@@ -244,14 +317,15 @@ class EvolveForm(Vertical):
         else:
             self._refresh_models(backend)
 
-    @work(exclusive=True, thread=True)
+    @work(exclusive=True, thread=True, exit_on_error=False)
     def _refresh_models(self, backend: str) -> None:
         # ONE container probe (probe_operator) runs the operator CLI INSIDE the
         # mutator image -- off the UI thread -- so version + the version-filtered
         # catalog match what a run actually uses, not the host's possibly-
         # different CLI. On a None catalog (image not built / offline / logged
         # out) the static list stays; the version line still reflects detection.
-        cli, models = probe_operator(backend, image=load_stage().mutator_image)
+        cli, models = probe_operator(
+            backend, image=resolve_image(load_stage().mutator_image, "mutator"))
         self.app.call_from_thread(self._cache_and_apply, backend, cli, models)
 
     def _cache_and_apply(self, backend: str, cli: CliInfo,
@@ -264,6 +338,15 @@ class EvolveForm(Vertical):
         if str(self.query_one("#f_op", Select).value) != backend:
             return   # operator changed since this fetch started -- stale, drop it
         self.query_one("#f_op_version", Static).update(_version_line(backend, cli))
+        if not cli.installed:
+            # The mutator image is absent -- there is no live catalog AND the
+            # curated static list is exactly as unverifiable, so say why
+            # instead of quietly offering "Harness default" (spec 5.8).
+            sel = self.query_one("#f_model", Select)
+            sel.set_options([(_NO_SANDBOX_MODEL_LABEL, _NO_SANDBOX_MODEL_VALUE),
+                             ("Custom…", "__custom__")])
+            sel.value = _NO_SANDBOX_MODEL_VALUE
+            return
         if not models:
             return   # keep the static fallback
         sel = self.query_one("#f_model", Select)
@@ -276,6 +359,47 @@ class EvolveForm(Vertical):
         valid = {m.id for m in models} | {"", "__custom__"}
         sel.value = current if current in valid else ""
         self._set_effort_options(str(sel.value))   # efforts now reflect the live model
+
+    @work(exclusive=True, thread=True, exit_on_error=False)
+    def _refresh_readiness(self) -> None:
+        # The strip reports readiness for ALL registered coding agents
+        # (run_checks' `operator=None` default), not the currently-picked one:
+        # evolve drives one operator chosen at Start, so "what evolve needs" is
+        # "at least one agent logged in", and the operator row lists each. No
+        # widget is read here, so nothing needs capturing off the UI thread.
+        # `manifest_reachable=lambda ref: False` is load-bearing: the image
+        # checks NEVER make a GHCR round-trip just because the user opened this
+        # tab (spec 5.8) -- local `docker image inspect` only. `only=evolve_ids`
+        # stops run_checks from running the other 3 checks (hub/hub_login/gh) AT
+        # ALL -- those touch a hub HTTPS call, a creds read, and a `gh`
+        # subprocess, and `_apply_readiness` only displays evolve-tagged rows.
+        # Off the UI thread because run_checks shells out (docker, host login
+        # probes).
+        from nethackers import diagnostics
+        evolve_ids = [cid for cid, (_sev, caps) in diagnostics.CHECK_SPECS.items()
+                     if "evolve" in caps]
+        results = diagnostics.run_checks(
+            manifest_reachable=lambda ref: False,
+            only=evolve_ids,
+        )
+        self.app.call_from_thread(self._apply_readiness, results)
+
+    def _apply_readiness(self, results: list[CheckResult]) -> None:
+        from nethackers import diagnostics
+        glyphs = {"ok": "[green]✓[/]", "warn": "[yellow]⚠[/]", "fail": "[red]✗[/]"}
+        rows = [r for r in results if "evolve" in r.capabilities]
+        lines: list[str] = []
+        for r in rows:
+            if r.items:  # a check with a per-item breakdown (operator) -> sublist
+                lines.append(f"{glyphs[r.status]} {r.id}")
+                for it in r.items:
+                    lines.append(f"    {glyphs[it.status]} {it.label}: {it.detail}")
+            else:
+                lines.append(f"{glyphs[r.status]} {r.id}: {diagnostics._short_digest(r.detail)}")
+        ready = diagnostics.capability_ready(results, "evolve")
+        verdict = ("[green]ready to evolve[/]" if ready
+                  else "[yellow]evolve not ready — see above[/]")
+        self.query_one("#f_readiness", Static).update("\n".join(lines + [verdict]))
 
     def _effort_options(self, model_id: str) -> list[tuple[str, str]]:
         # Efforts the selected model actually supports (from live discovery);
@@ -297,6 +421,8 @@ class EvolveForm(Vertical):
         value = str(self.query_one("#f_model", Select).value)
         if value == "__custom__":
             return self.query_one("#f_model_custom", Input).value.strip() or None
+        if value == _NO_SANDBOX_MODEL_VALUE:
+            return None   # no sandbox to verify against -- same as unpinned
         return value or None  # "" (harness default) -> None
 
     def _effort(self) -> str | None:
@@ -339,29 +465,83 @@ class EvolveForm(Vertical):
         if msg is not None:
             self.query_one("#f_err", Static).update(msg)
             return
-        # The sandbox image is auto-provisioned: if it isn't built yet, build it
-        # (off the UI thread, streaming progress into #f_err) and launch once
-        # ready -- the user never runs `make`. Already built -> launch straight.
-        if image_present(params.mutator_image):
+        # Publish-readiness pre-check (spec 5.6): advisory only -- it NEVER
+        # gates the launch below. Written into its own #f_publish_warn (not
+        # #f_err) so it's still on screen after Start, through provisioning
+        # and the run -- a win is kept as a local elite either way.
+        self.query_one("#f_publish_warn", Static).update(_publish_warning(params.owner))
+        # Both sandbox images are auto-provisioned: if either isn't built/
+        # pulled yet, acquire it (off the UI thread, streaming typed progress
+        # into #f_pull -- see _apply_pull) and launch once ready -- the user
+        # never runs `make`/`docker pull`. The arena image needs this exactly
+        # as much as the mutator: run_loop scores every iteration through it
+        # (harness/evaluate.py), so provisioning it only here -- not mid-loop
+        # -- keeps a missing/stale arena image a fail-fast Start-time error
+        # instead of a confusing mid-run stall. Already present -> launch
+        # straight.
+        if image_present(params.mutator_image) and image_present(params.image):
             self._launch(params)
         else:
-            self.query_one("#f_err", Static).update(
-                "[yellow]setting up the sandbox[/] (first run — compiling NLE, a few minutes)…")
-            self._build_then_launch(params)
+            self.query_one("#f_pull", Static).update(
+                "[yellow]setting up the sandbox[/] (first run — a few minutes)…")
+            self._provision_then_launch(params)
 
     def _launch(self, params: EvolveParams) -> None:
         plan = prepare_evolve(params)
         cast("NetHackersApp", self.app).start_run(plan)  # background run + open its monitor
 
     @work(exclusive=True, thread=True)
-    def _build_then_launch(self, params: EvolveParams) -> None:
-        def _line(ln: str) -> None:
-            self.app.call_from_thread(
-                lambda: self.query_one("#f_err", Static).update(
-                    f"[yellow]setting up the sandbox…[/] [dim]{ln}[/]"))
-        err = build_mutator_image(params.mutator_image, on_line=_line)
-        if err is not None:
-            self.app.call_from_thread(
-                lambda: self.query_one("#f_err", Static).update(err))
-            return
+    def _provision_then_launch(self, params: EvolveParams) -> None:
+        """Acquire whichever sandbox image(s) Start found missing, then
+        launch. Runs off the UI thread (``@work(thread=True)``) -- every
+        widget touch below is marshaled back onto it via ``call_from_thread``.
+        ``ensure_image``'s ``on_event`` callback fires from THIS worker
+        thread (it's called synchronously inside ``ensure_image``, which we
+        called), never the UI thread, so it must never touch ``#f_pull``
+        directly -- only ever through ``_apply_pull`` via ``call_from_thread``
+        (spec S5.5/5.8's typed pull-progress seam, replacing the old raw
+        ``on_line`` text dump into ``#f_err``)."""
+        for ref, kind in ((params.mutator_image, "mutator"), (params.image, "arena")):
+            err = ensure_image(
+                ref, kind, on_event=lambda e: self.app.call_from_thread(self._apply_pull, e))
+            if err is not None:
+                self.app.call_from_thread(
+                    lambda e=err: self.query_one("#f_err", Static).update(e))
+                return
         self.app.call_from_thread(self._launch, params)
+
+    def _apply_pull(self, event: PullEvent) -> None:
+        """Phase-driven ``#f_pull`` update from one ``PullEvent`` -- always
+        invoked on the UI thread via ``call_from_thread`` (see
+        ``_provision_then_launch``), never called directly from the worker.
+
+        Consent framing (spec 5.8/5.5): the Start click IS the consent to
+        pull, so ``"start"`` discloses exactly what's being acquired --
+        image + short digest + "one-time pull". NO size/GB anywhere (deferred
+        by ruling, not merely unimplemented -- never add one here).
+        ``"layer"`` shows a layers m/n meter; guarded for the ``make``-build
+        path, which has no layer concept at all (``layers_total`` is always
+        ``None`` there), so those events just leave "start"'s text standing.
+        ``"done"`` is a ✓ line for that kind. ``"error"`` goes to ``#f_err``
+        -- the genuine-error surface -- instead of here: ``#f_pull`` is
+        progress-only, and ``_provision_then_launch`` writes the real,
+        one-command-fix error text (``ensure_image``'s return value) into
+        ``#f_err`` right after this fires, superseding whatever's written
+        below."""
+        from nethackers import diagnostics
+        short_ref = diagnostics._short_digest(event.ref)
+        if event.phase == "start":
+            self.query_one("#f_pull", Static).update(
+                f"[dim]pulling {event.kind}  {short_ref}  — one-time pull[/]")
+        elif event.phase == "layer":
+            if event.layers_total is None or event.layers_complete is None:
+                return  # the make-build path has no layers -- "start"'s text stands
+            frac = event.layers_complete / event.layers_total
+            self.query_one("#f_pull", Static).update(
+                f"[dim]pulling {event.kind}  {_bar(frac)}  "
+                f"{event.layers_complete}/{event.layers_total} layers[/]")
+        elif event.phase == "done":
+            self.query_one("#f_pull", Static).update(
+                f"[green]✓ {event.kind} sandbox ready[/]  {short_ref}")
+        elif event.phase == "error":
+            self.query_one("#f_err", Static).update(f"[red]{event.detail or 'pull failed'}[/]")

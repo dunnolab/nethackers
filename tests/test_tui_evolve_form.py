@@ -15,7 +15,9 @@ from textual.app import App, ComposeResult
 from textual.widgets import Button, Input, Select, Static
 
 import nethackers.tui.screens.evolve_form as ef
+from nethackers import diagnostics
 from nethackers.harness.discovery import CliInfo, ModelInfo
+from nethackers.harness.pull_events import PullEvent
 from nethackers.hubclient.credentials import Credentials
 from nethackers.tui.app import NetHackersApp
 from nethackers.tui.identity_grid import IdentityGrid
@@ -294,9 +296,11 @@ async def test_effort_options_follow_selected_model(monkeypatch):
 
 
 async def test_missing_image_builds_then_launches(monkeypatch):
-    """When the sandbox image isn't built, Start builds it (off the UI thread,
-    streaming progress into #f_err) and launches once ready -- the user never
-    runs `make`."""
+    """When a sandbox image isn't built/pulled, Start acquires it (off the UI
+    thread, streaming typed progress into #f_pull -- see
+    test_provisioning_renders_typed_pull_progress_not_raw_text for that
+    surface's own coverage) and launches once ready -- the user never runs
+    `make`/`docker pull`. Both images (mutator + arena) go through this."""
     seen: dict = {}
 
     def _fake_prepare(p, **k):
@@ -305,25 +309,150 @@ async def test_missing_image_builds_then_launches(monkeypatch):
 
     monkeypatch.setattr(ef, "prepare_evolve", _fake_prepare)
     monkeypatch.setattr(ef, "image_present", lambda *a, **k: False)   # not built -> build path
-    built: dict = {}
+    provisioned: list[tuple[str, str]] = []
 
-    def _build(image, on_line=None, **k):
-        built["image"] = image
-        if on_line:
-            on_line("compiling nle…")     # exercises the streamed-progress path
+    def _ensure(ref, kind, on_event=None, **k):
+        provisioned.append((ref, kind))
+        if on_event:
+            on_event(PullEvent(kind=kind, ref=ref, phase="done",
+                               layers_total=None, layers_complete=None, detail=""))
         return None                        # success
 
-    monkeypatch.setattr(ef, "build_mutator_image", _build)
+    monkeypatch.setattr(ef, "ensure_image", _ensure)
     app = _Host(None)
     async with app.run_test(size=(100, 40)) as pilot:
         app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
         app.query_one("#f_start", Button).press()
         await pilot.pause()
-        await app.workers.wait_for_complete()   # the build-then-launch worker
+        await app.workers.wait_for_complete()   # the provision-then-launch worker
         await pilot.pause()
-        assert built.get("image")                # the image was auto-built
-        assert seen.get("prepared") is True       # prepare_evolve ran after the build
+        kinds = {kind for _ref, kind in provisioned}
+        assert kinds == {"mutator", "arena"}      # both images were auto-provisioned
+        assert seen.get("prepared") is True       # prepare_evolve ran after provisioning
         assert isinstance(app.started, _Plan)     # and the plan reached start_run
+
+
+# ---------------------------------------------------------------------------
+# Typed pull-progress surface (Task 5, spec 5.5/5.8): #f_pull replaces the
+# raw `docker pull` text that used to be dumped into #f_err during
+# provisioning. Start is the consent to pull -- it discloses image + short
+# digest + "one-time pull" + a layers m/n meter. Size/GB is deferred by
+# ruling and must never appear. `ensure_image` is faked at `ef.ensure_image`
+# -- the exact name `_provision_then_launch` calls (a bare global lookup at
+# call time, not a bound default captured at def-time -- the "bound-default
+# trap" to watch for), so patching it here is the seam the form actually
+# dereferences; `provisioned`/`calls` below confirm the fake was really hit.
+# ---------------------------------------------------------------------------
+
+async def test_provisioning_renders_typed_pull_progress_not_raw_text(monkeypatch):
+    """Drive `_provision_then_launch` with `ensure_image` faked to emit a
+    scripted start -> layer -> layer -> done sequence for a realistic
+    long-digest ref, and check what `#f_pull` shows at each phase (captured
+    via a spy on the real `_apply_pull`, called -- like production -- only on
+    the UI thread via `call_from_thread`, so reading the widget from inside
+    the spy is safe)."""
+    monkeypatch.setattr(ef, "prepare_evolve", lambda *a, **k: _Plan())
+    monkeypatch.setattr(ef, "image_present", lambda *a, **k: False)
+
+    long_ref = "ghcr.io/dunnolab/nethackers-mutator@sha256:" + "a" * 64
+    scripted = [
+        PullEvent(kind="mutator", ref=long_ref, phase="start",
+                  layers_total=None, layers_complete=None, detail=""),
+        PullEvent(kind="mutator", ref=long_ref, phase="layer",
+                  layers_total=12, layers_complete=3, detail="Downloading"),
+        PullEvent(kind="mutator", ref=long_ref, phase="layer",
+                  layers_total=12, layers_complete=9, detail="Pull complete"),
+        PullEvent(kind="mutator", ref=long_ref, phase="done",
+                  layers_total=12, layers_complete=12, detail=""),
+    ]
+    calls: list[tuple[str, str, bool]] = []   # (ref, kind, on_line was passed)
+
+    def _ensure(ref, kind, on_line=None, on_event=None, **k):
+        calls.append((ref, kind, on_line is not None))
+        if kind == "mutator" and on_event is not None:
+            for ev in scripted:
+                on_event(ev)
+        return None   # both "images" acquired successfully
+
+    monkeypatch.setattr(ef, "ensure_image", _ensure)
+    app = _Host(None)
+    async with app.run_test(size=(100, 40)) as pilot:
+        form = app.query_one(ef.EvolveForm)
+        snapshots: list[str] = []
+        real_apply = form._apply_pull
+
+        def _spy(event):
+            real_apply(event)   # runs on the UI thread (via call_from_thread) --
+            snapshots.append(str(form.query_one("#f_pull", Static).render()))
+
+        form._apply_pull = _spy
+
+        form._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()   # the provision-then-launch worker
+        await pilot.pause()
+
+        # both images went through the real seam, and never asked for the
+        # raw on_line dump this surface replaces
+        assert {kind for _ref, kind, _ in calls} == {"mutator", "arena"}
+        assert all(not had_on_line for _ref, _kind, had_on_line in calls)
+        assert len(snapshots) == 4   # exactly mutator's scripted sequence (arena fired none)
+
+        start_text, _layer1_text, layer2_text, done_text = snapshots
+        short = diagnostics._short_digest(long_ref)
+
+        # "start": kind + shortened digest (no 64-hex run) + one-time-pull framing
+        assert "mutator" in start_text and short in start_text
+        assert "a" * 64 not in start_text          # the raw digest never leaks through
+        assert "one-time pull" in start_text
+
+        # "layer": an m/n layers indicator (from the second, 9/12, event)
+        assert "9/12" in layer2_text and "layers" in layer2_text
+
+        # "done": a checkmark for that kind
+        assert "✓" in done_text and "mutator" in done_text
+
+        # deferred by ruling: no size/GB string anywhere, at any phase
+        for text in snapshots:
+            assert "gb" not in text.lower()
+            assert "size" not in text.lower()
+
+        # #f_err stays untouched -- it's for genuine errors only now
+        assert str(app.query_one("#f_err", Static).render()).strip() == ""
+        assert isinstance(app.started, _Plan)      # provisioning still launches the run
+
+
+async def test_pull_error_phase_writes_to_f_err_not_f_pull(monkeypatch):
+    """A mid-pull `error`-phase `PullEvent` must surface in #f_err -- the
+    genuine-error surface -- not linger in #f_pull. The authoritative,
+    one-command-fix message is `ensure_image`'s own return value (mirroring
+    the CLI's error mapping), which `_provision_then_launch` writes into
+    #f_err right after -- so that's the final state this checks."""
+    monkeypatch.setattr(ef, "prepare_evolve", lambda *a, **k: _Plan())
+    monkeypatch.setattr(ef, "image_present", lambda *a, **k: False)
+
+    def _ensure(ref, kind, on_event=None, **k):
+        if kind == "mutator":
+            if on_event is not None:
+                on_event(PullEvent(kind="mutator", ref=ref, phase="start",
+                                   layers_total=None, layers_complete=None, detail=""))
+                on_event(PullEvent(kind="mutator", ref=ref, phase="error",
+                                   layers_total=2, layers_complete=1, detail="boom"))
+            return "[red]couldn't reach the registry[/] — only the first run needs the network"
+        return None
+
+    monkeypatch.setattr(ef, "ensure_image", _ensure)
+    app = _Host(None)
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        err_text = str(app.query_one("#f_err", Static).render())
+        assert "couldn't reach the registry" in err_text   # the mapped, authoritative message
+        assert app.started is None   # provisioning failed -- the run never launched
 
 
 async def test_operator_switch_uses_cache_second_time(monkeypatch):
@@ -349,6 +478,93 @@ async def test_operator_switch_uses_cache_second_time(monkeypatch):
         form.query_one("#f_op", Select).value = "claude"     # cached -> NO re-probe
         await pilot.pause()
         assert calls == ["claude", "codex"]   # the switch back to claude hit the cache
+
+
+# ---------------------------------------------------------------------------
+# Readiness strip (spec 5.8: "on entering evolve you see what evolve needs").
+# `diagnostics.run_checks` is faked at its own module attribute -- the form
+# does a fresh `from nethackers import diagnostics; diagnostics.run_checks(
+# ...)` lookup at call time (not a name bound into evolve_form's own
+# namespace at import time), so patching `diagnostics.run_checks` directly is
+# the seam the form actually dereferences.
+# ---------------------------------------------------------------------------
+
+async def test_readiness_strip_shows_evolve_checks_and_not_ready_verdict(monkeypatch):
+    """On mount the form probes readiness scoped to the `evolve` capability,
+    off the UI thread, and -- critically -- NEVER over the network: the
+    worker must pass the always-False `manifest_reachable` so opening this
+    tab never triggers a GHCR round-trip (spec 5.8)."""
+    captured: dict = {}
+
+    def _fake_run_checks(**kwargs):
+        captured.update(kwargs)
+        return [
+            diagnostics.CheckResult(
+                id="container_runtime", status="ok", severity="hard",
+                detail="a working container runtime is available", fix=None,
+                capabilities=("eval", "evolve")),
+            diagnostics.CheckResult(
+                id="arena_image", status="ok", severity="hard",
+                detail="present — arena:dev", fix=None, capabilities=("eval", "evolve")),
+            diagnostics.CheckResult(
+                id="mutator_image", status="warn", severity="hard",
+                detail="not local yet, but pullable — mutator:dev",
+                fix="run `nethackers doctor --pull` to fetch it now", capabilities=("evolve",)),
+            diagnostics.CheckResult(
+                id="operator", status="ok", severity="hard",
+                detail="codex: logged in, claude: not logged in", fix=None,
+                capabilities=("evolve",),
+                items=(diagnostics.CheckItem("codex", "ok", "logged in"),
+                       diagnostics.CheckItem("claude", "fail", "not logged in"))),
+        ]
+
+    monkeypatch.setattr(diagnostics, "run_checks", _fake_run_checks)
+    app = _Host(None)
+    async with app.run_test(size=(100, 50)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        text = str(app.query_one("#f_readiness", Static).render())
+        assert "✓" in text and "container_runtime" in text   # runtime ready
+        assert "✓" in text and "arena_image" in text          # arena ready
+        assert "⚠" in text and "mutator_image" in text         # mutator not ready
+        # operator renders as a sublist -- each registered agent on its own line
+        assert "codex" in text and "claude" in text
+        assert "not ready" in text.lower()                    # overall evolve verdict
+
+    # the strip checks ALL registered agents now (operator not narrowed) and
+    # never over the network -- spec 5.8:
+    assert "operator" not in captured
+    assert captured["manifest_reachable"]("anyref") is False
+    assert callable(captured["manifest_reachable"])
+    # network-off: never says "pullable" by actually reaching the registry
+    assert captured["manifest_reachable"]("ghcr.io/dunnolab/nethackers-mutator:dev") is False
+    # scoped to ONLY the evolve-tagged (local) checks -- so run_checks itself
+    # never even calls the hub/gh/hub_login probes (fix round 1: the strip
+    # must not touch the network just because run_checks CAN do more).
+    assert set(captured["only"]) == {
+        cid for cid, (_sev, caps) in diagnostics.CHECK_SPECS.items() if "evolve" in caps}
+
+
+async def test_model_select_degrades_when_mutator_image_is_absent(monkeypatch):
+    """`probe_operator`'s `installed=False` return is specifically the
+    mutator-image-absent case (discovery.py: `if not image_present(image):
+    return CliInfo(backend, False, None, None), None`). The curated static
+    model list is just as unverifiable in that state, so the picker should
+    say why instead of quietly offering "Harness default" (spec 5.8)."""
+    monkeypatch.setattr(
+        ef, "probe_operator",
+        lambda backend, **k: (CliInfo(backend, False, None, None), None))
+    app = _Host(None)
+    async with app.run_test(size=(100, 50)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        sel = app.query_one("#f_model", Select)
+        label = str(sel.query_one("#label", Static).render()).lower()
+        assert "pull the sandbox" in label
+        # still resolves to "no model pin", same as today's "Harness default"
+        assert app.query_one(ef.EvolveForm)._model() is None
 
 
 # ---------------------------------------------------------------------------
@@ -383,3 +599,81 @@ async def test_grid_is_a_nav_target_but_scroll_pane_is_not():
         targets = app._nav_targets()
         assert app.query_one("#f_obj_grid", IdentityGrid) in targets  # the grid is reachable
         assert app.query_one("#f_objective") not in targets           # its subwindow pane isn't
+
+
+# ---------------------------------------------------------------------------
+# Publish-readiness pre-check at Start (spec 5.6): a hub-logged-in but
+# `gh`-unauthed contestant evolves, wins, and the win silently stays local.
+# The CLI already warns at evolve Start (cli.py:823-842); this mirrors its
+# three branches VERBATIM into the form's own `#f_publish_warn` -- a line
+# that must survive past Start (unlike `#f_err`, which provisioning
+# overwrites with progress text). The warning is advisory only: it never
+# blocks the launch, in any of the three states.
+# ---------------------------------------------------------------------------
+
+async def test_publish_warning_shows_gh_unauthed_but_run_still_launches(monkeypatch):
+    """Hub-logged-in (a real owner) but `gh auth login` was never run: the
+    #1 'wins won't register' onboarding gap (spec 5.6). Must warn AND must
+    still launch -- publishing failure is not a reason to block the run."""
+    monkeypatch.setattr(ef, "prepare_evolve", lambda *a, **k: _Plan())
+    monkeypatch.setattr(ef, "gh_state", lambda: ("", "unauthed"))
+    app = _Host(Credentials("castiel", "tok"))
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        warn = str(app.query_one("#f_publish_warn", Static).render())
+        assert "wins won't publish" in warn
+        assert "gh auth login" in warn
+        assert isinstance(app.started, _Plan)   # non-blocking: the run still launched
+
+
+async def test_publish_warning_shows_gh_missing_install_hint(monkeypatch):
+    """`gh` isn't even on PATH -- a different fix (install it) from merely
+    unauthed, so the CLI (and this mirror) distinguish the two messages."""
+    monkeypatch.setattr(ef, "prepare_evolve", lambda *a, **k: _Plan())
+    monkeypatch.setattr(ef, "gh_state", lambda: (None, "missing"))
+    app = _Host(Credentials("castiel", "tok"))
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        warn = str(app.query_one("#f_publish_warn", Static).render())
+        assert "wins won't publish" in warn
+        assert "install the github cli" in warn.lower()
+        assert isinstance(app.started, _Plan)
+
+
+async def test_no_publish_warning_when_gh_authed(monkeypatch):
+    """Hub-logged-in AND `gh` authed: publishing will actually work, so no
+    warning belongs on screen."""
+    monkeypatch.setattr(ef, "prepare_evolve", lambda *a, **k: _Plan())
+    monkeypatch.setattr(ef, "gh_state", lambda: ("x", "authed"))
+    app = _Host(Credentials("castiel", "tok"))
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        warn = str(app.query_one("#f_publish_warn", Static).render()).strip()
+        assert warn == ""
+        assert isinstance(app.started, _Plan)
+
+
+async def test_publish_warning_shows_offline_note_when_not_logged_in(monkeypatch):
+    """No hub login at all (the form's own `OFFLINE_OWNER` backstop) is a
+    different, dimmer note than the gh-specific ones -- and `gh_state` isn't
+    even worth calling in that case (mirrors the CLI's `elif` chain, which
+    only reaches `gh_state()` when NOT already reporting the offline note)."""
+    gh_calls: list[None] = []
+    monkeypatch.setattr(ef, "prepare_evolve", lambda *a, **k: _Plan())
+    monkeypatch.setattr(ef, "gh_state", lambda: (gh_calls.append(None), ("x", "authed"))[1])
+    app = _Host(None)   # no creds -> owner defaults to OFFLINE_OWNER
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        warn = str(app.query_one("#f_publish_warn", Static).render())
+        assert "running offline" in warn
+        assert "nethackers login" in warn
+        assert gh_calls == []                   # gh_state was never even consulted
+        assert isinstance(app.started, _Plan)

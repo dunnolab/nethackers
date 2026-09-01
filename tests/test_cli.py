@@ -12,13 +12,26 @@ alongside the rest of the M2a hub-facing CLI coverage.
 import json
 
 import nethackers.cli as C
+from nethackers import _image_pins
 from nethackers.config import load_stage
 from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
 from nethackers.hub.objectives import CATALOG
 
 
+def _stub_arena_preflight(monkeypatch):
+    # `eval`/`submit` gained a preflight (this task's acquisition gap): a
+    # working container runtime + the image being present, both ahead of
+    # eval_batch. Stub both green so these wiring tests -- which monkeypatch
+    # eval_batch itself and must never shell out to Docker -- stay hermetic;
+    # the real preflight_runtime/ensure_image logic is unit-tested in
+    # test_acquisition.py.
+    monkeypatch.setattr(C, "preflight_runtime", lambda **kw: None)
+    monkeypatch.setattr(C, "ensure_image", lambda *a, **kw: None)
+
+
 def test_cli_eval_invokes_eval_batch_with_resolved_objective(
         monkeypatch, capsys, tmp_path, clean_stage):
+    _stub_arena_preflight(monkeypatch)
     seen = {}
 
     def fake_eval_batch(solution, spec, image, *, now, max_parallel_evals=8):
@@ -42,16 +55,20 @@ def test_cli_eval_invokes_eval_batch_with_resolved_objective(
     # Resolves the real catalog entry -- not a hand-rolled Objective.
     assert seen["spec"] is CATALOG["val-dwa-law-fem"]
     assert seen["solution"] == tmp_path
-    assert seen["image"] == "nethackers/arena:dev"
+    # clean_stage chdirs to a bare tmp_path -- no repo checkout there -- so the
+    # sentinel (arena_image=None) resolves to the pinned ref, not the in-repo
+    # :dev tag (see resolve_image's ladder).
+    assert seen["image"] == _image_pins.ARENA_IMAGE
     assert seen["max_parallel_evals"] == 8  # default, unset here
 
     out = json.loads(capsys.readouterr().out)
     assert out["mean_progress"] == 0.1
-    assert out["evaluator_image"] == "nethackers/arena:dev"
+    assert out["evaluator_image"] == _image_pins.ARENA_IMAGE
     assert out["objective"]["seed_set"] == "val-dwa-law-fem"
 
 
 def test_cli_eval_custom_image_is_passed_through(monkeypatch, capsys, tmp_path):
+    _stub_arena_preflight(monkeypatch)
     seen = {}
 
     def fake_eval_batch(solution, spec, image, *, now, max_parallel_evals=8):
@@ -74,6 +91,7 @@ def test_cli_eval_custom_image_is_passed_through(monkeypatch, capsys, tmp_path):
 
 
 def test_cli_eval_custom_max_parallel_evals_is_passed_through(monkeypatch, capsys, tmp_path):
+    _stub_arena_preflight(monkeypatch)
     seen = {}
 
     def fake_eval_batch(solution, spec, image, *, now, max_parallel_evals=8):

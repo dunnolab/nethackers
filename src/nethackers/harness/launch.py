@@ -15,11 +15,14 @@ from typing import Any
 
 from nethackers import config
 from nethackers.config import load_stage
+from nethackers.eval.runner import _default_image_digest
 from nethackers.harness import runlog
 from nethackers.harness.container_operator import ContainerOperator
+from nethackers.harness.discovery import detect_cli
 from nethackers.harness.loop import run_loop
+from nethackers.harness.sandbox_preflight import resolve_image
 from nethackers.harness.store import LocalTreeStore
-from nethackers.harness.version import HARNESS_VERSION
+from nethackers.harness.version import RUN_SCHEMA_VERSION
 from nethackers.hubclient import credentials as _credentials
 from nethackers.hubclient.auth import TokenSource
 from nethackers.hubclient.client import HubClient
@@ -65,7 +68,7 @@ class EvolveParams:
     # -- never read at import time -- so a test's env/monkeypatch (or a future
     # .env.stack) is picked up on every fresh EvolveParams(), not frozen at
     # module load.
-    image: str = field(default_factory=lambda: load_stage().arena_image)
+    image: str = field(default_factory=lambda: resolve_image(load_stage().arena_image, "arena"))
     hub: str = field(default_factory=lambda: load_stage().hub_url)
     token: str = field(default_factory=lambda: config.OFFLINE_TOKEN)
     owner: str = field(default_factory=lambda: config.OFFLINE_OWNER)
@@ -75,7 +78,8 @@ class EvolveParams:
     offline: bool = False  # explicit no-publish/no-register gate (hub is still read for seeding)
     model: str | None = None   # pin the operator's model (None = harness default)
     effort: str | None = None  # reasoning effort level (None = harness default)
-    mutator_image: str = field(default_factory=lambda: load_stage().mutator_image)
+    mutator_image: str = field(
+        default_factory=lambda: resolve_image(load_stage().mutator_image, "mutator"))
     repo_name: str = field(default_factory=lambda: load_stage().repo_name)  # <owner>/<repo_name>
 
 
@@ -94,7 +98,7 @@ def _publisher_for(
     owner's public ``<owner>/<repo_name>`` repo via ``gh`` and return its
     ``{repo, commit}`` -- so the win is fetchable and passes the hub's
     commit-exists check. Pushes go to this run's own branch
-    (``evo-harness-<HARNESS_VERSION>/<run_id>``), not the repo's default
+    (``evo-harness-<RUN_SCHEMA_VERSION>/<run_id>``), not the repo's default
     branch, so parallel runs never race on the same fast-forward. Returns
     ``None`` (loop keeps the win as a local elite, unpublished) when
     publishing can't work: an explicit ``--offline`` (checked first, wins
@@ -108,7 +112,7 @@ def _publisher_for(
     from nethackers.hubclient.publish import PublishError, ensure_repo, publish_solution
 
     slug = f"{owner}/{repo_name}"
-    ref = f"evo-harness-{HARNESS_VERSION}/{run_id}"
+    ref = f"evo-harness-{RUN_SCHEMA_VERSION}/{run_id}"
 
     def publish(worktree: Path) -> dict[str, str] | None:
         try:
@@ -137,8 +141,34 @@ def _authed_hub(base_url: str) -> HubClient:
     return HubClient(base_url, token_source=TokenSource(creds) if creds is not None else None)
 
 
-def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
-                   tree_store: LocalTreeStore | None = None) -> EvolvePlan:
+def _default_operator_version(operator: str, image: str) -> str | None:
+    """The in-container ``<operator> --version`` baked into the mutator image
+    this run actually uses (not whatever happens to be on the host), via
+    ``discovery.detect_cli``. ``detect_cli`` already degrades to
+    ``CliInfo(version=None)`` on any probe failure (image absent, docker
+    down, unparseable output) -- this thin wrapper just exists so
+    ``prepare_evolve`` has an operator-shaped default it can inject a fake
+    for in tests."""
+    return detect_cli(operator, image=image).version
+
+
+def _best_effort(resolve: Callable[[], str | None]) -> str | None:
+    """Provenance is an untrusted debugging breadcrumb (spec INV1/INV7),
+    never a gate: a resolver may shell out to docker, which can be absent,
+    down, or slow to fail. Collapse any exception to ``None`` rather than
+    let a provenance probe crash -- or block -- a run's launch."""
+    try:
+        return resolve()
+    except Exception:
+        return None
+
+
+def prepare_evolve(
+    params: EvolveParams, *, git_sha: str | None = None,
+    tree_store: LocalTreeStore | None = None,
+    image_digest_resolver: Callable[[str], str] | None = None,
+    operator_version_resolver: Callable[[str, str], str | None] | None = None,
+) -> EvolvePlan:
     started = datetime.datetime.now(datetime.UTC)
     runs_dir = Path(params.workdir) / "runs"
     rid = runlog.run_id(started, params.run_name, exists=lambda r: (runs_dir / r).exists())
@@ -157,14 +187,35 @@ def prepare_evolve(params: EvolveParams, *, git_sha: str | None = None,
     # tells the loop to ignore the hub for that cell seeding.
     parent_tree = Path(params.seed)
 
+    # Per-run provenance (design 5.9): the resolved *platform* digests of the
+    # images this run actually launches, plus the in-container operator
+    # version -- distinct from `Evidence.evaluator_image` on an atom (the
+    # untrusted per-score trace, INV1/INV7); this is the evolve run's own
+    # traceability record. Best-effort: never let a resolver crash the run.
+    # The two resolver params default to `None`, not `= _default_...`
+    # directly, so the fallback below is looked up by *name* at call time --
+    # a bound-at-def-time kwarg default would capture that function object
+    # once at import time, making a test's `monkeypatch.setattr(launch,
+    # "_default_image_digest", ...)` a silent no-op. An explicitly injected
+    # (non-None) resolver always wins over the default.
+    img_res = image_digest_resolver or _default_image_digest
+    ov_res = operator_version_resolver or _default_operator_version
+    arena_image_digest = _best_effort(lambda: img_res(params.image))
+    mutator_image_digest = _best_effort(lambda: img_res(params.mutator_image))
+    operator_version = _best_effort(
+        lambda: ov_res(params.operator, params.mutator_image))
+
     runlog.write_run_config(run_dir, {
         "run_id": rid, "created_at": started.isoformat(),
-        "harness_version": HARNESS_VERSION,
+        "run_schema_version": RUN_SCHEMA_VERSION,
         "git_sha": git_sha if git_sha is not None else _git_sha(),
         "objective": params.objective, "seed": str(params.seed), "operator": params.operator,
         "iterations": params.iterations,
         "max_parallel_evals": params.max_parallel_evals, "image": params.image,
         "mutator_image": params.mutator_image,
+        "arena_image_digest": arena_image_digest,
+        "mutator_image_digest": mutator_image_digest,
+        "operator_version": operator_version,
         "parent": "seed",
         "model": params.model, "effort": params.effort,
     })

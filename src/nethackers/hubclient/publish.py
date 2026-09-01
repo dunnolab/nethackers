@@ -54,6 +54,16 @@ def gh_login(run: Run = subprocess.run) -> str | None:
     return login or None
 
 
+def gh_state(*, run: Run = subprocess.run, which=shutil.which) -> tuple[str | None, str]:
+    """(login, state) where state is 'authed' / 'missing' / 'unauthed' -- so a
+    caller can tell "install gh" from "run gh auth login" (different fixes;
+    conflating them is a top onboarding confusion). Never raises. See spec §5.6."""
+    if which("gh") is None:
+        return None, "missing"
+    login = gh_login(run=run)
+    return (login, "authed") if login is not None else (None, "unauthed")
+
+
 def ensure_repo(slug: str, *, run: Run = subprocess.run) -> None:
     """Ensure the repo ``slug`` (``owner/name``) exists AND is public: create it
     public if absent, and flip it public if a pre-existing repo is private.

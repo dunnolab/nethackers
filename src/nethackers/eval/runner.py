@@ -32,6 +32,7 @@ from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 
+from nethackers.containers import container_name, label_args
 from nethackers.contracts.models import Evidence, Objective, ObjectiveSpec, TrajectoryResult
 
 _ARENA_EPISODE = re.compile(
@@ -163,6 +164,7 @@ def eval_batch(
         out = Path(td) / "results.json"
         cmd = [
             "docker", "run", "--rm", "--network", "none",
+            "--name", container_name("arena"), *label_args(),
             # Silence AutoAscend's numpy RuntimeWarning flood at interpreter
             # startup, for every process in the container (a plain in-arena
             # filter didn't hold -- NLE/AutoAscend resets it).

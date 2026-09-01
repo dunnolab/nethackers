@@ -381,6 +381,11 @@ def test_evolve_defaults_owner_token_to_stored_creds_when_flags_absent(tmp_path,
     # operator auth is a host precondition, not what these cred/flag tests cover;
     # without this they fail on any host (e.g. CI) with no claude/codex login.
     monkeypatch.setattr(cli, "sandbox_preflight", lambda operator: None)
+    # both sandbox images are auto-provisioned; without this a clean runner
+    # with no pre-built nethackers/{arena,mutator} images would shell out to a
+    # real `make arena`/`make mutator` here (same pattern as test_cli_evolve.py
+    # / test_offline_flag.py's autouse/inline stubs).
+    monkeypatch.setattr(cli, "image_present", lambda *a, **kw: True)
     monkeypatch.setattr(cli, "_load_creds", lambda: cred.Credentials("castiel", "stored-tok"))
 
     rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed),
@@ -403,6 +408,7 @@ def test_evolve_falls_back_to_offline_when_no_creds_and_no_flags(tmp_path, monke
     # operator auth is a host precondition, not what these cred/flag tests cover;
     # without this they fail on any host (e.g. CI) with no claude/codex login.
     monkeypatch.setattr(cli, "sandbox_preflight", lambda operator: None)
+    monkeypatch.setattr(cli, "image_present", lambda *a, **kw: True)
     monkeypatch.setattr(cli, "_load_creds", lambda: None)
 
     rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed),
@@ -425,6 +431,7 @@ def test_evolve_explicit_flags_win_over_stored_creds(tmp_path, monkeypatch):
     # operator auth is a host precondition, not what these cred/flag tests cover;
     # without this they fail on any host (e.g. CI) with no claude/codex login.
     monkeypatch.setattr(cli, "sandbox_preflight", lambda operator: None)
+    monkeypatch.setattr(cli, "image_present", lambda *a, **kw: True)
     # Stored creds are present, but explicit flags must still win.
     monkeypatch.setattr(cli, "_load_creds", lambda: cred.Credentials("castiel", "stored-tok"))
 

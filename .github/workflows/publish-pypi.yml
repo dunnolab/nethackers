@@ -39,5 +39,75 @@ jobs:
         run: |
           uv build --no-sources
           uvx twine check dist/*
+      - name: Gate on published sandbox images
+        env:
+          # `docker manifest` is still marked experimental in the Docker CLI.
+          DOCKER_CLI_EXPERIMENTAL: enabled
+        run: |
+          # D12 (docs/superpowers/specs/2026-08-28-sandbox-image-distribution-design.md
+          # section 5.12): a wheel must never reach PyPI pinning sandbox image
+          # digests that don't actually exist in GHCR -- that's the exact
+          # "changed the image, forgot to re-pin" failure this distribution
+          # design exists to prevent. Read the two pins from the single
+          # source of truth (_image_pins.py, section 5.4) rather than
+          # re-parsing/duplicating its format, then poll `docker manifest
+          # inspect` (anonymous -- both repos are public, D3) with retries: a
+          # just-pushed manifest can take a short while to propagate for
+          # anonymous reads.
+          refs=$(uv run python -c 'from nethackers._image_pins import ARENA_IMAGE, MUTATOR_IMAGE; print(ARENA_IMAGE); print(MUTATOR_IMAGE)')
+
+          deadline=$((SECONDS + 1200))  # ~20 minutes
+          for ref in $refs; do
+            echo "waiting for $ref ..."
+            until docker manifest inspect "$ref" >/dev/null 2>&1; do
+              if [ "$SECONDS" -ge "$deadline" ]; then
+                echo "::error::sandbox image not found in GHCR after 20m: $ref"
+                echo "run .github/workflows/sandbox-images.yml, commit the real digest into src/nethackers/_image_pins.py (spec section 8), then re-run this release"
+                exit 1
+              fi
+              sleep 15
+            done
+            echo "found $ref"
+          done
       - name: Publish with PyPI OIDC
         run: uv publish --trusted-publishing always
+      - name: Canary -- verify the published version installs and runs
+        run: |
+          # `uv publish` succeeding only proves the upload was accepted --
+          # it says nothing about whether PyPI's index has propagated yet
+          # or whether the artifact it now serves actually runs. Reuses
+          # the same version this job already validated matches
+          # RELEASE_REF (the "Match the release tag to the package
+          # version" step above; the checkout is pinned to RELEASE_REF, so
+          # `uv version --short` is deterministically the same value
+          # here). `--isolated --no-cache` forces a real fetch against
+          # PyPI on every attempt, not a locally cached hit/miss. Retries
+          # with a bounded budget since index propagation can lag a few
+          # seconds to a couple of minutes. Failure is LOUD (::error::,
+          # full transcript) and clearly labeled "canary" so it is never
+          # confused with the publish step itself failing -- by this
+          # point the package IS on PyPI either way.
+          V="$(uv version --short)"
+          echo "canary: waiting for PyPI to serve nethackers==$V and confirming it runs ..."
+          sleep 10
+          deadline=$((SECONDS + 300))  # 5 minutes
+          attempt=0
+          while :; do
+            attempt=$((attempt + 1))
+            FULL=$(uvx --isolated --no-cache "nethackers@$V" --version 2>&1)
+            rc=$?
+            OUT=$(printf '%s\n' "$FULL" | head -1)
+            if [ "$rc" -eq 0 ] && [[ "$OUT" == *"$V"* ]]; then
+              echo "canary: attempt $attempt: installed reports: $OUT"
+              echo "canary: ok -- PyPI serves nethackers $V and it reports the tagged version"
+              break
+            fi
+            echo "canary: attempt $attempt did not confirm the published version yet (rc=$rc, first line: $OUT)"
+            if [ "$SECONDS" -ge "$deadline" ]; then
+              echo "::error::canary: uvx nethackers@$V --version never confirmed the published version within 5 minutes of publishing -- PyPI index propagation stalled, or the published artifact is broken"
+              echo "canary: last full output was:"
+              echo "$FULL"
+              exit 1
+            fi
+            sleep 15
+          done

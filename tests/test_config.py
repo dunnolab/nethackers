@@ -13,8 +13,8 @@ def test_stage_defaults_are_prod():
     assert s.runs_dir == Path.home() / ".nethackers" / "evolve" / "runs"
     assert s.store_dir == Path.home() / ".nethackers" / "evolve" / "store"
     assert s.repo_name == "nethacker"
-    assert s.arena_image == "nethackers/arena:dev"
-    assert s.mutator_image == "nethackers/mutator:latest"
+    assert s.arena_image is None      # S14 sentinel; resolved via resolve_image()
+    assert s.mutator_image is None    # S15 sentinel; resolved via resolve_image()
     assert s.github_client_id == "Iv23liWooDi2WlkrDAOw"
 
 

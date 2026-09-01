@@ -27,6 +27,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from nethackers.containers import label_args
 from nethackers.harness.auth_inject import auth_docker_args
 from nethackers.harness.operator import OperatorResult, _claude_cmd, _codex_cmd, run_operator
 
@@ -81,7 +82,7 @@ def build_docker_argv(
     """
     argv = [
         "docker", "run", "--rm",
-        "--name", name,
+        "--name", name, *label_args(),
         "--pids-limit", str(caps.pids),
         "--memory", caps.memory,
         "--memory-swap", caps.memory,  # cap swap too -- else a runaway reaches ~2x via swap
@@ -113,6 +114,18 @@ def _in_cage_cmd(
             for tok in cmd
         ]
     raise ValueError(f"unknown harness: {harness!r}")
+
+
+def _mutator_container_name(
+    run_id: str | None, worktree_name: str, parent_name: str | None = None,
+) -> str:
+    """`nethackers-mut-${RUN_ID}-${ITER}` (spec §3.3), prefixed per INV13 so
+    every container we start is ``docker ps -f name=nethackers-``-filterable.
+    Falls back to ``parent_name`` when no run id is available (existing unit
+    tests / callers that don't yet have one) -- see ``ContainerOperator.run``'s
+    caller for why the run id is preferred over the worktree-derived form."""
+    stem = run_id if run_id is not None else parent_name
+    return f"nethackers-mut-{stem}-{worktree_name}"
 
 
 class ContainerOperator:
@@ -151,11 +164,12 @@ class ContainerOperator:
         self.effort = effort
         self.caps = caps
         # Threaded into the container name (see `run`) so it satisfies spec
-        # §3.3's `mut-${RUN_ID}-${ITER}` -- `worktree.parent.name` alone is
-        # ALWAYS the literal "work" (worktree == <workdir>/runs/<rid>/work/
-        # iter-N), so without this every run would collide on the same name
-        # (e.g. `mut-work-iter-0`), racing on `docker run --name` and letting
-        # a hard-stop's `docker kill` hit the wrong run's live container.
+        # §3.3's `nethackers-mut-${RUN_ID}-${ITER}` -- `worktree.parent.name`
+        # alone is ALWAYS the literal "work" (worktree == <workdir>/runs/<rid>/
+        # work/iter-N), so without this every run would collide on the same
+        # name (e.g. `nethackers-mut-work-iter-0`), racing on `docker run
+        # --name` and letting a hard-stop's `docker kill` hit the wrong run's
+        # live container.
         # None keeps the old worktree-derived form as a fallback, so callers
         # that don't (yet) have a run id -- e.g. existing unit tests -- still
         # work; every real caller (launch.py) always passes one.
@@ -179,12 +193,11 @@ class ContainerOperator:
         stop: threading.Event | None = None,
     ) -> OperatorResult:
         # `worktree.name` is already `iter-N`; prefer the run id (spec §3.3:
-        # `mut-${RUN_ID}-${ITER}`) so two runs never collide on the same
-        # container name -- see the __init__ comment on `self._run_id`.
-        if self._run_id is not None:
-            name = f"mut-{self._run_id}-{worktree.name}"
-        else:
-            name = f"mut-{worktree.parent.name}-{worktree.name}"
+        # `nethackers-mut-${RUN_ID}-${ITER}`) so two runs never collide on the
+        # same container name -- see the __init__ comment on `self._run_id`.
+        name = _mutator_container_name(
+            self._run_id, worktree.name, worktree.parent.name
+        )
         # Preflight BEFORE shelling out to docker at all: a not-logged-in
         # host would otherwise have docker silently bind-mount an empty dir
         # (auth_docker_args is pure string formatting by default) and the

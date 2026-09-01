@@ -24,6 +24,7 @@ from pathlib import Path
 
 import httpx
 
+from nethackers.containers import container_name, label_args
 from nethackers.harness.auth_inject import AuthUnavailable, auth_docker_args
 from nethackers.harness.sandbox_preflight import image_present
 
@@ -54,7 +55,8 @@ def _container_run(image: str, *, docker: str = "docker",
                 auth = auth_docker_args(binary, system=platform.system(), home=Path.home())
             except AuthUnavailable:
                 auth = []
-            return run([docker, "run", "--rm", *auth, image, *argv], **kw)
+            return run([docker, "run", "--rm", "--name", container_name("probe"),
+                        *label_args(), *auth, image, *argv], **kw)
         return run(argv, **kw)   # host-side (e.g. the `security` keychain read)
     return _run
 
@@ -80,7 +82,8 @@ def _run_image_script(image: str, binary: str, script: str, *, run: Callable) ->
     except AuthUnavailable:
         auth = []
     try:
-        proc = run(["docker", "run", "--rm", *auth, image, "bash", "-lc", script],
+        proc = run(["docker", "run", "--rm", "--name", container_name("probe"),
+                    *label_args(), *auth, image, "bash", "-lc", script],
                    capture_output=True, text=True, timeout=40)
     except (OSError, subprocess.SubprocessError):
         return None

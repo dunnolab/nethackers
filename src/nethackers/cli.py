@@ -44,6 +44,26 @@ goes to ``hubclient.output.err`` (a ``stderr``-bound ``rich`` ``Console``),
 never stdout, so stdout stays machine-clean (in particular, exactly the
 JSON payload and nothing else under ``-o json``) no matter what a
 subcommand does along the way.
+
+The top-level ``--version`` flag is handled in ``_run`` before any of the
+above -- before the stage announcement, subcommand dispatch, or the bare-
+TUI launch -- since it's a self-contained, offline diagnostic (reads the
+package version + ``harness.version.RUN_SCHEMA_VERSION`` + the two pinned
+sandbox image refs via ``nethackers.diagnostics.version_info``, never
+Docker or the hub). Its output is data, not human chrome, so it goes to
+stdout like every other data render and honors ``-o json`` the same way.
+
+``doctor`` (spec 5.6) answers "is my machine set up to do X?" per
+**capability** (``eval``/``evolve``/``publish``/``browse``): it runs
+``nethackers.diagnostics.run_checks`` (which never raises -- every probe is
+wrapped) and prints either the grouped human summary or ``to_json``'s
+``{checks, capabilities, env}`` via the same ``emit`` every read subcommand
+uses, then exits via ``exit_code`` -- 0 iff ``--for``'s capability (default
+``eval``) is ready; soft warnings never flip it. ``--pull`` is the one
+mutating flag (acquires both sandbox images, streaming progress to
+``err``, then re-checks). The hub/login checks reuse ``whoami``'s own
+``HubClient(...).hub_mode()``/``_load_creds`` primitives -- one source of
+truth (INV5), not a second implementation.
 """
 
 from __future__ import annotations
@@ -53,6 +73,8 @@ import json
 import os
 import sys
 import time
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -62,15 +84,28 @@ from rich.panel import Panel
 from rich.text import Text
 from rich_argparse import RichHelpFormatter
 
-from nethackers import clipboard, config
+from nethackers import clipboard, config, crashfile
 from nethackers.config import Stage, load_stage
+from nethackers.diagnostics import (
+    CAPABILITIES,
+    _short_digest,
+    exit_code,
+    render_human,
+    render_plain,
+    run_checks,
+    to_json,
+    version_info,
+)
 from nethackers.eval.runner import eval_batch
 from nethackers.harness.discovery import ModelInfo, list_models, preflight_model
 from nethackers.harness.launch import EvolveParams, _now, prepare_evolve
+from nethackers.harness.pull_events import PullEvent, render_cli_line
 from nethackers.harness.sandbox_preflight import (
-    build_mutator_image,
+    ensure_image,
     image_present,
     preflight as sandbox_preflight,
+    preflight_runtime,
+    resolve_image,
 )
 from nethackers.hub.objectives import CATALOG
 from nethackers.hub.selector import resolve
@@ -90,7 +125,7 @@ from nethackers.hubclient.credentials import Credentials, whoami_from_token
 from nethackers.hubclient.frontier import champion, champion_scores, overall_mean, universe_scores
 from nethackers.hubclient.live import EpisodeStream
 from nethackers.hubclient.output import emit, err
-from nethackers.hubclient.publish import PublishError, ensure_repo, gh_login, publish_solution
+from nethackers.hubclient.publish import PublishError, ensure_repo, gh_state, publish_solution
 from nethackers.hubclient.pull import pull
 from nethackers.hubclient.register import device_login, refresh_access_token
 from nethackers.hubclient.render import (
@@ -100,6 +135,7 @@ from nethackers.hubclient.render import (
     render_search as rich_search,
     render_show as rich_show,
 )
+from nethackers.operators import DEFAULT_OPERATOR, OPERATORS
 from nethackers.tui.app import NetHackersApp
 
 # Time seam: tests monkeypatch ``cli._time_now`` to make credential
@@ -164,6 +200,32 @@ def _models_table(operator: str, rows: list[dict[str, Any]]):
         # unexpected reasoning shape (see discovery._codex_reasoning).
         table.add_row(name, r["label"], ", ".join(str(x) for x in r["reasoning"]))
     return table
+
+
+def _report_summary(crash: dict[str, Any]) -> str:
+    """Human-readable rendering of one crash file for ``nethackers
+    report``'s default/table/plain output. Deliberately plain text, no rich
+    markup: this is meant to be read once, then copied verbatim into a
+    GitHub issue or a chat message -- not decorated. ``-o json`` bypasses
+    this entirely (``emit`` falls back to a raw ``json.dumps`` of the crash
+    dict itself, per the zero-telemetry "only DISPLAYS the local file, never
+    reshapes it for a person" contract)."""
+    doctor = crash.get("doctor")
+    caps = doctor.get("capabilities") if isinstance(doctor, dict) else None
+    lines = [
+        f"crash report — {crash.get('ts', 'unknown time')}",
+        f"  nethackers  {crash.get('nethackers_version', '?')}",
+        f"  python      {crash.get('python', '?')}",
+        f"  platform    {crash.get('platform', '?')}",
+        f"  command     {' '.join(crash.get('argv', []))}",
+        f"  error       {crash.get('exc_type', '?')}",
+    ]
+    if caps:
+        ready = ", ".join(f"{name}={'yes' if ok else 'no'}" for name, ok in caps.items())
+        lines.append(f"  ready to    {ready}")
+    else:
+        lines.append("  doctor      not available")
+    return "\n".join(lines)
 
 
 def _common_parser() -> argparse.ArgumentParser:
@@ -297,6 +359,13 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
         ),
     )
     parser.add_argument(
+        "--version",
+        action="store_true",
+        help="Print the package version, run-schema version, and pinned "
+        "sandbox image digests, then exit (offline; honors -o json). Not "
+        "argparse's built-in version action -- that can't honor -o.",
+    )
+    parser.add_argument(
         "--hub",
         default=stage.hub_url,
         help="Hub API base URL (default: %(default)s; or $NETHACKERS_HUB).",
@@ -337,6 +406,32 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
         help="Show the currently logged-in identity.",
     )
 
+    do = sub.add_parser(
+        "doctor", parents=[common], formatter_class=RichHelpFormatter,
+        help="Check whether this machine is set up to eval/evolve/publish/browse.",
+    )
+    do.add_argument(
+        "--for", dest="for_capability", choices=list(CAPABILITIES), default=None,
+        help="Check readiness for one capability only, and exit accordingly "
+        "(default: eval -- the minimum useful).",
+    )
+    do.add_argument(
+        "--pull", action="store_true",
+        help="Pull the arena+mutator sandbox images first (progress on stderr), "
+        "then re-check.",
+    )
+    do.add_argument(
+        "--operator", choices=list(OPERATORS), default=None,
+        help="Restrict the operator-readiness check to one agent "
+        "(default: all registered coding agents).",
+    )
+
+    sub.add_parser(
+        "report", parents=[common], formatter_class=RichHelpFormatter,
+        help="Show the most recent local crash report (read-only and offline -- "
+        "nothing is ever sent anywhere; share it yourself if you choose to).",
+    )
+
     e = sub.add_parser(
         "eval", parents=[common], formatter_class=RichHelpFormatter,
         help="Evaluate a solution against a published objective's batch.",
@@ -353,7 +448,7 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
         "models", parents=[common], formatter_class=RichHelpFormatter,
         help="List the models the operator CLI can serve inside the mutator sandbox image.",
     )
-    mo.add_argument("--operator", choices=["codex", "claude"], default="codex")
+    mo.add_argument("--operator", choices=list(OPERATORS), default="codex")
     mo.add_argument(
         "--mutator-image", default=stage.mutator_image,
         help="Probe this image's operator CLI (the one a run uses), not the host's "
@@ -375,7 +470,7 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
         help="Evaluate locally without publishing or registering (still reads "
         "the configured hub for cell-seeding).",
     )
-    evolve.add_argument("--operator", choices=["codex", "claude"], default="claude")
+    evolve.add_argument("--operator", choices=list(OPERATORS), default=DEFAULT_OPERATOR)
     evolve.add_argument(
         "--model", default=None,
         help="Pin the operator's model (e.g. claude-opus-5, gpt-5.6-sol); "
@@ -521,6 +616,69 @@ def _unknown_scope(name: str) -> str:
     )
 
 
+def _short_pin(ref: str) -> str:
+    """Format one pinned ``<repo>@sha256:<64-hex>`` image ref for
+    ``--version``'s human block (spec 5.7): the registry/repo path is long
+    and identical shape across both pins, and the full 64-hex digest is
+    illegible on a terminal line, so both are elided behind a leading/
+    trailing ellipsis, keeping only a 19-char digest prefix -- e.g.
+    ``…@sha256:0000000000000000000…``. ``-o json`` (``version_info()``)
+    always carries the untruncated ref -- this truncation is display-only.
+
+    Delegates the actual digest-shortening to ``diagnostics._short_digest``
+    (``doctor``'s own display-layer truncation, spec 5.6) so the two share
+    one source of truth for the prefix length -- only the leading ellipsis
+    (eliding the repo path too, fine here but wrong for ``doctor``, where
+    the repo path is useful context mid-sentence) is added on top."""
+    return "…" + _short_digest(ref[ref.index("@sha256:"):])
+
+
+def _arena_preflight(image: str) -> str | None:
+    """The arena-only gate ``eval``/``submit`` share: a working container
+    runtime, then the (already-resolved) image itself, built/pulled if
+    missing. ``None`` on success, else the first failing check's styled
+    message. Deliberately calls ONLY ``preflight_runtime`` -- never
+    ``preflight_operator`` -- the arena has no operator, so a plain
+    eval/submit must never demand a codex/claude login (spec S5.5's "two
+    separate gates")."""
+    rt_err = preflight_runtime()
+    if rt_err is not None:
+        return rt_err
+    return ensure_image(image, "arena", on_line=lambda ln: err.print(f"[dim]{ln}[/]"))
+
+
+@contextmanager
+def _pull_progress() -> Iterator[Callable[[PullEvent], None]]:
+    """A ``PullEvent`` consumer for CLI sandbox provisioning -- the CLI half
+    of the shared typed pull-progress seam (spec S5.5; the TUI has its own
+    consumer). While attached to a real terminal, renders ``render_cli_line``
+    as a single rewriting status line via ``rich.live.Live`` (the same
+    in-place-update convention ``EpisodeStream`` below already uses for the
+    per-episode table, ``transient=True`` here since the surrounding
+    "checking/pulling…"/"✓ ready" prints already bracket it with a permanent
+    record). Redirected output (no tty, e.g. ``-o json``/CI logs) instead
+    gets plain sequential lines -- rewriting a line only makes sense on a
+    real terminal. Deliberately minimal: a compact one-liner, not a
+    progress bar.
+
+    Used INSTEAD OF the raw ``on_line`` docker-text dump at its two call
+    sites below (fix round 1) -- passing both would show the user the full
+    raw transcript AND a redundant compact line underneath it, which
+    defeats the point of a compact typed surface. ``on_line`` itself stays
+    a valid parameter on ``ensure_image``/``_pull_image``/``_build_image``
+    for any other caller (e.g. ``_arena_preflight``) that still wants the
+    raw text."""
+    if not err.is_terminal:
+        def _on_event_plain(event: PullEvent) -> None:
+            err.print(f"[dim]{render_cli_line(event)}[/]")
+        yield _on_event_plain
+        return
+    with Live(console=err, auto_refresh=False, transient=True) as live:
+        def _on_event_live(event: PullEvent) -> None:
+            live.update(f"[dim]{render_cli_line(event)}[/]", refresh=True)
+        yield _on_event_live
+
+
 def _run(argv: list[str] | None) -> int:
     """Parse args and dispatch one subcommand. May raise -- ``main`` is the
     single place that turns any failure into a clean message, so nothing here
@@ -528,6 +686,24 @@ def _run(argv: list[str] | None) -> int:
     stage = _stage_from_argv(argv)
     parser = _build_parser(stage)
     args = parser.parse_args(argv)
+
+    if args.version:
+        # Ahead of the stage announcement and every subcommand/TUI path --
+        # `--version` is a self-contained, offline diagnostic (spec 5.7/
+        # INV7: reports the pins this build was cut against, never touches
+        # Docker/network/hub) and must stay that way regardless of --hub or
+        # stage. `-o json` gets the untruncated refs on stdout; the human
+        # block shortens the two image digests for readability (see
+        # `_short_pin`) -- either way, nothing but this data hits stdout.
+        info = version_info()
+        if args.output == "json":
+            print(json.dumps(info))
+        else:
+            print(f"nethackers {info['nethackers']}")
+            print(f"run-schema {info['run_schema_version']}")
+            print(f"arena {_short_pin(info['images']['arena'])}")
+            print(f"mutator {_short_pin(info['images']['mutator'])}")
+        return 0
 
     if stage.name != "prod":
         # An ambient discovery visibility requirement: implicit .env.stack
@@ -595,20 +771,67 @@ def _run(argv: list[str] | None) -> int:
             err.print(_where_line(stage, ident, hub_mode, unreachable=unreachable))
         return 0 if c is not None else 1
 
+    if args.cmd == "doctor":
+        if args.pull:
+            # Acquire both sandbox images unconditionally -- ensure_image
+            # itself no-ops when a ref is already present, so this is cheap
+            # on a machine that's already set up. Never bails early on one
+            # failure: attempt both, stream each to stderr, then re-check
+            # regardless -- the checks below give an accurate post-attempt
+            # picture either way (this is doctor's one mutating path; every
+            # other branch here is read-only).
+            for kind in ("arena", "mutator"):
+                ref = resolve_image(None, kind)
+                err.print(f"[dim]checking/pulling {kind} sandbox ({ref})…[/]")
+                with _pull_progress() as on_event:
+                    perr = ensure_image(ref, kind, on_event=on_event)
+                if perr is not None:
+                    err.print(perr)
+        # Named distinctly from `evolve`'s own `results` local below -- both
+        # live in this same un-annotated function scope (Python has no
+        # per-`if`-block scoping), and mypy widens a bare local's inferred
+        # type across every assignment to that name in the whole function.
+        checks = run_checks(operator=args.operator, hub=args.hub)
+        emit(
+            to_json(checks), args.output,
+            table=lambda _d: render_human(checks),
+            plain=lambda _d: render_plain(checks),
+        )
+        return exit_code(checks, args.for_capability)
+
+    if args.cmd == "report":
+        # Read-only and offline, unlike every other branch above/below that
+        # touches the hub: this only ever displays a file `write_crash`
+        # already wrote (main()'s top-level exception guard) -- it makes no
+        # network call and never triggers a fresh doctor probe itself.
+        path = crashfile.latest()
+        if path is None:
+            err.print("no crash reports found")
+            return 0
+        crash = crashfile.load(path)
+        emit(crash, args.output, table=_report_summary, plain=_report_summary)
+        return 0
+
     if args.cmd == "eval":
         spec = CATALOG.get(args.objective)
         if spec is None:
             err.print(_unknown_objective(args.objective))
             return 2
+        image = resolve_image(args.image, "arena")
+        pf_err = _arena_preflight(image)
+        if pf_err is not None:
+            err.print(pf_err)
+            return 1
         evidence = eval_batch(
-            Path(args.solution), spec, args.image, now=_now(),
+            Path(args.solution), spec, image, now=_now(),
             max_parallel_evals=args.max_parallel_evals,
         )
         print(json.dumps(evidence.to_dict(), indent=2))
         return 0
 
     if args.cmd == "models":
-        models: list[ModelInfo] | None = list_models(args.operator, image=args.mutator_image)
+        models: list[ModelInfo] | None = list_models(
+            args.operator, image=resolve_image(args.mutator_image, "mutator"))
         if models is None:
             err.print(f"[yellow]couldn't determine {args.operator}'s models[/] "
                       "(offline, old CLI, or logged out) — check `"
@@ -640,17 +863,29 @@ def _run(argv: list[str] | None) -> int:
         if msg is not None:
             err.print(msg)
             return 1
-        # Auto-provision the sandbox image (users never run `make` themselves):
-        # if it isn't built yet, build it here with a one-time progress note.
-        if not image_present(args.mutator_image):
-            err.print("[yellow]setting up the mutation sandbox[/] (first run — this "
-                      "compiles NLE and can take a few minutes)…")
-            berr = build_mutator_image(args.mutator_image,
-                                       on_line=lambda ln: err.print(f"[dim]{ln}[/]"))
-            if berr is not None:
-                err.print(berr)
+        # One resolution covers every mutator-image use below (auto-provision,
+        # EvolveParams, model preflight) -- never re-read args.mutator_image
+        # directly past this point. Same for the arena image: run_loop scores
+        # every iteration through it (harness/evaluate.py -> eval_batch), so it
+        # needs provisioning up front exactly like the mutator does -- an
+        # unset-up arena image would otherwise fail deep inside the first
+        # iteration instead of here, at Start.
+        mut = resolve_image(args.mutator_image, "mutator")
+        arena_img = resolve_image(args.image, "arena")
+        # Auto-provision both sandbox images (users never run `make`/`docker
+        # pull` themselves): whichever isn't present yet is acquired here with
+        # a one-time progress note.
+        for _ref, _kind in ((mut, "mutator"), (arena_img, "arena")):
+            if image_present(_ref):
+                continue
+            err.print(f"[yellow]setting up the {_kind} sandbox[/] (first run — this "
+                      "can take a few minutes)…")
+            with _pull_progress() as on_event:
+                ierr = ensure_image(_ref, _kind, on_event=on_event)
+            if ierr is not None:
+                err.print(ierr)
                 return 1
-            err.print("[green]✓ sandbox ready[/]")
+            err.print(f"[green]✓ {_kind} sandbox ready[/]")
 
         _creds = _load_creds()
         # run.json + run wiring live in prepare_evolve, shared with the in-app
@@ -660,11 +895,12 @@ def _run(argv: list[str] | None) -> int:
             objective=args.objective, seed=str(args.seed), operator=args.operator,
             iterations=args.iterations,
             max_parallel_evals=args.max_parallel_evals,
-            image=args.image, hub=args.hub, workdir=args.workdir, run_name=args.run_name,
+            image=arena_img, hub=args.hub, workdir=args.workdir,
+            run_name=args.run_name,
             token=args.token or (_creds.access_token if _creds else config.OFFLINE_TOKEN),
             owner=args.owner or (_creds.login if _creds else config.OFFLINE_OWNER),
             from_seed=args.from_seed, offline=args.offline,
-            model=args.model, effort=args.effort, mutator_image=args.mutator_image,
+            model=args.model, effort=args.effort, mutator_image=mut,
         )
         # An anonymous run is offline by necessity (the owner==OFFLINE_OWNER
         # backstop in _publisher_for), but --offline is the only case that says
@@ -676,13 +912,23 @@ def _run(argv: list[str] | None) -> int:
                 "[dim]not logged in — running offline "
                 "(publishing needs `nethackers login`)[/]"
             )
+        elif not args.offline:
+            # Hub-logged-in but gh not ready ⇒ wins evolve, are found, and
+            # silently stay LOCAL (PublishError at push time). Warn up front.
+            _gh_login, _gh_state = gh_state()
+            if _gh_state == "missing":
+                err.print("[yellow]wins won't publish[/] — install the GitHub CLI "
+                          "(`gh`), then run `gh auth login`")
+            elif _gh_state == "unauthed":
+                err.print("[yellow]wins won't publish[/] — run `gh auth login` "
+                          "(separate from `nethackers login`)")
 
         # Preflight only when a model is pinned: harness-default has nothing to
         # validate, and this keeps the model=None path (the common case + every
         # existing wiring test) free of any CLI/network probe. A confident
         # refuse stops here -- no run dir, no doomed spin; unknown only warns.
         if args.model:
-            pf = preflight_model(args.operator, args.model, image=args.mutator_image)
+            pf = preflight_model(args.operator, args.model, image=mut)
             if pf.action == "refuse":
                 err.print(f"[red]{pf.message}[/]")
                 return 2
@@ -808,9 +1054,14 @@ def _run(argv: list[str] | None) -> int:
         if creds is None:
             err.print("[yellow]not logged in[/] — run `nethackers login`")
             return 1
-        gh = gh_login()
+        gh, gh_st = gh_state()
         if gh is None:
-            err.print("[yellow]gh unavailable[/] — install the GitHub CLI and run `gh auth login`")
+            if gh_st == "missing":
+                err.print("[yellow]gh not installed[/] — install the GitHub CLI "
+                          "(`gh`), then run `gh auth login`")
+            else:  # unauthed
+                err.print("[yellow]gh not authed[/] — run `gh auth login` "
+                          "(separate from `nethackers login`)")
             return 1
         if gh != creds.login:
             err.print(f"gh is authed as [b]@{gh}[/] but you're logged in as "
@@ -824,9 +1075,15 @@ def _run(argv: list[str] | None) -> int:
         if spec is None:
             err.print(_unknown_objective(args.objective))
             return 2
-        # self-reported score: evaluate the local solution on the objective's batch
+        # self-reported score: evaluate the local solution on the objective's
+        # batch. Same arena-only gate as `eval` -- no operator/login involved.
+        image = resolve_image(args.image, "arena")
+        pf_err = _arena_preflight(image)
+        if pf_err is not None:
+            err.print(pf_err)
+            return 1
         evidence = eval_batch(
-            Path(args.solution_dir), spec, args.image, now=_now(),
+            Path(args.solution_dir), spec, image, now=_now(),
             max_parallel_evals=args.max_parallel_evals,
         )
         slug = f"{creds.login}/{args.repo_name}"
@@ -889,6 +1146,23 @@ def main(argv: list[str] | None = None) -> int:
     except Exception as exc:  # never surface a raw traceback to a user
         if os.environ.get("NETHACKERS_DEBUG"):
             raise
+        # Belt-and-suspenders on top of write_crash's own internal guard
+        # (crashfile.py): the crash writer must never replace the ORIGINAL
+        # exception main() is already handling with a second one of its own.
+        # `manifest_reachable=lambda r: False` skips only the slow GHCR probe
+        # -- everything else is the full 7-check snapshot `to_json` expects
+        # (a filtered `only=` result would report vacuous "ready" for
+        # capabilities whose checks never ran); the whole enrich is
+        # best-effort regardless (write_crash nulls `doctor` on any failure).
+        try:
+            path = crashfile.write_crash(
+                exc, argv=sys.argv[1:],
+                enrich=lambda: to_json(run_checks(manifest_reachable=lambda r: False)),
+            )
+        except Exception:
+            path = None
         err.print(f"[red]nethackers: unexpected error[/]: {type(exc).__name__}: {exc}")
         err.print("[dim](set NETHACKERS_DEBUG=1 for the full traceback)[/]")
+        if path is not None:
+            err.print("[dim]wrote a crash report — run `nethackers report` to view/share it[/]")
         return 1
