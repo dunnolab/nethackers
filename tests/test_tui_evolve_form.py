@@ -512,7 +512,10 @@ async def test_readiness_strip_shows_evolve_checks_and_not_ready_verdict(monkeyp
                 fix="run `nethackers doctor --pull` to fetch it now", capabilities=("evolve",)),
             diagnostics.CheckResult(
                 id="operator", status="ok", severity="hard",
-                detail="claude: host login resolvable", fix=None, capabilities=("evolve",)),
+                detail="codex: logged in, claude: not logged in", fix=None,
+                capabilities=("evolve",),
+                items=(diagnostics.CheckItem("codex", "ok", "logged in"),
+                       diagnostics.CheckItem("claude", "fail", "not logged in"))),
         ]
 
     monkeypatch.setattr(diagnostics, "run_checks", _fake_run_checks)
@@ -525,6 +528,8 @@ async def test_readiness_strip_shows_evolve_checks_and_not_ready_verdict(monkeyp
         assert "✓" in text and "container_runtime" in text   # runtime ready
         assert "✓" in text and "arena_image" in text          # arena ready
         assert "⚠" in text and "mutator_image" in text         # mutator not ready
+        # operator renders as a sublist -- each registered agent on its own line
+        assert "codex" in text and "claude" in text
         assert "not ready" in text.lower()                    # overall evolve verdict
 
     # the strip checks ALL registered agents now (operator not narrowed) and

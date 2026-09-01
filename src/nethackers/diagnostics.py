@@ -79,6 +79,19 @@ CHECK_SPECS: dict[str, tuple[str, tuple[str, ...]]] = {
 
 
 @dataclass(frozen=True)
+class CheckItem:
+    """One sub-entry of a check that has a per-item breakdown -- e.g. each
+    registered coding agent under the ``operator`` check. Rendered as an
+    indented sublist beneath the parent check; the same data also stays
+    flattened into the parent ``CheckResult.detail``, so ``-o json`` (and its
+    committed schema) need no new field."""
+
+    label: str    # e.g. "codex"
+    status: str   # "ok" | "warn" | "fail"
+    detail: str   # e.g. "logged in"
+
+
+@dataclass(frozen=True)
 class CheckResult:
     """One named check's outcome.
 
@@ -103,6 +116,11 @@ class CheckResult:
     detail: str
     fix: str | None
     capabilities: tuple[str, ...]
+    # Optional per-item breakdown rendered as an indented sublist (e.g. one
+    # line per registered agent under `operator`); `()` for the checks that
+    # are a single line. NOT emitted by `to_json` -- `detail` carries the same
+    # data flattened, so the committed doctor.schema.json is unaffected.
+    items: tuple[CheckItem, ...] = ()
 
 
 def _manifest_reachable(ref: str, *, run=subprocess.run) -> bool:
@@ -235,13 +253,14 @@ def _check_operator(
     so this is ready as long as AT LEAST ONE agent is logged in, and the detail
     lists each agent's status so the options are visible."""
     status = {op: preflight_operator(op) for op in operators}  # None == logged in
-    ready = [op for op in operators if status[op] is None]
-    shown = " · ".join(
-        f"{op}: {'logged in' if status[op] is None else 'not logged in'}" for op in operators)
-    if ready:
-        return CheckResult(id="operator", status="ok", severity=severity,
-                           detail=f"{shown}  (evolve uses one — {', '.join(ready)} available)",
-                           fix=None, capabilities=caps)
+    items = tuple(
+        CheckItem(label=op, status="ok" if status[op] is None else "fail",
+                  detail="logged in" if status[op] is None else "not logged in")
+        for op in operators)
+    flat = ", ".join(f"{it.label}: {it.detail}" for it in items)  # flattened for -o json
+    if any(status[op] is None for op in operators):
+        return CheckResult(id="operator", status="ok", severity=severity, detail=flat,
+                           fix=None, capabilities=caps, items=items)
     logins = " or ".join(f"`{op} login`" for op in operators)
     fix = f"log in to a coding agent — {logins}"
     if not mutator_present:
@@ -250,9 +269,8 @@ def _check_operator(
         # `--pull`) -- name that option rather than trust an unverifiable
         # host-only signal.
         fix += " — or `nethackers doctor --pull` to pull the sandbox and verify inside it"
-    return CheckResult(id="operator", status="fail", severity=severity,
-                       detail=f"{shown} — no coding agent logged in", fix=fix,
-                       capabilities=caps)
+    return CheckResult(id="operator", status="fail", severity=severity, detail=flat,
+                       fix=fix, capabilities=caps, items=items)
 
 
 def _safe(
@@ -474,6 +492,13 @@ def render_human(results: list[CheckResult]) -> str:
             continue
         lines.append(f"[b]to {_CAP_LABEL[cap]}[/]")
         for r in rows:
+            if r.items:  # a check with a per-item breakdown -> parent + sublist
+                lines.append(f"  {_GLYPH[r.status]} {r.id}")
+                for it in r.items:
+                    lines.append(f"      {_GLYPH[it.status]} {it.label}: {it.detail}")
+                if r.fix and r.status != "ok":
+                    lines.append(f"      [dim]→ {r.fix}[/]")
+                continue
             line = f"  {_GLYPH[r.status]} {r.id:<17} {_short_digest(r.detail)}"
             if r.fix and r.status != "ok":
                 line += f"  [dim]→ {r.fix}[/]"
@@ -493,6 +518,13 @@ def render_plain(results: list[CheckResult]) -> str:
             continue
         lines.append(f"to {cap}:")
         for r in rows:
+            if r.items:  # a check with a per-item breakdown -> parent + sublist
+                lines.append(f"  [{_PLAIN_GLYPH[r.status]}] {r.id}")
+                for it in r.items:
+                    lines.append(f"        [{_PLAIN_GLYPH[it.status]}] {it.label}: {it.detail}")
+                if r.fix and r.status != "ok":
+                    lines.append(f"        -> {r.fix}")
+                continue
             line = f"  [{_PLAIN_GLYPH[r.status]}] {r.id}: {_short_digest(r.detail)}"
             if r.fix and r.status != "ok":
                 line += f" -> {r.fix}"

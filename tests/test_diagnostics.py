@@ -265,6 +265,41 @@ def test_operator_narrows_to_a_single_named_agent():
     assert "codex" in op.detail and "claude" not in op.detail
 
 
+def test_operator_items_are_per_agent_with_flat_detail_for_json():
+    from nethackers.operators import OPERATORS
+    results = run_checks(**_healthy_kwargs(
+        operator=None,
+        preflight_operator=lambda op: None if op == "codex" else "not logged in"))
+    op = next(r for r in results if r.id == "operator")
+    assert [it.label for it in op.items] == list(OPERATORS)   # one sub-item per agent
+    by = {it.label: it for it in op.items}
+    assert by["codex"].status == "ok" and by["codex"].detail == "logged in"
+    assert by["claude"].status == "fail" and by["claude"].detail == "not logged in"
+    # the same data stays flattened in `detail` -- what -o json / the schema use
+    assert "codex: logged in" in op.detail and "claude: not logged in" in op.detail
+
+
+def test_render_plain_renders_a_check_with_items_as_an_indented_sublist():
+    from nethackers.diagnostics import CheckItem, render_plain
+    results = [CheckResult(
+        id="operator", status="ok", severity="hard",
+        detail="codex: logged in, claude: not logged in", fix=None,
+        capabilities=("evolve",),
+        items=(CheckItem("codex", "ok", "logged in"),
+               CheckItem("claude", "fail", "not logged in")))]
+    lines = render_plain(results).splitlines()
+    parent = next(ln for ln in lines if ln.rstrip().endswith("operator"))
+    codex = next(ln for ln in lines if "codex" in ln)
+    claude = next(ln for ln in lines if "claude" in ln)
+
+    def indent(s: str) -> int:
+        return len(s) - len(s.lstrip())
+
+    assert indent(codex) > indent(parent) and indent(claude) > indent(parent)
+    assert "[OK]" in codex and "logged in" in codex
+    assert "[FAIL]" in claude and "not logged in" in claude
+
+
 # --- hub: the default reads the EFFECTIVE stage, not a frozen prod literal -
 
 

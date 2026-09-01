@@ -386,11 +386,16 @@ class EvolveForm(Vertical):
 
     def _apply_readiness(self, results: list[CheckResult]) -> None:
         from nethackers import diagnostics
+        glyphs = {"ok": "[green]✓[/]", "warn": "[yellow]⚠[/]", "fail": "[red]✗[/]"}
         rows = [r for r in results if "evolve" in r.capabilities]
         lines: list[str] = []
         for r in rows:
-            glyph = {"ok": "[green]✓[/]", "warn": "[yellow]⚠[/]", "fail": "[red]✗[/]"}[r.status]
-            lines.append(f"{glyph} {r.id}: {diagnostics._short_digest(r.detail)}")
+            if r.items:  # a check with a per-item breakdown (operator) -> sublist
+                lines.append(f"{glyphs[r.status]} {r.id}")
+                for it in r.items:
+                    lines.append(f"    {glyphs[it.status]} {it.label}: {it.detail}")
+            else:
+                lines.append(f"{glyphs[r.status]} {r.id}: {diagnostics._short_digest(r.detail)}")
         ready = diagnostics.capability_ready(results, "evolve")
         verdict = ("[green]ready to evolve[/]" if ready
                   else "[yellow]evolve not ready — see above[/]")
