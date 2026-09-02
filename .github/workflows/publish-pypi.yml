@@ -96,13 +96,15 @@ jobs:
             attempt=$((attempt + 1))
             FULL=$(uvx --isolated --no-cache "nethackers@$V" --version 2>&1)
             rc=$?
-            OUT=$(printf '%s\n' "$FULL" | head -1)
-            if [ "$rc" -eq 0 ] && [[ "$OUT" == *"$V"* ]]; then
-              echo "canary: attempt $attempt: installed reports: $OUT"
+            # uvx prints install progress ("Downloading …") before the CLI's own
+            # output, so match the version LINE anywhere in $FULL -- not head -1,
+            # which catches the progress line and never confirms.
+            if [ "$rc" -eq 0 ] && printf '%s\n' "$FULL" | grep -qF "nethackers $V"; then
+              echo "canary: attempt $attempt: confirmed nethackers $V"
               echo "canary: ok -- PyPI serves nethackers $V and it reports the tagged version"
               break
             fi
-            echo "canary: attempt $attempt did not confirm the published version yet (rc=$rc, first line: $OUT)"
+            echo "canary: attempt $attempt did not confirm the published version yet (rc=$rc)"
             if [ "$SECONDS" -ge "$deadline" ]; then
               echo "::error::canary: uvx nethackers@$V --version never confirmed the published version within 5 minutes of publishing -- PyPI index propagation stalled, or the published artifact is broken"
               echo "canary: last full output was:"
