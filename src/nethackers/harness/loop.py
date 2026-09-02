@@ -63,6 +63,13 @@ def _causes(results) -> dict[str, int]:
     return dict(Counter(r.cause_of_death for r in results if r.cause_of_death))
 
 
+# How many recent REJECTED attempts to provision as real code trees under
+# /refs/attempts/ (the mutator can diff/read them). The brief's textual notes
+# stay uncapped for breadth; this caps the far heavier tree copies to the most
+# recent few for depth (matching the old per-island <=3 rejected-tree cap).
+_ATTEMPT_REFS_CAP = 3
+
+
 def _attempt_note(iteration: int, hyp: str | None, outcome: str) -> str:
     """One run-global attempt-history line: the iteration id, the change the
     mutator made (its `# hypothesis:` when present), and the outcome."""
@@ -72,16 +79,35 @@ def _attempt_note(iteration: int, hyp: str | None, outcome: str) -> str:
 _HYP = re.compile(r"#\s*hypothesis:\s*(.+)", re.IGNORECASE)
 
 
-def _hypothesis_of(worktree: Path) -> str | None:
-    """The mutator's own `# hypothesis: …` comment (brief.py asks for one at
-    the edit) -- the first match across the worktree's Python files, in
-    sorted path order. Best-effort: an unreadable file (encoding issue, race)
-    is skipped, not fatal; no match anywhere yields None."""
-    for p in sorted(Path(worktree).rglob("*.py")):
+def _hypotheses_in(root: Path) -> list[str]:
+    """Every `# hypothesis: …` text in a tree, in sorted path order (a file may
+    hold more than one). Best-effort: an unreadable file (encoding issue, race)
+    is skipped, not fatal."""
+    found: list[str] = []
+    for p in sorted(Path(root).rglob("*.py")):
         with contextlib.suppress(OSError, UnicodeDecodeError):
-            m = _HYP.search(p.read_text())
-            if m:
-                return m.group(1).strip()
+            found.extend(m.group(1).strip() for m in _HYP.finditer(p.read_text()))
+    return found
+
+
+def _hypothesis_of(worktree: Path, parent: Path | None = None) -> str | None:
+    """The mutator's OWN `# hypothesis: …` for this mutation. The worktree is a
+    copy of the parent elite, so it inherits every ancestor's hypothesis
+    comment (typically in an early-sorting file like autoascend/agent.py); the
+    old "first match in sorted path order" therefore returned a STALE inherited
+    line, not the change just made. So diff against the pristine `parent`: the
+    new hypothesis is the first worktree line whose text isn't already in the
+    parent. Honest when nothing is new (the mutation added no hypothesis) ->
+    None, never an inherited echo. With `parent=None` (no reference) it falls
+    back to the first hypothesis found, preserving the standalone helper's old
+    contract."""
+    worktree_hyps = _hypotheses_in(worktree)
+    if parent is None:
+        return worktree_hyps[0] if worktree_hyps else None
+    inherited = set(_hypotheses_in(parent))
+    for hyp in worktree_hyps:
+        if hyp not in inherited:
+            return hyp
     return None
 
 
@@ -130,9 +156,17 @@ def run_loop(
     # Run-global attempt history (uncapped, NOT per-cell, NOT cross-run): one
     # note per iteration -- the mutation's `# hypothesis:` (when present) plus
     # its outcome -- surfaced in the NEXT iteration's brief so the mutator
-    # avoids re-deriving a dead mutation. Notes only: the full code tree is
-    # never copied into /refs (the anti-repeat signal is the note, not a tree).
+    # avoids re-deriving a dead mutation.
     attempt_notes: list[str] = []
+    # ...and the CODE of the most-recent rejected attempts, provisioned as real
+    # trees under /refs/attempts/ so the mutator can diff/read what was tried,
+    # not just infer it from the note. Capped (heavy tree copies), recency-
+    # ordered; the note travels with each tree as its CONTEXT.md label.
+    recent_attempts: list[refs.Ref] = []
+
+    def _remember_attempt(label: str, tree: Path, note: str) -> None:
+        recent_attempts.append((label, tree, note))
+        del recent_attempts[:-_ATTEMPT_REFS_CAP]   # keep only the most-recent cap
 
     def _episode_cb(label: str) -> Callable[[dict], None] | None:
         # None when the caller isn't rendering -> evaluate stays on the plain
@@ -265,16 +299,16 @@ def run_loop(
             if on_log is not None:
                 on_log(tag, json.dumps({"type": "nethackers_brief", "text": brief}))
             # A FRESH `/refs/` dir every iteration (refs.assemble's copytree is
-            # dirs_exist_ok=False). No `attempts` trees and no `influences`
-            # (the amendment carries attempt history as brief notes, not tree
-            # copies); /refs still gives the mutator the base eval + a pristine
-            # parent copy.
+            # dirs_exist_ok=False): the base eval, a pristine parent copy, and
+            # the most-recent rejected attempts as real trees under
+            # /refs/attempts/ (no `influences` -- selector influence pools were
+            # dropped in the MAP-Elites rework).
             refs_dir = workdir / f"refs-{k}"
             refs.assemble(
                 refs_dir,
                 base_eval=json.dumps([r.to_dict() for r in cell.dev_evidence.results])
                 if cell.dev_evidence is not None else None,
-                influences=[], attempts=[], parent=cell.tree)
+                influences=[], attempts=list(recent_attempts), parent=cell.tree)
 
             _emit("mutating", k + 1, cell=ident)
             report(f"{tag} · mutating cell {ident} …")
@@ -299,7 +333,10 @@ def run_loop(
                 sleep(min(2 ** (consecutive_errors - 1), 30))   # 1s, 2s, 4s… capped
                 continue
             consecutive_errors = 0   # a healthy operator run resets the breaker
-            note_hyp = _hypothesis_of(worktree)
+            # Diff against the pristine parent (cell.tree, the copytree source)
+            # so this is the mutation's OWN hypothesis, not one inherited from
+            # an ancestor and merely carried along in the worktree.
+            note_hyp = _hypothesis_of(worktree, cell.tree)
 
             report(f"{tag} · operator: {op.spend} tok ({op.stopped_reason}); gating…")
             _emit("gating", k + 1, cell=ident, tokens=op.spend)
@@ -309,8 +346,12 @@ def run_loop(
             if not ok:
                 _emit("rejected", k + 1, cell=ident, tokens=op.spend, detail=f"gate: {reason}")
                 report(f"{tag} · ✗ gate: {reason}")
-                attempt_notes.append(_attempt_note(
-                    k + 1, note_hyp, f"rejected at smoke gate ({reason})"))
+                note = _attempt_note(k + 1, note_hyp, f"rejected at smoke gate ({reason})")
+                attempt_notes.append(note)
+                # An identical-to-parent mutant is just /refs/parent -- worth a
+                # note (it says "this iteration changed nothing") but not a tree.
+                if reason != "child identical to parent":
+                    _remember_attempt(f"iter-{k + 1}", worktree, note)
                 _record(k + 1, IterationResult(False, f"gate:{reason}", tokens=op.spend,
                                                usage=op.usage, stopped_reason=op.stopped_reason))
                 continue
@@ -371,8 +412,11 @@ def run_loop(
                     digest=digest, stopped_reason=op.stopped_reason, regressions=regs or None,
                     causes=_causes(dev_ev.results), hub_reason=hub_reason, improved=improved))
             else:
-                attempt_notes.append(_attempt_note(
-                    k + 1, note_hyp, f"dev {dev_fit:.3f}, improved no cell"))
+                note = _attempt_note(k + 1, note_hyp, f"dev {dev_fit:.3f}, improved no cell")
+                attempt_notes.append(note)
+                # A gate-passed mutant is always distinct from its parent, so
+                # its tree is always worth showing the next mutator.
+                _remember_attempt(f"iter-{k + 1}", worktree, note)
                 _emit("rejected", k + 1, cell=ident, tokens=op.spend,
                       detail="no cell improved", hub_reason=hub_reason)
                 report(f"{tag} · ✗ improved no cell: dev={dev_fit:.3f}")

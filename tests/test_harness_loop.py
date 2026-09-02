@@ -8,6 +8,7 @@
 # copied trees -- see the amendment tests at the bottom).
 import json
 import random
+import shutil
 from pathlib import Path
 
 from pytest import approx
@@ -38,6 +39,40 @@ def test_hypothesis_extracted_from_worktree(tmp_path):
         "def f():\n    return 1  # hypothesis: heal earlier at <1/2 HP\n")
     assert _hypothesis_of(tmp_path) == "heal earlier at <1/2 HP"
     assert _hypothesis_of(tmp_path / "autoascend") is not None  # dir walk
+
+
+def test_hypothesis_of_returns_the_new_line_not_an_inherited_one(tmp_path):
+    # The real bug: a worktree is copied from the parent elite, which ALREADY
+    # carries a `# hypothesis:` from an earlier mutation (typically in an
+    # early-sorting file like autoascend/agent.py). The mutator adds its NEW
+    # hypothesis in some other file. _hypothesis_of(worktree, parent) must
+    # report the NEW one -- diffing against the parent -- not the inherited
+    # early-sort match the old first-in-sorted-order scan returned.
+    from nethackers.harness.loop import _hypothesis_of
+    parent = tmp_path / "parent"
+    (parent / "autoascend").mkdir(parents=True)
+    (parent / "autoascend" / "agent.py").write_text(
+        "# hypothesis: inherited from an ancestor\nX = 1\n")
+    worktree = tmp_path / "worktree"
+    shutil.copytree(parent, worktree)                       # inherits agent.py's hypothesis
+    (worktree / "autoascend" / "zzz_change.py").write_text(
+        "# hypothesis: the change this mutation actually made\n")
+    assert _hypothesis_of(worktree, parent) == "the change this mutation actually made"
+
+
+def test_hypothesis_of_is_none_when_the_mutation_added_no_new_hypothesis(tmp_path):
+    # If the mutation added no NEW hypothesis (edited code without one, or left
+    # the tree carrying only inherited comments), the note must be honest --
+    # None -- rather than echoing an ancestor's hypothesis as if it were tried.
+    from nethackers.harness.loop import _hypothesis_of
+    parent = tmp_path / "parent"
+    (parent / "autoascend").mkdir(parents=True)
+    (parent / "autoascend" / "agent.py").write_text(
+        "# hypothesis: inherited only\nX = 1\n")
+    worktree = tmp_path / "worktree"
+    shutil.copytree(parent, worktree)
+    (worktree / "bot.py").write_text("VERSION = 2\n")       # a change, but NO new hypothesis
+    assert _hypothesis_of(worktree, parent) is None
 
 
 class _FakeHub:
@@ -631,6 +666,83 @@ def test_maplites_attempt_history_is_uncapped_across_the_run(tmp_path):
     brief5 = _brief_for("iter 5/5", logs)
     for i in range(1, 5):
         assert f"iter-{i}" in brief5   # all four earlier attempts, none dropped
+
+
+def test_maplites_provisions_recent_rejected_attempt_trees_into_refs(tmp_path):
+    # Restore the /refs/attempts channel: each iteration's mutator can inspect
+    # the CODE of recent rejected attempts (diff/read it), not just their brief
+    # notes. Every mutant here regresses ("improved no cell"), so by the 5th
+    # iteration /refs/attempts holds the 3 most-recent rejected trees -- capped
+    # and recency-ordered, so the oldest (iter-1) is evicted.
+    workdir = tmp_path / "work"
+    run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_AlwaysRejectingOperator(),
+        hub=_FakeHub(), image="img:dev", token="t", owner="dev", iterations=5,
+        now_fn=lambda: "2026-08-26T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.2 if v == 0 else 0.1),
+        workdir=workdir, rng=random.Random(0))
+    attempts = workdir / "refs-4" / "attempts"          # /refs for the 5th iteration (k=4)
+    labels = sorted(p.name for p in attempts.iterdir())
+    assert labels == ["iter-2", "iter-3", "iter-4"]     # 3 most-recent; iter-1 evicted by the cap
+    # the copied tree is the real rejected mutant, not a stub: iter-4 == VERSION 4
+    assert (attempts / "iter-4" / "bot.py").read_text().strip() == "VERSION = 4"
+    context = (workdir / "refs-4" / "CONTEXT.md").read_text()
+    assert "iter-4" in context                          # the manifest lists them (not "(none yet)")
+
+
+def test_maplites_first_iteration_has_no_attempt_trees(tmp_path):
+    # The very first mutation has no prior attempts -> /refs/attempts is absent
+    # (refs.assemble writes the section only when there is something to show).
+    workdir = tmp_path / "work"
+    run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_AlwaysRejectingOperator(),
+        hub=_FakeHub(), image="img:dev", token="t", owner="dev", iterations=1,
+        now_fn=lambda: "2026-08-26T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.2 if v == 0 else 0.1),
+        workdir=workdir, rng=random.Random(0))
+    assert not (workdir / "refs-0" / "attempts").exists()
+
+
+class _InheritedHypothesisOperator:
+    """Call 1 wins and leaves a hypothesis in an EARLY-sorting file
+    (autoascend/agent.py); later calls INHERIT it (copied from the elite) and
+    add their OWN hypothesis in a LATE-sorting file (autoascend/zzz.py) without
+    touching the inherited one. Reproduces the field bug: the note must report
+    each mutation's OWN (late-file) hypothesis, not the inherited early-file
+    line the old first-in-sorted-order scan returned for every descendant."""
+    def __init__(self): self.briefs: list[str] = []
+    def run(self, worktree, brief, *, refs=None, on_line=None, stop=None):
+        from nethackers.harness.operator import OperatorResult
+        self.briefs.append(brief)
+        n = len(self.briefs)
+        wt = Path(worktree)
+        (wt / "autoascend").mkdir(exist_ok=True)
+        if n == 1:
+            (wt / "autoascend" / "agent.py").write_text("# hypothesis: inherited early idea\n")
+        (wt / "bot.py").write_text(f"VERSION = {n}\n")
+        (wt / "autoascend" / "zzz.py").write_text(f"# hypothesis: new idea {n}\n")
+        return OperatorResult(backend="fake", usage=TokenUsage(1, 2, 3, 4),
+                              stopped_reason="completed")
+
+
+def test_brief_note_reports_the_mutations_own_hypothesis_not_an_inherited_one(tmp_path):
+    # The reported bug, end to end: iter 1 wins and its hypothesis lands in
+    # agent.py; iters 2+ inherit that comment and add their own in zzz.py. The
+    # note for iter 2 in iter 3's brief must be iter 2's OWN "new idea 2", not
+    # the inherited "inherited early idea" (which the pre-fix scan returned).
+    op = _InheritedHypothesisOperator()
+    run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=op, hub=_FakeHub(),
+        image="img:dev", token="t", owner="dev", iterations=3,
+        now_fn=lambda: "2026-08-26T00:00:00Z",
+        runner=_fitness_runner(lambda v: [0.2, 0.9, 0.1, 0.1][v]),   # v1 wins; v2,v3 don't
+        workdir=tmp_path / "work", rng=random.Random(0))
+    brief3 = op.briefs[2]                                        # the 3rd mutation's brief
+    assert "iter-2: tried 'new idea 2'" in brief3                # its OWN hypothesis...
+    assert "iter-2: tried 'inherited early idea'" not in brief3  # ...not the inherited one
 
 
 # -- cold start: each cell is seeded on ITS OWN identity, not the full union --
