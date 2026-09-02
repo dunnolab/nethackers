@@ -271,6 +271,7 @@ def test_eval_path_calls_preflight_runtime_but_never_preflight_operator(
     monkeypatch.setattr(cli, "preflight_runtime", lambda **kw: calls.update(
         runtime=calls["runtime"] + 1) or None)
     monkeypatch.setattr(cli, "ensure_image", lambda *a, **kw: None)
+    monkeypatch.setattr(cli, "container_runtime", lambda **kw: "docker")
     # Even if something regressed and reached real auth resolution, it must
     # not be reachable from here -- assert on the real chokepoint too.
     monkeypatch.setattr(sp, "preflight_operator", lambda *a, **kw: calls.update(
@@ -278,7 +279,7 @@ def test_eval_path_calls_preflight_runtime_but_never_preflight_operator(
     monkeypatch.setattr(sp, "auth_docker_args", lambda *a, **kw: calls.update(
         operator=calls["operator"] + 1) or [])
 
-    def fake_eval_batch(solution, spec, image, *, now, max_parallel_evals=8):
+    def fake_eval_batch(solution, spec, image, *, now, runtime="docker", max_parallel_evals=8):
         from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
         result = TrajectoryResult(0, "completed", 0.1, False, 1, 1, 1, None, None, 0.0)
         objective = Objective(character=None, seed_set=spec.name)
@@ -299,6 +300,7 @@ def test_eval_path_calls_preflight_runtime_but_never_preflight_operator(
 def test_eval_blocked_by_preflight_runtime_never_reaches_eval_batch(monkeypatch, tmp_path):
     from nethackers import cli
 
+    monkeypatch.setattr(cli, "container_runtime", lambda **kw: None)
     monkeypatch.setattr(
         cli, "preflight_runtime",
         lambda **kw: "[red]sandbox unavailable[/]: no working container runtime found "

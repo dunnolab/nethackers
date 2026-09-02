@@ -23,6 +23,7 @@ from typing import Any
 import httpx
 
 from nethackers.config import load_stage
+from nethackers.hubclient._deadline import DEADLINE, call_with_deadline
 
 GITHUB_DEVICE_CODE_URL = "https://github.com/login/device/code"
 GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
@@ -36,6 +37,15 @@ GITHUB_TOKEN_URL = "https://github.com/login/oauth/access_token"
 class DeviceFlowError(Exception):
     """The device flow ended in a terminal error (e.g. ``access_denied``,
     ``expired_token``) that polling can never resolve."""
+
+
+class GitHubUnreachable(Exception):
+    """GitHub itself couldn't be reached to run the OAuth flow -- a transport
+    failure (connect/timeout/DNS) or a hung call the deadline gave up on. This
+    step talks to ``github.com``, NOT the hub, so callers must never fold it
+    into the generic "cannot reach the hub" message (issue #50); the CLI's
+    top-level guard renders a GitHub/DNS-specific line instead. Carries the URL
+    it was trying to reach as its message."""
 
 
 def _token_set(resp: dict[str, Any]) -> dict[str, Any]:
@@ -62,6 +72,7 @@ def device_login(
     http=httpx,
     prompt=_announce,
     sleep=time.sleep,
+    deadline: float = DEADLINE,
 ) -> dict[str, Any]:
     """Run the GitHub device flow and return the resulting user token set.
 
@@ -85,9 +96,19 @@ def device_login(
         client_id = load_stage().github_client_id
 
     def _post(url: str, payload: dict[str, Any]) -> dict[str, Any]:
-        response = http.post(url, data=payload, headers={"Accept": "application/json"})
-        response.raise_for_status()
-        return response.json()
+        # httpx's own 5s default bounds connect/read; call_with_deadline adds a
+        # hard wall-clock ceiling that ALSO bounds a hung getaddrinfo (which no
+        # socket timeout covers -- issue #50). A transport failure or that
+        # ceiling becomes GitHubUnreachable, never a raw httpx error / a hang.
+        def _do() -> dict[str, Any]:
+            response = http.post(url, data=payload, headers={"Accept": "application/json"})
+            response.raise_for_status()
+            return response.json()
+
+        try:
+            return call_with_deadline(_do, deadline)
+        except (httpx.RequestError, TimeoutError) as exc:
+            raise GitHubUnreachable(url) from exc
 
     device = _post(GITHUB_DEVICE_CODE_URL, {"client_id": client_id, "scope": ""})
     prompt(device["verification_uri"], device["user_code"])
@@ -115,6 +136,7 @@ def refresh_access_token(
     *,
     client_id: str | None = None,
     http=httpx,
+    deadline: float = DEADLINE,
 ) -> dict[str, Any]:
     """Exchange a GitHub refresh token for a fresh user token set.
 
@@ -130,17 +152,27 @@ def refresh_access_token(
     """
     if client_id is None:
         client_id = load_stage().github_client_id
-    response = http.post(
-        GITHUB_TOKEN_URL,
-        data={
-            "client_id": client_id,
-            "grant_type": "refresh_token",
-            "refresh_token": refresh_token,
-        },
-        headers={"Accept": "application/json"},
-    )
-    response.raise_for_status()
-    token_response = response.json()
+
+    def _do() -> dict[str, Any]:
+        response = http.post(
+            GITHUB_TOKEN_URL,
+            data={
+                "client_id": client_id,
+                "grant_type": "refresh_token",
+                "refresh_token": refresh_token,
+            },
+            headers={"Accept": "application/json"},
+        )
+        response.raise_for_status()
+        return response.json()
+
+    # Same fail-fast contract as device_login: a transport failure / hung call
+    # is GitHubUnreachable (this hits github.com, not the hub -- issue #50), not
+    # a raw httpx error. TokenSource.refresh catches it like any exception.
+    try:
+        token_response = call_with_deadline(_do, deadline)
+    except (httpx.RequestError, TimeoutError) as exc:
+        raise GitHubUnreachable(GITHUB_TOKEN_URL) from exc
     if "access_token" not in token_response:
         raise DeviceFlowError(token_response.get("error") or "refresh failed")
     return _token_set(token_response)

@@ -86,6 +86,7 @@ from rich_argparse import RichHelpFormatter
 
 from nethackers import clipboard, config, crashfile
 from nethackers.config import Stage, load_stage
+from nethackers.containers import container_runtime
 from nethackers.diagnostics import (
     CAPABILITIES,
     _short_digest,
@@ -127,7 +128,7 @@ from nethackers.hubclient.live import EpisodeStream
 from nethackers.hubclient.output import emit, err
 from nethackers.hubclient.publish import PublishError, ensure_repo, gh_state, publish_solution
 from nethackers.hubclient.pull import pull
-from nethackers.hubclient.register import device_login, refresh_access_token
+from nethackers.hubclient.register import GitHubUnreachable, device_login, refresh_access_token
 from nethackers.hubclient.render import (
     render_board as rich_board,
     render_elites as rich_elites,
@@ -633,18 +634,25 @@ def _short_pin(ref: str) -> str:
     return "…" + _short_digest(ref[ref.index("@sha256:"):])
 
 
-def _arena_preflight(image: str) -> str | None:
+def _arena_preflight(image: str, *, runtime: str | None) -> str | None:
     """The arena-only gate ``eval``/``submit`` share: a working container
     runtime, then the (already-resolved) image itself, built/pulled if
     missing. ``None`` on success, else the first failing check's styled
     message. Deliberately calls ONLY ``preflight_runtime`` -- never
     ``preflight_operator`` -- the arena has no operator, so a plain
     eval/submit must never demand a codex/claude login (spec S5.5's "two
-    separate gates")."""
+    separate gates").
+
+    ``runtime`` is the resolved container CLI (``container_runtime()``, docker
+    or podman -- issue #50), passed once by the caller and threaded into
+    ``ensure_image`` so the pull uses the same binary the gate accepted.
+    ``preflight_runtime`` stays the gate (and the source of the styled "no
+    runtime" message), so a ``None`` runtime is caught there, not here."""
     rt_err = preflight_runtime()
     if rt_err is not None:
         return rt_err
-    return ensure_image(image, "arena", on_line=lambda ln: err.print(f"[dim]{ln}[/]"))
+    return ensure_image(image, "arena", runtime=runtime or "docker",
+                        on_line=lambda ln: err.print(f"[dim]{ln}[/]"))
 
 
 @contextmanager
@@ -779,14 +787,23 @@ def _run(argv: list[str] | None) -> int:
             # failure: attempt both, stream each to stderr, then re-check
             # regardless -- the checks below give an accurate post-attempt
             # picture either way (this is doctor's one mutating path; every
-            # other branch here is read-only).
-            for kind in ("arena", "mutator"):
-                ref = resolve_image(None, kind)
-                err.print(f"[dim]checking/pulling {kind} sandbox ({ref})…[/]")
-                with _pull_progress() as on_event:
-                    perr = ensure_image(ref, kind, on_event=on_event)
-                if perr is not None:
-                    err.print(perr)
+            # other branch here is read-only). Resolve the runtime (docker or
+            # podman -- issue #50) ONCE and thread it in; with none usable there
+            # is nothing to pull WITH, so skip and let the container_runtime
+            # check below explain the real cause rather than mislabel a missing
+            # binary as "couldn't reach the registry".
+            pull_runtime = container_runtime()
+            if pull_runtime is None:
+                err.print("[yellow]skipping --pull[/]: no usable container runtime "
+                          "(see the container_runtime check below)")
+            else:
+                for kind in ("arena", "mutator"):
+                    ref = resolve_image(None, kind)
+                    err.print(f"[dim]checking/pulling {kind} sandbox ({ref})…[/]")
+                    with _pull_progress() as on_event:
+                        perr = ensure_image(ref, kind, runtime=pull_runtime, on_event=on_event)
+                    if perr is not None:
+                        err.print(perr)
         # Named distinctly from `evolve`'s own `results` local below -- both
         # live in this same un-annotated function scope (Python has no
         # per-`if`-block scoping), and mypy widens a bare local's inferred
@@ -818,12 +835,13 @@ def _run(argv: list[str] | None) -> int:
             err.print(_unknown_objective(args.objective))
             return 2
         image = resolve_image(args.image, "arena")
-        pf_err = _arena_preflight(image)
+        runtime = container_runtime()
+        pf_err = _arena_preflight(image, runtime=runtime)
         if pf_err is not None:
             err.print(pf_err)
             return 1
         evidence = eval_batch(
-            Path(args.solution), spec, image, now=_now(),
+            Path(args.solution), spec, image, now=_now(), runtime=runtime or "docker",
             max_parallel_evals=args.max_parallel_evals,
         )
         print(json.dumps(evidence.to_dict(), indent=2))
@@ -831,7 +849,8 @@ def _run(argv: list[str] | None) -> int:
 
     if args.cmd == "models":
         models: list[ModelInfo] | None = list_models(
-            args.operator, image=resolve_image(args.mutator_image, "mutator"))
+            args.operator, image=resolve_image(args.mutator_image, "mutator"),
+            docker=container_runtime() or "docker")
         if models is None:
             err.print(f"[yellow]couldn't determine {args.operator}'s models[/] "
                       "(offline, old CLI, or logged out) — check `"
@@ -863,6 +882,12 @@ def _run(argv: list[str] | None) -> int:
         if msg is not None:
             err.print(msg)
             return 1
+        # Resolve the container runtime ONCE (docker/podman -- issue #50); the
+        # preflight above already confirmed one is usable, so this is non-None.
+        # It threads into every `<runtime> …` below (auto-provision) AND onto
+        # EvolveParams, so the whole run (arena evals + the mutator container)
+        # uses the same detected binary.
+        evolve_runtime = container_runtime() or "docker"
         # One resolution covers every mutator-image use below (auto-provision,
         # EvolveParams, model preflight) -- never re-read args.mutator_image
         # directly past this point. Same for the arena image: run_loop scores
@@ -876,12 +901,12 @@ def _run(argv: list[str] | None) -> int:
         # pull` themselves): whichever isn't present yet is acquired here with
         # a one-time progress note.
         for _ref, _kind in ((mut, "mutator"), (arena_img, "arena")):
-            if image_present(_ref):
+            if image_present(_ref, runtime=evolve_runtime):
                 continue
             err.print(f"[yellow]setting up the {_kind} sandbox[/] (first run — this "
                       "can take a few minutes)…")
             with _pull_progress() as on_event:
-                ierr = ensure_image(_ref, _kind, on_event=on_event)
+                ierr = ensure_image(_ref, _kind, runtime=evolve_runtime, on_event=on_event)
             if ierr is not None:
                 err.print(ierr)
                 return 1
@@ -901,6 +926,7 @@ def _run(argv: list[str] | None) -> int:
             owner=args.owner or (_creds.login if _creds else config.OFFLINE_OWNER),
             from_seed=args.from_seed, offline=args.offline,
             model=args.model, effort=args.effort, mutator_image=mut,
+            runtime=evolve_runtime,
         )
         # An anonymous run is offline by necessity (the owner==OFFLINE_OWNER
         # backstop in _publisher_for), but --offline is the only case that says
@@ -928,7 +954,7 @@ def _run(argv: list[str] | None) -> int:
         # existing wiring test) free of any CLI/network probe. A confident
         # refuse stops here -- no run dir, no doomed spin; unknown only warns.
         if args.model:
-            pf = preflight_model(args.operator, args.model, image=mut)
+            pf = preflight_model(args.operator, args.model, image=mut, docker=evolve_runtime)
             if pf.action == "refuse":
                 err.print(f"[red]{pf.message}[/]")
                 return 2
@@ -1078,12 +1104,13 @@ def _run(argv: list[str] | None) -> int:
         # self-reported score: evaluate the local solution on the objective's
         # batch. Same arena-only gate as `eval` -- no operator/login involved.
         image = resolve_image(args.image, "arena")
-        pf_err = _arena_preflight(image)
+        runtime = container_runtime()
+        pf_err = _arena_preflight(image, runtime=runtime)
         if pf_err is not None:
             err.print(pf_err)
             return 1
         evidence = eval_batch(
-            Path(args.solution_dir), spec, image, now=_now(),
+            Path(args.solution_dir), spec, image, now=_now(), runtime=runtime or "docker",
             max_parallel_evals=args.max_parallel_evals,
         )
         slug = f"{creds.login}/{args.repo_name}"
@@ -1128,6 +1155,14 @@ def main(argv: list[str] | None = None) -> int:
         # condition (same styling as the "not logged in" hints above), never
         # the red "unexpected error" banner a real bug would get.
         err.print(f"[yellow]{exc}[/]")
+        return 1
+    except GitHubUnreachable as exc:
+        # `login` (and token refresh) talk to github.com, NOT the hub -- so a
+        # reachability failure there must name GitHub + the network, never the
+        # generic "cannot reach the hub / docker compose up -d" below, which
+        # sent users chasing a local hub that was never the problem (issue #50).
+        err.print(f"[red]can't reach GitHub to sign in[/] ({exc}) — "
+                  "check your network connection or DNS")
         return 1
     except httpx.HTTPStatusError as exc:
         err.print(f"[red]hub error:[/] {exc.response.status_code} for {exc.request.url}")

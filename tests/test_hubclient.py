@@ -9,6 +9,8 @@ body's link shape, and the register ``Authorization: Bearer`` header.
 
 from __future__ import annotations
 
+import time
+
 import httpx
 import pytest
 
@@ -522,3 +524,46 @@ def test_refresh_error_raises():
 
     with pytest.raises(r.DeviceFlowError):
         r.refresh_access_token("ghr_old", client_id="cid", http=H())
+
+
+# --- issue #50: login/hub calls must fail fast, never hang, and name the
+# right component. The socket/httpx timeout does not bound getaddrinfo, so a
+# DNS hang froze `login` (talking to github.com) and `doctor` (the hub) with
+# no error. device_login/hub_mode now run under call_with_deadline and raise a
+# typed "unreachable" (never a raw hang, never a raw httpx error mislabeled as
+# "the hub").
+
+
+def test_device_login_raises_github_unreachable_on_a_transport_error():
+    from nethackers.hubclient.register import GitHubUnreachable
+
+    class H:
+        def post(self, url, data=None, headers=None):
+            raise httpx.ConnectError("no route to host", request=httpx.Request("POST", url))
+
+    with pytest.raises(GitHubUnreachable):
+        r.device_login(client_id="cid", http=H(), prompt=lambda *_: None, sleep=lambda *_: None)
+
+
+def test_device_login_raises_github_unreachable_when_the_call_hangs():
+    from nethackers.hubclient.register import GitHubUnreachable
+
+    class Hang:
+        def post(self, url, data=None, headers=None):
+            time.sleep(0.5)  # simulate a hung getaddrinfo the socket timeout can't bound
+            return _FakeResp({"device_code": "d", "user_code": "x", "verification_uri": "u"})
+
+    with pytest.raises(GitHubUnreachable):
+        r.device_login(client_id="cid", http=Hang(), prompt=lambda *_: None,
+                       sleep=lambda *_: None, deadline=0.02)
+
+
+def test_hub_mode_raises_hub_unreachable_when_the_call_hangs():
+    class Hang:
+        def get(self, url, params=None, timeout=None):
+            time.sleep(0.5)
+            return _FakeResp({"auth": "github"})
+
+    client = HubClient("http://hub", http=Hang(), timeout=0.02)
+    with pytest.raises(HubUnreachable):
+        client.hub_mode()

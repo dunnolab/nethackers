@@ -72,17 +72,20 @@ class ModelInfo:
 _PROBE_SEP = "@@nh-probe@@"
 
 
-def _run_image_script(image: str, binary: str, script: str, *, run: Callable) -> str | None:
-    """ONE ``docker run`` of ``bash -lc <script>`` in the mutator image, with the
-    same auth a real run gets. Returns stdout (whatever was captured, even on a
-    non-zero last command -- earlier echoes still printed), or ``None`` if the
-    run couldn't start. Amortizes docker's ~1s startup across every probe."""
+def _run_image_script(image: str, binary: str, script: str, *,
+                      docker: str = "docker", run: Callable) -> str | None:
+    """ONE ``<docker> run`` of ``bash -lc <script>`` in the mutator image, with
+    the same auth a real run gets. Returns stdout (whatever was captured, even
+    on a non-zero last command -- earlier echoes still printed), or ``None`` if
+    the run couldn't start. Amortizes the runtime's ~1s startup across every
+    probe. ``docker`` is the resolved container CLI (docker/podman -- issue
+    #50), threaded from the caller; defaults to ``"docker"``."""
     try:
         auth = auth_docker_args(binary, system=platform.system(), home=Path.home())
     except AuthUnavailable:
         auth = []
     try:
-        proc = run(["docker", "run", "--rm", "--name", container_name("probe"),
+        proc = run([docker, "run", "--rm", "--name", container_name("probe"),
                     *label_args(), *auth, image, "bash", "-lc", script],
                    capture_output=True, text=True, timeout=40)
     except (OSError, subprocess.SubprocessError):
@@ -94,6 +97,7 @@ def probe_operator(
     backend: str,
     *,
     image: str,
+    docker: str = "docker",
     run: Callable = subprocess.run,
     http: Callable = httpx.get,
     home: Path | None = None,
@@ -105,7 +109,7 @@ def probe_operator(
     ``/v1/models`` (account-gated, version-independent). Never raises; an unbuilt
     image / unparseable output degrades to (not-installed / no-version, None)."""
     binary = {"codex": "codex", "claude": "claude"}[backend]
-    if not image_present(image, run=run):
+    if not image_present(image, runtime=docker, run=run):
         return CliInfo(backend, False, None, None), None
     if backend == "codex":
         script = (f"codex --version; echo {_PROBE_SEP}; "
@@ -113,7 +117,8 @@ def probe_operator(
                   f"echo {_PROBE_SEP}; codex debug models")
     else:
         script = f"claude --version; echo {_PROBE_SEP}; claude auth status --json 2>/dev/null"
-    parts = (_run_image_script(image, binary, script, run=run) or "").split(_PROBE_SEP)
+    parts = (_run_image_script(image, binary, script, docker=docker, run=run) or "").split(
+        _PROBE_SEP)
     version = parts[0].strip() or None if parts else None
     if backend == "codex":
         logged_in = ("OK" in parts[1]) if len(parts) > 1 else None
@@ -140,14 +145,16 @@ def list_models(
     backend: str,
     *,
     image: str | None = None,
+    docker: str = "docker",
     run: Callable = subprocess.run,
     http: Callable = httpx.get,
     home: Path | None = None,
 ) -> list[ModelInfo] | None:
     if image is not None:
-        if not image_present(image, run=run):
+        if not image_present(image, runtime=docker, run=run):
             return None   # image not built -> unknown; never the host CLI's cache
-        run = _container_run(image, run=run)   # probe the mutator container, not the host
+        # probe the mutator container (via the resolved runtime), not the host
+        run = _container_run(image, docker=docker, run=run)
     if backend == "codex":
         return _codex_models(run=run, home=home, allow_cache=image is None)
     if backend == "claude":
@@ -330,12 +337,12 @@ def _logged_in(backend: str, *, run: Callable) -> bool | None:
         return None
 
 
-def detect_cli(backend: str, *, image: str | None = None, run: Callable = subprocess.run,
-               which: Callable = shutil.which) -> CliInfo:
+def detect_cli(backend: str, *, image: str | None = None, docker: str = "docker",
+               run: Callable = subprocess.run, which: Callable = shutil.which) -> CliInfo:
     if image is not None:
-        if not image_present(image, run=run):
+        if not image_present(image, runtime=docker, run=run):
             return CliInfo(backend, False, None, None)   # image not built
-        run, which = _container_run(image, run=run), _image_which
+        run, which = _container_run(image, docker=docker, run=run), _image_which
     binary = {"codex": "codex", "claude": "claude"}[backend]
     if which(binary) is None:
         return CliInfo(backend, False, None, None)
@@ -362,12 +369,13 @@ def preflight_model(
     model: str | None,
     *,
     image: str | None = None,
+    docker: str = "docker",
     run: Callable = subprocess.run,
     http: Callable = httpx.get,
     home: Path | None = None,
     which: Callable = shutil.which,
 ) -> Preflight:
-    cli = detect_cli(backend, image=image, run=run, which=which)
+    cli = detect_cli(backend, image=image, docker=docker, run=run, which=which)
     if not cli.installed:
         return Preflight("refuse", f"{backend} is not installed / not on PATH.", cli, None)
     if cli.logged_in is False:
@@ -377,7 +385,7 @@ def preflight_model(
         return Preflight("proceed", "", cli, None)   # harness default: nothing pinned to check
     if backend == "claude" and model in _CLAUDE_ALIASES:
         return Preflight("proceed", "", cli, None)   # aliases are always valid -- skip the probe
-    models = list_models(backend, image=image, run=run, http=http, home=home)
+    models = list_models(backend, image=image, docker=docker, run=run, http=http, home=home)
     ver = f" {cli.version}" if cli.version else ""
     if models is None:
         return Preflight(

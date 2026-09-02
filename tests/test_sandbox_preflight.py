@@ -18,26 +18,29 @@ class _Info:
         self.returncode = returncode
 
 
-# --- docker_available: PATH lookup + a live `docker info`, not just install --
+# --- docker_available: delegates to container_runtime (docker OR podman) --
+# so it's driven by patching the global `shutil.which` (what container_runtime
+# probes) + the injected `run` (the `<exe> info` liveness call). "docker" here
+# means a docker-compatible runtime, podman included (issue #50).
 
 
 def test_docker_available_false_when_binary_missing(monkeypatch):
-    monkeypatch.setattr(sp.shutil, "which", lambda name: None)
+    monkeypatch.setattr("shutil.which", lambda name: None)
     assert sp.docker_available() is False
 
 
 def test_docker_available_false_when_info_returns_nonzero(monkeypatch):
-    monkeypatch.setattr(sp.shutil, "which", lambda name: "/usr/bin/docker")
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/docker")
     assert sp.docker_available(run=lambda *a, **kw: _Info(1)) is False
 
 
 def test_docker_available_true_when_info_ok(monkeypatch):
-    monkeypatch.setattr(sp.shutil, "which", lambda name: "/usr/bin/docker")
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/docker")
     assert sp.docker_available(run=lambda *a, **kw: _Info(0)) is True
 
 
 def test_docker_available_false_when_info_raises(monkeypatch):
-    monkeypatch.setattr(sp.shutil, "which", lambda name: "/usr/bin/docker")
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/docker")
 
     def _raise(*a, **kw):
         raise OSError("daemon gone")
