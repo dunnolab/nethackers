@@ -9,12 +9,15 @@
 import json
 import random
 import shutil
+from collections import Counter
 from pathlib import Path
 
 from pytest import approx
 
+from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
 from nethackers.harness import loop as loop_mod
-from nethackers.harness.loop import IterationResult, run_loop
+from nethackers.harness.archive import UNION, CellArchive
+from nethackers.harness.loop import IterationResult, _pick_cell, run_loop
 from nethackers.harness.metering import TokenUsage
 from nethackers.harness.store import LocalTreeStore
 
@@ -888,3 +891,39 @@ def test_coldstart_warm_cell_mutates_without_error(tmp_path):
         workdir=tmp_path / "work", rng=random.Random(0))
     assert not results[0].reason.startswith("error")   # subset parent_means: regressions+brief ok
     assert results[0].registered is True               # the warm cell mutated and improved a cell
+
+
+# -- _pick_cell: weighted parent draw over the archive's cells. Each identity
+# weight 1, the union cell weight 2 -- but only once a full-coverage program
+# has filled it; before that the draw stays uniform over identities.
+
+def _ev2(means):  # local factory: one episode per identity
+    results = tuple(
+        TrajectoryResult(trajectory_id=i, status="completed", progress=v, ascended=False,
+                         steps=1, turns=1, max_depth=1, end_status="died", error=None,
+                         wall_seconds=0.1, character=c, milestone=None)
+        for i, (c, v) in enumerate(means.items()))
+    return Evidence.from_results(solution_digest="sha256:x",
+                                 objective=Objective(character=None, seed_set="s"),
+                                 evaluator_image="img", results=results, created_at="t")
+
+
+def test_pick_cell_uniform_before_union_exists(tmp_path):
+    arc = CellArchive(["a", "b"])
+    arc.insert("a0", tmp_path / "a0", _ev2({"a": 0.3}))   # partial -> union stays None
+    arc.insert("b0", tmp_path / "b0", _ev2({"b": 0.3}))   # partial -> union stays None
+    assert arc.union is None
+    label, cell = _pick_cell(random.Random(0), arc)
+    assert label in ("a", "b")
+    assert cell is arc.cell(label)
+
+
+def test_pick_cell_weights_union_2x(tmp_path):
+    arc = CellArchive(["a", "b"])
+    arc.insert("gen", tmp_path / "gen", _ev2({"a": 0.5, "b": 0.5}))  # full -> union set
+    assert arc.union is not None
+    rng = random.Random(0)
+    counts = Counter(_pick_cell(rng, arc)[0] for _ in range(6000))
+    # weights: a=1, b=1, union=2  -> union share 2/4 = 0.5
+    assert 0.45 < counts[UNION] / 6000 < 0.55
+    assert _pick_cell(random.Random(0), arc)  # returns without error

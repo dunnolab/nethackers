@@ -21,7 +21,7 @@ from typing import Any
 
 from nethackers.contracts.models import TrajectoryResult
 from nethackers.harness import aggregate, refs, select
-from nethackers.harness.archive import CellArchive
+from nethackers.harness.archive import UNION, CellArchive
 from nethackers.harness.brief import build_brief
 from nethackers.harness.evaluate import evaluate
 from nethackers.harness.gate import passes_gate
@@ -109,6 +109,21 @@ def _hypothesis_of(worktree: Path, parent: Path | None = None) -> str | None:
         if hyp not in inherited:
             return hyp
     return None
+
+
+def _pick_cell(rng: random.Random, archive: CellArchive) -> tuple[str, Any]:
+    """Weighted parent draw over the archive's cells: each identity weight 1,
+    the union cell weight 2 -- but only once a full-coverage program has filled
+    it. Before that the union cell is empty, so the draw is the original
+    uniform-over-identities (identical rng stream to the pre-union behavior).
+    Returns ``(label, cell)`` where ``label`` is an identity or ``"union"``."""
+    if archive.union is None:
+        ident = rng.choice(list(archive.identities))
+        return ident, archive.cell(ident)
+    labels = list(archive.identities) + [UNION]
+    weights = [1] * len(archive.identities) + [2]
+    label = rng.choices(labels, weights=weights, k=1)[0]
+    return label, (archive.union if label == UNION else archive.cell(label))
 
 
 def run_loop(
