@@ -21,7 +21,7 @@ from typing import Any
 
 from nethackers.contracts.models import TrajectoryResult
 from nethackers.harness import aggregate, refs, select
-from nethackers.harness.archive import UNION, CellArchive
+from nethackers.harness.archive import UNION, Cell, CellArchive
 from nethackers.harness.brief import build_brief
 from nethackers.harness.evaluate import evaluate
 from nethackers.harness.gate import passes_gate
@@ -112,7 +112,7 @@ def _hypothesis_of(worktree: Path, parent: Path | None = None) -> str | None:
     return None
 
 
-def _pick_cell(rng: random.Random, archive: CellArchive) -> tuple[str, Any]:
+def _pick_cell(rng: random.Random, archive: CellArchive) -> tuple[str, Cell]:
     """Weighted parent draw over the archive's cells: each identity weight 1,
     the union cell weight 2 -- but only once a full-coverage program has filled
     it. Before that the union cell is empty, so the draw is the original
@@ -223,8 +223,12 @@ def run_loop(
             # mutated cell's values whenever one is named.
             "parent_digest": "", "parent_dev": base_dev, "parent_held": 0.0,
         }
-        if cell is not None and cell in archive.cells:
+        c = None
+        if cell == UNION:
+            c = archive.union
+        elif cell is not None and cell in archive.cells:
             c = archive.cells[cell]
+        if c is not None:
             payload["parent_digest"] = c.digest
             payload["parent_dev"] = c.score
             if c.dev_evidence is not None:

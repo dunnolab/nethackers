@@ -3,7 +3,7 @@ from __future__ import annotations
 import pytest
 
 from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
-from nethackers.harness.archive import CellArchive, UNION
+from nethackers.harness.archive import UNION, CellArchive
 
 IDS = ["wiz-elf-cha-mal", "wiz-orc-cha-mal"]
 

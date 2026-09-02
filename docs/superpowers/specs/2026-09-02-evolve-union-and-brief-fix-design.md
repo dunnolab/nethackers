@@ -63,7 +63,7 @@ Generalize the archive so a cell carries a **scorer** over a child's episode res
 - per-identity cell → mean of that identity's episodes (today's behavior),
 - **union cell** → mean of all episodes (≡ `dev_fitness`).
 
-Insert logic is unchanged in shape: a child takes a cell iff its score under that cell's scorer **strictly exceeds** the cell's incumbent (deterministic strict `>`, no margin). The union cell is initialized at cold start to the champion with the highest union score among the re-scored cold-start elites (the cold-start re-eval already runs; §Appendix A).
+Insert logic is unchanged in shape: a child takes a cell iff its score under that cell's scorer **strictly exceeds** the cell's incumbent (deterministic strict `>`, no margin). The union cell only seeds on **full-coverage** evidence — results spanning every identity in one eval. Under the N·b cold start (§Appendix A), each champion is re-scored only on the identities *it* owns, a sub-union slice, so cold start seeds the union only in the special case where one champion sweeps every identity; otherwise the union stays empty through cold start and seeds on iteration 1's first full dev eval instead (which always spans the whole union).
 
 ### 5.2 Registration includes the union
 `registered` becomes "child strictly improved ≥1 cell, the union cell included." A child may now register by (a) winning an identity cell, (b) winning the union cell, or (c) both. Case (b) is the iter-12 recovery. Publishing to the hub happens on registration as today — a union-only winner is published as an ordinary program + atoms (D6).
@@ -106,7 +106,7 @@ Unit tests against the archive + loop, following the existing harness test patte
 - **Union score:** the union cell's score for a child equals `dev_fitness` for the same episodes (I3).
 - **Selection:** the parent draw includes the union cell; over many draws the union share matches the `2 : 1` weighting (I7).
 - **Brief:** the rendered brief contains the provenance + scoreboard + dual goal and honest grading line, and contains **none** of the removed strings ("weakest", "held-out seeds you'll never see").
-- **Cold start:** the union cell's initial elite is the highest-union cold-start champion.
+- **Cold start:** the union cell seeds only on full-coverage evidence — a champion that sweeps every identity, or otherwise iteration 1's first full dev eval; it does **not** seed from a per-identity champion's own sub-union slice.
 
 ## 9. Rollout / build order
 

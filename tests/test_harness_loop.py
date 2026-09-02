@@ -481,6 +481,37 @@ def test_on_state_carries_parent_snapshot_and_generation(tmp_path):
     assert mut["parent_dev"] == cold["best_dev"]      # == the seed's score
 
 
+def test_on_state_resolves_union_parent_snapshot(tmp_path):
+    """_emit's parent-snapshot guard checked `cell in archive.cells`, but a
+    union-sampled iteration names cell="union" -- a key that lives in
+    archive.union, never in archive.cells -- so the payload silently kept its
+    blank defaults (parent_digest="") on every union-sampled iteration. A
+    2-identity set with NO hub elites scores the seed on the full union at
+    cold start, seeding archive.union immediately; rng=random.Random(0) is
+    known to draw "union" as _pick_cell's very first pick for this label
+    order (["wiz-elf-cha-mal", "wiz-orc-cha-mal", "union"], weights [1,1,2]).
+    A flat fitness function ties the seed's own score everywhere, so the
+    union cell never moves off the cold-start seed during the run -- the
+    'mutating' snapshot must match it exactly."""
+    a, b = "wiz-elf-cha-mal", "wiz-orc-cha-mal"
+    seed_tree = _seed_tree(tmp_path / "seed")
+    tree_store = LocalTreeStore(tmp_path / "store")
+    cold_seed_digest = tree_store.save(seed_tree)  # same digest run_loop computes
+    states: list[dict] = []
+    run_loop(
+        objective=f"{a},{b}", seed_tree=seed_tree, tree_store=tree_store,
+        operator=_ImprovingOperator(), hub=_FakeHub(), image="img:dev", token="t",
+        owner="dev", iterations=1, now_fn=lambda: "2026-08-26T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.5),  # flat: nothing ever beats the cold-start seed
+        workdir=tmp_path / "work", rng=random.Random(0),
+        on_state=states.append)
+    mut = next(s for s in states if s["phase"] == "mutating")
+    assert mut["cell"] == UNION                        # confirms this run drew the union cell
+    assert mut["parent_digest"] == cold_seed_digest     # NOT "" -- the pre-fix blank default
+    assert mut["parent_dev"] == approx(0.5)             # archive.union.score at cold start
+    assert mut["parent_means"] == approx({a: 0.5, b: 0.5})
+
+
 def test_iteration_result_stopped_reason_defaults_to_none():
     assert IterationResult(False, "baseline").stopped_reason is None
 
