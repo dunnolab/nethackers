@@ -83,6 +83,7 @@ def test_set_brief_shows_scoreboard_and_targets_sampled_cell():
     assert "union" in text.lower()                   # the overall objective is offered too
     assert "union 0.30" in text or "union 0.3" in text   # scoreboard shows the union score
     assert "weakest" not in text.lower()             # the mis-targeting directive is gone
+    assert "current best on" in text.lower()         # the targeting block itself fired
 
 def test_set_brief_targets_union_when_sampled_from_it():
     per_identity = {"a": 0.1, "b": 0.2}
@@ -91,6 +92,7 @@ def test_set_brief_targets_union_when_sampled_from_it():
                        sampled_cell="union", cell_score=0.15, union_score=0.15)
     assert "overall" in text.lower() or "union" in text.lower()
     assert "weakest" not in text.lower()
+    assert "current best overall" in text.lower()    # the targeting block itself fired
 
 def test_set_brief_keeps_contract_line():
     per_identity = {"a": 0.1, "b": 0.2}
