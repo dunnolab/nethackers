@@ -51,9 +51,10 @@ class IterationResult:
     # record of whether that program actually reached the hub (register-all
     # pushes every scored program, improved or not).
     hub_reason: str | None = None
-    # The cells (identities) this program became the elite of -- the
-    # MAP-Elites illumination signal. None for a non-improving/rejected
-    # iteration; a non-empty list for a registered win.
+    # The cells this program became the elite of (identities, plus "union"
+    # when it took the overall-average cell) -- the MAP-Elites illumination
+    # signal. None for a non-improving/rejected iteration; a non-empty list
+    # for a registered win.
     improved: list[str] | None = None
 
 
@@ -291,8 +292,7 @@ def run_loop(
         if stop is not None and stop.is_set():
             break  # manual hard-stop: don't start another iteration
         tag = f"iter {k + 1}/{iterations}"
-        ident = rng.choice(identities)                    # random cell in S
-        cell = archive.cell(ident)
+        cell_label, cell = _pick_cell(rng, archive)        # weighted cell draw (union 2x)
         note_hyp: str | None = None
         try:
             worktree = workdir / f"iter-{k}"
@@ -310,7 +310,11 @@ def run_loop(
                                 training_seeds=sorted({s for s, _c in dev.batch}),
                                 identities=identities if len(identities) > 1 else None,
                                 per_identity=parent_means or None,
-                                attempts=list(attempt_notes))
+                                attempts=list(attempt_notes),
+                                sampled_cell=cell_label,
+                                cell_score=cell.score,
+                                union_score=(archive.union.score
+                                             if archive.union is not None else None))
             if on_log is not None:
                 on_log(tag, json.dumps({"type": "nethackers_brief", "text": brief}))
             # A FRESH `/refs/` dir every iteration (refs.assemble's copytree is
@@ -325,8 +329,8 @@ def run_loop(
                 if cell.dev_evidence is not None else None,
                 influences=[], attempts=list(recent_attempts), parent=cell.tree)
 
-            _emit("mutating", k + 1, cell=ident)
-            report(f"{tag} · mutating cell {ident} …")
+            _emit("mutating", k + 1, cell=cell_label)
+            report(f"{tag} · mutating cell {cell_label} …")
             try:
                 op = operator.run(worktree, brief, refs=refs_dir,
                                   on_line=_log_cb(tag), stop=stop)
@@ -354,12 +358,12 @@ def run_loop(
             note_hyp = _hypothesis_of(worktree, cell.tree)
 
             report(f"{tag} · operator: {op.spend} tok ({op.stopped_reason}); gating…")
-            _emit("gating", k + 1, cell=ident, tokens=op.spend)
+            _emit("gating", k + 1, cell=cell_label, tokens=op.spend)
             ok, reason = passes_gate(worktree, cell.digest, smoke_spec=smoke,
                                      image=image, now=now_fn(), runner=runner,
                                      on_episode=_episode_cb(f"{tag} · smoke"))
             if not ok:
-                _emit("rejected", k + 1, cell=ident, tokens=op.spend, detail=f"gate: {reason}")
+                _emit("rejected", k + 1, cell=cell_label, tokens=op.spend, detail=f"gate: {reason}")
                 report(f"{tag} · ✗ gate: {reason}")
                 note = _attempt_note(k + 1, note_hyp, f"rejected at smoke gate ({reason})")
                 attempt_notes.append(note)
@@ -371,7 +375,7 @@ def run_loop(
                                                usage=op.usage, stopped_reason=op.stopped_reason))
                 continue
 
-            _emit("evaluating-dev", k + 1, cell=ident, tokens=op.spend)
+            _emit("evaluating-dev", k + 1, cell=cell_label, tokens=op.spend)
             report(f"{tag} · gate ok; dev eval ({len(dev.batch)}ep)…")
             dev_fit, dev_ev = evaluate(
                 worktree, dev, image, now=now_fn(), runner=runner,
@@ -414,7 +418,7 @@ def run_loop(
                 wins += 1
                 attempt_notes.append(_attempt_note(
                     k + 1, note_hyp, f"dev {dev_fit:.3f}, improved {', '.join(improved)}"))
-                _emit("registered", k + 1, cell=ident, tokens=op.spend,
+                _emit("registered", k + 1, cell=cell_label, tokens=op.spend,
                       detail=(f"⚠{len(regs)}" if regs else ""), hub_reason=hub_reason)
                 if hub_ok:
                     report(f"{tag} · ✓ REGISTERED dev={dev_fit:.3f} · "
@@ -432,7 +436,7 @@ def run_loop(
                 # A gate-passed mutant is always distinct from its parent, so
                 # its tree is always worth showing the next mutator.
                 _remember_attempt(f"iter-{k + 1}", worktree, note)
-                _emit("rejected", k + 1, cell=ident, tokens=op.spend,
+                _emit("rejected", k + 1, cell=cell_label, tokens=op.spend,
                       detail="no cell improved", hub_reason=hub_reason)
                 report(f"{tag} · ✗ improved no cell: dev={dev_fit:.3f}")
                 _record(k + 1, IterationResult(

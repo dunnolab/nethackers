@@ -536,7 +536,11 @@ def test_maplites_keeps_a_one_identity_improver(tmp_path):
         rng=random.Random(0))
     win = next(r for r in results if r.improved)
     assert win.registered is True
-    assert win.improved == ["wiz-elf-cha-mal"]
+    # cold start (no hub elites) scores the seed on the FULL union in one
+    # eval, so the union cell is already seeded (0.2) before iteration 1; this
+    # child's union mean (0.9+0.1)/2=0.5 beats it too -- deterministically,
+    # regardless of which cell _pick_cell drew as the mutation parent.
+    assert win.improved == ["wiz-elf-cha-mal", "union"]
 
 
 def test_maplites_registers_every_scored_program(tmp_path):
@@ -554,8 +558,11 @@ def test_maplites_registers_every_scored_program(tmp_path):
 
 
 def test_maplites_picks_a_random_cell(tmp_path):
-    # With a seeded rng and a 2-identity set, the mutated cell is the rng's
-    # choice; the "mutating" state names it.
+    # With a seeded rng and a 2-identity set, the mutated cell is _pick_cell's
+    # weighted draw; the "mutating" state names it. Cold start here has NO hub
+    # elites, so the seed is scored on the full union in one eval and the
+    # union cell is already seeded before iteration 1 -- so the draw is over
+    # all THREE labels (identities + "union"), not just the two identities.
     states = []
     run_loop(
         objective="wiz-elf-cha-mal,wiz-orc-cha-mal",
@@ -566,7 +573,7 @@ def test_maplites_picks_a_random_cell(tmp_path):
         runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
         on_state=states.append, rng=random.Random(0))
     mut = next(s for s in states if s["phase"] == "mutating")
-    assert mut["cell"] in ("wiz-elf-cha-mal", "wiz-orc-cha-mal")
+    assert mut["cell"] in ("wiz-elf-cha-mal", "wiz-orc-cha-mal", UNION)
 
 
 def test_loop_registers_regressions_on_a_per_identity_drop(tmp_path):
