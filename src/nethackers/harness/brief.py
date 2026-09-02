@@ -18,7 +18,7 @@ NETHACK_PREAMBLE = (
     "them (diff, read, or run `python -m nethackers.arena.run` yourself), then make ONE "
     "focused change with a `# hypothesis: …` comment at the edit.\n\n"
     "Don't game it: no branching on seed fingerprints, no exploiting scorer/NLE quirks — "
-    "such candidates fail on held-out seeds. Keep the `make_agent()` → `reset()`/`act()` "
+    "such candidates won't generalize. Keep the `make_agent()` → `reset()`/`act()` "
     "contract and import cleanly.\n\n"
     "**Measure like the judge.** Evaluate exactly as the judge does: "
     "`python -m nethackers.arena.run --solution /workspace "
@@ -35,21 +35,30 @@ NETHACK_PREAMBLE = (
 )
 
 
-def _set_block(identities: list[str], per_identity: dict[str, float] | None) -> str:
+def _set_block(identities: list[str], per_identity: dict[str, float] | None,
+               sampled_cell: str | None = None, cell_score: float | None = None,
+               union_score: float | None = None) -> str:
     n = len(identities)
-    lines = [f"**Objective — a set of {n} builds.** You are optimizing ONE bot to "
-             f"raise its **average** progression across these {n} character builds, "
-             f"and especially to lift its **weakest** ones."]
+    lines = [f"**Objective — one bot, {n} character builds.** You're improving a single "
+             f"bot scored per-build AND on its overall average across the {n} builds (the "
+             f"'union'). A win on EITHER a single build or the union counts."]
+    if sampled_cell == "union":
+        base = f"{cell_score:.3f}" if cell_score is not None else "the best so far"
+        lines.append(f"**This program is the current best OVERALL** (union {base}). Make ONE "
+                     "focused change that raises the overall union above its current best.")
+    elif sampled_cell:
+        base = f" ({cell_score:.3f})" if cell_score is not None else ""
+        lines.append(f"**This program is the current best on `{sampled_cell}`**{base}. Make ONE "
+                     f"focused change that pushes `{sampled_cell}` above its current best **or** "
+                     "raises the overall union — target a concrete build you can actually beat, "
+                     "not 'the average' in the abstract.")
     if per_identity:
         ordered = sorted(identities, key=lambda i: per_identity.get(i, 0.0))
         table = "  ".join(f"{i} {per_identity[i]:.2f}" for i in ordered if i in per_identity)
-        lines.append(f"**Per-build now (weakest first).** {table}")
+        u = f"  ·  union {union_score:.2f}" if union_score is not None else ""
+        lines.append(f"**Scoreboard now.** {table}{u}")
     else:
         lines.append("Builds: " + ", ".join(identities))
-    lines.append(
-        "You needn't roll every build every cycle — sample a few seeds across a "
-        "spread of builds, prioritizing the weak ones; the full grading is done "
-        "for you on held-out seeds.")
     return "\n\n".join(lines)
 
 
@@ -78,6 +87,9 @@ def build_brief(
     identities: list[str] | None = None,
     per_identity: dict[str, float] | None = None,
     attempts: list[str] | None = None,
+    sampled_cell: str | None = None,
+    cell_score: float | None = None,
+    union_score: float | None = None,
 ) -> str:
     # parent_evidence is kept for caller/signature stability but is no longer
     # distilled into text -- its score/outcome detail lives in
@@ -97,14 +109,15 @@ def build_brief(
         have = "**What you have.** Live Python + NLE; the current bot is your starting point."
 
     if identities and len(identities) > 1:
-        body = _set_block(identities, per_identity)
+        body = _set_block(identities, per_identity, sampled_cell, cell_score, union_score)
     else:
         body = f"You are improving it as **{character}** (objective '{objective_name}')."
 
     tail = (
-        "**Seeds & the real test.** Develop against your training seeds"
-        f"{seeds_note}. Scored on **held-out seeds you'll never see** — "
-        "generalize, don't memorize.\n\n"
+        "**Seeds.** Develop against your training seeds"
+        f"{seeds_note}. You're graded on these fixed public dungeon seeds — prefer "
+        "**general** NetHack improvements over ones tuned to these particular dungeons, "
+        "which won't hold up.\n\n"
         f"{have}"
     )
 
