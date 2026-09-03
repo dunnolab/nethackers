@@ -33,6 +33,7 @@ from dataclasses import dataclass, replace
 from nethackers.arena.seeds import secret_fingerprint as _fingerprint
 from nethackers.contracts.models import Evidence
 from nethackers.hub.atoms import evidence_to_atoms
+from nethackers.hub.ids import program_id as _program_id
 from nethackers.hub.objectives import IDENTITIES
 from nethackers.hub.store import Store
 from nethackers.hub.validate import SolutionReference
@@ -194,3 +195,51 @@ def register_verified(
         solution_id=solution_id, owner=owner, inserted=inserted,
         done=len(covered), total=total,
     )
+
+
+# Attempt outcomes that will never resolve on retry against the same
+# solution/image (a bad build, a crash, a hang) -- as opposed to a
+# transient/environmental failure. verify_candidates uses this to stop
+# offering a solution that has already failed deterministically, rather
+# than handing it back to a verifier node forever.
+_DETERMINISTIC = frozenset({"build_failed", "crashed", "hung"})
+
+
+def verify_candidates(store, *, secret_fingerprint, evaluator_image, seeds, limit):
+    """Programs still needing verified coverage under this secret epoch and
+    evaluator image, least-covered first -- the verifier node's work queue
+    (``GET /verify/candidates``, Tasks 10/11's polling loop).
+
+    Skips a solution whose ``latest_verified_attempt`` failed
+    deterministically (``_DETERMINISTIC``) -- retrying it would just fail
+    again -- and one already fully covered (``done >= total`` over the
+    hidden identity x seed grid). Each surviving row is
+    ``{"program_id", "reference": {"repo", "commit"},
+    "coverage": {"done", "total"}}``, sorted by ``(done, program_id)`` so
+    the least-covered (and, among ties, lowest program_id) programs come
+    first; only the first ``limit`` are returned.
+    """
+    seed_set = frozenset(seeds)
+    total = len(IDENTITIES) * len(seeds)
+    out = []
+    for sol in store.iter_solutions():
+        digest = sol["digest"]
+        latest = store.latest_verified_attempt(
+            digest, secret_fingerprint=secret_fingerprint, evaluator_image=evaluator_image
+        )
+        if latest and latest["status"] == "failed" and latest["failure_kind"] in _DETERMINISTIC:
+            continue
+        atoms = store.iter_verified_atoms(
+            solution_digest=digest, secret_fingerprint=secret_fingerprint,
+            evaluator_image=evaluator_image,
+        )
+        done = len([a for a in atoms if a.seed in seed_set])
+        if done >= total:
+            continue
+        out.append({
+            "program_id": _program_id(digest),
+            "reference": {"repo": sol["repo"], "commit": sol["commit_sha"]},
+            "coverage": {"done": done, "total": total},
+        })
+    out.sort(key=lambda r: (r["coverage"]["done"], r["program_id"]))
+    return out[:limit]

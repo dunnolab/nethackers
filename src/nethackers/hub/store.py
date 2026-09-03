@@ -327,6 +327,13 @@ class Store:
             "SELECT digest FROM solutions WHERE program_id = ?", (program_id,)).fetchone()
         return row[0] if row is not None else None
 
+    def iter_solutions(self) -> list[dict[str, Any]]:
+        """Every registered solution, as ``{digest, repo, commit_sha}`` --
+        the source Task 7's ``verify_candidates`` scans to find programs
+        still lacking full verified coverage."""
+        rows = self._conn.execute("SELECT digest, repo, commit_sha FROM solutions").fetchall()
+        return [{"digest": d, "repo": r, "commit_sha": c} for d, r, c in rows]
+
     def random_owners(self, n: int) -> list[str]:
         """Up to ``n`` random distinct hacker handles -- the ``owner``s in
         ``atoms`` (real *scored* submissions), the SAME source the leaderboard's

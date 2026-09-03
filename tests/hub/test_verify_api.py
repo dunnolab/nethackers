@@ -112,3 +112,21 @@ def test_post_verify_attempt_records_failure(tmp_path):
     latest = store.latest_verified_attempt(f"{REPO}@{SHA}",
                 secret_fingerprint=secret_fingerprint(CFG.secret), evaluator_image=ARENA_IMAGE)
     assert latest["status"] == "failed" and latest["failure_kind"] == "build_failed"
+
+
+def test_candidates_excludes_fully_covered_and_failed(tmp_path):
+    client, store = _app(tmp_path)
+    # program A: registered, no verified coverage -> candidate
+    store.upsert_solution("github.com/a/x@" + "a" * 40, repo="github.com/a/x", commit_sha="a" * 40,
+                          owner="a", root=".", entrypoint="bot.py", registered_at="t")
+    # program B: deterministically failed -> excluded
+    store.upsert_solution("github.com/b/x@" + "b" * 40, repo="github.com/b/x", commit_sha="b" * 40,
+                          owner="b", root=".", entrypoint="bot.py", registered_at="t")
+    store.insert_verified_attempt(solution_digest="github.com/b/x@" + "b" * 40,
+        secret_fingerprint=secret_fingerprint(CFG.secret), evaluator_image=ARENA_IMAGE,
+        verifier_token_fingerprint="t", status="failed", failure_kind="build_failed",
+        message="x", identities_done=0, at="t")
+    r = client.get("/verify/candidates?limit=8", headers={"Authorization": f"Bearer {VTOKEN}"})
+    assert r.status_code == 200
+    ids = [row["reference"]["repo"] for row in r.json()["rows"]]
+    assert "github.com/a/x" in ids and "github.com/b/x" not in ids

@@ -45,6 +45,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
 from nethackers._image_pins import ARENA_IMAGE
+from nethackers.arena.seeds import secret_fingerprint as _fp
 from nethackers.contracts.models import Evidence, ObjectiveSpec
 from nethackers.hub.auth import AuthError, AuthProvider, GitHubAppAuth, LocalStubAuth
 from nethackers.hub.envelope import envelope
@@ -68,6 +69,7 @@ from nethackers.hub.verify import (
     record_attempt,
     register_verified,
     resolve_verifier,
+    verify_candidates,
 )
 from nethackers.hub.views.achievements import (
     coverage as achievements_coverage,
@@ -460,6 +462,23 @@ def create_app(
             message=body.message, identities_done=body.identities_done,
             now=datetime.now(UTC).isoformat())
         return {"ok": True}
+
+    @app.get("/verify/candidates")
+    def verify_candidates_route(
+        limit: int = 8, authorization: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        if verifier is None:
+            raise HTTPException(status_code=503, detail="verification not configured")
+        token = _bearer_token(authorization)
+        try:
+            resolve_verifier(token, verifier)
+        except VerifierAuthError as e:
+            raise HTTPException(status_code=401, detail=str(e)) from e
+        rows = verify_candidates(
+            store, secret_fingerprint=_fp(verifier.secret),
+            evaluator_image=ARENA_IMAGE, seeds=verifier.seeds, limit=limit,
+        )
+        return envelope(rows)
 
     return app
 
