@@ -54,8 +54,8 @@ def main(argv: list[str] | None = None) -> None:
 
     if args.program:  # one-shot: verify the given reference, then exit
         config = client.get_verify_config(args.token)
-        verify_program(client, args.token, config, _parse_reference(args.program))
-        return
+        status = verify_program(client, args.token, config, _parse_reference(args.program))
+        raise SystemExit(0 if status == "succeeded" else 1)
 
     # Daemon (default) / --once: fetch-config -> fetch-candidates -> verify
     # each, forever. Resilient on two axes: hub outages back off

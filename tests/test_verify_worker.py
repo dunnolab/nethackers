@@ -1,3 +1,5 @@
+import pytest
+
 import nethackers.worker.server as server
 from nethackers._image_pins import ARENA_IMAGE
 from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
@@ -57,6 +59,39 @@ def test_verify_program_reports_failure_on_eval_error():
     assert client.attempts[-1]["failure_kind"] == "crashed"
 
 
+def test_verify_program_reports_build_failed_on_pull_error():
+    """``pull_fn`` raising (can't clone/fetch the program) is a
+    ``build_failed`` -- deterministic, distinct from an eval-source
+    crash. ``eval_fn`` must never be reached in this case."""
+    client = _Client()
+    def boom(*a, **k): raise RuntimeError("clone failed")
+    def unreachable(*a, **k): raise AssertionError("eval_fn should not run when pull_fn fails")
+    status = verify_program(client, "vt", CONFIG, REF, pull_fn=boom,
+                            eval_fn=unreachable, now_fn=lambda: "t",
+                            identities=("val-dwa-law-fem",))
+    assert status == "failed"
+    assert client.attempts[-1]["failure_kind"] == "build_failed"
+    assert client.attempts[-1]["identities_done"] == 0
+
+
+def test_verify_program_reports_infra_error_on_post_verify_failure():
+    """A hub submission error (``client.post_verify`` raising -- e.g. a 5xx
+    or network blip) is a transient ``infra_error``, NOT ``crashed`` --
+    ``crashed`` is in the hub's ``_DETERMINISTIC`` set and would
+    permanently exclude the program from candidates, defeating free-resume
+    for what is actually a retry-eligible failure."""
+    class _FlakyClient(_Client):
+        def post_verify(self, token, *, reference, evidence, secret_fingerprint):
+            raise RuntimeError("hub 503")
+    client = _FlakyClient()
+    status = verify_program(client, "vt", CONFIG, REF, pull_fn=lambda ref, dest: dest,
+                            eval_fn=lambda tree, spec, image, *, now, secret: _evidence(spec),
+                            now_fn=lambda: "t", identities=("val-dwa-law-fem",))
+    assert status == "failed"
+    assert client.attempts[-1]["failure_kind"] == "infra_error"
+    assert client.attempts[-1]["identities_done"] == 0
+
+
 def test_main_one_shot_verifies_given_program(monkeypatch):
     seen = {}
     def _fake_verify(client, token, config, reference, **kw):
@@ -67,8 +102,25 @@ def test_main_one_shot_verifies_given_program(monkeypatch):
         def __init__(self, *a, **k): pass
         def get_verify_config(self, token): return {"secret": "s", "seeds": [1]}
     monkeypatch.setattr(server, "HubClient", _C)
-    server.main(["--hub", "http://h", "--token", "vt", "github.com/a/x@" + "a" * 40])
+    with pytest.raises(SystemExit) as exc_info:
+        server.main(["--hub", "http://h", "--token", "vt", "github.com/a/x@" + "a" * 40])
+    assert exc_info.value.code == 0
     assert seen["ref"] == {"repo": "github.com/a/x", "commit": "a" * 40}
+
+
+def test_main_one_shot_exits_nonzero_on_failed_verify(monkeypatch):
+    """Spec 4e: one-shot exit code = outcome. A ``verify_program`` result of
+    ``"failed"`` must surface as a non-zero exit, not a silent exit 0."""
+    def _fake_verify(client, token, config, reference, **kw):
+        return "failed"
+    monkeypatch.setattr(server, "verify_program", _fake_verify)
+    class _C:
+        def __init__(self, *a, **k): pass
+        def get_verify_config(self, token): return {"secret": "s", "seeds": [1]}
+    monkeypatch.setattr(server, "HubClient", _C)
+    with pytest.raises(SystemExit) as exc_info:
+        server.main(["--hub", "http://h", "--token", "vt", "github.com/a/x@" + "a" * 40])
+    assert exc_info.value.code != 0
 
 
 def test_daemon_processes_candidates_then_stops_when_idle(monkeypatch):

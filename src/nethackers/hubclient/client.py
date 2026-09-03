@@ -279,7 +279,7 @@ class HubClient:
     def post_verify_attempt(self, token: str, *, reference: dict[str, Any],
                             evaluator_image: str, secret_fingerprint: str,
                             status: str, failure_kind: str | None,
-                            message: str, identities_done: int) -> Any:
+                            message: str | None, identities_done: int) -> Any:
         """``POST /verify/attempts`` with a ``Bearer`` token and the attempt
         details (reference, evaluator_image, secret_fingerprint, status,
         failure_kind, message, identities_done)."""
