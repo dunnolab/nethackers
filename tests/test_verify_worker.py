@@ -54,3 +54,40 @@ def test_verify_program_reports_failure_on_eval_error():
                             eval_fn=boom, now_fn=lambda: "t", identities=("val-dwa-law-fem",))
     assert status == "failed"
     assert client.attempts[-1]["failure_kind"] == "crashed"
+
+
+import nethackers.worker.server as server  # noqa: E402
+
+
+def test_main_one_shot_verifies_given_program(monkeypatch):
+    seen = {}
+    def _fake_verify(client, token, config, reference, **kw):
+        seen["ref"] = reference
+        return "succeeded"
+    monkeypatch.setattr(server, "verify_program", _fake_verify)
+    class _C:
+        def __init__(self, *a, **k): pass
+        def get_verify_config(self, token): return {"secret": "s", "seeds": [1]}
+    monkeypatch.setattr(server, "HubClient", _C)
+    server.main(["--hub", "http://h", "--token", "vt", "github.com/a/x@" + "a" * 40])
+    assert seen["ref"] == {"repo": "github.com/a/x", "commit": "a" * 40}
+
+
+def test_daemon_processes_candidates_then_stops_when_idle(monkeypatch):
+    calls = {"verify": 0}
+    class _C:
+        def __init__(self, *a, **k): self._served = False
+        def get_verify_config(self, token): return {"secret": "s", "seeds": [1]}
+        def get_verify_candidates(self, token, *, limit=8):
+            if self._served:
+                return []
+            self._served = True
+            return [{"reference": {"repo": "github.com/a/x", "commit": "a" * 40}}]
+    monkeypatch.setattr(server, "HubClient", _C)
+    def _fake_verify(*a, **k):
+        calls["verify"] += 1
+        return "succeeded"
+    monkeypatch.setattr(server, "verify_program", _fake_verify)
+    # --once processes at most one candidate pass then returns
+    server.main(["--hub", "http://h", "--token", "vt", "--once"])
+    assert calls["verify"] == 1
