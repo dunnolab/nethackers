@@ -1,129 +1,144 @@
-# tests/test_harness_brief.py
-from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
-from nethackers.harness.brief import build_brief
+from nethackers.harness.brief import VOCABULARY, build_brief
+
+IDS = ["val-hum-law-fem", "val-hum-neu-fem", "val-dwa-law-fem"]
+PID = {"val-hum-law-fem": 0.146, "val-hum-neu-fem": 0.173, "val-dwa-law-fem": 0.185}
 
 
-def _evidence(mean, episodes, tally):
-    ends = [end for end, count in tally.items() for _ in range(count)]
-    ends += ["unknown"] * (episodes - len(ends))
-    results = tuple(
-        TrajectoryResult(trajectory_id=i, status="completed", progress=mean, ascended=False,
-                         steps=1, turns=1, max_depth=1, end_status=e, error=None,
-                         wall_seconds=0.1, character="val-dwa-law-fem", milestone=None)
-        for i, e in enumerate(ends))
-    return Evidence.from_results(
-        solution_digest="sha256:x",
-        objective=Objective(character="val-dwa-law-fem"),
-        evaluator_image="img", results=results, created_at="t")
+def _brief(**kw):
+    base = dict(identities=IDS, per_identity=PID, overall=0.168, target=0.174,
+                seeds_per_identity=15, training_seeds=list(range(15)))
+    base.update(kw)
+    return build_brief("val", IDS[0], **base)
 
 
-def test_brief_targets_progression_not_proxies():
-    b = build_brief("ascend", "val-wiz", _evidence(mean=12.3, episodes=8, tally={"starved": 5}))
-    assert "progression" in b.lower()
-    assert "reach deeper" not in b and "survive longer" not in b   # old proxy line gone
-    assert "objective 'ascend'" in b                               # objective_name is used
-    assert "CONTEXT.md" in b                                       # mean/tally now live in /refs/
-    assert "12.3" not in b and "starved" not in b                  # no baked-in parent numbers
+def test_no_forbidden_jargon():
+    b = _brief().lower()
+    for bad in ("this run", "iteration", " cell", "map-elites", "champion",
+                "dev ", "held-out", "weakest", "build"):
+        assert bad not in b, bad
 
 
-def test_brief_has_antigaming_and_generalization_and_gate():
-    b = build_brief("ascend", "val-wiz", _evidence(mean=1.0, episodes=4, tally={}))
-    assert "held-out" in b.lower()
-    assert "seed fingerprint" in b.lower() or "fingerprint" in b.lower()   # named exploit #1
-    assert "scorer/nle quirks" in b.lower()                                # named exploit #2
-    assert "make_agent" in b                                              # frozen-skeleton gate
-    assert "hypothesis" in b.lower()                                      # focused-change comment
+def test_nle_spelled_out_once_then_abbreviated():
+    b = _brief()
+    assert "NetHack Learning Environment (NLE)" in b
 
 
-def test_wiki_line_is_conditional():
-    # NOTE: the shrunk brief's NetHack preamble always mentions "reference"
-    # solutions under /refs/ (Task A2), so conditionality is checked against
-    # the wiki *path* itself rather than the generic word "reference".
-    assert "/knowledge" not in build_brief("o", "c", _evidence(1, 1, {})).lower()
-    b = build_brief("o", "c", _evidence(1, 1, {}), wiki_path="/knowledge/nethack")
-    assert "/knowledge" in b.lower()
+def test_vocabulary_is_invariant_constant():
+    assert "**identity**" in VOCABULARY and "**seed**" in VOCABULARY
+    assert "**score**" in VOCABULARY and "**overall**" in VOCABULARY
+    assert "**focused change**" in VOCABULARY
+    assert "one coherent idea" in VOCABULARY          # focused-change definition (⑫)
+    # invariant "0" (score starts near 0) is fine; a real run-count would use
+    # a nonzero digit -- ban those, not digits outright.
+    assert not any(c in VOCABULARY for c in "123456789")
+    assert VOCABULARY in _brief()                      # threaded verbatim
 
 
-def test_training_seeds_render_when_given():
-    b = build_brief("o", "c", _evidence(1, 1, {}), training_seeds=[3, 17, 42])
-    assert "3, 17, 42" in b
+def test_goal_is_the_average():
+    b = _brief().lower()
+    assert "overall average" in b
+    assert "all-rounder" in b and "not a specialist" in b
 
-def test_brief_pins_the_judges_eval_config():
-    ev = Evidence(solution_digest="sha256:x", objective=Objective(character=None),
-                  evaluator_image="img", tier="self-reported", results=(),
-                  episodes=0, mean_progress=0.0, ascensions=0, created_at="t")
-    b = build_brief("mon-hum-cha-fem", "mon-hum-cha-fem", ev, training_seeds=[0, 1, 2])
-    # The mutator must reproduce the JUDGE's games, not invent an evaluation-id.
+
+def test_scores_table_exact_rows_weakest_first():
+    b = _brief()
+    assert "| character | score |" in b
+    # exact identity -> score mapping, and weakest-first ordering
+    i_law = b.index("`val-hum-law-fem` | 0.146")
+    i_neu = b.index("`val-hum-neu-fem` | 0.173")
+    i_dwa = b.index("`val-dwa-law-fem` | 0.185")
+    assert i_law < i_neu < i_dwa                       # ascending score order
+    assert "Overall average now: 0.168 · target to beat: 0.174" in b
+
+
+def test_scores_table_sorts_even_when_declared_order_is_not_ascending():
+    # IDS/PID above happen to already be ascending, so a deleted sorted()
+    # wouldn't be caught above -- declare a non-ascending order here so the
+    # sort itself is what makes the rows come out weakest-first.
+    ids = ["val-dwa-law-fem", "val-hum-law-fem", "val-hum-neu-fem"]
+    b = build_brief("val", ids[0], identities=ids, per_identity=PID, overall=0.168,
+                    target=0.174, seeds_per_identity=15, training_seeds=list(range(15)))
+    i_law = b.index("`val-hum-law-fem` | 0.146")
+    i_neu = b.index("`val-hum-neu-fem` | 0.173")
+    i_dwa = b.index("`val-dwa-law-fem` | 0.185")
+    assert i_law < i_neu < i_dwa                       # ascending score order
+
+
+def test_whats_kept_present_and_average_framed():
+    b = _brief()
+    assert "## What's kept" in b
+    assert "kept" in b.lower() and "discarded" in b.lower()
+    assert "0.174" in b                                # beats the target
+
+
+def test_per_seed_detail_has_count_and_path():
+    b = _brief()
+    assert "/refs/parent-eval.json" in b
+    assert "45 = 3 identities × 15 seeds" in b         # ⑧ count, ⑥ don't-make-them-infer
+    assert "cause_of_death" in b
+
+
+def test_references_and_contract_and_antigaming():
+    b = _brief()
+    assert "/refs/CONTEXT.md" in b and "/workspace" in b
+    assert "make_agent()" in b                          # contract line (regression guard)
+    assert "seed fingerprint" in b.lower()              # anti-gaming #1
+    assert "scorer/nle quirks" in b.lower()             # anti-gaming #2
+    assert "hypothesis" in b.lower()
+
+
+def test_measure_command_intact():
+    b = _brief()
     assert "python -m nethackers.arena.run" in b
-    assert "--evaluation-id local" in b   # explicit judge namespace, not "the default"
-    assert "local" in b   # names the judge's default namespace
-
-
-def test_brief_gives_a_runnable_eval_command():
-    from nethackers.contracts.models import Evidence, Objective
-    from nethackers.harness.brief import build_brief
-    ev = Evidence(solution_digest="sha256:x", objective=Objective(character=None),
-                  evaluator_image="img", tier="self-reported", results=(),
-                  episodes=0, mean_progress=0.0, ascensions=0, created_at="t")
-    b = build_brief("kni-hum-law-fem", "kni-hum-law-fem", ev, training_seeds=[0, 1])
-    assert "--evaluation-id local" in b   # explicit, not "the default"
-    assert "--out" in b                   # the required flag that was missing
-
-
-# --- generalist (set) brief -----------------------------------------------
-
-def test_set_brief_lists_builds_and_weakest_first():
-    per_identity = {"wiz-elf-cha-mal": 0.5, "wiz-orc-cha-mal": 0.1, "wiz-gno-neu-fem": 0.3}
-    text = build_brief(
-        "wiz", "wiz-elf-cha-mal", _evidence(mean=0.3, episodes=3, tally={}),
-        identities=list(per_identity), per_identity=per_identity, training_seeds=[0, 1, 2])
-    assert "3 builds" in text or "3 identities" in text
-    # weakest build appears before the strongest in the breakdown
-    assert text.index("wiz-orc-cha-mal") < text.index("wiz-elf-cha-mal")
-    assert "sample" in text.lower()   # the soft "don't roll every build" note
-
-def test_set_brief_keeps_contract_line():
-    per_identity = {"a": 0.1, "b": 0.2}
-    text = build_brief("set", "a", _evidence(mean=0.1, episodes=2, tally={}),
-                       identities=["a", "b"], per_identity=per_identity)
-    assert "make_agent()" in text
-
-def test_set_brief_has_heldout_and_antigaming_and_hypothesis():
-    per_identity = {"a": 0.1, "b": 0.2}
-    text = build_brief("set", "a", _evidence(mean=0.1, episodes=2, tally={}),
-                       identities=["a", "b"], per_identity=per_identity)
-    assert "held-out" in text.lower()
-    assert "fingerprint" in text.lower()          # named exploit #1
-    assert "scorer/nle quirks" in text.lower()    # named exploit #2
-    assert "hypothesis" in text.lower()           # focused-change comment
-
-def test_single_identity_brief_unaffected_by_new_kwargs_when_absent():
-    # identities=None (default) must still take the original, single-build path.
-    b = build_brief("ascend", "val-wiz", _evidence(mean=1.0, episodes=4, tally={}))
-    assert "a set of" not in b.lower()
-
-# --- shrunk brief: framing + /refs/ pointer (both branches) --------------
-
-def test_both_branches_frame_nethack_and_point_to_refs():
-    single = build_brief("val-dwa-law-fem", "val-dwa-law-fem",
-                         _evidence(mean=0.11, episodes=5, tally={"died": 5}))
-    a_set = build_brief("mon", "mon-hum-law-mal",
-                        _evidence(mean=0.10, episodes=5, tally={"died": 5}),
-                        identities=["mon-hum-law-mal", "mon-hum-neu-mal", "mon-hum-cha-mal"])
-    for b in (single, a_set):
-        assert "nethack" in b.lower()          # frames the game (was missing in the set branch)
-        assert "progression" in b.lower()      # what the metric is
-        assert "/refs/" in b                    # points at the provisioned folders
-        assert "/workspace" in b                # names the editable base
-        assert "hypothesis" in b.lower()        # still asks for the focused-change comment
-
-
-def test_brief_directs_synchronous_foreground_eval():
-    # The mutator sandbox is single-shot; a backgrounded eval's result is lost
-    # when the agent's turn ends (the claude-harness-in-mutator bug). The brief
-    # must steer the agent to a foreground, waited-on eval instead.
-    b = build_brief("ascend", "val-wiz", _evidence(mean=1.0, episodes=1, tally={}))
+    assert "--evaluation-id local" in b and "--out" in b
     lo = b.lower()
-    assert "foreground" in lo
-    assert "run_in_background" in b        # names the thing NOT to do
-    assert "single-shot" in lo
+    assert "foreground" in lo and "run_in_background" in b and "single-shot" in lo
+
+
+def test_training_seeds_contiguous_range():
+    assert "0–14" in _brief()                           # en-dash range branch
+
+
+def test_training_seeds_noncontiguous_list():
+    b = _brief(training_seeds=[3, 17, 42])
+    assert "3, 17, 42" in b                             # comma-joined branch
+
+
+def test_wiki_path_conditional():
+    assert "/knowledge" not in _brief().lower()
+    assert "/knowledge" in _brief(wiki_path="/knowledge/nethack").lower()
+
+
+def test_partial_coverage_no_misleading_overall():
+    # a cold-start parent measured on only one identity
+    b = build_brief("val", IDS[0], identities=IDS,
+                    per_identity={"val-hum-law-fem": 0.146}, overall=0.146,
+                    target=0.174, seeds_per_identity=15, training_seeds=list(range(15)))
+    assert "| `val-hum-neu-fem` | — |" in b             # unmeasured -> em-dash row
+    assert "Overall average now" not in b               # not shown on partial coverage
+    assert "Target to beat: 0.174" in b
+
+
+def test_single_identity_variant_de_jargoned():
+    b = build_brief("val-dwa-law-fem", "val-dwa-law-fem", identities=None,
+                    per_identity={"val-dwa-law-fem": 0.18}, overall=0.18,
+                    training_seeds=[0, 1], seeds_per_identity=2)
+    assert "3 different characters" not in b
+    assert "val-dwa-law-fem" in b
+    assert "objective" not in b.lower()                 # no internal 'objective' leak
+    assert "0.18" in b                                  # its score is shown
+
+
+def test_single_identity_variant_keeps_safety_and_refs_lines():
+    # HOWTO/MEASURE/_references are shared with the multi-identity path, but
+    # nothing guarded that on the identities=None branch specifically.
+    b = build_brief("val-dwa-law-fem", "val-dwa-law-fem", identities=None,
+                    per_identity={"val-dwa-law-fem": 0.18}, overall=0.18,
+                    training_seeds=[0, 1], seeds_per_identity=2)
+    lo = b.lower()
+    assert "make_agent()" in b                          # contract line
+    assert "seed fingerprint" in lo                      # anti-gaming #1
+    assert "scorer/nle quirks" in lo                      # anti-gaming #2
+    assert "foreground" in lo                             # synchronous-eval steer
+    assert "/refs/CONTEXT.md" in b                        # references pointer
+    assert "hypothesis" in lo                              # focused-change comment

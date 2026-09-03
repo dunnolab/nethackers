@@ -11,6 +11,8 @@ from pathlib import Path
 from nethackers.contracts.models import Evidence
 from nethackers.harness import aggregate
 
+UNION = "union"   # sentinel cell key: the best full-coverage program by union_mean
+
 
 @dataclass
 class Cell:
@@ -24,6 +26,7 @@ class CellArchive:
     def __init__(self, identities: Sequence[str]) -> None:
         self.identities: tuple[str, ...] = tuple(identities)
         self.cells: dict[str, Cell] = {}
+        self.union: Cell | None = None
         self._seed_digest: str | None = None
 
     def mark_seed(self, digest: str) -> None:
@@ -35,10 +38,11 @@ class CellArchive:
         return self.cells[identity]
 
     def insert(self, digest: str, tree: Path, dev_evidence: Evidence) -> list[str]:
-        """Slot ``digest`` into every cell of S whose per-identity mean it
-        strictly improves (best-per-cell). Returns the improved identities. An
-        empty/absent cell (score ``-inf``) is always improved, so the first
-        insert seeds every cell."""
+        """Slot ``digest`` into every identity cell it strictly improves, and
+        into the union cell if it strictly improves the best full-coverage
+        union mean. Returns the improved keys (identities, plus ``"union"``
+        when the union cell moved). An empty/absent cell (score ``-inf``) is
+        always improved, so the first insert seeds every cell."""
         means = aggregate.per_identity_means(dev_evidence.results)
         improved: list[str] = []
         for ident in self.identities:
@@ -49,6 +53,17 @@ class CellArchive:
             if current is None or score > current.score:
                 self.cells[ident] = Cell(digest, tree, score, dev_evidence)
                 improved.append(ident)
+
+        # Union cell (multi-identity sets only): the best program by the mean
+        # over the WHOLE union batch. Only full-coverage evidence qualifies --
+        # cold-start inserts pass a sub-union slice (a champion scored on a
+        # subset of identities), which must not seed or move the union cell.
+        if len(self.identities) > 1 and set(self.identities).issubset(
+                r.character for r in dev_evidence.results):
+            u = aggregate.union_mean(dev_evidence.results)
+            if self.union is None or u > self.union.score:
+                self.union = Cell(digest, tree, u, dev_evidence)
+                improved.append(UNION)
         return improved
 
     def coverage(self) -> tuple[int, int]:
