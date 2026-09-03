@@ -72,6 +72,24 @@ CREATE TABLE IF NOT EXISTS baseline_atoms (
     evaluator_image TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS verified_atoms (
+    solution_digest TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    tier TEXT NOT NULL,
+    identity TEXT NOT NULL,
+    seed INTEGER NOT NULL,
+    progression REAL NOT NULL,
+    milestone TEXT,
+    ascended INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    turns INTEGER NOT NULL,
+    steps INTEGER NOT NULL,
+    evaluator_image TEXT NOT NULL,
+    secret_fingerprint TEXT NOT NULL,
+    verifier_token_fingerprint TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(solution_digest, identity, seed, secret_fingerprint, evaluator_image)
+);
 CREATE TABLE IF NOT EXISTS lineage (
     child_digest TEXT NOT NULL REFERENCES solutions(digest),
     parent_digest TEXT NOT NULL,         -- may be an external/base solution: NO FK
@@ -128,6 +146,11 @@ _ITER_ATOMS_FILTER_KEYS: frozenset[str] = frozenset(
         "seed", "ascended", "status", "milestone",
     }
 )
+
+_VERIFIED_EXTRA_COLUMNS = ("secret_fingerprint", "verifier_token_fingerprint")
+_ITER_VERIFIED_FILTER_KEYS = _ITER_ATOMS_FILTER_KEYS | {
+    "secret_fingerprint", "evaluator_image", "verifier_token_fingerprint",
+}
 
 
 def _migrate_drop_objective_digest(conn: sqlite3.Connection) -> None:
@@ -421,6 +444,51 @@ class Store:
             raise ValueError(f"unknown iter_baseline_atoms filter key(s): {unknown}")
 
         sql = f"SELECT {_SELECT_ATOM_COLUMNS_SQL} FROM baseline_atoms"
+        params = list(filters.values())
+        if filters:
+            sql += " WHERE " + " AND ".join(f"{column} = ?" for column in filters)
+
+        rows = self._conn.execute(sql, params).fetchall()
+        atoms = []
+        for row in rows:
+            values = dict(zip(_ATOM_COLUMNS, row, strict=True))
+            values["ascended"] = bool(values["ascended"])
+            atoms.append(Atom.from_dict(values))
+        return atoms
+
+    def insert_verified_atoms(
+        self, atoms: list[Atom], *, secret_fingerprint: str,
+        verifier_token_fingerprint: str
+    ) -> int:
+        """Insert verified atoms into the isolated ``verified_atoms`` table
+        (dedup on UNIQUE key, no FKs). Returns the number of rows inserted.
+        """
+        cols = ", ".join(_ATOM_COLUMNS + _VERIFIED_EXTRA_COLUMNS)
+        placeholders = ", ".join("?" for _ in _ATOM_COLUMNS + _VERIFIED_EXTRA_COLUMNS)
+        inserted = 0
+        with self._conn:
+            for atom in atoms:
+                values = atom.to_dict()
+                row = tuple(
+                    values[c] for c in _ATOM_COLUMNS
+                ) + (secret_fingerprint, verifier_token_fingerprint)
+                cur = self._conn.execute(
+                    f"INSERT OR IGNORE INTO verified_atoms ({cols}) VALUES ({placeholders})",
+                    row,
+                )
+                inserted += cur.rowcount
+        return inserted
+
+    def iter_verified_atoms(self, **filters: Any) -> list[Atom]:
+        """Return verified atoms matching every ``column=value`` filter
+        (AND'ed). Filter keys include solution_digest, identity, seed, plus
+        secret_fingerprint, evaluator_image, verifier_token_fingerprint.
+        """
+        unknown = sorted(set(filters) - _ITER_VERIFIED_FILTER_KEYS)
+        if unknown:
+            raise ValueError(f"unknown iter_verified_atoms filter key(s): {unknown}")
+
+        sql = f"SELECT {_SELECT_ATOM_COLUMNS_SQL} FROM verified_atoms"
         params = list(filters.values())
         if filters:
             sql += " WHERE " + " AND ".join(f"{column} = ?" for column in filters)
