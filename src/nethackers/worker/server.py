@@ -51,18 +51,24 @@ def main(argv: list[str] | None = None) -> None:
     if not args.token:
         raise SystemExit("a verifier token is required (--token or NETHACKERS_VERIFIER_TOKEN)")
     client = HubClient(args.hub)
-    config = client.get_verify_config(args.token)
 
     if args.program:  # one-shot: verify the given reference, then exit
+        config = client.get_verify_config(args.token)
         verify_program(client, args.token, config, _parse_reference(args.program))
         return
 
     # Daemon (default) / --once: fetch-config -> fetch-candidates -> verify
     # each, forever. Resilient on two axes: hub outages back off
-    # exponentially (base 10s, capped at 600s) instead of hot-looping or
-    # crashing the daemon, and a per-program verify failure never raises --
-    # verify_program already reports it as a "failed" attempt and returns a
-    # status string -- so one bad program never stops the rest of the batch.
+    # exponentially (base 10s, capped at 600s, reset on a successful fetch)
+    # instead of hot-looping or crashing the daemon -- the *only* unguarded
+    # hub calls live inside this try, so a blip fetching config/candidates
+    # is always absorbed here, never left to crash main(); and a per-program
+    # verify failure never takes the loop down either -- verify_program is
+    # designed to report its own failures and return a status string rather
+    # than raise, but it isn't airtight (e.g. its own attempt-reporting call
+    # can itself throw on a hub blip), so each candidate is defensively
+    # wrapped too -- one bad candidate is skipped, never fatal to the batch
+    # or the process.
     backoff = 10.0
     while True:
         try:
@@ -79,6 +85,9 @@ def main(argv: list[str] | None = None) -> None:
             time.sleep(30.0)
             continue
         for cand in candidates:
-            verify_program(client, args.token, config, cand["reference"])  # never raises
+            try:
+                verify_program(client, args.token, config, cand["reference"])
+            except Exception:
+                continue
         if args.once:
             return

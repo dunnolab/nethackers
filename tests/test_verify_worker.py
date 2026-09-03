@@ -1,3 +1,4 @@
+import nethackers.worker.server as server
 from nethackers._image_pins import ARENA_IMAGE
 from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
 from nethackers.worker.verify import verified_identity_spec, verify_program
@@ -56,9 +57,6 @@ def test_verify_program_reports_failure_on_eval_error():
     assert client.attempts[-1]["failure_kind"] == "crashed"
 
 
-import nethackers.worker.server as server  # noqa: E402
-
-
 def test_main_one_shot_verifies_given_program(monkeypatch):
     seen = {}
     def _fake_verify(client, token, config, reference, **kw):
@@ -91,3 +89,43 @@ def test_daemon_processes_candidates_then_stops_when_idle(monkeypatch):
     # --once processes at most one candidate pass then returns
     server.main(["--hub", "http://h", "--token", "vt", "--once"])
     assert calls["verify"] == 1
+
+
+def test_daemon_absorbs_verify_program_exception_and_completes_pass(monkeypatch):
+    class _C:
+        def __init__(self, *a, **k): self._served = False
+        def get_verify_config(self, token): return {"secret": "s", "seeds": [1]}
+        def get_verify_candidates(self, token, *, limit=8):
+            if self._served:
+                return []
+            self._served = True
+            return [{"reference": {"repo": "github.com/a/x", "commit": "a" * 40}}]
+    monkeypatch.setattr(server, "HubClient", _C)
+    def _boom(*a, **k):
+        raise RuntimeError("hub down")
+    monkeypatch.setattr(server, "verify_program", _boom)
+    # A verify_program exception (e.g. its own attempt-report call hitting a
+    # hub blip) must be absorbed, not propagate out of main() and kill the
+    # worker -- returning normally, instead of raising, IS the assertion.
+    server.main(["--hub", "http://h", "--token", "vt", "--once"])
+
+
+def test_daemon_backs_off_on_hub_error_then_recovers(monkeypatch):
+    sleeps = []
+    monkeypatch.setattr(server.time, "sleep", lambda s: sleeps.append(s))
+    calls = {"verify": 0}
+    class _C:
+        def __init__(self, *a, **k): self._fails = 2
+        def get_verify_config(self, token):
+            if self._fails:
+                self._fails -= 1
+                raise RuntimeError("hub down")
+            return {"secret": "s", "seeds": [1]}
+        def get_verify_candidates(self, token, *, limit=8): return []
+    monkeypatch.setattr(server, "HubClient", _C)
+    def _fake_verify(*a, **k):
+        calls["verify"] += 1
+    monkeypatch.setattr(server, "verify_program", _fake_verify)
+    server.main(["--hub", "http://h", "--token", "vt", "--once"])
+    assert sleeps == [10.0, 20.0]  # exponential: base 10s, doubling per failed fetch
+    assert calls["verify"] == 0    # recovered with no candidates -> --once returns
