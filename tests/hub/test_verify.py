@@ -3,10 +3,12 @@ import pytest
 from nethackers._image_pins import ARENA_IMAGE
 from nethackers.arena.seeds import secret_fingerprint
 from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
+from nethackers.hub.objectives import IDENTITIES
 from nethackers.hub.store import Store
 from nethackers.hub.validate import SolutionReference
 from nethackers.hub.verify import (
     BadBatch,
+    NonFiniteMetrics,
     ParityMismatch,
     StaleSecret,
     UnknownSolution,
@@ -46,6 +48,8 @@ def test_register_verified_writes_verified_atoms(tmp_path):
                             verifier_token_fingerprint="tok", now="t",
                             expected_image=ARENA_IMAGE, hub_secret=SECRET, seeds=SEEDS)
     assert res.owner == "sam" and res.inserted == 2
+    assert res.total == len(IDENTITIES) * len(SEEDS)
+    assert res.done == len(SEEDS)  # one identity submitted, every seed of it covered
     atoms = s.iter_verified_atoms(solution_digest=SID)
     assert len(atoms) == 2 and all(a.tier == "verified" and a.owner == "sam" for a in atoms)
     assert s.iter_atoms() == []  # self-reported table untouched
@@ -61,6 +65,9 @@ def test_register_verified_is_idempotent(tmp_path):
     second = register_verified(s, **kwargs)
     assert first.inserted == 2
     assert second.inserted == 0
+    assert first.done == len(SEEDS) and second.done == len(SEEDS)
+    assert first.total == len(IDENTITIES) * len(SEEDS)
+    assert second.total == first.total
     assert len(s.iter_verified_atoms(solution_digest=SID)) == 2
 
 
@@ -99,3 +106,32 @@ def test_seed_outside_config_rejected(tmp_path):
             s, reference=SolutionReference(REPO, SHA), evidence=_evidence(seeds=(999,)),
             secret_fingerprint=secret_fingerprint(SECRET), verifier_token_fingerprint="tok",
             now="t", expected_image=ARENA_IMAGE, hub_secret=SECRET, seeds=SEEDS)
+
+
+def test_bad_identity_rejected(tmp_path):
+    s = _store(tmp_path)
+    with pytest.raises(BadBatch):
+        register_verified(
+            s, reference=SolutionReference(REPO, SHA),
+            evidence=_evidence(identity="not-a-real-identity"),
+            secret_fingerprint=secret_fingerprint(SECRET), verifier_token_fingerprint="tok",
+            now="t", expected_image=ARENA_IMAGE, hub_secret=SECRET, seeds=SEEDS)
+
+
+def test_non_finite_metrics_rejected(tmp_path):
+    s = _store(tmp_path)
+    results = (
+        TrajectoryResult(trajectory_id=SEEDS[0], status="completed", progress=float("nan"),
+                         ascended=False, steps=1, turns=1, max_depth=1, end_status="died",
+                         error=None, wall_seconds=0.1, character="val-dwa-law-fem",
+                         milestone=None),
+    )
+    evidence = Evidence.from_results(
+        solution_digest=SID, objective=Objective(character=None, seed_set="v"),
+        evaluator_image=ARENA_IMAGE, results=results, created_at="t")
+    with pytest.raises(NonFiniteMetrics):
+        register_verified(
+            s, reference=SolutionReference(REPO, SHA), evidence=evidence,
+            secret_fingerprint=secret_fingerprint(SECRET), verifier_token_fingerprint="tok",
+            now="t", expected_image=ARENA_IMAGE, hub_secret=SECRET, seeds=SEEDS)
+    assert s.iter_verified_atoms(solution_digest=SID) == []
