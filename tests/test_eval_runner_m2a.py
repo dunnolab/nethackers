@@ -252,7 +252,9 @@ def test_eval_batch_attaches_docker_stderr_on_nonzero_exit(tmp_path):
 
 
 def test_eval_batch_passes_secret_via_env_not_argv(tmp_path):
-    sol = tmp_path / "sol"; sol.mkdir(); (sol / "bot.py").write_text("x")
+    sol = tmp_path / "sol"
+    sol.mkdir()
+    (sol / "bot.py").write_text("x")
     calls = []
     eval_batch(
         sol, _SPEC, "img:dev", now="2026-09-03T00:00:00Z",
@@ -267,7 +269,9 @@ def test_eval_batch_passes_secret_via_env_not_argv(tmp_path):
 
 
 def test_eval_batch_defaults_secret_to_public(tmp_path):
-    sol = tmp_path / "sol"; sol.mkdir(); (sol / "bot.py").write_text("x")
+    sol = tmp_path / "sol"
+    sol.mkdir()
+    (sol / "bot.py").write_text("x")
     calls = []
     eval_batch(sol, _SPEC, "img:dev", now="2026-09-03T00:00:00Z",
                runner=_make_fake_docker_run(calls),
