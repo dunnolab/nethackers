@@ -20,6 +20,10 @@ def _hermetic_tui_discovery(monkeypatch):
         _ef, "probe_operator",
         lambda backend, **k: (CliInfo(backend, True, f"{backend} 0.0.0", True), None),
         raising=False)
+    # Start/probe now resolve the container runtime (docker/podman -- issue #50)
+    # via `container_runtime()`, a real `<exe> info` subprocess. Pin it here so
+    # no TUI test shells out through the form on mount or Start.
+    monkeypatch.setattr(_ef, "container_runtime", lambda **k: "docker", raising=False)
 
 
 @pytest.fixture(autouse=True)
