@@ -44,6 +44,7 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
+from nethackers._image_pins import ARENA_IMAGE
 from nethackers.contracts.models import Evidence, ObjectiveSpec
 from nethackers.hub.auth import AuthError, AuthProvider, GitHubAppAuth, LocalStubAuth
 from nethackers.hub.envelope import envelope
@@ -59,7 +60,14 @@ from nethackers.hub.validate import (
     WrongOwner,
     register,
 )
-from nethackers.hub.verify import VerifierAuthError, VerifierConfig, resolve_verifier
+from nethackers.hub.verify import (
+    UnknownSolution,
+    VerifierAuthError,
+    VerifierConfig,
+    VerifyError,
+    register_verified,
+    resolve_verifier,
+)
 from nethackers.hub.views.achievements import (
     coverage as achievements_coverage,
     firsts as achievements_firsts,
@@ -102,6 +110,20 @@ class RegisterRequest(BaseModel):
     evidence: dict[str, Any]
 
 
+class VerifyRequest(BaseModel):
+    """The ``POST /verify`` envelope: a ``repo@commit`` reference (same raw
+    ``{repo, commit}`` dict shape as ``RegisterRequest.reference``, parsed by
+    hand into ``SolutionReference``) plus the verifier's own ``Evidence`` and
+    the ``secret_fingerprint`` it computed over the hidden secret it was
+    handed (``register_verified`` checks that fingerprint, never a raw
+    secret, against the hub's own -- the raw hidden secret never appears in
+    this request)."""
+
+    reference: dict[str, str]
+    evidence: dict[str, Any]
+    secret_fingerprint: str
+
+
 class PollVoteRequest(BaseModel):
     """POST /poll/vote body. roles is multi-select (0-4 keys); xp may be null."""
 
@@ -139,9 +161,11 @@ def create_app(
     nothing here executes candidate code.
 
     ``verifier`` is the optional ``VerifierConfig`` gating the verified-tier
-    routes (``GET /verify/config`` for now; Tasks 5/6/7 add more) -- defaults
-    to ``None`` (verification unconfigured, routes 503) so every existing
-    call site is unaffected."""
+    routes (``GET /verify/config``, ``POST /verify``; Tasks 6/7 add more) --
+    defaults to ``None`` (verification unconfigured, routes 503) so every
+    existing call site is unaffected. ``POST /verify`` writes into the
+    isolated ``verified_atoms`` table via ``register_verified`` -- it never
+    touches the self-reported ``atoms`` table ``POST /register`` owns."""
     app = FastAPI()
 
     @app.get("/healthz")
@@ -367,6 +391,39 @@ def create_app(
         except VerifierAuthError as e:
             raise HTTPException(status_code=401, detail=str(e)) from e
         return {"secret": verifier.secret, "seeds": list(verifier.seeds)}
+
+    @app.post("/verify")
+    def verify_solution(
+        body: VerifyRequest, authorization: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        if verifier is None:
+            raise HTTPException(status_code=503, detail="verification not configured")
+        token = _bearer_token(authorization)
+        try:
+            tok_fp = resolve_verifier(token, verifier)
+        except VerifierAuthError as e:
+            raise HTTPException(status_code=401, detail=str(e)) from e
+        try:
+            result = register_verified(
+                store,
+                reference=SolutionReference(**body.reference),
+                evidence=Evidence.from_dict(body.evidence),
+                secret_fingerprint=body.secret_fingerprint,
+                verifier_token_fingerprint=tok_fp,
+                now=datetime.now(UTC).isoformat(),
+                expected_image=ARENA_IMAGE,
+                hub_secret=verifier.secret,
+                seeds=verifier.seeds,
+            )
+        except UnknownSolution as e:
+            raise HTTPException(status_code=404, detail=f"{type(e).__name__}: {e}") from e
+        except VerifyError as e:
+            raise HTTPException(status_code=400, detail=f"{type(e).__name__}: {e}") from e
+        return {
+            "inserted": result.inserted,
+            "ignored": result.total - result.done,
+            "coverage": {"done": result.done, "total": result.total},
+        }
 
     return app
 
