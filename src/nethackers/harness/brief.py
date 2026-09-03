@@ -20,7 +20,7 @@ VOCABULARY = (
     "layout, monster and item generation, every roll — so the same seed always "
     "plays out the identical game. Not just a map: one concrete, fully-determined "
     "playthrough.\n"
-    "- **score** — BALROG progression: starts near zero and rises as the bot "
+    "- **score** — BALROG progression: starts near 0 and rises as the bot "
     "survives, descends, and advances. Higher is better.\n"
     "- **overall** — the mean score across all identities (every identity's "
     "seeds pooled).\n"

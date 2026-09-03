@@ -28,7 +28,9 @@ def test_vocabulary_is_invariant_constant():
     assert "**score**" in VOCABULARY and "**overall**" in VOCABULARY
     assert "**focused change**" in VOCABULARY
     assert "one coherent idea" in VOCABULARY          # focused-change definition (⑫)
-    assert not any(ch.isdigit() for ch in VOCABULARY)  # no counts / run data
+    # invariant "0" (score starts near 0) is fine; a real run-count would use
+    # a nonzero digit -- ban those, not digits outright.
+    assert not any(c in VOCABULARY for c in "123456789")
     assert VOCABULARY in _brief()                      # threaded verbatim
 
 
@@ -47,6 +49,19 @@ def test_scores_table_exact_rows_weakest_first():
     i_dwa = b.index("`val-dwa-law-fem` | 0.185")
     assert i_law < i_neu < i_dwa                       # ascending score order
     assert "Overall average now: 0.168 · target to beat: 0.174" in b
+
+
+def test_scores_table_sorts_even_when_declared_order_is_not_ascending():
+    # IDS/PID above happen to already be ascending, so a deleted sorted()
+    # wouldn't be caught above -- declare a non-ascending order here so the
+    # sort itself is what makes the rows come out weakest-first.
+    ids = ["val-dwa-law-fem", "val-hum-law-fem", "val-hum-neu-fem"]
+    b = build_brief("val", ids[0], identities=ids, per_identity=PID, overall=0.168,
+                    target=0.174, seeds_per_identity=15, training_seeds=list(range(15)))
+    i_law = b.index("`val-hum-law-fem` | 0.146")
+    i_neu = b.index("`val-hum-neu-fem` | 0.173")
+    i_dwa = b.index("`val-dwa-law-fem` | 0.185")
+    assert i_law < i_neu < i_dwa                       # ascending score order
 
 
 def test_whats_kept_present_and_average_framed():
@@ -112,3 +127,18 @@ def test_single_identity_variant_de_jargoned():
     assert "val-dwa-law-fem" in b
     assert "objective" not in b.lower()                 # no internal 'objective' leak
     assert "0.18" in b                                  # its score is shown
+
+
+def test_single_identity_variant_keeps_safety_and_refs_lines():
+    # HOWTO/MEASURE/_references are shared with the multi-identity path, but
+    # nothing guarded that on the identities=None branch specifically.
+    b = build_brief("val-dwa-law-fem", "val-dwa-law-fem", identities=None,
+                    per_identity={"val-dwa-law-fem": 0.18}, overall=0.18,
+                    training_seeds=[0, 1], seeds_per_identity=2)
+    lo = b.lower()
+    assert "make_agent()" in b                          # contract line
+    assert "seed fingerprint" in lo                      # anti-gaming #1
+    assert "scorer/nle quirks" in lo                      # anti-gaming #2
+    assert "foreground" in lo                             # synchronous-eval steer
+    assert "/refs/CONTEXT.md" in b                        # references pointer
+    assert "hypothesis" in lo                              # focused-change comment
