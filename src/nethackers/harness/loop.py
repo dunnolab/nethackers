@@ -142,6 +142,7 @@ def run_loop(
     sleep: Callable[[float], None] = time.sleep,
     stop: threading.Event | None = None,
     now_fn: Callable[[], str],
+    runtime: str = "docker",
     report: Callable[[str], None] = lambda _: None,
     on_episode: Callable[[str, dict], None] | None = None,
     on_log: Callable[[str, str], None] | None = None,
@@ -254,7 +255,7 @@ def run_loop(
         report(f"cold-start · scoring {d[:8]} on {len(idents)} cell(s) …")
         spec = build_union_spec(sorted(idents), name=f"coldstart:{d[:8]}")
         _f, ev = evaluate(
-            tree_path, spec, image, now=now_fn(), runner=runner,
+            tree_path, spec, image, now=now_fn(), runtime=runtime, runner=runner,
             on_episode=_episode_cb(f"cold-start · dev [{d[:8]}]"),
             max_parallel_evals=max_parallel_evals)
         archive.insert(d, tree_path, ev)
@@ -265,7 +266,7 @@ def run_loop(
         report(f"cold-start · scoring seed on {len(seed_idents)} cell(s) …")
         spec = build_union_spec(sorted(seed_idents), name="coldstart:seed")
         _f, seed_ev = evaluate(
-            tree_store.path(seed_digest), spec, image, now=now_fn(), runner=runner,
+            tree_store.path(seed_digest), spec, image, now=now_fn(), runtime=runtime, runner=runner,
             on_episode=_episode_cb("cold-start · dev [seed]"),
             max_parallel_evals=max_parallel_evals)
         archive.insert(seed_digest, tree_store.path(seed_digest), seed_ev)
@@ -360,7 +361,7 @@ def run_loop(
             report(f"{tag} · operator: {op.spend} tok ({op.stopped_reason}); gating…")
             _emit("gating", k + 1, cell=cell_label, tokens=op.spend)
             ok, reason = passes_gate(worktree, cell.digest, smoke_spec=smoke,
-                                     image=image, now=now_fn(), runner=runner,
+                                     image=image, now=now_fn(), runtime=runtime, runner=runner,
                                      on_episode=_episode_cb(f"{tag} · smoke"))
             if not ok:
                 _emit("rejected", k + 1, cell=cell_label, tokens=op.spend, detail=f"gate: {reason}")
@@ -374,7 +375,7 @@ def run_loop(
             _emit("evaluating-dev", k + 1, cell=cell_label, tokens=op.spend)
             report(f"{tag} · gate ok; dev eval ({len(dev.batch)}ep)…")
             dev_fit, dev_ev = evaluate(
-                worktree, dev, image, now=now_fn(), runner=runner,
+                worktree, dev, image, now=now_fn(), runtime=runtime, runner=runner,
                 on_episode=_episode_cb(f"{tag} · dev"), max_parallel_evals=max_parallel_evals)
             digest = tree_store.save(worktree)
             manifest = json.loads((worktree / "nethackers.solution.json").read_text())

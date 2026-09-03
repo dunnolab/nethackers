@@ -29,11 +29,21 @@ from pathlib import Path
 import jsonschema
 import pytest
 
+from nethackers.containers import RuntimeCandidate, RuntimeReport
 from nethackers.diagnostics import CAPABILITIES, CHECK_SPECS, run_checks, to_json
 from nethackers.hubclient.client import HubUnreachable
 from nethackers.hubclient.credentials import Credentials
 
 _SCHEMA_PATH = Path(__file__).resolve().parent.parent / "src" / "nethackers" / "doctor.schema.json"
+
+
+def _runtime_ok():
+    return RuntimeReport("docker", (RuntimeCandidate("docker", "usable", ""),))
+
+
+def _runtime_none():
+    return RuntimeReport(None, (RuntimeCandidate("docker", "absent", ""),
+                               RuntimeCandidate("podman", "absent", "")))
 
 
 def _load_schema() -> dict:
@@ -161,7 +171,7 @@ def _kwargs(**overrides):
     kwargs = dict(
         operator="claude",
         hub="https://example.invalid",
-        docker_available=lambda: True,
+        runtime_report=_runtime_ok,
         resolve_image=_ref,
         image_present=lambda ref: True,
         manifest_reachable=lambda ref: True,
@@ -182,7 +192,7 @@ def _all_ok_json() -> dict:
 def _all_down_json() -> dict:
     # Every probe fails/unreachable -- exercises "fail" across every check.
     return to_json(run_checks(**_kwargs(
-        docker_available=lambda: False,
+        runtime_report=_runtime_none,
         image_present=lambda ref: False,
         manifest_reachable=lambda ref: False,
         preflight_operator=lambda operator: "not logged in",

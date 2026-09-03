@@ -27,6 +27,10 @@ def _stub_arena_preflight(monkeypatch):
     # test_acquisition.py.
     monkeypatch.setattr(C, "preflight_runtime", lambda **kw: None)
     monkeypatch.setattr(C, "ensure_image", lambda *a, **kw: None)
+    # eval/submit now resolve the container runtime (docker/podman -- issue #50)
+    # once and thread it down; pin it so these wiring tests never shell out to a
+    # real `docker info`/`podman info` probe.
+    monkeypatch.setattr(C, "container_runtime", lambda **kw: "docker")
 
 
 def test_cli_eval_invokes_eval_batch_with_resolved_objective(
@@ -34,7 +38,7 @@ def test_cli_eval_invokes_eval_batch_with_resolved_objective(
     _stub_arena_preflight(monkeypatch)
     seen = {}
 
-    def fake_eval_batch(solution, spec, image, *, now, max_parallel_evals=8):
+    def fake_eval_batch(solution, spec, image, *, now, runtime="docker", max_parallel_evals=8):
         seen["solution"] = solution
         seen["spec"] = spec
         seen["image"] = image
@@ -71,7 +75,7 @@ def test_cli_eval_custom_image_is_passed_through(monkeypatch, capsys, tmp_path):
     _stub_arena_preflight(monkeypatch)
     seen = {}
 
-    def fake_eval_batch(solution, spec, image, *, now, max_parallel_evals=8):
+    def fake_eval_batch(solution, spec, image, *, now, runtime="docker", max_parallel_evals=8):
         seen["image"] = image
         result = TrajectoryResult(0, "completed", 0.1, False, 1, 1, 1, None, None, 0.0)
         objective = Objective(character=None, seed_set=spec.name)
@@ -94,7 +98,7 @@ def test_cli_eval_custom_max_parallel_evals_is_passed_through(monkeypatch, capsy
     _stub_arena_preflight(monkeypatch)
     seen = {}
 
-    def fake_eval_batch(solution, spec, image, *, now, max_parallel_evals=8):
+    def fake_eval_batch(solution, spec, image, *, now, runtime="docker", max_parallel_evals=8):
         seen["max_parallel_evals"] = max_parallel_evals
         result = TrajectoryResult(0, "completed", 0.1, False, 1, 1, 1, None, None, 0.0)
         objective = Objective(character=None, seed_set=spec.name)
