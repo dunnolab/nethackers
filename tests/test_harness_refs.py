@@ -41,6 +41,7 @@ def test_assemble_writes_index_attempts_and_eval(tmp_path):
     assert (dest / "attempts" / "24" / "bot.py").exists()
     assert not (dest / "attempts" / "24" / "__pycache__").exists()  # junk filtered
     assert (dest / "attempts" / "24" / "eval.json").read_text().startswith("[")
+    assert (dest / "parent-eval.json").read_text().startswith("[")
 
 
 def test_missing_identity_renders_dash_not_nan(tmp_path):

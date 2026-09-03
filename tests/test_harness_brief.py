@@ -116,7 +116,7 @@ def test_partial_coverage_no_misleading_overall():
                     target=0.174, seeds_per_identity=15, training_seeds=list(range(15)))
     assert "| `val-hum-neu-fem` | — |" in b             # unmeasured -> em-dash row
     assert "Overall average now" not in b               # not shown on partial coverage
-    assert "target to beat: 0.174" in b
+    assert "Target to beat: 0.174" in b
 
 
 def test_single_identity_variant_de_jargoned():

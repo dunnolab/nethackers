@@ -77,7 +77,7 @@ def _scores(identities: list[str], per_identity: dict[str, float] | None,
         lines.append(f"**Overall average now: {overall:.3f} · "
                      f"target to beat: {target:.3f}**")
     elif target is not None:
-        lines.append(f"**target to beat: {target:.3f}**")
+        lines.append(f"**Target to beat: {target:.3f}**")
     return "\n".join(lines)
 
 
@@ -104,11 +104,12 @@ def _whats_kept(target: float | None) -> str:
 
 def _per_seed(n_identities: int, seeds_per: int) -> str:
     total = n_identities * seeds_per
+    noun = "identity" if n_identities == 1 else "identities"
     return (
         "## Per-seed detail\n"
         "The table above averages over each identity's seeds. "
         f"**`/refs/parent-eval.json`** has one row per seed ({total} = "
-        f"{n_identities} identities × {seeds_per} seeds): the `trajectory_id`, "
+        f"{n_identities} {noun} × {seeds_per} seeds): the `trajectory_id`, "
         "its `character` (identity), the `progress` score, the deepest "
         "`milestone`, and the `cause_of_death`. Read it to see which dungeons "
         "this bot does worst on and how it dies there."

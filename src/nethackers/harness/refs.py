@@ -47,8 +47,8 @@ def _render_index() -> str:
 def _render_attempts(attempts: list[Attempt], identities: list[str]) -> str:
     if not attempts:
         return "# Changes tried\n\n_(none yet)_\n"
-    header = "| # | change (its `# hypothesis`) | " + " | ".join(identities) + " | overall |"
-    sep = "| --- | --- | " + " | ".join("---" for _ in identities) + " | --- |"
+    header = "| # | change (its # hypothesis) | " + " | ".join(identities) + " | overall |"
+    sep = "| -- | --- | " + " | ".join("---" for _ in identities) + " | --- |"
     rows = []
     for a in attempts:
         cells = " | ".join(
@@ -57,8 +57,8 @@ def _render_attempts(attempts: list[Attempt], identities: list[str]) -> str:
         rows.append(f"| {a.label} | {_md_cell(a.hypothesis or '—')} | {cells} | {a.overall:.3f} |")
     return ("# Changes tried\n\n"
             "Each change that was tried, with the score it reached per identity. "
-            "Code for the recent ones is under `/refs/attempts/<n>/`, each with "
-            "its own per-seed `eval.json`.\n\n"
+            "Code for the recent ones is under /refs/attempts/<n>/, each with "
+            "its own per-seed eval.json.\n\n"
             + "\n".join([header, sep, *rows]) + "\n")
 
 
