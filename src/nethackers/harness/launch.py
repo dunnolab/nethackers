@@ -15,6 +15,7 @@ from typing import Any
 
 from nethackers import config
 from nethackers.config import load_stage
+from nethackers.containers import container_runtime
 from nethackers.eval.runner import _default_image_digest
 from nethackers.harness import runlog
 from nethackers.harness.container_operator import ContainerOperator
@@ -64,6 +65,11 @@ class EvolveParams:
     operator: str = "claude"
     iterations: int = 1
     max_parallel_evals: int = 8
+    # The container CLI every `<runtime> run` uses (docker OR podman -- issue
+    # #50). Defaults to "docker"; the CLI evolve handler resolves the actual one
+    # via `container_runtime()` and sets it here, so the whole run (arena evals
+    # AND the mutator container) shells out to the same detected binary.
+    runtime: str = "docker"
     # All of the below are late-bound to the active Stage via default_factory
     # -- never read at import time -- so a test's env/monkeypatch (or a future
     # .env.stack) is picked up on every fresh EvolveParams(), not frozen at
@@ -149,7 +155,7 @@ def _default_operator_version(operator: str, image: str) -> str | None:
     down, unparseable output) -- this thin wrapper just exists so
     ``prepare_evolve`` has an operator-shaped default it can inject a fake
     for in tests."""
-    return detect_cli(operator, image=image).version
+    return detect_cli(operator, image=image, docker=container_runtime() or "docker").version
 
 
 def _best_effort(resolve: Callable[[], str | None]) -> str | None:
@@ -225,7 +231,7 @@ def prepare_evolve(
     # duck-typed on `.run(worktree, brief, *, on_line, stop)`.
     operator: Any = ContainerOperator(
         harness=params.operator, image=params.mutator_image,
-        model=params.model, effort=params.effort, run_id=rid)
+        model=params.model, effort=params.effort, run_id=rid, docker=params.runtime)
     cfg = EvolveConfig(objective=params.objective, backend=params.operator,
                        iterations=params.iterations, model=params.model,
                        effort=params.effort)
@@ -241,6 +247,7 @@ def prepare_evolve(
             owner=params.owner, iterations=params.iterations,
             from_seed=params.from_seed, rng=random.Random(rid),
             max_parallel_evals=params.max_parallel_evals, stop=callbacks.get("stop"),
+            runtime=params.runtime,
             now_fn=_now, report=report, on_episode=callbacks["on_episode"],
             on_state=callbacks["on_state"], on_log=_on_log, workdir=run_dir / "work",
             on_iteration=lambda it, res: runlog.append_metric(
