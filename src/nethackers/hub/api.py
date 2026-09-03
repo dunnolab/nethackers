@@ -65,6 +65,7 @@ from nethackers.hub.verify import (
     VerifierAuthError,
     VerifierConfig,
     VerifyError,
+    record_attempt,
     register_verified,
     resolve_verifier,
 )
@@ -122,6 +123,20 @@ class VerifyRequest(BaseModel):
     reference: dict[str, str]
     evidence: dict[str, Any]
     secret_fingerprint: str
+
+
+class VerifyAttemptRequest(BaseModel):
+    """The ``POST /verify/attempts`` envelope: a ``repo@commit`` reference,
+    evaluator image digest, secret fingerprint, and attempt outcome
+    (status, optional failure kind and message, identities completed)."""
+
+    reference: dict[str, str]
+    evaluator_image: str
+    secret_fingerprint: str
+    status: str
+    failure_kind: str | None = None
+    message: str | None = None
+    identities_done: int = 0
 
 
 class PollVoteRequest(BaseModel):
@@ -424,6 +439,27 @@ def create_app(
             "ignored": result.total - result.done,
             "coverage": {"done": result.done, "total": result.total},
         }
+
+    @app.post("/verify/attempts")
+    def verify_attempt(
+        body: VerifyAttemptRequest, authorization: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        if verifier is None:
+            raise HTTPException(status_code=503, detail="verification not configured")
+        token = _bearer_token(authorization)
+        try:
+            tok_fp = resolve_verifier(token, verifier)
+        except VerifierAuthError as e:
+            raise HTTPException(status_code=401, detail=str(e)) from e
+        record_attempt(
+            store, reference=SolutionReference(**body.reference),
+            secret_fingerprint=body.secret_fingerprint,
+            evaluator_image=body.evaluator_image,
+            verifier_token_fingerprint=tok_fp, status=body.status,
+            failure_kind=body.failure_kind,
+            message=body.message, identities_done=body.identities_done,
+            now=datetime.now(UTC).isoformat())
+        return {"ok": True}
 
     return app
 

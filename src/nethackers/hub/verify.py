@@ -105,6 +105,19 @@ class VerifyResult:
     total: int
 
 
+def record_attempt(store, *, reference, secret_fingerprint, evaluator_image,
+                   verifier_token_fingerprint, status, failure_kind, message,
+                   identities_done, now):
+    """Record a program-level verification attempt (success or failure)."""
+    store.insert_verified_attempt(
+        solution_digest=f"{reference.repo}@{reference.commit}",
+        secret_fingerprint=secret_fingerprint,
+        evaluator_image=evaluator_image,
+        verifier_token_fingerprint=verifier_token_fingerprint,
+        status=status, failure_kind=failure_kind, message=message,
+        identities_done=identities_done, at=now)
+
+
 def register_verified(
     store: Store,
     *,

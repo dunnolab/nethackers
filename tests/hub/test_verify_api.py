@@ -100,3 +100,15 @@ def test_post_verify_503_when_unconfigured(tmp_path):
     r = client.post("/verify", json=_verify_body(),
                     headers={"Authorization": f"Bearer {VTOKEN}"})
     assert r.status_code == 503
+
+
+def test_post_verify_attempt_records_failure(tmp_path):
+    client, store = _app(tmp_path)
+    body = {"reference": {"repo": REPO, "commit": SHA}, "evaluator_image": ARENA_IMAGE,
+            "secret_fingerprint": secret_fingerprint(CFG.secret), "status": "failed",
+            "failure_kind": "build_failed", "message": "clone failed", "identities_done": 0}
+    r = client.post("/verify/attempts", json=body, headers={"Authorization": f"Bearer {VTOKEN}"})
+    assert r.status_code == 200
+    latest = store.latest_verified_attempt(f"{REPO}@{SHA}",
+                secret_fingerprint=secret_fingerprint(CFG.secret), evaluator_image=ARENA_IMAGE)
+    assert latest["status"] == "failed" and latest["failure_kind"] == "build_failed"
