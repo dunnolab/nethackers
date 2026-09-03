@@ -29,6 +29,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Label, Select, Static
 
 from nethackers.config import OFFLINE_OWNER, OFFLINE_TOKEN, load_stage
+from nethackers.containers import container_runtime
 from nethackers.harness.discovery import CliInfo, ModelInfo, probe_operator
 from nethackers.harness.launch import EvolveParams, prepare_evolve
 from nethackers.harness.models import EFFORTS, MODELS
@@ -325,7 +326,8 @@ class EvolveForm(Vertical):
         # different CLI. On a None catalog (image not built / offline / logged
         # out) the static list stays; the version line still reflects detection.
         cli, models = probe_operator(
-            backend, image=resolve_image(load_stage().mutator_image, "mutator"))
+            backend, image=resolve_image(load_stage().mutator_image, "mutator"),
+            docker=container_runtime() or "docker")  # docker OR podman -- issue #50
         self.app.call_from_thread(self._cache_and_apply, backend, cli, models)
 
     def _cache_and_apply(self, backend: str, cli: CliInfo,
@@ -479,19 +481,25 @@ class EvolveForm(Vertical):
         # -- keeps a missing/stale arena image a fail-fast Start-time error
         # instead of a confusing mid-run stall. Already present -> launch
         # straight.
-        if image_present(params.mutator_image) and image_present(params.image):
+        # Resolve the container runtime once (docker OR podman -- issue #50);
+        # sandbox_preflight above already confirmed one is usable, so this is
+        # non-None. Threads into the presence checks AND the provision worker so
+        # the whole Start path uses the same detected binary.
+        runtime = container_runtime() or "docker"
+        if image_present(params.mutator_image, runtime=runtime) and \
+                image_present(params.image, runtime=runtime):
             self._launch(params)
         else:
             self.query_one("#f_pull", Static).update(
                 "[yellow]setting up the sandbox[/] (first run — a few minutes)…")
-            self._provision_then_launch(params)
+            self._provision_then_launch(params, runtime)
 
     def _launch(self, params: EvolveParams) -> None:
         plan = prepare_evolve(params)
         cast("NetHackersApp", self.app).start_run(plan)  # background run + open its monitor
 
     @work(exclusive=True, thread=True)
-    def _provision_then_launch(self, params: EvolveParams) -> None:
+    def _provision_then_launch(self, params: EvolveParams, runtime: str = "docker") -> None:
         """Acquire whichever sandbox image(s) Start found missing, then
         launch. Runs off the UI thread (``@work(thread=True)``) -- every
         widget touch below is marshaled back onto it via ``call_from_thread``.
@@ -503,7 +511,8 @@ class EvolveForm(Vertical):
         ``on_line`` text dump into ``#f_err``)."""
         for ref, kind in ((params.mutator_image, "mutator"), (params.image, "arena")):
             err = ensure_image(
-                ref, kind, on_event=lambda e: self.app.call_from_thread(self._apply_pull, e))
+                ref, kind, runtime=runtime,
+                on_event=lambda e: self.app.call_from_thread(self._apply_pull, e))
             if err is not None:
                 self.app.call_from_thread(
                     lambda e=err: self.query_one("#f_err", Static).update(e))
