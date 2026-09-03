@@ -59,6 +59,7 @@ from nethackers.hub.validate import (
     WrongOwner,
     register,
 )
+from nethackers.hub.verify import VerifierAuthError, VerifierConfig, resolve_verifier
 from nethackers.hub.views.achievements import (
     coverage as achievements_coverage,
     firsts as achievements_firsts,
@@ -128,13 +129,19 @@ def create_app(
     *,
     catalog: dict[str, ObjectiveSpec] = CATALOG,
     git_factory: Callable[[str], CommitChecker] = lambda token: GitHubRead(token),
+    verifier: VerifierConfig | None = None,
 ) -> FastAPI:
     """Build a hub API app over ``store``/``auth``. Every route is a closure
-    over ``store``/``auth``/``catalog``/``git_factory`` -- see module
-    docstring for the catalog-injection scope. ``git_factory`` maps the
+    over ``store``/``auth``/``catalog``/``git_factory``/``verifier`` -- see
+    module docstring for the catalog-injection scope. ``git_factory`` maps the
     caller's Bearer token to a commit-checker (default: a real ``GitHubRead``;
     tests inject a fake). Reads delegate straight to the view/store functions;
-    nothing here executes candidate code."""
+    nothing here executes candidate code.
+
+    ``verifier`` is the optional ``VerifierConfig`` gating the verified-tier
+    routes (``GET /verify/config`` for now; Tasks 5/6/7 add more) -- defaults
+    to ``None`` (verification unconfigured, routes 503) so every existing
+    call site is unaffected."""
     app = FastAPI()
 
     @app.get("/healthz")
@@ -350,6 +357,17 @@ def create_app(
             raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}") from e
         return asdict(result)
 
+    @app.get("/verify/config")
+    def verify_config(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+        if verifier is None:
+            raise HTTPException(status_code=503, detail="verification not configured")
+        token = _bearer_token(authorization)
+        try:
+            resolve_verifier(token, verifier)
+        except VerifierAuthError as e:
+            raise HTTPException(status_code=401, detail=str(e)) from e
+        return {"secret": verifier.secret, "seeds": list(verifier.seeds)}
+
     return app
 
 
@@ -372,6 +390,13 @@ def create_default_app() -> FastAPI:
       when set, auth is ``LocalStubAuth`` over that map (offline dev/demo).
       Otherwise auth is ``GitHubAppAuth(NETHACKERS_CLIENT_ID)`` (the real
       device-flow validator; ``NETHACKERS_CLIENT_ID`` is then required).
+    - ``NETHACKERS_HIDDEN_SECRET``: the verified-tier hidden-eval secret. When
+      unset, ``verifier`` stays ``None`` and the verified-tier routes 503.
+    - ``NETHACKERS_HIDDEN_SEEDS`` (default ``"[]"``): a JSON list of the
+      hidden seed ints, read only when ``NETHACKERS_HIDDEN_SECRET`` is set.
+    - ``NETHACKERS_VERIFIER_TOKENS``: a comma-separated list of tokens
+      accepted as verifier auth (empties dropped), read only when
+      ``NETHACKERS_HIDDEN_SECRET`` is set.
     """
     db = os.environ.get("NETHACKERS_DB", "/data/hub.db")
     store = Store(db)
@@ -387,4 +412,12 @@ def create_default_app() -> FastAPI:
         auth = LocalStubAuth(json.loads(stub))
     else:
         auth = GitHubAppAuth(os.environ["NETHACKERS_CLIENT_ID"])
-    return create_app(store, auth)
+
+    verifier: VerifierConfig | None = None
+    secret = os.environ.get("NETHACKERS_HIDDEN_SECRET")
+    if secret:
+        seeds = tuple(json.loads(os.environ.get("NETHACKERS_HIDDEN_SEEDS", "[]")))
+        raw_tokens = os.environ.get("NETHACKERS_VERIFIER_TOKENS", "").split(",")
+        tokens = frozenset(t for t in raw_tokens if t)
+        verifier = VerifierConfig(tokens=tokens, secret=secret, seeds=seeds)
+    return create_app(store, auth, verifier=verifier)
