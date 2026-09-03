@@ -26,6 +26,7 @@ from nethackers.harness.brief import build_brief
 from nethackers.harness.evaluate import evaluate
 from nethackers.harness.gate import passes_gate
 from nethackers.harness.metering import TokenUsage
+from nethackers.harness.refs import Attempt
 from nethackers.harness.register import register_win
 from nethackers.harness.seeds import dev_spec, validation_spec
 from nethackers.harness.store import LocalTreeStore
@@ -64,17 +65,13 @@ def _causes(results) -> dict[str, int]:
     return dict(Counter(r.cause_of_death for r in results if r.cause_of_death))
 
 
-# How many recent REJECTED attempts to provision as real code trees under
-# /refs/attempts/ (the mutator can diff/read them). The brief's textual notes
-# stay uncapped for breadth; this caps the far heavier tree copies to the most
-# recent few for depth (matching the old per-island <=3 rejected-tree cap).
+# How many recent EVALUATED attempts (registered or rejected -- anything that
+# reached a real dev score) to keep as Attempt records. This caps BOTH the
+# /refs/attempts/<n>/ tree copies and the attempts.md score-table rows to the
+# most recent few (matching the old per-island <=3 rejected-tree cap). A
+# smoke-gate reject never reaches here -- it has no score, so it never becomes
+# an Attempt.
 _ATTEMPT_REFS_CAP = 3
-
-
-def _attempt_note(iteration: int, hyp: str | None, outcome: str) -> str:
-    """One run-global attempt-history line: the iteration id, the change the
-    mutator made (its `# hypothesis:` when present), and the outcome."""
-    return f"iter-{iteration}: " + (f"tried '{hyp}' — " if hyp else "") + outcome
 
 
 _HYP = re.compile(r"#\s*hypothesis:\s*(.+)", re.IGNORECASE)
@@ -169,20 +166,17 @@ def run_loop(
     archive = CellArchive(identities)
     wins = 0
     base_dev = 0.0
-    # Run-global attempt history (uncapped, NOT per-cell, NOT cross-run): one
-    # note per iteration -- the mutation's `# hypothesis:` (when present) plus
-    # its outcome -- surfaced in the NEXT iteration's brief so the mutator
-    # avoids re-deriving a dead mutation.
-    attempt_notes: list[str] = []
-    # ...and the CODE of the most-recent rejected attempts, provisioned as real
-    # trees under /refs/attempts/ so the mutator can diff/read what was tried,
-    # not just infer it from the note. Capped (heavy tree copies), recency-
-    # ordered; the note travels with each tree as its CONTEXT.md label.
-    recent_attempts: list[refs.Ref] = []
+    # Run-global attempt history (capped at _ATTEMPT_REFS_CAP, NOT per-cell,
+    # NOT cross-run): every evaluated child (registered or rejected), most-
+    # recent last. Backs BOTH /refs/attempts/<n>/ (the code + its eval.json)
+    # and /refs/attempts.md (the per-identity scores table) -- see refs.py.
+    attempts: list[Attempt] = []
 
-    def _remember_attempt(label: str, tree: Path, note: str) -> None:
-        recent_attempts.append((label, tree, note))
-        del recent_attempts[:-_ATTEMPT_REFS_CAP]   # keep only the most-recent cap
+    def _remember(label: str, tree: Path, hyp: str | None,
+                  per_identity: dict[str, float], overall: float,
+                  eval_json: str) -> None:
+        attempts.append(Attempt(label, tree, hyp, per_identity, overall, eval_json))
+        del attempts[:-_ATTEMPT_REFS_CAP]
 
     def _episode_cb(label: str) -> Callable[[dict], None] | None:
         # None when the caller isn't rendering -> evaluate stays on the plain
@@ -305,33 +299,35 @@ def run_loop(
             shutil.copytree(cell.tree, worktree)
 
             # Hand the TRAINING seeds in as data (spec §3.6): the mutator image
-            # has no harness/seeds.py to derive them. parent_means: the mutated
-            # cell's per-identity means (the base being mutated). attempts: the
-            # run-global anti-repeat notes accumulated so far.
+            # has no harness/seeds.py to derive them. parent_means/parent_overall:
+            # the mutated cell's own per-identity means / union mean (the base
+            # being mutated); target is the run's best full-coverage union score
+            # so far (None until the union cell is seeded).
             parent_means = (aggregate.per_identity_means(cell.dev_evidence.results)
                             if cell.dev_evidence is not None else {})
-            brief = build_brief(objective, character, cell.dev_evidence,
-                                training_seeds=sorted({s for s, _c in dev.batch}),
-                                identities=identities if len(identities) > 1 else None,
-                                per_identity=parent_means or None,
-                                attempts=list(attempt_notes),
-                                sampled_cell=cell_label,
-                                cell_score=cell.score,
-                                union_score=(archive.union.score
-                                             if archive.union is not None else None))
+            parent_overall = (aggregate.union_mean(cell.dev_evidence.results)
+                              if cell.dev_evidence is not None else None)
+            brief = build_brief(
+                objective, character,
+                identities=identities if len(identities) > 1 else None,
+                per_identity=parent_means or None,
+                overall=parent_overall,
+                target=(archive.union.score if archive.union is not None else None),
+                seeds_per_identity=len(dev.batch) // len(identities),
+                training_seeds=sorted({s for s, _c in dev.batch}))
             if on_log is not None:
                 on_log(tag, json.dumps({"type": "nethackers_brief", "text": brief}))
             # A FRESH `/refs/` dir every iteration (refs.assemble's copytree is
-            # dirs_exist_ok=False): the base eval, a pristine parent copy, and
-            # the most-recent rejected attempts as real trees under
-            # /refs/attempts/ (no `influences` -- selector influence pools were
-            # dropped in the MAP-Elites rework).
+            # dirs_exist_ok=False): a pristine parent copy, its per-seed eval,
+            # and the capped `attempts` list rendered as both real code trees
+            # (/refs/attempts/<n>/, each with its own eval.json) and a
+            # per-identity scores table (/refs/attempts.md).
             refs_dir = workdir / f"refs-{k}"
             refs.assemble(
-                refs_dir,
-                base_eval=json.dumps([r.to_dict() for r in cell.dev_evidence.results])
+                refs_dir, parent=cell.tree,
+                parent_eval=json.dumps([r.to_dict() for r in cell.dev_evidence.results])
                 if cell.dev_evidence is not None else None,
-                influences=[], attempts=list(recent_attempts), parent=cell.tree)
+                attempts=list(attempts), identities=identities)
 
             _emit("mutating", k + 1, cell=cell_label)
             report(f"{tag} · mutating cell {cell_label} …")
@@ -369,12 +365,8 @@ def run_loop(
             if not ok:
                 _emit("rejected", k + 1, cell=cell_label, tokens=op.spend, detail=f"gate: {reason}")
                 report(f"{tag} · ✗ gate: {reason}")
-                note = _attempt_note(k + 1, note_hyp, f"rejected at smoke gate ({reason})")
-                attempt_notes.append(note)
-                # An identical-to-parent mutant is just /refs/parent -- worth a
-                # note (it says "this iteration changed nothing") but not a tree.
-                if reason != "child identical to parent":
-                    _remember_attempt(f"iter-{k + 1}", worktree, note)
+                # No score -> no Attempt: a smoke-gate reject never reaches the
+                # mutator via /refs/attempts (nothing to show it).
                 _record(k + 1, IterationResult(False, f"gate:{reason}", tokens=op.spend,
                                                usage=op.usage, stopped_reason=op.stopped_reason))
                 continue
@@ -411,17 +403,20 @@ def run_loop(
                 hub_reason = f"local-only: hub error — {e}"
                 report(f"{tag} · ⚠ hub publish/register failed: {e}")
 
+            child_means = aggregate.per_identity_means(dev_ev.results)
+            child_overall = aggregate.union_mean(dev_ev.results)
             improved = archive.insert(digest, tree_store.path(digest), dev_ev)
             # A rising union mean can still hide a per-identity drop -- diff the
             # mutated cell's parent means against the child's so a regression is
             # surfaced, not absorbed. On a size-1 identity set this is naturally
             # [] when the one identity didn't drop.
-            regs = aggregate.regressions(
-                parent_means, aggregate.per_identity_means(dev_ev.results))
+            regs = aggregate.regressions(parent_means, child_means)
+            # Record for BOTH outcomes -- a rejected-but-scored child is exactly
+            # as useful a "don't repeat this" reference as a registered one.
+            _remember(str(k + 1), worktree, note_hyp, child_means, child_overall,
+                      json.dumps([r.to_dict() for r in dev_ev.results]))
             if improved:
                 wins += 1
-                attempt_notes.append(_attempt_note(
-                    k + 1, note_hyp, f"dev {dev_fit:.3f}, improved {', '.join(improved)}"))
                 _emit("registered", k + 1, cell=cell_label, tokens=op.spend,
                       detail=(f"⚠{len(regs)}" if regs else ""), hub_reason=hub_reason)
                 if hub_ok:
@@ -435,11 +430,6 @@ def run_loop(
                     digest=digest, stopped_reason=op.stopped_reason, regressions=regs or None,
                     causes=_causes(dev_ev.results), hub_reason=hub_reason, improved=improved))
             else:
-                note = _attempt_note(k + 1, note_hyp, f"dev {dev_fit:.3f}, improved no cell")
-                attempt_notes.append(note)
-                # A gate-passed mutant is always distinct from its parent, so
-                # its tree is always worth showing the next mutator.
-                _remember_attempt(f"iter-{k + 1}", worktree, note)
                 _emit("rejected", k + 1, cell=cell_label, tokens=op.spend,
                       detail="no cell improved", hub_reason=hub_reason)
                 report(f"{tag} · ✗ improved no cell: dev={dev_fit:.3f}")
