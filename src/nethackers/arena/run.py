@@ -123,6 +123,7 @@ def main(argv: list[str] | None = None) -> int:
     if os.environ.get("NETHACKERS_ARENA_WARNINGS") != "1":
         warnings.filterwarnings("ignore", category=RuntimeWarning)
     a = _parser().parse_args(argv)
+    secret = os.environ.get("NETHACK_ARENA_SECRET") or a.secret
     sys.path.insert(0, a.solution)  # so `import bot`, `import arena_adapter` resolve
 
     # Published (seed, character) batch -- one trajectory per pair, fanned
@@ -150,7 +151,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     results = run_batch(
-        a.solution, batch, secret=a.secret, evaluation_id=a.evaluation_id,
+        a.solution, batch, secret=secret, evaluation_id=a.evaluation_id,
         max_steps=a.max_steps, no_progress_timeout=a.no_progress_timeout,
         action_timeout=a.action_timeout, max_parallel_evals=a.max_parallel_evals,
         on_episode=_on_episode,

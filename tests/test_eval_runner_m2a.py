@@ -249,3 +249,27 @@ def test_eval_batch_attaches_docker_stderr_on_nonzero_exit(tmp_path):
                    image_digest_resolver=lambda img: "img@sha256:x")
     assert ei.value.returncode == 125
     assert "pull access denied" in (ei.value.stderr or "")
+
+
+def test_eval_batch_passes_secret_via_env_not_argv(tmp_path):
+    sol = tmp_path / "sol"; sol.mkdir(); (sol / "bot.py").write_text("x")
+    calls = []
+    eval_batch(
+        sol, _SPEC, "img:dev", now="2026-09-03T00:00:00Z",
+        runner=_make_fake_docker_run(calls),
+        image_digest_resolver=lambda img: "img@sha256:deadbeef",
+        secret="s3cr3t",
+    )
+    cmd = calls[0]
+    assert "-e" in cmd and "NETHACK_ARENA_SECRET=s3cr3t" in cmd
+    assert "--secret" not in cmd            # never on argv
+    assert cmd[cmd.index("--evaluation-id") + 1] == "local"
+
+
+def test_eval_batch_defaults_secret_to_public(tmp_path):
+    sol = tmp_path / "sol"; sol.mkdir(); (sol / "bot.py").write_text("x")
+    calls = []
+    eval_batch(sol, _SPEC, "img:dev", now="2026-09-03T00:00:00Z",
+               runner=_make_fake_docker_run(calls),
+               image_digest_resolver=lambda img: "img@sha256:deadbeef")
+    assert "NETHACK_ARENA_SECRET=public" in calls[0]
