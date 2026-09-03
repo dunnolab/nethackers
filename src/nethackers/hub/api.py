@@ -85,6 +85,7 @@ from nethackers.hub.views.progress import read_progress
 from nethackers.hub.views.recognition import read_recognition
 from nethackers.hub.views.solution import read_solution_frontier
 from nethackers.hub.views.stats import read_stats
+from nethackers.hub.views.verified import read_verified
 
 # The index.html file shipped in the wheel package data.
 _INDEX = Path(__file__).parent / "web" / "index.html"
@@ -479,6 +480,17 @@ def create_app(
             evaluator_image=ARENA_IMAGE, seeds=verifier.seeds, limit=limit,
         )
         return envelope(rows)
+
+    @app.get("/verify/overview")
+    def verify_overview() -> dict[str, Any]:
+        if verifier is None:
+            return {"per_identity": {}, "overall": None}
+        return read_verified(
+            store,
+            secret_fingerprint=_fp(verifier.secret),
+            seeds=verifier.seeds,
+            evaluator_image=ARENA_IMAGE,
+        )
 
     return app
 
