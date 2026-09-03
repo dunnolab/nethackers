@@ -1,88 +1,77 @@
-"""Assemble the mutator's read-only `/refs/` reference tree: the
-selector-chosen influence solutions, an island's recent rejected attempts,
-the base's raw per-episode eval output, and a `CONTEXT.md` manifest tying
-them together (design doc §3, "Sandbox provisioning"). This replaces
-text-distilled feedback with real folders the agent reads and analyzes
-itself -- the only thing written here is the manifest.
-
-Pure filesystem I/O -- no hub, no network, no LLM -- so callers (the loop,
-eventually `container_operator.py`) own everything about *which* folders to
-pass in, and this module is asserted directly in tests.
+"""Assemble the mutator's read-only `/refs/` tree: a pristine copy of the
+current bot (`parent/`), its per-seed results (`parent-eval.json`), the recent
+tried changes as real code trees (`attempts/<label>/` each with its own
+`eval.json`), a per-identity scores table (`attempts.md`), and a `CONTEXT.md`
+index. Pure filesystem I/O — no hub, no network, no loop internals rendered.
 """
 from __future__ import annotations
 
 import shutil
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from nethackers.hubclient.publish import _junk_ignore
 
-# (label, tree, note) -- `tree` is copied into dest/<section>/<label>/; `note`
-# is a short caller-supplied line (score/outcome/hypothesis) rendered
-# verbatim into CONTEXT.md so the agent knows what each folder is without
-# having to infer it.
-Ref = tuple[str, Path, str]
+
+@dataclass
+class Attempt:
+    label: str
+    tree: Path
+    hypothesis: str | None
+    per_identity: dict[str, float] = field(default_factory=dict)
+    overall: float = 0.0
+    eval_json: str = ""
 
 
 def _md_cell(text: str) -> str:
-    # Keep a caller-supplied note from breaking the manifest's markdown
-    # table if it happens to contain a pipe or newline (e.g. a multi-line
-    # hypothesis comment pasted in verbatim).
     return text.replace("|", "\\|").replace("\n", " ")
 
 
-def _copy_refs(dest_section: Path, refs: list[Ref]) -> None:
-    for label, tree, _note in refs:
-        shutil.copytree(tree, dest_section / label, ignore=_junk_ignore)
+def _render_index() -> str:
+    return (
+        "# /refs/ — your reference material\n\n"
+        "Everything here is read-only.\n\n"
+        "- `parent/` — a pristine copy of the bot you're editing. `/workspace` "
+        "started as a copy of this, so `diff -ru /refs/parent /workspace` shows "
+        "exactly what you changed.\n"
+        "- `parent-eval.json` — the current bot's result on every seed: one row "
+        "per seed with its `trajectory_id`, `character` (identity), `progress` "
+        "score, deepest `milestone`, and `cause_of_death`.\n"
+        "- `attempts.md` — changes already tried, with the score each reached "
+        "per identity.\n"
+        "- `attempts/<n>/` — the code for each recent tried change, each with "
+        "its own per-seed `eval.json`.\n"
+    )
 
 
-def _render_context(
-    base_eval: str | None, influences: list[Ref], attempts: list[Ref],
-    parent: Path | None = None,
-) -> str:
-    lines = ["# /refs/ manifest", "", "| section | label | note |", "| --- | --- | --- |"]
-    for section, refs in (("influences", influences), ("attempts", attempts)):
-        if not refs:
-            lines.append(f"| {section} | — | (none yet) |")
-        for label, _tree, note in refs:
-            lines.append(f"| {section} | {_md_cell(label)} | {_md_cell(note)} |")
-    if parent is not None:
-        lines.append("")
-        lines.append("Pristine copy of the bot you started from: `parent/` — "
-                     "`diff -ru /refs/parent /workspace` shows your changes "
-                     "(there is no git repo in `/workspace`).")
-    if base_eval is not None:
-        lines.append("")
-        lines.append("Base's raw per-episode eval output: `parent-eval.json`.")
-    return "\n".join(lines) + "\n"
+def _render_attempts(attempts: list[Attempt], identities: list[str]) -> str:
+    if not attempts:
+        return "# Changes tried\n\n_(none yet)_\n"
+    header = "| # | change (its `# hypothesis`) | " + " | ".join(identities) + " | overall |"
+    sep = "| --- | --- | " + " | ".join("---" for _ in identities) + " | --- |"
+    rows = []
+    for a in attempts:
+        cells = " | ".join(
+            f"{a.per_identity[i]:.3f}" if i in a.per_identity else "—"
+            for i in identities)
+        rows.append(f"| {a.label} | {_md_cell(a.hypothesis or '—')} | {cells} | {a.overall:.3f} |")
+    return ("# Changes tried\n\n"
+            "Each change that was tried, with the score it reached per identity. "
+            "Code for the recent ones is under `/refs/attempts/<n>/`, each with "
+            "its own per-seed `eval.json`.\n\n"
+            + "\n".join([header, sep, *rows]) + "\n")
 
 
-def assemble(
-    dest: Path,
-    *,
-    base_eval: str | None,
-    influences: list[Ref],
-    attempts: list[Ref],
-    parent: Path | None = None,
-) -> None:
-    """Lay out `dest` as the mutator's `/refs/` tree: `dest/influences/<label>/`
-    and `dest/attempts/<label>/` (each a junk-excluded copy of `tree`),
-    `dest/parent/` (a junk-excluded copy of `parent`, only when given),
-    `dest/parent-eval.json` (only when `base_eval` is given), and
-    `dest/CONTEXT.md` (always -- a section/label/note manifest table).
-
-    Filesystem-only: no hub, no network. Degrades gracefully -- empty
-    `influences`/`attempts`, a `None` `parent`, and a `None` `base_eval` still
-    produce a valid (mostly empty) tree, matching the "hub down / thin pool"
-    fallback in design doc §7.
-    """
+def assemble(dest: Path, *, parent: Path, parent_eval: str | None,
+             attempts: list[Attempt], identities: list[str]) -> None:
     dest.mkdir(parents=True, exist_ok=True)
-    if influences:
-        _copy_refs(dest / "influences", influences)
-    if attempts:
-        _copy_refs(dest / "attempts", attempts)
-    if parent is not None:
-        shutil.copytree(parent, dest / "parent", ignore=_junk_ignore)   # pristine start
-    if base_eval is not None:
-        (dest / "parent-eval.json").write_text(base_eval)
-    (dest / "CONTEXT.md").write_text(
-        _render_context(base_eval, influences, attempts, parent))
+    shutil.copytree(parent, dest / "parent", ignore=_junk_ignore)
+    if parent_eval is not None:
+        (dest / "parent-eval.json").write_text(parent_eval)
+    for a in attempts:
+        adir = dest / "attempts" / a.label
+        shutil.copytree(a.tree, adir, ignore=_junk_ignore)
+        if a.eval_json:
+            (adir / "eval.json").write_text(a.eval_json)
+    (dest / "attempts.md").write_text(_render_attempts(attempts, identities))
+    (dest / "CONTEXT.md").write_text(_render_index())
