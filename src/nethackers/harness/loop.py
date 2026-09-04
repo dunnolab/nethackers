@@ -241,7 +241,7 @@ def run_loop(
     archive.mark_seed(seed_digest)
     elites: dict[str, tuple[dict, Path]] = (
         {} if from_seed
-        else select.per_identity_elites(hub, tuple(identities), owner,
+        else select.per_identity_elites(hub, tuple(identities),
                                         store=tree_store, fetch=fetch))
     owned: dict[str, tuple[Path, list[str]]] = {}
     for ident, (entry, tree_path) in elites.items():
