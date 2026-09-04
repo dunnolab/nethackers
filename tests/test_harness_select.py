@@ -4,12 +4,10 @@ from pathlib import Path
 # -- per_identity_elites: thin per-identity read for MAP-Elites cell seeding (Task B3) --
 # Row shape (Task 2b): {rank, identity, program_id, owner, score,
 # reference: {repo, commit}} -- program_id is the cache key/id (was
-# solution_digest); reference is what pull_fetch git-pulls; tier is gone
-# (/elites' tier is always the constant "self-reported", so _trusted no
-# longer checks it -- owner match only).
+# solution_digest); reference is what pull_fetch git-pulls.
 
 
-def test_per_identity_elites_returns_top_trusted_with_resolved_tree(tmp_path):
+def test_per_identity_elites_returns_global_top_with_resolved_tree(tmp_path):
     from nethackers.harness import select
     from nethackers.harness.store import LocalTreeStore
     id_a, id_b = "wiz-elf-cha-mal", "wiz-orc-cha-mal"
@@ -26,7 +24,7 @@ def test_per_identity_elites_returns_top_trusted_with_resolved_tree(tmp_path):
         (dest / "nethackers.solution.json").write_text('{"root":".","entrypoint":"bot.py"}')
         return dest
     out = select.per_identity_elites(
-        _Hub(), (id_a, id_b), "dev",
+        _Hub(), (id_a, id_b),
         store=LocalTreeStore(tmp_path / "store"), fetch=fetch)
     assert id_a in out and id_b not in out          # id_b has no elite
     entry, tree = out[id_a]
@@ -34,11 +32,9 @@ def test_per_identity_elites_returns_top_trusted_with_resolved_tree(tmp_path):
     assert (tree / "bot.py").exists()
 
 
-def test_trusted_is_owner_match_only_not_a_verified_tier(tmp_path):
-    # _trusted no longer checks a "verified" tier (Task 2b: /elites' tier is
-    # always the constant "self-reported", so that branch never fired) --
-    # only entry["owner"] == the run's owner. A stranger's elite (even a
-    # high scorer) is excluded; your own is kept.
+def test_per_identity_elites_uses_another_owners_global_leader(tmp_path):
+    # Cold-start follows the public per-identity leaderboard. Ownership does
+    # not change which rank-1 program becomes the cell's starting parent.
     from nethackers.harness import select
     from nethackers.harness.store import LocalTreeStore
     ident = "wiz-elf-cha-mal"
@@ -55,10 +51,10 @@ def test_trusted_is_owner_match_only_not_a_verified_tier(tmp_path):
         (dest / "nethackers.solution.json").write_text('{"root":".","entrypoint":"bot.py"}')
         return dest
     out = select.per_identity_elites(
-        _Hub(), (ident,), "dev",
+        _Hub(), (ident,),
         store=LocalTreeStore(tmp_path / "store"), fetch=fetch)
     entry, _tree = out[ident]
-    assert entry["program_id"] == "prog_m"   # the stranger's higher score is untrusted
+    assert entry["program_id"] == "prog_s"
 
 
 def test_pull_fetch_pulls_the_reference_repo_at_commit(tmp_path, monkeypatch):
