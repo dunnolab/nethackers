@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -208,25 +209,58 @@ def _migrate_add_program_id(conn: sqlite3.Connection) -> None:
 
 
 class Store:
-    """A single-connection sqlite3 data layer over the hub's schema.
+    """A sqlite3 data layer over the hub's schema, with ONE CONNECTION PER
+    THREAD.
 
-    Thread-safety beyond ``check_same_thread=False`` is the API task's
-    concern (task-5-context.md); a single connection is fine for M2a.
+    It used to hold a single connection shared by every caller. FastAPI runs
+    this package's sync (``def``) handlers in a worker threadpool, so that
+    connection was used concurrently by many threads -- and ``sqlite3``
+    caches prepared statements *per connection*, so two threads running the
+    same SQL got the same statement object and clobbered each other's
+    results. In practice that surfaced as ``fetchone()`` returning ``None``
+    for a ``SELECT COUNT(*)`` (``read_stats`` crashing with ``'NoneType' is
+    not subscriptable``), short ``zip()``s, and ``InterfaceError: bad
+    parameter or other API misuse``. It needed no load to trigger: the
+    website's boot fans out four parallel requests, so a single visitor
+    could race it.
+
+    Every connection is therefore thread-local and created on first use in
+    that thread. Callers are unaffected: transactions here are always
+    ``with self._conn:`` *within one method call*, and a request is served
+    on one thread, so no transaction ever spans threads. The threadpool is
+    bounded, so the number of connections is too.
     """
 
     def __init__(self, db_path: str | Path) -> None:
-        self._conn: sqlite3.Connection = sqlite3.connect(db_path, check_same_thread=False)
-        # sqlite defaults foreign keys OFF, and it's a per-connection
-        # setting -- required for insert_atoms' FK integrity behavior.
-        self._conn.execute("PRAGMA foreign_keys = ON")
+        self._db_path = str(db_path)
+        self._local = threading.local()
+
+    @property
+    def _conn(self) -> sqlite3.Connection:
+        """This thread's connection, opened (and PRAGMA'd) on first use.
+
+        ``journal_mode=WAL`` matters now that there are concurrent
+        connections: under the default rollback journal a writer locks out
+        every reader, so one ``/register`` would stall the whole site.
+        ``busy_timeout`` makes a contended write wait rather than raise
+        ``SQLITE_BUSY`` immediately."""
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(self._db_path, check_same_thread=False)
+            # sqlite defaults foreign keys OFF, and it's a per-connection
+            # setting -- required for insert_atoms' FK integrity behavior.
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA busy_timeout = 5000")
+            self._local.conn = conn
+        return conn
 
     @property
     def conn(self) -> sqlite3.Connection:
-        """The store's single live connection (FK pragma already set) --
-        the seam the derived views (Tasks 7-9) use to own their own SQL
-        against the ``attainment``/``attainment_holders`` tables (plus the
-        live ``/elites`` query straight over ``atoms``), without opening a
-        second connection to the same db file."""
+        """This thread's live connection (PRAGMAs already set) -- the seam
+        the derived views (Tasks 7-9) use to own their own SQL against the
+        ``attainment``/``attainment_holders`` tables (plus the live
+        ``/elites`` query straight over ``atoms``)."""
         return self._conn
 
     def init_schema(self) -> None:

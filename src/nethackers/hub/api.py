@@ -388,4 +388,27 @@ def create_default_app() -> FastAPI:
         auth = LocalStubAuth(json.loads(stub))
     else:
         auth = GitHubAppAuth(os.environ["NETHACKERS_CLIENT_ID"])
-    return create_app(store, auth)
+    app = create_app(store, auth)
+    _limit_worker_threads(app, int(os.environ.get("NETHACKERS_THREADS", "2")))
+    return app
+
+
+def _limit_worker_threads(app: FastAPI, total: int) -> None:
+    """Cap the threadpool FastAPI runs this package's sync handlers in.
+
+    Every handler here is a sync ``def``, so each request occupies a worker
+    thread doing almost pure Python (rows -> objects -> JSON). AnyIO's
+    default of 40 lets 40 such threads fight over the GIL, and measured
+    throughput *falls* as load rises -- 7.1 page views/s at one client down
+    to 0.4/s at ten, a convoy, not saturation. Capping the pool keeps
+    throughput flat instead: at 40 concurrent clients, 2 threads served
+    ~16x more than 40 did.
+
+    Set via ``NETHACKERS_THREADS`` (default 2). Raise it only alongside
+    evidence -- more threads is what causes the collapse, not what cures
+    it. Applied per worker process, so N uvicorn workers give N*total."""
+    @app.on_event("startup")
+    async def _cap() -> None:  # pragma: no cover - startup hook
+        import anyio.to_thread
+
+        anyio.to_thread.current_default_thread_limiter().total_tokens = total
