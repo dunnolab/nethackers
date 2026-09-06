@@ -6,6 +6,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from rich.text import Text
+
 from nethackers.tui.art import score_to_dlvl
 from nethackers.tui.theme import glyph
 
@@ -155,3 +157,75 @@ def scorecard(parent_means: dict[str, float],
             delta = f"  Δ{candidate_means[i] - parent_means[i]:+.2f}"
         rows.append(f"  {i:<18} {_bar(val)} {val:.2f}{delta}")
     return header + "\n" + "\n".join(rows)
+
+
+# ---------------------------------------------------------------------------
+# New monitor-screen formatters (evolve-monitor rework, Task 8).
+# ---------------------------------------------------------------------------
+
+_AMBER, _PARCHMENT, _DIM, _FOCUS, _GREEN, _GOLD, _HP = (
+    "#d2a24c", "#d7c9a2", "#7c745f", "#ffd54a", "#00a000", "#c0a000", "#c04040")
+
+ROLE_FULL = {"arc": "Archeologist", "bar": "Barbarian", "cav": "Caveman",
+             "hea": "Healer", "kni": "Knight", "mon": "Monk", "pri": "Priest",
+             "ran": "Ranger", "rog": "Rogue", "sam": "Samurai", "tou": "Tourist",
+             "val": "Valkyrie", "wiz": "Wizard"}
+_STATUS = {"ascended": ("★", _GOLD), "died": ("☠", _HP),
+           "timed out": ("⧗", _DIM)}
+_BACKEND_NAME = {"claude": "Claude Code", "codex": "Codex"}
+
+
+def dur(seconds: float) -> str:
+    m = int(seconds // 60)
+    h, m = divmod(m, 60)
+    return f"{h}h {m:02d}m" if h else f"{m}m"
+
+
+def role_full(role: str) -> str:
+    return ROLE_FULL.get(role, role)
+
+
+def status_glyph(word: str) -> tuple[str, str]:
+    return _STATUS.get(word, ("·", _DIM))
+
+
+def best_cell(inc: tuple[float, str, str, int | None]) -> Text:
+    score, label, kind, _ = inc
+    color = {"hub": _AMBER, "run": _GREEN, "aa": _DIM}[kind]
+    return Text.from_markup(f"[{color}]{label:<15}[/] [b {color}]{score:>4.2f}[/]")
+
+
+def run_cell(avg: float | None, revealed: int, total: int, inc_score: float,
+             is_init: bool, done: bool) -> Text:
+    if is_init or avg is None or revealed == 0:
+        return Text.from_markup("[dim]— · no mutation[/]" if is_init
+                                else f"[dim]{'—':>4}  {revealed:>2}/{total} pending[/]")
+    win = avg > inc_score
+    color = _GREEN if win else _FOCUS
+    spin = "" if done else " [dim]⊙[/]"
+    tag = f"   [b {_GREEN}]▲ new best[/]" if win else ""
+    return Text.from_markup(
+        f"[b {color}]{avg:>4.2f}[/]  [dim]{revealed:>2}/{total}[/]{spin}{tag}")
+
+
+def best_overall_cell(bo: tuple[float, str, str, int | None]) -> Text:
+    score, label, kind, _ = bo
+    color = {"aa": _DIM, "run": _GREEN, "hub": _PARCHMENT}[kind]
+    return Text.from_markup(
+        f"[b {_AMBER}]BEST OVERALL[/]  [b {color}]{label}[/]   [dim]open ▸[/]")
+
+
+def mutator_title(cfg: EvolveConfig) -> Text:
+    agent = _BACKEND_NAME.get(cfg.backend, cfg.backend)
+    ver = f" [{_AMBER}]{cfg.operator_version}[/]" if cfg.operator_version else ""
+    model = f"  [dim]· model[/] [b]{cfg.model}[/]" if cfg.model else ""
+    effort = f"  [dim]· effort[/] [b]{cfg.effort}[/]" if cfg.effort else ""
+    return Text.from_markup(f"[dim]mutator[/] [b {_PARCHMENT}]{agent}[/]{ver}{model}{effort}")
+
+
+def token_subline(usage, seconds: float) -> Text:
+    return Text.from_markup(
+        f"[dim]tokens[/]  in [b]{_compact(usage.input)}[/] · out [b]{_compact(usage.output)}[/] "
+        f"· cached [dim]([/]write [b]{_compact(usage.cache_creation)}[/] · "
+        f"read [b]{_compact(usage.cache_read)}[/][dim])[/]      [dim]·[/]      "
+        f"[dim]time[/] [b]{dur(seconds)}[/]")

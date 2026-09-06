@@ -5,6 +5,8 @@ EvolveScreen renders through. These superseded the old single-panel
 format_status(), which the old EvolveApp used; both were removed in the
 Task 10 NetHackersApp shell cutover.
 """
+from nethackers.harness.metering import TokenUsage
+from nethackers.tui import status as S
 from nethackers.tui.status import (
     EvolveConfig,
     _bar,
@@ -179,3 +181,28 @@ def test_cells_panel_marks_active_and_best_and_shows_coverage():
 
 def test_cells_panel_empty_is_blank():
     assert cells_panel([], active=None, coverage=(0, 0)) == ""
+
+
+# ---- dur -------------------------------------------------------
+
+
+def test_dur_is_hours_and_minutes_no_seconds():
+    assert S.dur(65) == "1m"
+    assert S.dur(3 * 3600 + 25 * 60 + 9) == "3h 25m"
+
+
+def test_best_cell_colors_by_kind_and_shows_score():
+    txt = str(S.best_cell((0.42, "clyde @11", "hub", None)))
+    assert "clyde @11" in txt and "0.42" in txt
+
+
+def test_mutator_title_includes_agent_version_model_effort():
+    cfg = EvolveConfig("v1,v2", "claude", 3, model="opus", effort="high",
+                       operator_version="1.2.7")
+    txt = str(S.mutator_title(cfg))
+    assert "Claude Code" in txt and "1.2.7" in txt and "opus" in txt and "high" in txt
+
+
+def test_token_subline_shows_four_kinds():
+    txt = str(S.token_subline(TokenUsage(12000, 3000, 6000, 500000), 3660))
+    assert "12.0k" in txt and "500.0k" in txt and "1h 01m" in txt
