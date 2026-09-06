@@ -256,6 +256,8 @@ def run_loop(
                 payload["parent_means"] = aggregate.per_identity_means(c.dev_evidence.results)
         payload["origins"] = origins
         payload["aa_baseline"] = aa_baseline
+        payload["union"] = ({"score": archive.union.score, "digest": archive.union.digest}
+                            if archive.union is not None else None)
         on_state(payload)
 
     # Cold start: seed each cell on ITS OWN identity's batch. The champions
@@ -303,6 +305,27 @@ def run_loop(
             max_parallel_evals=max_parallel_evals)
         archive.insert(seed_digest, tree_store.path(seed_digest), seed_ev)
         frontier_results.extend(seed_ev.results)
+
+    # Seed the UNION cell from the hub's best-on-average champion (spec §5.1):
+    # one full-union eval so BEST OVERALL is a real, full-detail incumbent from
+    # the start and a samplable parent from iteration 1. Skipped for --from-seed,
+    # a single-identity objective (no union cell), or an empty board.
+    if not from_seed and len(identities) > 1:
+        champ = select.overall_champion(
+            hub, objective, store=tree_store, fetch=fetch)
+        if champ is not None:
+            entry, tree_path = champ
+            report(f"cold-start · scoring union champion {entry['program_id'][:8]} "
+                   f"on {len(identities)} cell(s) …")
+            spec = build_union_spec(sorted(identities), name="coldstart:union")
+            _f, uev = evaluate(tree_path, spec, image, now=now_fn(), runtime=runtime,
+                               runner=runner, on_episode=_episode_cb("cold-start · dev [union]"),
+                               max_parallel_evals=max_parallel_evals)
+            archive.insert(entry["program_id"], tree_path, uev)   # full coverage -> seeds union
+            frontier_results.extend(uev.results)
+            ref = entry.get("reference") or {}
+            origins[entry["program_id"]] = _origin(
+                "hub", handle=entry.get("owner"), sha=ref.get("commit"), repo=ref.get("repo"))
 
     # base_dev is the frontier the run departs from -- the mean of the cells'
     # starting elite scores -- NOT a separate full-union seed eval (dropped). The

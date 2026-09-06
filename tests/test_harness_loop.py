@@ -1084,6 +1084,68 @@ def test_coldstart_baseline_read_survives_a_malformed_shape(tmp_path):
     assert cold["aa_baseline"] == {}   # malformed entries dropped, not a crash
 
 
+# -- Task 4: seed the UNION cell at cold-start from the hub's /board rank-1
+# champion (best-on-average), so BEST OVERALL is a real incumbent from the
+# start rather than only filling later from a lucky local mutation.
+
+def test_coldstart_seeds_union_from_board_champion(tmp_path):
+    a, b = "wiz-elf-cha-mal", "wiz-orc-cha-mal"
+    champ_a = {"program_id": "github.com/t/a@11", "score": 0.9, "owner": "clyde",
+               "reference": {"repo": "github.com/t/a", "commit": "11"}}
+    champ_b = {"program_id": "github.com/t/b@22", "score": 0.9, "owner": "bob",
+               "reference": {"repo": "github.com/t/b", "commit": "22"}}
+    board_top = {"program_id": "github.com/t/u@33", "owner": "mikhail", "mean_progression": 0.7,
+                 "reference": {"repo": "github.com/t/u", "commit": "33"}}
+    class _Hub(_ElitesHub):
+        def board(self, scope, tier="self-reported"):
+            return [board_top]
+        def baseline(self):
+            return []
+    states = []
+    run_loop(objective=f"{a},{b}", seed_tree=_seed_tree(tmp_path / "seed"),
+             tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+             hub=_Hub({a: champ_a, b: champ_b}), image="img:dev", token="t", owner="dev",
+             iterations=0, now_fn=lambda: "2026-09-06T00:00:00Z",
+             runner=_fitness_runner(lambda v: {5: 0.5, 7: 0.6}[v]),  # union champ (v=7) scores 0.6
+             fetch=_champion_fetch({"github.com/t/a@11": 5, "github.com/t/b@22": 5,
+                                    "github.com/t/u@33": 7}),
+             workdir=tmp_path / "work", on_state=states.append)
+    cold = next(s for s in states if s["phase"] == "cold-start")
+    assert cold["union"] is not None
+    assert cold["union"]["digest"] == "github.com/t/u@33"
+    assert cold["origins"]["github.com/t/u@33"]["handle"] == "mikhail"
+
+
+def test_union_seed_skipped_for_single_identity(tmp_path):
+    called = []
+    class _Hub(_FakeHub):
+        def board(self, scope, tier="self-reported"):
+            called.append(scope)
+            return []
+        def baseline(self): return []
+    run_loop(objective="wiz-elf-cha-mal", seed_tree=_seed_tree(tmp_path / "seed"),
+             tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+             hub=_Hub(), image="img:dev", token="t", owner="dev", iterations=0,
+             now_fn=lambda: "2026-09-06T00:00:00Z",
+             runner=_fitness_runner(lambda v: 0.2), workdir=tmp_path / "work")
+    assert called == []   # N=1: no board call, no union eval
+
+def test_union_seed_skipped_from_seed(tmp_path):
+    called = []
+    class _Hub(_FakeHub):
+        def board(self, scope, tier="self-reported"):
+            called.append(scope)
+            return []
+        def baseline(self): return []
+    run_loop(objective="wiz-elf-cha-mal,wiz-orc-cha-mal", from_seed=True,
+             seed_tree=_seed_tree(tmp_path / "seed"),
+             tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+             hub=_Hub(), image="img:dev", token="t", owner="dev", iterations=0,
+             now_fn=lambda: "2026-09-06T00:00:00Z",
+             runner=_fitness_runner(lambda v: 0.2), workdir=tmp_path / "work")
+    assert called == []   # --from-seed keeps the hub out
+
+
 # -- _pick_cell: weighted parent draw over the archive's cells. Each identity
 # weight 1, the union cell weight 2 -- but only once a full-coverage program
 # has filled it; before that the draw stays uniform over identities.
