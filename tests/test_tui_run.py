@@ -290,6 +290,19 @@ def test_iteration_evals_init_completed_running():
                                                    "max_depth": 8, "turns": 1200,
                                                    "wall_seconds": 20.0}]))
     assert r.iteration_evals(1)["v1"].rows[0]["cause"] == "starvation"
+    # iteration 2 starts running with its own live batch...
+    r.apply_state(_state("evaluating-dev", iteration=2, identities=["v1", "v2"]))
+    r.apply_episode("iter 2/5 · dev", {"index": 0, "total": 2, "seed": 10,
+                                       "character": "v1", "progress": 0.3,
+                                       "status": "died", "turns": 400, "depth": 3})
+    r.apply_episode("iter 2/5 · dev", {"index": 1, "total": 2, "seed": 11,
+                                       "character": "v1", "progress": 0.5,
+                                       "status": "died", "turns": 500, "depth": 4})
+    # ...while iteration 1 is (re)recorded as a gate reject (results=None): it
+    # must show NO rows, never iteration 2's live batch mislabeled as its own.
+    r.apply_iteration(1, IterationResult(False, "gate:smoke", results=None))
+    assert r.iteration_evals(1)["v1"].rows == []
+    assert len(r.iteration_evals(2)["v1"].rows) == 2   # the actually-running iteration
 
 
 def test_run_tracks_cells_and_coverage_from_state():

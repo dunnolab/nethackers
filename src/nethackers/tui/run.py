@@ -384,9 +384,15 @@ class Run:
                 c = r.get("character")
                 if c:
                     src.setdefault(c, []).append(r)
-        else:   # the running (or pending) iteration -> the live batch stream
-            live = self._batch_rows_for()
-            return {i: EvalView(i, total, live.get(i, [])) for i in idents}
+        else:
+            # Only the actually-running iteration streams live per-seed rows.
+            # A completed-but-no-eval iteration (gate/error reject, results=None)
+            # or a not-yet-started one has none -> empty EvalViews (not another
+            # iteration's live batch).
+            if self.iteration_status(k) == "running":
+                live = self._batch_rows_for()
+                return {i: EvalView(i, total, live.get(i, [])) for i in idents}
+            return {i: EvalView(i, total, []) for i in idents}
         return {i: EvalView(i, total, [_seed_row(r) for r in src.get(i, [])]) for i in idents}
 
     def _per_ident_total(self) -> int:
