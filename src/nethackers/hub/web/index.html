@@ -836,7 +836,7 @@ let STATS=null;                      // live platform totals from /stats
 let WALL_OF_FAME={keepers:[],breakthroughs:[]};
 const FAME_PAGE_SIZE=5;
 const FAME_LIMITS={keepers:FAME_PAGE_SIZE,breakthroughs:FAME_PAGE_SIZE};
-let PROGRAM_BY_ID={};                 // program registry index (by opaque id) for source/date cells
+const HACKER_PAGE=50;                 // rows in the hacker popup's program table (each costs a /identities fetch)
 let BASELINE={owner:"autoascend",per_identity:{},overall:null};  // raw /baseline
 let OBJ_EP={};                       // {objective: episodes} from /objectives (honest ep for tooltips)
 const ROLE_NAMES={arc:"Archeologist",bar:"Barbarian",cav:"Caveman",hea:"Healer",kni:"Knight",mon:"Monk",
@@ -1301,14 +1301,13 @@ async function openIdentity(identity){
     const rows=resp.rows||[];
     const baseline=aa&&aa.progression!=null?aa.progression:null;
     const body=rows.length?rows.map(r=>{
-      const meta=PROGRAM_BY_ID[r.program_id]||{reference:{repo:"",commit:""},registered_at:null,owner:r.owner};
       const delta=identityDelta(r.mean_progression,baseline);
       return `<tr><td class="num ${r.rank<=3?'top':''}">${r.rank}</td>
         <td><span class="ownerlink" data-owner="${esc(r.owner)}">@${esc(r.owner)}</span></td>
-        <td>${sourceLink(meta)}</td><td class="num">${r.mean_progression.toFixed(3)}</td>
+        <td>${sourceLink(r)}</td><td class="num">${r.mean_progression.toFixed(3)}</td>
         <td class="num">${r.median_progression.toFixed(3)}</td><td class="num">${OBJ_EP[identity]!=null?OBJ_EP[identity]:'—'}</td>
         <td>${esc(r.deepest||'—')}</td><td class="num ${delta.cls}">${delta.text}</td>
-        <td class="num ${r.ascensions?'star':''}">${r.ascensions||'·'}</td><td>${esc(fmtDate(meta.registered_at))}</td></tr>`;
+        <td class="num ${r.ascensions?'star':''}">${r.ascensions||'·'}</td><td>${esc(fmtDate(r.registered_at))}</td></tr>`;
     }).join(""):`<tr><td colspan="10" class="pend">${curTier==="verified"?EMPTY_VERIFIED:'No program has evaluated this identity yet.'}</td></tr>`;
     const aaRow=baseline!=null?`<tr class="base"><td class="num">&middot;</td><td>autoascend</td><td>reference floor</td><td class="num">${baseline.toFixed(3)}</td><td class="num">&mdash;</td><td class="num">${aa.episodes||'—'}</td><td>${esc(aa.deepest||'—')}</td><td class="num dz">&mdash;</td><td class="num">&middot;</td><td>&mdash;</td></tr>`:"";
     pbody.innerHTML=`<div class="tablewrap"><table class="identityboard"><caption>same canonical seed batch &middot; ${curTier.toUpperCase()}${curTier==="self-reported"?'*':''}</caption><thead><tr><th class="num">#</th><th>hacker</th><th>program</th><th class="num">mean</th><th class="num">median</th><th class="num">ep</th><th>deepest</th><th class="num">&Delta; AA</th><th class="num">&#9733;</th><th>registered</th></tr></thead><tbody>${body}${aaRow}</tbody></table></div>`;
@@ -1374,8 +1373,7 @@ async function openBreakthrough(event){
   const pbody=pushDetail(`${event.identity} - breakthrough submission`);
   pbody.innerHTML=`<div class="popupstatus">Loading the exact registered submission&hellip;</div>`;
   try{
-    const cached=PROGRAM_BY_ID[event.program_id];
-    const solution=cached||await jget("/programs/"+encodeURIComponent(event.program_id));
+    const solution=await jget("/programs/"+encodeURIComponent(event.program_id));
     const frontier=(await jget("/programs/"+encodeURIComponent(event.program_id)+"/identities")).rows||[];
     const roles=roleKeys(frontier), episodes=frontier.reduce((sum,x)=>sum+(x.episodes||0),0);
     pbody.innerHTML=`<div class="kv">
@@ -1400,7 +1398,13 @@ async function openHacker(owner){
   const pbody=pushDetail(`@${owner}`, true);
   pbody.innerHTML=`<div class="popupstatus">Loading registered programs and per-identity results&hellip;</div>`;
   try{
-    const solutions=(await jget(`/programs?owner=${encodeURIComponent(owner)}&limit=50`)).rows||[];
+    // One page of the newest programs. The header count comes from the envelope's
+    // `total` (the size of the whole set), never from this page's length -- each
+    // row below costs a /identities fetch, so the page stays small while the
+    // count stays true. Older hubs omit `total`; fall back to the page length.
+    const resp=await jget(`/programs?owner=${encodeURIComponent(owner)}&limit=${HACKER_PAGE}`);
+    const solutions=resp.rows||[];
+    const total=Number.isFinite(resp.total)?resp.total:solutions.length;
     await Promise.all(solutions.map(async s=>{
       try{ s.frontier=(await jget("/programs/"+encodeURIComponent(s.id)+"/identities")).rows||[]; }
       catch(e){ s.frontier=null; }
@@ -1411,14 +1415,17 @@ async function openHacker(owner){
     loaded.forEach(s=>roleKeys(s.frontier).forEach(r=>{ roleCount[r]=(roleCount[r]||0)+1; }));
     const loves=Object.entries(roleCount).sort((a,b)=>b[1]-a[1]||(ROLE_NAMES[a[0]]||a[0]).localeCompare(ROLE_NAMES[b[0]]||b[0])).slice(0,3);
     const newest=solutions.length?fmtDate(solutions[0].registered_at):"&mdash;";
+    // Truncated view: say so, and scope the role tally to what was actually read.
+    const shown=solutions.length, clipped=total>shown;
+    const sample=clipped?` <span class="dz">(newest ${shown})</span>`:"";
     pbody.innerHTML=`<div class="hackerhead">
       <span class="ghavatar-slot"></span>
       <div class="kv">
-        <span class="k">loves to roleplay</span><span class="v">${loves.length?loves.map(([r,n])=>`${esc(ROLE_NAMES[r]||r)} (${n})`).join(", "):"&mdash;"}</span>
-        <span class="k">registered programs</span><span class="v">${solutions.length}</span>
+        <span class="k">loves to roleplay</span><span class="v">${loves.length?loves.map(([r,n])=>`${esc(ROLE_NAMES[r]||r)} (${n})`).join(", ")+sample:"&mdash;"}</span>
+        <span class="k">registered programs</span><span class="v">${total}</span>
         <span class="k">latest registration</span><span class="v">${esc(newest)}</span>
       </div></div>
-    <div class="minihead">programs -- newest first:</div>
+    <div class="minihead">${clipped?`programs -- newest ${shown} of ${total}:`:"programs -- newest first:"}</div>
     ${solutions.length?`<div class="tablewrap"><table class="identityboard"><caption>REGISTERED PROGRAMS &middot; SELF-REPORTED*</caption><thead><tr><th>program</th><th>roles</th><th class="num">identities</th><th class="num">episodes</th><th class="num">records</th><th>best identity</th><th>registered</th></tr></thead><tbody>${solutions.map(programRow).join("")}</tbody></table></div>`:'<div class="popupstatus">No registered programs found.</div>'}`;
     pbody.querySelector(".ghavatar-slot").replaceWith(ghAvatar(owner));
   }catch(e){
@@ -1444,15 +1451,6 @@ async function loadUniverse(){
   }catch(e){ UNIVERSE = {}; }
 }
 
-/* Program registry index, keyed by opaque program id -> {id, owner, reference{repo,commit}, registered_at}
-   (GET /programs). Feeds the identity-board source/date cells and the hacker/breakthrough popups. */
-async function loadProgramIndex(){
-  try{
-    const resp=await jget("/programs?limit=100");
-    PROGRAM_BY_ID=Object.fromEntries((resp.rows||[]).map(s=>[s.id,s]));
-  }catch(e){ PROGRAM_BY_ID={}; }
-}
-
 async function loadRecognition(){
   try{ WALL_OF_FAME=await jget("/recognition"); }
   catch(e){ WALL_OF_FAME={keepers:[],breakthroughs:[]}; }
@@ -1468,7 +1466,7 @@ async function boot(){
     .catch(()=>{ STATS=null; odo($("#odoProg"),0,5); odo($("#odoPlay"),0,5); });
   const baseP = jget("/baseline").then(b=>{ BASELINE = b; }).catch(()=>{ BASELINE = {owner:"autoascend", per_identity:{}, overall:null}; });
   const objP  = jget("/objectives").then(o=>{ OBJ_EP = Object.fromEntries(o.map(x=>[x.name, x.episodes])); }).catch(()=>{ OBJ_EP = {}; });
-  await Promise.all([statsP,baseP,objP,loadProgramIndex(),loadRecognition()]);
+  await Promise.all([statsP,baseP,objP,loadRecognition()]);
   await loadUniverse();
   renderFrontier(); renderRecognition();
 }
