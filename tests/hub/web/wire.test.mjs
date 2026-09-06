@@ -87,9 +87,16 @@ const PROGRAMS_INDEX = { rows: [
   { id: "prog_bbb", owner: "ako", reference: REF_BBB, registered_at: "2026-08-26T09:30:00+00:00" },
 ] };
 
-// /board?scope=<identity> -> enveloped program rows (program_id, no episodes column)
+// /board?scope=<identity> -> enveloped program rows. The program here is
+// DELIBERATELY absent from PROGRAMS_INDEX: on prod the index holds one page of
+// /programs while the board ranks programs from the whole history, so 22 of 33
+// rank-1 elites missed it and rendered "source unavailable" / "date unknown".
+// The row carries its own reference{repo,commit} + registered_at, so a board
+// row is self-sufficient and the index is not consulted at all.
 const IDENTITY_BOARD = { rows: [
-  { rank: 1, program_id: "prog_aaa", owner: "dun", mean_progression: 0.3, median_progression: 0.3, ascensions: 1, deepest: "Mines' End" },
+  { rank: 1, program_id: "prog_not_in_index", owner: "dun", reference: REF_AAA,
+    registered_at: "2026-08-27T09:30:00+00:00",
+    mean_progression: 0.3, median_progression: 0.3, ascensions: 1, deepest: "Mines' End" },
 ] };
 
 // /programs/{id}/identities -> enveloped per-identity frontier (has episodes)
@@ -110,6 +117,22 @@ const RECOGNITION = {
 
 const RANDOM_HACKERS = ["dun", "ako", "sam"];
 
+// A prolific hacker: far more registered programs than the popup's page holds.
+// Reproduces the prod shape (vkurenkov: 237 programs, 50-row page) that made the
+// popup print the PAGE LENGTH as "registered programs". `total` is a property of
+// the whole filtered set; `rows` is just the page. null total => a hub too old to
+// send one (the client must then fall back to the page length).
+const OWNER_TOTAL = 237;
+function ownerPrograms(owner, limit, total) {
+  const n = total == null ? Math.min(limit, 3) : Math.min(limit, total);
+  const rows = Array.from({ length: n }, (_, i) => ({
+    id: `prog_${owner}_${i}`, owner,
+    reference: { repo: `github.com/${owner}/bot`, commit: `${owner}cmt${String(i).padStart(3, "0")}` },
+    registered_at: "2026-08-20T00:00:00+00:00",
+  }));
+  return total == null ? { owner, rows } : { owner, total, rows };
+}
+
 function router(path) {
   const [route, query] = path.split("?");
   const params = new URLSearchParams(query || "");
@@ -121,7 +144,7 @@ function router(path) {
   if (route === "/hackers/random") return { n: Number(params.get("n")), rows: RANDOM_HACKERS };
   if (route === "/programs") {
     const owner = params.get("owner");
-    if (owner) return { rows: [{ id: "prog_" + owner, owner, reference: { repo: `github.com/${owner}/bot`, commit: owner + "cmt00" }, registered_at: "2026-08-20T00:00:00+00:00" }] };
+    if (owner) return ownerPrograms(owner, Number(params.get("limit") || 50), OWNER_TOTAL);
     return PROGRAMS_INDEX;
   }
   if (route.startsWith("/programs/") && route.endsWith("/identities")) return FRONTIER;
@@ -160,7 +183,8 @@ function makeDom(fetchImpl, errors) {
 async function pass1() {
   console.log("\n== pass 1: populated dashboard ==");
   const errors = [];
-  const dom = makeDom((p) => Promise.resolve({ ok: true, status: 200, json: async () => router(p) }), errors);
+  const fetched = [];
+  const dom = makeDom((p) => { fetched.push(p); return Promise.resolve({ ok: true, status: 200, json: async () => router(p) }); }, errors);
   const { document } = dom.window;
   await sleep(200);
   const q = (s) => document.querySelector(s), qa = (s) => [...document.querySelectorAll(s)];
@@ -172,6 +196,12 @@ async function pass1() {
   ok(frCells.length === 73, "frontier renders 73 identity cells");
   ok(floorCells > 0 && progCells > 0, `frontier mixes program (${progCells}) and floor (${floorCells}) cells`);
   ok(/AutoAscend floor/.test(q("#gridnote").textContent), "gridnote mentions the AutoAscend floor");
+
+  // Boot must not pull a page of the registry to index client-side: that page
+  // can never cover every ranked program (503 registered vs a 100-row page on
+  // prod), and the rows that missed it rendered placeholder source/date cells.
+  ok(!fetched.some((p) => /^\/programs(\?|$)/.test(p) && !/[?&]owner=/.test(p)),
+     "boot does not fetch an unowned page of /programs to index");
 
   // masthead marquee + sidebar freshness stamp read live from /stats
   const mq = q("#mq").textContent;
@@ -199,6 +229,11 @@ async function pass1() {
   const idBody = top().querySelector(".win__body");
   ok(/@dun/.test(idBody.textContent) && /Mines' End/.test(idBody.textContent), "identity leaderboard shows the program row (@dun, Mines' End)");
   ok(/github\.com\/dun\/bot/.test(idBody.innerHTML), "identity source cell resolves reference{repo} to a github link");
+  // the bug: both cells came from a client-side index built from one page of
+  // /programs, so a program older than that page rendered these placeholders
+  ok(!/source unavailable/.test(idBody.textContent), "a program missing from the /programs page is NOT 'source unavailable'");
+  ok(/27 Aug 2026/.test(idBody.textContent), "the registered cell reads the row's own registered_at");
+  ok(!/date unknown/.test(idBody.textContent), "...and never falls back to 'date unknown'");
   // clicking an @owner INSIDE the popup stacks a SECOND popup on top
   top().querySelector(".ownerlink").click();
   await sleep(40);
@@ -220,7 +255,13 @@ async function pass1() {
   q("#recordholders tbody tr").click();
   await sleep(40);
   ok(/^@keeper/.test(top().querySelector(".win__title span").textContent.trim()), "keeper row opens the hacker popup titled just @username");
-  ok(/registered programs/i.test(top().querySelector(".win__body").textContent), "hacker popup lists registered programs");
+  const hkText = top().querySelector(".win__body").textContent.replace(/\s+/g, " ");
+  ok(/registered programs/i.test(hkText), "hacker popup lists registered programs");
+  // the bug: this printed 50 (the page length) for anyone with more than 50
+  ok(/registered programs ?237\b/.test(hkText), "hacker popup counts from the envelope total (237), not the 50-row page");
+  ok(!/registered programs ?50\b/.test(hkText), "hacker popup no longer reports the page length as the count");
+  ok(/newest 50 of 237/.test(hkText), "the truncated table says which slice it is showing");
+  ok(top().querySelectorAll(".identityboard tbody tr").length === 50, "the table itself still renders just the page (50 rows)");
   top().querySelector(".x").click();
 
   ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
@@ -277,9 +318,33 @@ function checkDictvizRandomWiring() {
     "no longer hands the raw envelope straight to buildRunners");
 }
 
+async function pass4() {
+  console.log("\n== pass 4: hub without envelope `total` -> count falls back to the page ==");
+  const errors = [];
+  const dom = makeDom((p) => Promise.resolve({ ok: true, status: 200, json: async () => {
+    const [route, query] = p.split("?");
+    const owner = new URLSearchParams(query || "").get("owner");
+    // an older hub: same rows, no `total` key
+    if (route === "/programs" && owner) return ownerPrograms(owner, 50, null);
+    return router(p);
+  } }), errors);
+  const { document } = dom.window;
+  await sleep(200);
+  document.querySelector('[data-fame-more="keepers"]');
+  document.querySelector("#recordholders tbody tr").click();
+  await sleep(60);
+  const body = [...document.querySelectorAll(".detailmodal")].pop().querySelector(".win__body");
+  const text = body.textContent.replace(/\s+/g, " ");
+  ok(/registered programs ?3\b/.test(text), "with no `total`, the count falls back to the page length (3)");
+  ok(!/newest \d+ of/.test(text), "nothing claims truncation when the page is all there is");
+  ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
+  dom.window.close();
+}
+
 await pass1();
 await pass2();
 await pass3();
+await pass4();
 checkDictvizRandomWiring();
 console.log("\n" + (failures === 0 ? "ALL PASSED" : failures + " CHECK(S) FAILED"));
 process.exit(failures === 0 ? 0 : 1);

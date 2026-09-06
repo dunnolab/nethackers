@@ -110,14 +110,17 @@ ORDER BY firsts DESC, first_solution ASC
 def _finalize_row(store: Store, rank: int, entry: dict[str, Any]) -> dict[str, Any]:
     """Turn one aggregated (pre-rank) entry -- still keyed by the internal
     ``solution_digest`` working key -- into the one uniform ``/board`` row:
-    ``{rank, program_id, owner, reference, coverage, identities_total,
-    ascensions, mean_progression, median_progression, deepest}``.
-    ``reference`` ``{repo, commit}`` comes from ``solutions`` (every atom's
-    ``solution_digest`` FKs there, so ``get_solution`` always resolves)."""
+    ``{rank, program_id, owner, reference, registered_at, coverage,
+    identities_total, ascensions, mean_progression, median_progression,
+    deepest}``. ``reference`` ``{repo, commit}`` and ``registered_at`` come
+    from ``solutions`` (every atom's ``solution_digest`` FKs there, so
+    ``get_solution`` always resolves) -- carried on the row so a consumer can
+    render the whole board without a second lookup per program."""
     digest = entry.pop("solution_digest")
     solution = store.get_solution(digest) or {}
     reference = {"repo": solution.get("repo", ""), "commit": solution.get("commit_sha", "")}
-    return {"rank": rank, "program_id": program_id(digest), "reference": reference, **entry}
+    return {"rank": rank, "program_id": program_id(digest), "reference": reference,
+            "registered_at": solution.get("registered_at"), **entry}
 
 
 def board(
