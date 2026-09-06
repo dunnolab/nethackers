@@ -182,13 +182,13 @@ def run_loop(
         # without an AutoAscend number).
         try:
             data = hub.baseline() or {}
+            per = data.get("per_identity") or {}
+            want = set(identities)
+            return {ident: float(entry["progression"])
+                    for ident, entry in per.items()
+                    if ident in want and "progression" in entry}
         except Exception:
             return {}
-        per = data.get("per_identity") or {}
-        want = set(identities)
-        return {ident: float(entry["progression"])
-                for ident, entry in per.items()
-                if ident in want and "progression" in entry}
 
     aa_baseline = {} if from_seed else _baseline_floor()
     wins = 0

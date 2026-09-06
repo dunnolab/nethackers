@@ -1063,6 +1063,27 @@ def test_registered_child_gets_run_origin(tmp_path):
     assert run_origins and next(iter(run_origins.values()))["iteration"] == 1
 
 
+def test_coldstart_baseline_read_survives_a_malformed_shape(tmp_path):
+    # hub.baseline() can succeed (raise nothing) but still return a malformed
+    # shape -- a None per-identity entry, or an entry whose "progression" is
+    # None rather than a number. _baseline_floor's best-effort try/except must
+    # cover the WHOLE parse (not just the hub.baseline() call itself), so a
+    # malformed shape degrades to {} instead of crashing run_loop.
+    a, b = "wiz-elf-cha-mal", "wiz-orc-cha-mal"
+    class _Hub(_ElitesHub):
+        def baseline(self):
+            return {"per_identity": {a: None, b: {"progression": None}}}
+    states = []
+    run_loop(objective=f"{a},{b}", seed_tree=_seed_tree(tmp_path / "seed"),
+             tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+             hub=_Hub({}), image="img:dev", token="t", owner="dev", iterations=0,
+             now_fn=lambda: "2026-09-07T00:00:00Z",
+             runner=_fitness_runner(lambda v: 0.2),
+             workdir=tmp_path / "work", on_state=states.append)
+    cold = next(s for s in states if s["phase"] == "cold-start")
+    assert cold["aa_baseline"] == {}   # malformed entries dropped, not a crash
+
+
 # -- _pick_cell: weighted parent draw over the archive's cells. Each identity
 # weight 1, the union cell weight 2 -- but only once a full-coverage program
 # has filled it; before that the draw stays uniform over identities.
