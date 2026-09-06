@@ -73,28 +73,33 @@ def test_identity_text_shows_the_login_when_present():
 
 
 class _FakeClient:
-    """Duck-types HubClient's ``search()`` -- no real HubClient or network."""
+    """Duck-types HubClient's ``program_count()`` -- no real HubClient or network."""
 
-    def __init__(self, rows=None, boom=False):
-        self._rows = rows
+    def __init__(self, total=None, boom=False):
+        self._total = total
         self._boom = boom
 
-    def search(self, owner):
+    def program_count(self, owner):
         if self._boom:
             raise RuntimeError("hub unreachable")
-        return self._rows
+        return self._total
 
 
-def test_registered_count_counts_the_search_rows():
-    client = _FakeClient(rows=[{"digest": "a"}, {"digest": "b"}, {"digest": "c"}])
-    assert _registered_count(client, "castiel") == 3
+def test_registered_count_reports_the_hubs_total():
+    assert _registered_count(_FakeClient(total=3), "castiel") == 3
 
 
-def test_registered_count_counts_zero_when_search_is_empty():
-    assert _registered_count(_FakeClient(rows=[]), "castiel") == 0
+def test_registered_count_is_not_capped_by_the_page_size():
+    """It used to count ``search()`` rows, which the hub caps at 50 -- so a
+    prolific hacker's Home read "50 registered" no matter how many they had."""
+    assert _registered_count(_FakeClient(total=237), "castiel") == 237
 
 
-def test_registered_count_is_none_when_search_raises():
+def test_registered_count_counts_zero_when_nothing_is_registered():
+    assert _registered_count(_FakeClient(total=0), "castiel") == 0
+
+
+def test_registered_count_is_none_when_the_hub_raises():
     # a raising hub degrades to None (Home renders "—", not a misleading 0)
     assert _registered_count(_FakeClient(boom=True), "castiel") is None
 

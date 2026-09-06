@@ -128,6 +128,16 @@ class HubClient:
         }
         return (self._get("/programs", params) or {}).get("rows", [])
 
+    def program_count(self, owner: str) -> int:
+        """``GET /programs?owner=&limit=1`` -> the envelope's ``total``: how many
+        programs ``owner`` has registered, whatever the page size. Counting
+        ``search()`` rows instead caps at ``limit`` -- that is what reported a
+        flat 50 for a hacker with 237. Falls back to counting a page against a
+        hub too old to send ``total`` (undercounting there, exactly as before)."""
+        body = self._get("/programs", {"owner": owner, "limit": 1}) or {}
+        total = body.get("total")
+        return int(total) if isinstance(total, int) else len(self.search(owner) or [])
+
     def show(self, program_id: str) -> Any:
         """``GET /programs/{id}`` -- the ``{id, owner, reference:{repo,
         commit}, registered_at}`` object (a single resource, not enveloped)."""

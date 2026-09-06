@@ -158,6 +158,33 @@ def test_search_unwraps_the_envelopes_rows():
     assert client.search() == rows
 
 
+def test_program_count_reads_the_envelope_total_not_a_page():
+    """Counting ``search()`` rows caps at the page size -- the bug that made
+    Home (and the website) report exactly 50 for a hacker with 237 programs.
+    ``program_count`` asks for the count itself, so it fetches one row, not 50."""
+    http = _FakeHttp(response={"generated_at": "t", "owner": "sam", "total": 237,
+                               "rows": [{"id": "prog_abc", "owner": "sam"}]})
+    client = HubClient("http://localhost:8000", http=http)
+
+    assert client.program_count("sam") == 237
+    assert http.calls == [
+        ("GET", "http://localhost:8000/programs", {"owner": "sam", "limit": 1})
+    ]
+
+
+def test_program_count_falls_back_to_a_page_on_a_hub_without_total():
+    """A hub too old to send ``total`` degrades to the previous behavior
+    (counting a page) rather than reporting the 1-row probe as the count."""
+    http = _FakeHttp(response={"generated_at": "t", "rows": [{"id": "a"}, {"id": "b"}]})
+    client = HubClient("http://localhost:8000", http=http)
+
+    assert client.program_count("sam") == 2
+    assert [c[2] for c in http.calls] == [
+        {"owner": "sam", "limit": 1},                  # the probe...
+        {"owner": "sam", "limit": 50, "offset": 0},    # ...then the old page count
+    ]
+
+
 def test_show_gets_program_path():
     http = _FakeHttp(response={"id": "prog_x"})
     client = HubClient("http://localhost:8000", http=http)
