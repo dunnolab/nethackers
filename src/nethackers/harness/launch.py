@@ -234,7 +234,7 @@ def prepare_evolve(
         model=params.model, effort=params.effort, run_id=rid, docker=params.runtime)
     cfg = EvolveConfig(objective=params.objective, backend=params.operator,
                        iterations=params.iterations, model=params.model,
-                       effort=params.effort)
+                       effort=params.effort, operator_version=operator_version)
 
     def run(callbacks: dict, report: Callable[[str], None] = lambda _m: None) -> list:
         def _on_log(tag: str, line: str) -> None:
