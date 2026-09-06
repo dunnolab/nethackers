@@ -208,6 +208,12 @@ class Run:
         cov = self.state.get("coverage") or (0, 0)
         return (int(cov[0]), int(cov[1]))
 
+    def origins(self) -> dict[str, dict]:
+        return dict(self.state.get("origins") or {})
+
+    def aa_baseline(self) -> dict[str, float]:
+        return dict(self.state.get("aa_baseline") or {})
+
     def active_cell(self) -> str | None:
         """The identity of the cell the current iteration is mutating, or
         None (cold-start / done)."""

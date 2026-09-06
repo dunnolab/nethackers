@@ -165,6 +165,32 @@ def run_loop(
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
     archive = CellArchive(identities)
+
+    origins: dict[str, dict] = {}
+
+    def _origin(kind, *, handle=None, sha=None, repo=None, iteration=None) -> dict:
+        return {"kind": kind, "handle": handle, "sha": sha,
+                "repo": repo, "iteration": iteration}
+
+    def _baseline_floor() -> dict[str, float]:
+        # AutoAscend's per-identity /baseline floor (the `progression` field of
+        # each per_identity entry), sliced to this objective's identities.
+        # `hub.baseline()` returns the dict {"owner", "per_identity":
+        # {ident: {"progression", "deepest", "episodes"}}, "overall"} -- see
+        # hub/views/baseline.py:15-32 (NOT a list of rows). Best-effort (hub
+        # read): any error / missing shape -> {} (the cell still renders, just
+        # without an AutoAscend number).
+        try:
+            data = hub.baseline() or {}
+        except Exception:
+            return {}
+        per = data.get("per_identity") or {}
+        want = set(identities)
+        return {ident: float(entry["progression"])
+                for ident, entry in per.items()
+                if ident in want and "progression" in entry}
+
+    aa_baseline = {} if from_seed else _baseline_floor()
     wins = 0
     base_dev = 0.0
     # Run-global attempt history (capped at _ATTEMPT_REFS_CAP, NOT per-cell,
@@ -228,6 +254,8 @@ def run_loop(
             payload["parent_dev"] = c.score
             if c.dev_evidence is not None:
                 payload["parent_means"] = aggregate.per_identity_means(c.dev_evidence.results)
+        payload["origins"] = origins
+        payload["aa_baseline"] = aa_baseline
         on_state(payload)
 
     # Cold start: seed each cell on ITS OWN identity's batch. The champions
@@ -239,6 +267,7 @@ def run_loop(
     # keeps the hub out: the seed owns all of S.
     seed_digest = tree_store.save(seed_tree)
     archive.mark_seed(seed_digest)
+    origins[seed_digest] = _origin("seed")
     elites: dict[str, tuple[dict, Path]] = (
         {} if from_seed
         else select.per_identity_elites(hub, tuple(identities),
@@ -249,6 +278,9 @@ def run_loop(
         # see harness/select.py) -- opaque, but stable per distinct champion,
         # which is all this grouping key needs.
         owned.setdefault(entry["program_id"], (tree_path, []))[1].append(ident)
+        ref = entry.get("reference") or {}
+        origins[entry["program_id"]] = _origin(
+            "hub", handle=entry.get("owner"), sha=ref.get("commit"), repo=ref.get("repo"))
 
     frontier_results: list[TrajectoryResult] = []   # every cold-start episode -> baseline tally
     for d, (tree_path, idents) in owned.items():
@@ -417,6 +449,11 @@ def run_loop(
             _remember(str(k + 1), worktree, note_hyp, child_means, child_overall,
                       json.dumps([r.to_dict() for r in dev_ev.results]))
             if improved:
+                origins[digest] = _origin(
+                    "run", handle=owner,
+                    sha=(reference or {}).get("commit"),
+                    repo=(reference or {}).get("repo"),
+                    iteration=k + 1)
                 wins += 1
                 _emit("registered", k + 1, cell=cell_label, tokens=op.spend,
                       detail=(f"⚠{len(regs)}" if regs else ""), hub_reason=hub_reason)

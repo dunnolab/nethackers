@@ -206,6 +206,16 @@ def test_apply_iteration_stores_result():
     assert "union" in r.iter_results[2].improved
 
 
+def test_apply_state_captures_origins_and_baseline():
+    r = Run("r1", CFG)
+    r.apply_state(_state("cold-start",
+                         origins={"d1": {"kind": "hub", "handle": "clyde", "sha": "11",
+                                         "repo": "github.com/t/a", "iteration": None}},
+                         aa_baseline={"val-dwa-law-fem": 0.28}))
+    assert r.origins()["d1"]["handle"] == "clyde"
+    assert r.aa_baseline()["val-dwa-law-fem"] == 0.28
+
+
 def test_run_tracks_cells_and_coverage_from_state():
     r = Run("r1", EvolveConfig("wiz-elf-cha-mal,wiz-orc-cha-mal", "claude", 3))
     r.apply_state({

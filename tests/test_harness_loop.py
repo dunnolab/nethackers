@@ -1019,6 +1019,50 @@ def test_coldstart_warm_cell_mutates_without_error(tmp_path):
     assert results[0].registered is True               # the warm cell mutated and improved a cell
 
 
+# -- Task 3: per-cell origin labels ("hub"/"seed"/"run") + the AutoAscend
+# per-identity baseline floor, both emitted on the cold-start (and later
+# registered) on_state payload so the monitor can label each cell's elite.
+
+def test_coldstart_emits_origins_and_baseline(tmp_path):
+    a = "wiz-elf-cha-mal"
+    b = "wiz-orc-cha-mal"
+    champ_a = {"program_id": "github.com/t/a@11", "score": 0.9, "owner": "clyde",
+               "reference": {"repo": "github.com/t/a", "commit": "11"}}
+    class _Hub(_ElitesHub):
+        def baseline(self):   # real /baseline shape: dict, per_identity -> {"progression"}
+            return {"owner": "autoascend", "overall": 0.22,
+                    "per_identity": {a: {"progression": 0.20, "episodes": 1},
+                                     b: {"progression": 0.25, "episodes": 1}}}
+    states = []
+    run_loop(objective=f"{a},{b}", seed_tree=_seed_tree(tmp_path / "seed"),
+             tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+             hub=_Hub({a: champ_a}),  # only A has a champion; B falls to the seed
+             image="img:dev", token="t", owner="dev", iterations=0,
+             now_fn=lambda: "2026-09-06T00:00:00Z",
+             runner=_fitness_runner(lambda v: {0: 0.2, 5: 0.7}[v]),
+             fetch=_champion_fetch({"github.com/t/a@11": 5}),
+             workdir=tmp_path / "work", on_state=states.append)
+    cold = next(s for s in states if s["phase"] == "cold-start")
+    assert cold["origins"]["github.com/t/a@11"] == {
+        "kind": "hub", "handle": "clyde", "sha": "11",
+        "repo": "github.com/t/a", "iteration": None}
+    assert cold["aa_baseline"][b] == 0.25   # AutoAscend floor for the championless cell
+
+
+def test_registered_child_gets_run_origin(tmp_path):
+    a = "wiz-elf-cha-mal"
+    states = []
+    run_loop(objective=a, seed_tree=_seed_tree(tmp_path / "seed"),
+             tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+             hub=_FakeHub(), image="img:dev", token="t", owner="dev", iterations=1,
+             now_fn=lambda: "2026-09-06T00:00:00Z", rng=random.Random(0),
+             runner=_fitness_runner(lambda v: {0: 0.2, 1: 0.8}[v]),
+             workdir=tmp_path / "work", on_state=states.append)
+    reg = next(s for s in states if s["phase"] == "registered")
+    run_origins = {d: o for d, o in reg["origins"].items() if o["kind"] == "run"}
+    assert run_origins and next(iter(run_origins.values()))["iteration"] == 1
+
+
 # -- _pick_cell: weighted parent draw over the archive's cells. Each identity
 # weight 1, the union cell weight 2 -- but only once a full-coverage program
 # has filled it; before that the draw stays uniform over identities.
