@@ -121,6 +121,7 @@ def eval_batch(
     image: str,
     *,
     now: str,
+    secret: str = "public",
     runtime: str = "docker",
     runner=subprocess.run,
     image_digest_resolver=None,
@@ -180,6 +181,7 @@ def eval_batch(
             # startup, for every process in the container (a plain in-arena
             # filter didn't hold -- NLE/AutoAscend resets it).
             "-e", "PYTHONWARNINGS=ignore::RuntimeWarning",
+            "-e", f"NETHACK_ARENA_SECRET={secret}",
             "-v", f"{solution_path}:/sol:ro",
             "-v", f"{td}:/out",
             image,

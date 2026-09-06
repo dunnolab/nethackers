@@ -73,6 +73,36 @@ CREATE TABLE IF NOT EXISTS baseline_atoms (
     evaluator_image TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+CREATE TABLE IF NOT EXISTS verified_atoms (
+    solution_digest TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    tier TEXT NOT NULL,
+    identity TEXT NOT NULL,
+    seed INTEGER NOT NULL,
+    progression REAL NOT NULL,
+    milestone TEXT,
+    ascended INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    turns INTEGER NOT NULL,
+    steps INTEGER NOT NULL,
+    evaluator_image TEXT NOT NULL,
+    secret_fingerprint TEXT NOT NULL,
+    verifier_token_fingerprint TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(solution_digest, identity, seed, secret_fingerprint, evaluator_image)
+);
+CREATE TABLE IF NOT EXISTS verified_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    solution_digest TEXT NOT NULL,
+    secret_fingerprint TEXT NOT NULL,
+    evaluator_image TEXT NOT NULL,
+    verifier_token_fingerprint TEXT NOT NULL,
+    status TEXT NOT NULL,
+    failure_kind TEXT,
+    message TEXT,
+    identities_done INTEGER NOT NULL,
+    at TEXT NOT NULL DEFAULT (datetime('now'))
+);
 CREATE TABLE IF NOT EXISTS lineage (
     child_digest TEXT NOT NULL REFERENCES solutions(digest),
     parent_digest TEXT NOT NULL,         -- may be an external/base solution: NO FK
@@ -129,6 +159,15 @@ _ITER_ATOMS_FILTER_KEYS: frozenset[str] = frozenset(
         "seed", "ascended", "status", "milestone",
     }
 )
+
+_VERIFIED_EXTRA_COLUMNS = ("secret_fingerprint", "verifier_token_fingerprint")
+_ITER_VERIFIED_FILTER_KEYS = _ITER_ATOMS_FILTER_KEYS | {
+    "secret_fingerprint", "evaluator_image", "verifier_token_fingerprint",
+}
+
+_ATTEMPT_COLUMNS = ("solution_digest", "secret_fingerprint", "evaluator_image",
+                    "verifier_token_fingerprint", "status", "failure_kind", "message",
+                    "identities_done", "at")
 
 
 def _migrate_drop_objective_digest(conn: sqlite3.Connection) -> None:
@@ -322,6 +361,13 @@ class Store:
             "SELECT digest FROM solutions WHERE program_id = ?", (program_id,)).fetchone()
         return row[0] if row is not None else None
 
+    def iter_solutions(self) -> list[dict[str, Any]]:
+        """Every registered solution, as ``{digest, repo, commit_sha}`` --
+        the source Task 7's ``verify_candidates`` scans to find programs
+        still lacking full verified coverage."""
+        rows = self._conn.execute("SELECT digest, repo, commit_sha FROM solutions").fetchall()
+        return [{"digest": d, "repo": r, "commit_sha": c} for d, r, c in rows]
+
     def random_owners(self, n: int) -> list[str]:
         """Up to ``n`` random distinct hacker handles -- the ``owner``s in
         ``atoms`` (real *scored* submissions), the SAME source the leaderboard's
@@ -466,3 +512,76 @@ class Store:
             values["ascended"] = bool(values["ascended"])
             atoms.append(Atom.from_dict(values))
         return atoms
+
+    def insert_verified_atoms(
+        self, atoms: list[Atom], *, secret_fingerprint: str,
+        verifier_token_fingerprint: str
+    ) -> int:
+        """Insert verified atoms into the isolated ``verified_atoms`` table
+        (dedup on UNIQUE key, no FKs). Returns the number of rows inserted.
+        """
+        cols = ", ".join(_ATOM_COLUMNS + _VERIFIED_EXTRA_COLUMNS)
+        placeholders = ", ".join("?" for _ in _ATOM_COLUMNS + _VERIFIED_EXTRA_COLUMNS)
+        inserted = 0
+        with self._conn:
+            for atom in atoms:
+                values = atom.to_dict()
+                row = tuple(
+                    values[c] for c in _ATOM_COLUMNS
+                ) + (secret_fingerprint, verifier_token_fingerprint)
+                cur = self._conn.execute(
+                    f"INSERT OR IGNORE INTO verified_atoms ({cols}) VALUES ({placeholders})",
+                    row,
+                )
+                inserted += cur.rowcount
+        return inserted
+
+    def iter_verified_atoms(self, **filters: Any) -> list[Atom]:
+        """Return verified atoms matching every ``column=value`` filter
+        (AND'ed). Filter keys include solution_digest, identity, seed, plus
+        secret_fingerprint, evaluator_image, verifier_token_fingerprint.
+        """
+        unknown = sorted(set(filters) - _ITER_VERIFIED_FILTER_KEYS)
+        if unknown:
+            raise ValueError(f"unknown iter_verified_atoms filter key(s): {unknown}")
+
+        sql = f"SELECT {_SELECT_ATOM_COLUMNS_SQL} FROM verified_atoms"
+        params = list(filters.values())
+        if filters:
+            sql += " WHERE " + " AND ".join(f"{column} = ?" for column in filters)
+
+        rows = self._conn.execute(sql, params).fetchall()
+        atoms = []
+        for row in rows:
+            values = dict(zip(_ATOM_COLUMNS, row, strict=True))
+            values["ascended"] = bool(values["ascended"])
+            atoms.append(Atom.from_dict(values))
+        return atoms
+
+    def insert_verified_attempt(self, *, solution_digest, secret_fingerprint,
+                                evaluator_image, verifier_token_fingerprint, status,
+                                failure_kind, message, identities_done, at):
+        """Insert an audit record of a verification attempt into the
+        append-only ``verified_attempts`` table. Each call appends a new row.
+        """
+        cols = ", ".join(_ATTEMPT_COLUMNS)
+        placeholders = ", ".join("?" for _ in _ATTEMPT_COLUMNS)
+        vals = (solution_digest, secret_fingerprint, evaluator_image,
+                verifier_token_fingerprint, status, failure_kind, message,
+                identities_done, at)
+        with self._conn:
+            self._conn.execute(f"INSERT INTO verified_attempts ({cols}) VALUES "
+                               f"({placeholders})", vals)
+
+    def latest_verified_attempt(self, solution_digest, *, secret_fingerprint,
+                                evaluator_image):
+        """Return the most recent (highest id) verification attempt for the
+        given solution with the given secret and evaluator, or None if no
+        attempt exists."""
+        cols = ", ".join(_ATTEMPT_COLUMNS)
+        row = self._conn.execute(
+            f"SELECT {cols} FROM verified_attempts"
+            " WHERE solution_digest = ? AND secret_fingerprint = ? AND"
+            " evaluator_image = ? ORDER BY id DESC LIMIT 1",
+            (solution_digest, secret_fingerprint, evaluator_image)).fetchone()
+        return dict(zip(_ATTEMPT_COLUMNS, row, strict=True)) if row else None
