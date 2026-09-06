@@ -216,6 +216,82 @@ def test_apply_state_captures_origins_and_baseline():
     assert r.aa_baseline()["val-dwa-law-fem"] == 0.28
 
 
+def test_roles_and_token_usage():
+    r = Run("r1", EvolveConfig("wiz-elf-cha-mal,val-dwa-law-fem,wiz-orc-cha-mal", "claude", 3))
+    r.apply_state(_state("cold-start",
+                         identities=["wiz-elf-cha-mal", "val-dwa-law-fem", "wiz-orc-cha-mal"]))
+    assert r.roles_present() == ["wiz", "val"]       # first-seen order, deduped
+    assert r.role_of("val-dwa-law-fem") == "val"
+    r.apply_log("iter 1/3", '{"type":"result","usage":{"input_tokens":10,"output_tokens":5,'
+                            '"cache_creation_input_tokens":3,"cache_read_input_tokens":100}}')
+    u = r.token_usage()
+    assert (u.input, u.output, u.cache_creation, u.cache_read) == (10, 5, 3, 100)
+
+
+def _cold(**kw):
+    base = dict(phase="cold-start", iteration=0, identities=["v1", "v2"],
+                cells=[{"identity": "v1", "score": 0.42, "digest": "d1"}],  # v1 has a champion
+                origins={"d1": {"kind": "hub", "handle": "clyde", "sha": "11",
+                                "repo": "github.com/t/a", "iteration": None}},
+                aa_baseline={"v1": 0.28, "v2": 0.31}, union=None, cell_results={})
+    base.update(kw)
+    return base
+
+
+def test_incumbent_starts_at_champion_or_autoascend_and_propagates():
+    from nethackers.harness.loop import IterationResult
+    r = Run("r1", EvolveConfig("v1,v2", "claude", 5))
+    r.apply_state(_cold())
+    assert r.incumbent("v1", upto_k=1) == (0.42, "clyde @11", "hub", None)
+    assert r.incumbent("v2", upto_k=1) == (0.31, "AutoAscend", "aa", None)
+    # iteration 1 registers, beating v1's champion on v1
+    r.apply_iteration(1, IterationResult(True, "registered", improved=["v1"],
+                                         results=[{"character": "v1", "progress": 0.5}]))
+    score, label, kind, j = r.incumbent("v1", upto_k=2)
+    assert (round(score, 2), kind, j) == (0.5, "run", 1) and label == "run · iter 1"
+
+
+def test_best_overall_uses_union_then_propagates_and_falls_back():
+    from nethackers.harness.loop import IterationResult
+    r = Run("r1", EvolveConfig("v1,v2", "claude", 5))
+    # no union seeded -> AutoAscend overall = mean of baselines
+    r.apply_state(_cold())
+    score, label, kind, j = r.best_overall(upto_k=1)
+    # round: sum(0.28, 0.31) / 2 is 0.29500000000000004 in IEEE-754, not 0.295
+    assert (round(score, 3), label, kind, j) == (0.295, "AutoAscend", "aa", None)
+    # union seeded from the hub board champion
+    r.apply_state(_cold(union={"score": 0.48, "digest": "u1"},
+                        origins={"u1": {"kind": "hub", "handle": "clyde", "sha": "33",
+                                        "repo": "github.com/t/u", "iteration": None}}))
+    assert r.best_overall(upto_k=1) == (0.48, "clyde @33", "hub", None)
+    # a child takes the union cell in iter 1 (dev_fitness = union mean)
+    r.apply_iteration(1, IterationResult(True, "registered", improved=["v1", "union"],
+                                         dev_fitness=0.55, results=[{"character": "v1",
+                                                                     "progress": 0.55}]))
+    score, label, kind, j = r.best_overall(upto_k=2)
+    assert (round(score, 2), kind, j) == (0.55, "run", 1) and label == "run · iter 1"
+
+
+def test_iteration_evals_init_completed_running():
+    from nethackers.harness.loop import IterationResult
+    r = Run("r1", EvolveConfig("v1,v2", "claude", 5))
+    r.apply_state(_cold(cell_results={"v1": [{"character": "v1", "trajectory_id": 7,
+                        "progress": 0.4, "status": "completed", "end_status": "died",
+                        "ascended": False, "cause_of_death": "killed by a newt",
+                        "max_depth": 6, "turns": 900, "wall_seconds": 12.0}]}))
+    ev0 = r.iteration_evals(0)["v1"]
+    assert ev0.rows[0]["cause"] == "killed by a newt" and ev0.rows[0]["seed"] == 7
+    # completed iteration reads iter_results[k].results
+    r.apply_iteration(1, IterationResult(True, "registered", improved=["v1"],
+                                         results=[{"character": "v1", "trajectory_id": 0,
+                                                   "progress": 0.6, "status": "completed",
+                                                   "end_status": "died", "ascended": False,
+                                                   "cause_of_death": "starvation",
+                                                   "max_depth": 8, "turns": 1200,
+                                                   "wall_seconds": 20.0}]))
+    assert r.iteration_evals(1)["v1"].rows[0]["cause"] == "starvation"
+
+
 def test_run_tracks_cells_and_coverage_from_state():
     r = Run("r1", EvolveConfig("wiz-elf-cha-mal,wiz-orc-cha-mal", "claude", 3))
     r.apply_state({

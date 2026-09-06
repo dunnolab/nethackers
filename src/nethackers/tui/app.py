@@ -43,6 +43,7 @@ from textual.widgets import (
 
 from nethackers.config import load_stage
 from nethackers.harness.launch import EvolvePlan
+from nethackers.harness.loop import IterationResult
 from nethackers.hubclient.client import HubClient, HubUnreachable
 from nethackers.hubclient.credentials import Credentials
 from nethackers.tui.nav import dedup_visible, nearest_in_direction
@@ -355,7 +356,7 @@ class NetHackersApp(App):
         if m is not None:
             m.render_log(tag)
 
-    def _on_run_iteration(self, run: Run, iteration: int, result: object) -> None:
+    def _on_run_iteration(self, run: Run, iteration: int, result: IterationResult) -> None:
         run.apply_iteration(iteration, result)
         m = self._monitor_for(run)
         if m is not None:

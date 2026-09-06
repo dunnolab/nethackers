@@ -7,8 +7,10 @@ from __future__ import annotations
 import threading
 import time
 from dataclasses import dataclass, field
+from statistics import pstdev
 
-from nethackers.harness.metering import Meter
+from nethackers.harness.loop import IterationResult
+from nethackers.harness.metering import Meter, TokenUsage
 from nethackers.tui.prettify import prettify
 from nethackers.tui.status import EvolveConfig
 
@@ -34,6 +36,62 @@ class Batch:
         return [self.rows_by_index[k] for k in sorted(self.rows_by_index)]
 
 
+@dataclass
+class EvalView:
+    ident: str
+    total: int
+    rows: list[dict]                 # normalized seed rows (see _seed_row)
+
+    @property
+    def revealed(self) -> int:
+        return len(self.rows)
+
+    @property
+    def done(self) -> bool:
+        return self.total > 0 and self.revealed >= self.total
+
+    @property
+    def scores(self) -> list[float]:
+        return [float(r["progress"]) for r in self.rows]
+
+    @property
+    def avg(self) -> float | None:
+        s = self.scores
+        return sum(s) / len(s) if s else None
+
+    @property
+    def std(self) -> float:
+        s = self.scores
+        return pstdev(s) if len(s) > 1 else 0.0
+
+
+def _status_word(row: dict) -> str:
+    """Normalize a seed row's status to one of ascended | died | timed out."""
+    if row.get("ascended"):
+        return "ascended"
+    st = str(row.get("status") or "")
+    if "timeout" in st or st == "timed out":
+        return "timed out"
+    return row.get("end_status") or ("died" if st in ("", "completed") else st)
+
+
+def _seed_row(raw: dict) -> dict:
+    """Normalize either a live episode dict {seed,progress,status,turns,depth}
+    or a completed TrajectoryResult.to_dict() into the detail view's row shape.
+    Live rows have no cause/time yet -> None (rendered as '—')."""
+    seed = raw.get("seed", raw.get("trajectory_id"))
+    depth = raw.get("depth", raw.get("max_depth"))
+    return {
+        "seed": seed,
+        "progress": float(raw.get("progress", 0.0)),
+        "status": _status_word(raw),
+        "cause": raw.get("cause_of_death"),           # None for live / non-death
+        "depth": depth,
+        "turns": raw.get("turns"),
+        "time": raw.get("wall_seconds"),              # None for live
+    }
+
+
 class Run:
     """One evolution's live state. ``apply_*`` are the worker->UI reductions
     (called on the UI thread, from the app's run worker); the read helpers
@@ -57,7 +115,7 @@ class Run:
         self.batches: list[Batch] = []
         self.logs: dict[str, list[tuple[str, str]]] = {}
         self.meters: dict[str, Meter] = {}
-        self.iter_results: dict[int, object] = {}   # iteration -> IterationResult
+        self.iter_results: dict[int, IterationResult] = {}   # iteration -> result
         self.sel_tag: str | None = None
         self.eval_step: tuple[int, int, float] | None = None
         self.mut_start = 0.0
@@ -123,7 +181,7 @@ class Run:
         self.logs.setdefault(tag, []).extend(prettify(self.cfg.backend, line))
         self.meters.setdefault(tag, Meter(self.cfg.backend)).observe(line)
 
-    def apply_iteration(self, iteration: int, result: object) -> None:
+    def apply_iteration(self, iteration: int, result: IterationResult) -> None:
         """Fold one completed iteration's IterationResult (harness/loop.py) into
         the run: registered/rejected, which cells improved (incl. "union"),
         per-kind usage, causes, and per-seed results. Delivered by the worker's
@@ -236,3 +294,118 @@ class Run:
             if c:
                 buckets.setdefault(c, []).append(float(row["progress"]))
         return {c: sum(v) / len(v) for c, v in buckets.items()}
+
+    def role_of(self, ident: str) -> str:
+        return ident.split("-", 1)[0]
+
+    def roles_present(self) -> list[str]:
+        out: list[str] = []
+        for i in self.identities():
+            role = self.role_of(i)
+            if role not in out:
+                out.append(role)
+        return out
+
+    def token_usage(self) -> TokenUsage:
+        total = TokenUsage()
+        for meter in self.meters.values():
+            total = total + meter.usage
+        return total
+
+    def _origin_label(self, digest: str) -> tuple[str, str]:
+        """(label, kind) for a program digest from the origins map."""
+        o = self.origins().get(digest)
+        if o is None:
+            return "seed", "aa"
+        if o["kind"] == "hub":
+            return f"{o.get('handle') or '?'} @{o.get('sha') or '?'}", "hub"
+        if o["kind"] == "run":
+            return f"run · iter {o.get('iteration')}", "run"
+        return "AutoAscend", "aa"
+
+    def _completed_iters(self, upto_k: int) -> list[tuple[int, IterationResult]]:
+        """(k, IterationResult) for finished iterations strictly before upto_k
+        that carry per-seed results, in order."""
+        return [(k, self.iter_results[k]) for k in sorted(self.iter_results)
+                if 0 < k < upto_k and self.iter_results[k].results is not None]
+
+    def incumbent(self, ident: str, upto_k: int) -> tuple[float, str, str, int | None]:
+        cells = {c["identity"]: c for c in self.cells()}
+        if ident in cells and self.origins().get(cells[ident]["digest"], {}).get("kind") == "hub":
+            label, kind = self._origin_label(cells[ident]["digest"])
+            score, j = float(cells[ident]["score"]), None
+        else:
+            score, label, kind, j = self.aa_baseline().get(ident, 0.0), "AutoAscend", "aa", None
+        for k, res in self._completed_iters(upto_k):
+            vals = [float(r["progress"]) for r in (res.results or [])
+                    if r.get("character") == ident]
+            if vals:
+                avg = sum(vals) / len(vals)
+                if avg > score:
+                    score, label, kind, j = avg, f"run · iter {k}", "run", k
+        return score, label, kind, j
+
+    def best_overall(self, upto_k: int) -> tuple[float, str, str, int | None]:
+        union = self.state.get("union")
+        if union is not None:
+            label, kind = self._origin_label(union["digest"])
+            score, j = float(union["score"]), None
+        else:   # AutoAscend fallback: macro-average of the baselines (spec §5.6)
+            floors = [self.aa_baseline().get(i, 0.0) for i in self.identities()]
+            score = sum(floors) / len(floors) if floors else 0.0
+            label, kind, j = "AutoAscend", "aa", None
+        for k, res in self._completed_iters(upto_k):
+            if (res.improved and "union" in res.improved and res.dev_fitness is not None
+                    and float(res.dev_fitness) > score):
+                score, label, kind, j = float(res.dev_fitness), f"run · iter {k}", "run", k
+        return score, label, kind, j
+
+    def _batch_rows_for(self) -> dict[str, list[dict]]:
+        """The current live dev batch's per-identity rows, grouped by character
+        (the running iteration's stream). {} when no batch exists yet."""
+        batch = self.current_batch()
+        if batch is None:
+            return {}
+        out: dict[str, list[dict]] = {}
+        for row in batch.rows():
+            c = row.get("character")
+            if c:
+                out.setdefault(c, []).append(_seed_row(row))
+        return out
+
+    def iteration_evals(self, k: int) -> dict[str, EvalView]:
+        idents = self.identities()
+        total = self._per_ident_total()
+        if k == 0:
+            src = {i: (self.state.get("cell_results") or {}).get(i, []) for i in idents}
+        elif k in self.iter_results and self.iter_results[k].results is not None:
+            src = {i: [] for i in idents}
+            for r in self.iter_results[k].results or []:
+                c = r.get("character")
+                if c:
+                    src.setdefault(c, []).append(r)
+        else:   # the running (or pending) iteration -> the live batch stream
+            live = self._batch_rows_for()
+            return {i: EvalView(i, total, live.get(i, [])) for i in idents}
+        return {i: EvalView(i, total, [_seed_row(r) for r in src.get(i, [])]) for i in idents}
+
+    def _per_ident_total(self) -> int:
+        """Best-effort per-identity seed count for progress ratios (seeds/ident)."""
+        cr = self.state.get("cell_results") or {}
+        if cr:
+            return max((len(v) for v in cr.values()), default=0)
+        batch = self.current_batch()
+        if batch and self.identities():
+            return max(1, int(batch.rows()[0].get("total", 0)) // len(self.identities())) \
+                if batch.rows() else 0
+        return 0
+
+    def iteration_status(self, k: int) -> str:
+        if k == 0:
+            return "init"
+        res = self.iter_results.get(k)
+        if res is not None:
+            return "registered" if res.registered else "rejected"
+        if self.state.get("iteration") == k and self.running:
+            return "running"
+        return "pending"
