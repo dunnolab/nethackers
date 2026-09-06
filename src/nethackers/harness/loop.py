@@ -57,6 +57,11 @@ class IterationResult:
     # signal. None for a non-improving/rejected iteration; a non-empty list
     # for a registered win.
     improved: list[str] | None = None
+    # Per-seed TrajectoryResult dicts for this child's dev eval -- the detail
+    # view's full breakdown (cause/depth/time). Kept off metrics.jsonl (lean
+    # durable log); it rides the live on_iteration callback only. None for
+    # baseline / gate-reject / error iterations (no dev eval ran).
+    results: list[dict] | None = None
 
 
 def _causes(results) -> dict[str, int]:
@@ -225,6 +230,16 @@ def run_loop(
             return
         filled, total = archive.coverage()
         best_dev = max((c.score for c in archive.cells.values()), default=base_dev)
+        # Per-cell TrajectoryResult dicts (detail-view breakdown), one entry per
+        # identity with a filled cell whose elite has dev evidence. Built as an
+        # explicit loop (not a one-shot comprehension) so a plain local narrows
+        # cleanly under mypy across the `dev_evidence is not None` check and the
+        # `.dev_evidence.results` read that follows it.
+        cell_results: dict[str, list[dict]] = {}
+        for i in identities:
+            filled_cell = archive.cells.get(i)
+            if filled_cell is not None and filled_cell.dev_evidence is not None:
+                cell_results[i] = [r.to_dict() for r in filled_cell.dev_evidence.results]
         payload = {
             "phase": phase, "iteration": iteration, "generation": iteration,
             "baseline_dev": base_dev, "baseline_held": 0.0,
@@ -238,6 +253,7 @@ def run_loop(
             "cells": [{"identity": i, "score": archive.cells[i].score,
                        "digest": archive.cells[i].digest}
                       for i in identities if i in archive.cells],
+            "cell_results": cell_results,
             "coverage": (filled, total),
             # Parent snapshot: defaults keep the (pre-C1) parent_panel from
             # KeyError-ing before a cell is active; overwritten with the
@@ -489,7 +505,8 @@ def run_loop(
                 _record(k + 1, IterationResult(
                     True, "registered", dev_fitness=dev_fit, tokens=op.spend, usage=op.usage,
                     digest=digest, stopped_reason=op.stopped_reason, regressions=regs or None,
-                    causes=_causes(dev_ev.results), hub_reason=hub_reason, improved=improved))
+                    causes=_causes(dev_ev.results), hub_reason=hub_reason, improved=improved,
+                    results=[r.to_dict() for r in dev_ev.results]))
             else:
                 _emit("rejected", k + 1, cell=cell_label, tokens=op.spend,
                       detail="no cell improved", hub_reason=hub_reason)
@@ -497,7 +514,8 @@ def run_loop(
                 _record(k + 1, IterationResult(
                     False, "no-cell-improved", dev_fitness=dev_fit, tokens=op.spend,
                     usage=op.usage, stopped_reason=op.stopped_reason,
-                    causes=_causes(dev_ev.results), hub_reason=hub_reason))
+                    causes=_causes(dev_ev.results), hub_reason=hub_reason,
+                    results=[r.to_dict() for r in dev_ev.results]))
         except Exception as e:
             _emit("error", k + 1, detail=str(e))
             report(f"{tag} · ✗ error: {e}")

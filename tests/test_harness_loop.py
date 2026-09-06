@@ -531,6 +531,21 @@ def test_iteration_result_stopped_reason_defaults_to_none():
     assert IterationResult(False, "baseline").stopped_reason is None
 
 
+def test_iteration_result_carries_per_seed_results(tmp_path):
+    a = "wiz-elf-cha-mal"
+    results = []
+    run_loop(objective=a, seed_tree=_seed_tree(tmp_path / "seed"),
+             tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+             hub=_FakeHub(), image="img:dev", token="t", owner="dev", iterations=1,
+             now_fn=lambda: "2026-09-06T00:00:00Z", rng=random.Random(0),
+             runner=_fitness_runner(lambda v: {0: 0.2, 1: 0.8}[v]),
+             workdir=tmp_path / "work",
+             on_iteration=lambda it, res: results.append(res))
+    child = next(r for r in results if r.reason != "baseline")
+    assert child.results and "progress" in child.results[0]
+    assert "cause_of_death" in child.results[0]   # completed detail, from TrajectoryResult
+
+
 def test_on_iteration_fires_for_baseline_and_each_iteration(tmp_path):
     seen: list[tuple[int, str]] = []
     run_loop(
@@ -1144,6 +1159,25 @@ def test_union_seed_skipped_from_seed(tmp_path):
              now_fn=lambda: "2026-09-06T00:00:00Z",
              runner=_fitness_runner(lambda v: 0.2), workdir=tmp_path / "work")
     assert called == []   # --from-seed keeps the hub out
+
+
+# -- Task 5: hand per-seed TrajectoryResult dicts to the monitor -- the detail
+# view's full per-seed cause/depth/time breakdown. metrics.jsonl stays lean
+# (see test_harness_runlog.py); this rides the live on_iteration/on_state
+# callbacks only.
+
+def test_coldstart_emits_cell_results(tmp_path):
+    a = "wiz-elf-cha-mal"
+    b = "wiz-orc-cha-mal"
+    states = []
+    run_loop(objective=f"{a},{b}", from_seed=True, seed_tree=_seed_tree(tmp_path / "seed"),
+             tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+             hub=_FakeHub(), image="img:dev", token="t", owner="dev", iterations=0,
+             now_fn=lambda: "2026-09-06T00:00:00Z",
+             runner=_fitness_runner(lambda v: 0.2), workdir=tmp_path / "work",
+             on_state=states.append)
+    cold = next(s for s in states if s["phase"] == "cold-start")
+    assert a in cold["cell_results"] and "progress" in cold["cell_results"][a][0]
 
 
 # -- _pick_cell: weighted parent draw over the archive's cells. Each identity

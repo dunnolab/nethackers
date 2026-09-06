@@ -78,6 +78,13 @@ def test_metric_record_uses_faithful_usage_when_present():
     assert rec["usage"] == {"input": 1, "output": 2, "cache_creation": 3, "cache_read": 4}
 
 
+def test_metric_record_omits_per_seed_results():
+    from nethackers.harness.loop import IterationResult
+    rec = metric_record(1, IterationResult(True, "registered", dev_fitness=0.2,
+                                           results=[{"progress": 0.2}]))
+    assert "results" not in rec   # per-seed detail must not bloat metrics.jsonl
+
+
 def test_append_log_writes_per_iteration_file(tmp_path):
     d = tmp_path / "runs" / "r1"
     append_log(d, "iter 1/3", '{"a":1}\n')
