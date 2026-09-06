@@ -9,6 +9,8 @@ body's link shape, and the register ``Authorization: Bearer`` header.
 
 from __future__ import annotations
 
+import time
+
 import httpx
 import pytest
 
@@ -154,6 +156,33 @@ def test_search_unwraps_the_envelopes_rows():
     client = HubClient("http://localhost:8000", http=http)
 
     assert client.search() == rows
+
+
+def test_program_count_reads_the_envelope_total_not_a_page():
+    """Counting ``search()`` rows caps at the page size -- the bug that made
+    Home (and the website) report exactly 50 for a hacker with 237 programs.
+    ``program_count`` asks for the count itself, so it fetches one row, not 50."""
+    http = _FakeHttp(response={"generated_at": "t", "owner": "sam", "total": 237,
+                               "rows": [{"id": "prog_abc", "owner": "sam"}]})
+    client = HubClient("http://localhost:8000", http=http)
+
+    assert client.program_count("sam") == 237
+    assert http.calls == [
+        ("GET", "http://localhost:8000/programs", {"owner": "sam", "limit": 1})
+    ]
+
+
+def test_program_count_falls_back_to_a_page_on_a_hub_without_total():
+    """A hub too old to send ``total`` degrades to the previous behavior
+    (counting a page) rather than reporting the 1-row probe as the count."""
+    http = _FakeHttp(response={"generated_at": "t", "rows": [{"id": "a"}, {"id": "b"}]})
+    client = HubClient("http://localhost:8000", http=http)
+
+    assert client.program_count("sam") == 2
+    assert [c[2] for c in http.calls] == [
+        {"owner": "sam", "limit": 1},                  # the probe...
+        {"owner": "sam", "limit": 50, "offset": 0},    # ...then the old page count
+    ]
 
 
 def test_show_gets_program_path():
@@ -522,3 +551,46 @@ def test_refresh_error_raises():
 
     with pytest.raises(r.DeviceFlowError):
         r.refresh_access_token("ghr_old", client_id="cid", http=H())
+
+
+# --- issue #50: login/hub calls must fail fast, never hang, and name the
+# right component. The socket/httpx timeout does not bound getaddrinfo, so a
+# DNS hang froze `login` (talking to github.com) and `doctor` (the hub) with
+# no error. device_login/hub_mode now run under call_with_deadline and raise a
+# typed "unreachable" (never a raw hang, never a raw httpx error mislabeled as
+# "the hub").
+
+
+def test_device_login_raises_github_unreachable_on_a_transport_error():
+    from nethackers.hubclient.register import GitHubUnreachable
+
+    class H:
+        def post(self, url, data=None, headers=None):
+            raise httpx.ConnectError("no route to host", request=httpx.Request("POST", url))
+
+    with pytest.raises(GitHubUnreachable):
+        r.device_login(client_id="cid", http=H(), prompt=lambda *_: None, sleep=lambda *_: None)
+
+
+def test_device_login_raises_github_unreachable_when_the_call_hangs():
+    from nethackers.hubclient.register import GitHubUnreachable
+
+    class Hang:
+        def post(self, url, data=None, headers=None):
+            time.sleep(0.5)  # simulate a hung getaddrinfo the socket timeout can't bound
+            return _FakeResp({"device_code": "d", "user_code": "x", "verification_uri": "u"})
+
+    with pytest.raises(GitHubUnreachable):
+        r.device_login(client_id="cid", http=Hang(), prompt=lambda *_: None,
+                       sleep=lambda *_: None, deadline=0.02)
+
+
+def test_hub_mode_raises_hub_unreachable_when_the_call_hangs():
+    class Hang:
+        def get(self, url, params=None, timeout=None):
+            time.sleep(0.5)
+            return _FakeResp({"auth": "github"})
+
+    client = HubClient("http://hub", http=Hang(), timeout=0.02)
+    with pytest.raises(HubUnreachable):
+        client.hub_mode()

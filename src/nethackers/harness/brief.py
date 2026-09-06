@@ -1,116 +1,182 @@
-"""Assemble the operator prompt: NetHack framing + a pointer to `/refs/`.
-
-The brief no longer distills the parent's score/outcome history into text --
-that (and the influence/attempt reference folders) is provisioned as real
-files under `/refs/` (Task A2's `CONTEXT.md` + copied folders), which the
-agent reads and analyzes itself.
+"""Assemble the operator prompt: a sectioned, human-readable brief that frames
+the task in plain terms (identities, seeds), asks the mutator to raise the
+overall average, and points it at /refs/. It never mentions the evolutionary
+loop, iterations, or acceptance internals.
 """
 from __future__ import annotations
 
-from nethackers.contracts.models import Evidence
+INTRO = (
+    "# You're improving a NetHack bot\n\n"
+    "You are improving a Python program that plays **NetHack** through the "
+    "**NetHack Learning Environment (NLE)**. Make **one** focused change that "
+    "raises its score."
+)
 
-NETHACK_PREAMBLE = (
-    "You are improving a program that plays **NetHack** (via NLE). It is scored by a "
-    "BALROG-style **progression** metric — starts near 0 and rises as the bot survives "
-    "and descends/advances (the evaluator defines the milestones). Maximize that.\n\n"
-    "**The current bot is at `/workspace`** — edit it. **Strong reference solutions and "
-    "recent rejected attempts are under `/refs/` — read `/refs/CONTEXT.md` first**, analyze "
-    "them (diff, read, or run `python -m nethackers.arena.run` yourself), then make ONE "
-    "focused change with a `# hypothesis: …` comment at the edit.\n\n"
-    "Don't game it: no branching on seed fingerprints, no exploiting scorer/NLE quirks — "
-    "such candidates fail on held-out seeds. Keep the `make_agent()` → `reset()`/`act()` "
-    "contract and import cleanly.\n\n"
-    "**Measure like the judge.** Evaluate exactly as the judge does: "
-    "`python -m nethackers.arena.run --solution /workspace "
-    "--batch '[[0,\"<build>\"], …]' --evaluation-id local --out /tmp/eval.json` "
-    "— pass `--evaluation-id local` (the judge's seed namespace; any other id plays "
-    "different, meaningless games) and read the per-episode results from the `/tmp/eval.json` "
-    "`--out` file. **Run that eval as ONE foreground command and wait for it to finish** — give "
-    "Bash a long timeout (up to 600000 ms) and evaluate a SMALL sample of seeds so it completes "
-    "synchronously in that window. This sandbox is single-shot: do NOT background the eval "
-    "(`run_in_background`), `sleep`-wait for it, or rely on task notifications — a backgrounded "
-    "eval's result is lost when your turn ends, leaving you to decide the change blind. "
-    "Put your edits in the strategy code (the `autoascend/` package), not the "
-    "`arena_adapter.py` glue."
+VOCABULARY = (
+    "## Vocabulary\n"
+    "- **identity** — one character the bot plays: role-race-alignment-gender, "
+    "e.g. `val-hum-law-fem`.\n"
+    "- **seed** — a fixed game RNG. One seed pins *everything* random — dungeon "
+    "layout, monster and item generation, every roll — so the same seed always "
+    "plays out the identical game. Not just a map: one concrete, fully-determined "
+    "playthrough.\n"
+    "- **score** — BALROG progression: starts near 0 and rises as the bot "
+    "survives, descends, and advances. Higher is better.\n"
+    "- **overall** — the mean score across all identities (every identity's "
+    "seeds pooled).\n"
+    "- **focused change** — one coherent idea (a single hypothesis), not "
+    "necessarily a small edit. \"Focused\" means the *idea* is singular, not that "
+    "the diff is small: carrying it out may take a large change — a refactor, a "
+    "drastic rewrite, whatever the idea needs. One idea, any amount of code."
+)
+
+HOWTO = (
+    "## How to make your change\n"
+    "1. The bot lives at **`/workspace`** — edit the strategy code in the "
+    "`autoascend/` package, not the `arena_adapter.py` glue.\n"
+    "2. Make **ONE** focused change, marked with a `# hypothesis: …` comment "
+    "saying what you expect it to improve.\n"
+    "3. Keep the `make_agent()` → `reset()` / `act()` contract intact and make "
+    "sure the code imports cleanly.\n"
+    "4. **Don't game the score:** no branching on seed fingerprints, no "
+    "exploiting scorer/NLE quirks — those don't generalize."
+)
+
+MEASURE = (
+    "## How to measure (exactly like the judge)\n"
+    "```\n"
+    "python -m nethackers.arena.run --solution /workspace \\\n"
+    "  --batch '[[0,\"<identity>\"], …]' --evaluation-id local --out /tmp/eval.json\n"
+    "```\n"
+    "- `--evaluation-id local` is the judge's seed namespace — any other id "
+    "plays different, meaningless games.\n"
+    "- Read per-seed results from the `--out` file.\n"
+    "- **Run it as ONE foreground command and wait.** Give Bash a long timeout "
+    "(up to 600000 ms) and evaluate a **small** sample of seeds so it finishes in "
+    "that window. This sandbox is single-shot: do **not** background the eval "
+    "(`run_in_background`), `sleep`-wait, or rely on task notifications — a "
+    "backgrounded result is lost when your turn ends, and you'd choose your "
+    "change blind."
 )
 
 
-def _set_block(identities: list[str], per_identity: dict[str, float] | None) -> str:
-    n = len(identities)
-    lines = [f"**Objective — a set of {n} builds.** You are optimizing ONE bot to "
-             f"raise its **average** progression across these {n} character builds, "
-             f"and especially to lift its **weakest** ones."]
-    if per_identity:
-        ordered = sorted(identities, key=lambda i: per_identity.get(i, 0.0))
-        table = "  ".join(f"{i} {per_identity[i]:.2f}" for i in ordered if i in per_identity)
-        lines.append(f"**Per-build now (weakest first).** {table}")
-    else:
-        lines.append("Builds: " + ", ".join(identities))
-    lines.append(
-        "You needn't roll every build every cycle — sample a few seeds across a "
-        "spread of builds, prioritizing the weak ones; the full grading is done "
-        "for you on held-out seeds.")
-    return "\n\n".join(lines)
+def _scores(identities: list[str], per_identity: dict[str, float] | None,
+            overall: float | None, target: float | None) -> str:
+    pid = per_identity or {}
+    full = bool(identities) and all(i in pid for i in identities)
+    # weakest-first when every identity has a score, else the declared order
+    order = sorted(identities, key=lambda i: pid[i]) if full else list(identities)
+    lines = ["### Scores",
+             "How this bot does on each character it plays — the low ones drag "
+             "the average down:", "", "| character | score |", "| --- | --- |"]
+    for i in order:
+        cell = f"{pid[i]:.3f}" if i in pid else "—"
+        lines.append(f"| `{i}` | {cell} |")
+    lines.append("")
+    if full and overall is not None and target is not None:
+        lines.append(f"**Overall average now: {overall:.3f} · "
+                     f"target to beat: {target:.3f}**")
+    elif target is not None:
+        lines.append(f"**Target to beat: {target:.3f}**")
+    return "\n".join(lines)
 
 
-def _attempts_block(attempts: list[str] | None) -> str:
-    """A run-global anti-repeat list: one line per earlier attempt this run
-    (its id + the change it made + its outcome). Surfaced verbatim so the
-    mutator can avoid re-deriving a mutation that already failed. Empty/absent
-    -> no block at all (the first iteration has no history)."""
-    if not attempts:
-        return ""
-    lines = "\n".join(f"- {a}" for a in attempts)
+def _goal(n: int) -> str:
     return (
-        "**Earlier attempts this run — don't just repeat these.** These changes "
-        "were already tried this run; build on them or go elsewhere, don't rediscover "
-        f"a dead end:\n{lines}"
+        "## Your goal\n"
+        f"This one bot plays **{n} different characters** (identities). Raise its "
+        "**overall average** across all of them — a better all-rounder, not a "
+        "specialist. A change that lifts one character while dropping the others "
+        "usually isn't a win; one that lifts the average is."
+    )
+
+
+def _whats_kept(target: float | None) -> str:
+    bar = f"beats {target:.3f}" if target is not None else "goes up"
+    return (
+        "## What's kept\n"
+        "Your edited bot is re-scored on the same fixed seeds. It's **kept** if "
+        f"its **overall average {bar}**; a change that doesn't raise the average "
+        "is discarded. So aim for changes that help across characters, not tricks "
+        "that boost one and hurt the rest."
+    )
+
+
+def _per_seed(n_identities: int, seeds_per: int) -> str:
+    total = n_identities * seeds_per
+    noun = "identity" if n_identities == 1 else "identities"
+    return (
+        "## Per-seed detail\n"
+        "The table above averages over each identity's seeds. "
+        f"**`/refs/parent-eval.json`** has one row per seed ({total} = "
+        f"{n_identities} {noun} × {seeds_per} seeds): the `trajectory_id`, "
+        "its `character` (identity), the `progress` score, the deepest "
+        "`milestone`, and the `cause_of_death`. Read it to see which dungeons "
+        "this bot does worst on and how it dies there."
+    )
+
+
+def _references() -> str:
+    return (
+        "## References\n"
+        "You also have a read-only **`/refs/`** folder. Start with "
+        "**`/refs/CONTEXT.md`** — it lists what's there: a pristine copy of this "
+        "bot (`parent/`), its per-seed results (`parent-eval.json`), and other "
+        "changes that were tried with the score each reached (`attempts.md`, with "
+        "their code under `attempts/`)."
+    )
+
+
+def _seeds(training_seeds: list[int] | None, wiki_path: str | None) -> str:
+    seeds = ""
+    if training_seeds:
+        lo, hi = min(training_seeds), max(training_seeds)
+        if training_seeds == list(range(lo, hi + 1)):
+            seeds = f" **{lo}–{hi}**"
+        else:
+            seeds = " " + ", ".join(str(s) for s in training_seeds)
+    have = "You have live Python + NLE and the current bot as your starting point."
+    if wiki_path:
+        have = f"NetHack reference (offline): {wiki_path}. " + have
+    return (
+        "## Seeds\n"
+        f"Your training seeds are{seeds}. Prefer **general** NetHack improvements "
+        "over tricks tuned to these particular dungeons — they won't hold up. "
+        f"{have}"
     )
 
 
 def build_brief(
     objective_name: str,
     character: str,
-    parent_evidence: Evidence | None,
     *,
-    training_seeds: list[int] | None = None,
-    wiki_path: str | None = None,
     identities: list[str] | None = None,
     per_identity: dict[str, float] | None = None,
-    attempts: list[str] | None = None,
+    overall: float | None = None,
+    target: float | None = None,
+    seeds_per_identity: int | None = None,
+    training_seeds: list[int] | None = None,
+    wiki_path: str | None = None,
 ) -> str:
-    # parent_evidence is kept for caller/signature stability but is no longer
-    # distilled into text -- its score/outcome detail lives in
-    # /refs/CONTEXT.md (Task A2), which the agent reads directly.
-    del parent_evidence
-
-    seeds_note = ""
-    if training_seeds:
-        seeds_note = ": " + ", ".join(str(s) for s in training_seeds)
-
-    if wiki_path is not None:
-        have = (
-            "**What you have.** Live Python + NLE; NetHack reference (offline): "
-            f"{wiki_path}; the current bot is your starting point."
-        )
-    else:
-        have = "**What you have.** Live Python + NLE; the current bot is your starting point."
-
+    n_seeds = seeds_per_identity or (len(training_seeds) if training_seeds else 0)
     if identities and len(identities) > 1:
-        body = _set_block(identities, per_identity)
+        parts = [
+            INTRO, VOCABULARY, _goal(len(identities)),
+            _scores(identities, per_identity, overall, target),
+            _per_seed(len(identities), n_seeds),
+            _whats_kept(target), _references(), HOWTO, MEASURE,
+            _seeds(training_seeds, wiki_path),
+        ]
     else:
-        body = f"You are improving it as **{character}** (objective '{objective_name}')."
-
-    tail = (
-        "**Seeds & the real test.** Develop against your training seeds"
-        f"{seeds_note}. Scored on **held-out seeds you'll never see** — "
-        "generalize, don't memorize.\n\n"
-        f"{have}"
-    )
-
-    attempts_block = _attempts_block(attempts)
-    parts = [NETHACK_PREAMBLE, body]
-    if attempts_block:
-        parts.append(attempts_block)
-    parts.append(tail)
+        # single-identity objective: no average framing; show its own score.
+        score = ""
+        if per_identity and character in per_identity:
+            score = f" It currently scores **{per_identity[character]:.3f}**."
+        parts = [
+            INTRO, VOCABULARY,
+            f"## Your goal\nYou are improving this bot as **{character}**. Raise "
+            f"its score.{score}",
+            _per_seed(1, n_seeds), _references(), HOWTO, MEASURE,
+            _seeds(training_seeds, wiki_path),
+        ]
     return "\n\n".join(parts)

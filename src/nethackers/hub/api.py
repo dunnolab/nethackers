@@ -80,7 +80,7 @@ from nethackers.hub.views.baseline import read_baseline
 from nethackers.hub.views.boards import aggregate_board, board, resolve_scope
 from nethackers.hub.views.elites import read_elites
 from nethackers.hub.views.hackers import hacker_board, leaders as hackers_leaders
-from nethackers.hub.views.programs import get_program, list_programs
+from nethackers.hub.views.programs import count_programs, get_program, list_programs
 from nethackers.hub.views.progress import read_progress
 from nethackers.hub.views.recognition import read_recognition
 from nethackers.hub.views.solution import read_solution_frontier
@@ -332,7 +332,8 @@ def create_app(
 
     @app.get("/programs")
     def programs(owner: str | None = None, limit: int = 50, offset: int = 0) -> dict[str, Any]:
-        return envelope(list_programs(store, owner=owner, limit=limit, offset=offset), owner=owner)
+        return envelope(list_programs(store, owner=owner, limit=limit, offset=offset),
+                        owner=owner, total=count_programs(store, owner=owner))
 
     @app.get("/programs/{program_id}/identities")
     def program_identities(program_id: str) -> dict[str, Any]:
@@ -544,4 +545,27 @@ def create_default_app() -> FastAPI:
         raw_tokens = os.environ.get("NETHACKERS_VERIFIER_TOKENS", "").split(",")
         tokens = frozenset(t for t in raw_tokens if t)
         verifier = VerifierConfig(tokens=tokens, secret=secret, seeds=seeds)
-    return create_app(store, auth, verifier=verifier)
+    app = create_app(store, auth, verifier=verifier)
+    _limit_worker_threads(app, int(os.environ.get("NETHACKERS_THREADS", "2")))
+    return app
+
+
+def _limit_worker_threads(app: FastAPI, total: int) -> None:
+    """Cap the threadpool FastAPI runs this package's sync handlers in.
+
+    Every handler here is a sync ``def``, so each request occupies a worker
+    thread doing almost pure Python (rows -> objects -> JSON). AnyIO's
+    default of 40 lets 40 such threads fight over the GIL, and measured
+    throughput *falls* as load rises -- 7.1 page views/s at one client down
+    to 0.4/s at ten, a convoy, not saturation. Capping the pool keeps
+    throughput flat instead: at 40 concurrent clients, 2 threads served
+    ~16x more than 40 did.
+
+    Set via ``NETHACKERS_THREADS`` (default 2). Raise it only alongside
+    evidence -- more threads is what causes the collapse, not what cures
+    it. Applied per worker process, so N uvicorn workers give N*total."""
+    @app.on_event("startup")
+    async def _cap() -> None:  # pragma: no cover - startup hook
+        import anyio.to_thread
+
+        anyio.to_thread.current_default_thread_limiter().total_tokens = total

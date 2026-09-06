@@ -100,10 +100,12 @@ def causes_panel(causes: dict[str, int]) -> Table:
 
 
 def _registered_count(client: HubClient, login: str) -> int | None:
-    """How many solutions ``login`` has registered, or ``None`` when the hub is
-    unreachable -- so Home shows ``—`` instead of a misleading ``0``."""
+    """How many programs ``login`` has registered, or ``None`` when the hub is
+    unreachable -- so Home shows ``—`` instead of a misleading ``0``. Asks the
+    hub for the count; counting ``search()`` rows here silently capped the
+    number at the 50-row page."""
     try:
-        return len(client.search(login) or [])
+        return client.program_count(login)
     except Exception:
         return None
 

@@ -43,6 +43,7 @@ from typing import Any
 
 import httpx
 
+from nethackers.hubclient._deadline import DEADLINE, call_with_deadline
 from nethackers.hubclient.auth import AuthError, TokenSource
 
 # The register-401 hint shown whenever the pointed-at hub isn't confirmed to
@@ -127,6 +128,16 @@ class HubClient:
         }
         return (self._get("/programs", params) or {}).get("rows", [])
 
+    def program_count(self, owner: str) -> int:
+        """``GET /programs?owner=&limit=1`` -> the envelope's ``total``: how many
+        programs ``owner`` has registered, whatever the page size. Counting
+        ``search()`` rows instead caps at ``limit`` -- that is what reported a
+        flat 50 for a hacker with 237. Falls back to counting a page against a
+        hub too old to send ``total`` (undercounting there, exactly as before)."""
+        body = self._get("/programs", {"owner": owner, "limit": 1}) or {}
+        total = body.get("total")
+        return int(total) if isinstance(total, int) else len(self.search(owner) or [])
+
     def show(self, program_id: str) -> Any:
         """``GET /programs/{id}`` -- the ``{id, owner, reference:{repo,
         commit}, registered_at}`` object (a single resource, not enveloped)."""
@@ -151,13 +162,24 @@ class HubClient:
         kwargs: dict[str, Any] = {}
         if self._timeout is not None:
             kwargs["timeout"] = self._timeout
-        try:
+        # httpx's timeout does NOT bound a hung getaddrinfo (issue #50), so wrap
+        # the call in a hard wall-clock deadline: a broken-DNS host fails fast
+        # with HubUnreachable rather than hanging `doctor`/`whoami` forever. Use
+        # the caller's own timeout as the ceiling when set (both paths yield
+        # HubUnreachable, so they need no margin), else the default DEADLINE.
+        deadline = self._timeout if self._timeout is not None else DEADLINE
+
+        def _get() -> Any:
             response = self._http.get(self._base + "/healthz", **kwargs)
             response.raise_for_status()
-            mode = response.json().get("auth")
-        except (httpx.HTTPError, ValueError) as exc:
-            # ValueError covers a non-JSON 200 (JSONDecodeError): treat a
-            # reachable-but-unparseable hub as unreachable, never a raw crash.
+            return response.json().get("auth")
+
+        try:
+            mode = call_with_deadline(_get, deadline)
+        except (httpx.HTTPError, ValueError, TimeoutError) as exc:
+            # ValueError covers a non-JSON 200 (JSONDecodeError); TimeoutError
+            # is the deadline tripping on a hung lookup. Treat all three as
+            # unreachable, never a raw crash / an un-interruptible hang.
             raise HubUnreachable(self._base) from exc
         return mode if isinstance(mode, str) else None
 

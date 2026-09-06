@@ -21,6 +21,7 @@ from types import SimpleNamespace
 import pytest
 
 import nethackers.diagnostics as diagnostics
+from nethackers.containers import RuntimeCandidate, RuntimeReport
 from nethackers.diagnostics import (
     CAPABILITIES,
     CHECK_SPECS,
@@ -37,6 +38,15 @@ from nethackers.hubclient.client import HubUnreachable
 from nethackers.hubclient.credentials import Credentials
 
 _HEX64 = "a" * 64
+
+
+def _runtime_ok(runtime="docker"):
+    return lambda: RuntimeReport(runtime, (RuntimeCandidate(runtime, "usable", ""),))
+
+
+def _runtime_none():
+    return RuntimeReport(None, (RuntimeCandidate("docker", "absent", ""),
+                               RuntimeCandidate("podman", "absent", "")))
 
 
 def _no_64_hex_run(text: str) -> bool:
@@ -61,7 +71,7 @@ def _healthy_kwargs(**overrides):
     kwargs = dict(
         operator="claude",
         hub="https://example.invalid",
-        docker_available=lambda: True,
+        runtime_report=_runtime_ok(),
         resolve_image=_ref,
         image_present=lambda ref: True,
         manifest_reachable=lambda ref: True,
@@ -100,7 +110,7 @@ def test_all_ok_every_capability_ready_and_exit_zero():
 
 def test_everything_down_gates_every_capability():
     results = run_checks(**_healthy_kwargs(
-        docker_available=lambda: False,
+        runtime_report=_runtime_none,
         image_present=lambda ref: False,
         manifest_reachable=lambda ref: False,
         preflight_operator=lambda operator: "not logged in",
@@ -111,6 +121,25 @@ def test_everything_down_gates_every_capability():
     assert exit_code(results, None) == 1
     for cap in CAPABILITIES:
         assert capability_ready(results, cap) is False, cap
+
+
+def test_container_runtime_fail_surfaces_the_broken_binarys_actual_error():
+    # issue #50: a present-but-`info`-failed runtime (e.g. docker installed but
+    # the daemon socket denies this user) must show the REAL cause and a
+    # per-CLI breakdown, not a bare "no working container runtime found".
+    report = RuntimeReport(None, (
+        RuntimeCandidate("docker", "broken",
+                         "permission denied while trying to connect to the Docker daemon socket"),
+        RuntimeCandidate("podman", "absent", ""),
+    ))
+    results = run_checks(**_healthy_kwargs(runtime_report=lambda: report))
+    cr = next(r for r in results if r.id == "container_runtime")
+    assert cr.status == "fail"
+    assert "permission denied" in cr.detail  # the actual error, flattened for -o json
+    by_label = {it.label: it for it in cr.items}
+    assert by_label["docker"].status == "fail"
+    assert "permission denied" in by_label["docker"].detail
+    assert by_label["podman"].status == "warn" and by_label["podman"].detail == "not installed"
 
 
 def test_gh_unauthed_only_gates_publish_not_eval():
@@ -185,7 +214,7 @@ def test_a_raising_probe_becomes_a_failed_check_not_an_exception():
     def _boom():
         raise RuntimeError("docker vanished")
 
-    results = run_checks(**_healthy_kwargs(docker_available=_boom))
+    results = run_checks(**_healthy_kwargs(runtime_report=_boom))
     by_id = {r.id: r for r in results}
     assert by_id["container_runtime"].status == "fail"
     # the crash-path CheckResult still carries the RIGHT severity/capabilities
@@ -572,7 +601,7 @@ def test_fold_probe_crash_matches_an_authored_hard_fail():
     def _boom():
         raise RuntimeError("docker vanished")
 
-    results = run_checks(**_healthy_kwargs(docker_available=_boom))
+    results = run_checks(**_healthy_kwargs(runtime_report=_boom))
     _, expected_by_cap = _SCENARIOS["one_hard_fail"]
     for cap, expected in expected_by_cap.items():
         assert exit_code(results, cap) == expected, cap

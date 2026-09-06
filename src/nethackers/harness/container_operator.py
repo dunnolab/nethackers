@@ -61,6 +61,7 @@ def build_docker_argv(
     auth_args: list[str],
     brief: str,
     refs: Path | None = None,
+    docker: str = "docker",
 ) -> list[str]:
     """Assemble ``docker run`` argv for one mutator iteration: fixed docker
     prefix (name + caps + security-opt + workspace mount), then ``auth_args``,
@@ -81,7 +82,7 @@ def build_docker_argv(
     that don't yet have a refs dir (and all pre-existing tests) are unaffected.
     """
     argv = [
-        "docker", "run", "--rm",
+        docker, "run", "--rm",
         "--name", name, *label_args(),
         "--pids-limit", str(caps.pids),
         "--memory", caps.memory,
@@ -209,7 +210,7 @@ class ContainerOperator:
         argv = build_docker_argv(
             harness=self.harness, image=self.image, name=name, worktree=worktree,
             cli=self.cli, model=self.model, effort=self.effort, caps=self.caps,
-            auth_args=auth, brief=brief, refs=refs,
+            auth_args=auth, brief=brief, refs=refs, docker=self.docker,
         )
         done = threading.Event()
         watcher: threading.Thread | None = None

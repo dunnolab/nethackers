@@ -3,8 +3,8 @@ cache (hub is the index; the local store is the byte-cache). Pure +
 injectable (store/fetch).
 
 ``per_identity_elites`` is the MAP-Elites cold-start read: for each identity
-in the objective's set, the top *trusted* elite (``owner == <me>``) plus its
-resolved tree on disk."""
+in the objective's set, the leaderboard's top elite plus its resolved tree on
+disk."""
 from __future__ import annotations
 
 import tempfile
@@ -25,12 +25,6 @@ def pull_fetch(entry: dict, dest: Path) -> Path | None:
         return pull(f"{reference['repo']}@{reference['commit']}", dest)
     except Exception:
         return None
-
-
-def _trusted(entry: dict, owner: str) -> bool:
-    # fixed policy: your own self-report only. (/elites' `tier` is always the
-    # constant "self-reported" -- there is no "verified" tier to check.)
-    return entry.get("owner") == owner
 
 
 def _resolve(entry: dict, store: LocalTreeStore,
@@ -62,19 +56,19 @@ def _resolve(entry: dict, store: LocalTreeStore,
 
 
 def per_identity_elites(
-    hub, identities: tuple[str, ...], owner: str, *,
+    hub, identities: tuple[str, ...], *,
     store: LocalTreeStore,
     fetch: Callable[[dict, Path], Path | None] = pull_fetch,
 ) -> dict[str, tuple[dict, Path]]:
-    """For each identity in ``identities``, the top TRUSTED elite entry plus
+    """For each identity in ``identities``, the global top elite entry plus
     its resolved tree on disk -- the thin per-identity read the MAP-Elites cold
-    start seeds cells from. An identity with no trusted elite (or whose top
-    elite fails to resolve) is simply absent. Any hub error on a member ->
-    that member absent (never raises)."""
+    start seeds cells from. An identity with no elite (or whose top elite fails
+    to resolve) is simply absent. Any hub error on a member -> that member
+    absent (never raises)."""
     out: dict[str, tuple[dict, Path]] = {}
     for ident in identities:
         try:
-            entries = [e for e in hub.elites(ident) if _trusted(e, owner)]
+            entries = list(hub.elites(ident))
         except Exception:
             entries = []
         if not entries:

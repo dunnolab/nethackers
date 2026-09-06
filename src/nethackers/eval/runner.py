@@ -32,7 +32,7 @@ from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 
-from nethackers.containers import container_name, label_args
+from nethackers.containers import container_name, container_runtime, label_args
 from nethackers.contracts.models import Evidence, Objective, ObjectiveSpec, TrajectoryResult
 
 _ARENA_EPISODE = re.compile(
@@ -91,19 +91,22 @@ def _solution_digest(solution_path: Path) -> str:
     return "sha256:" + h.hexdigest()
 
 
-def _default_image_digest(image: str) -> str:
-    """Resolve ``image`` to a content digest via ``docker image inspect``.
+def _default_image_digest(image: str, *, runtime: str | None = None) -> str:
+    """Resolve ``image`` to a content digest via ``<runtime> image inspect``.
 
     Prefers the first RepoDigest (``repo@sha256:...``, present once an image
     has been pushed to/pulled from a registry); falls back to the image Id
     (``sha256:...``) for locally-built images that have no RepoDigests yet.
-    Only ever invoked as the default ``image_digest_resolver`` -- tests
-    always inject a fake resolver instead, so this shells out to a real
-    ``docker`` binary only when actually evaluating.
+    Only ever invoked as the default digest resolver -- tests always inject a
+    fake resolver instead, so this shells out to a real runtime binary only
+    when actually evaluating. ``runtime`` resolves to ``container_runtime()``
+    (docker OR podman -- issue #50) when not given, so ``launch.py``'s
+    provenance use is podman-aware too without threading a name through.
     """
+    rt = runtime or container_runtime() or "docker"
     out = subprocess.run(
         [
-            "docker", "image", "inspect", "--format",
+            rt, "image", "inspect", "--format",
             "{{if .RepoDigests}}{{index .RepoDigests 0}}{{else}}{{.Id}}{{end}}",
             image,
         ],
@@ -119,8 +122,9 @@ def eval_batch(
     *,
     now: str,
     secret: str = "public",
+    runtime: str = "docker",
     runner=subprocess.run,
-    image_digest_resolver=_default_image_digest,
+    image_digest_resolver=None,
     on_episode: Callable[[dict], None] | None = None,
     popen=subprocess.Popen,
     max_parallel_evals: int = 8,
@@ -128,9 +132,11 @@ def eval_batch(
     """Evaluate ``solution_path`` against ``image`` for ``spec``'s published
     ``(seed, character)`` batch and return the resulting ``Evidence``.
 
-    Runs ``docker run --rm --network none`` with the solution bind-mounted
-    read-only at ``/sol`` and a fresh host temp directory bind-mounted at
-    ``/out``, invoking the image's ``nethackers.arena.run`` entrypoint with
+    Runs ``<runtime> run --rm --network none`` (``runtime`` is the resolved
+    container CLI -- ``"docker"`` or ``"podman"``, issue #50 -- defaulting to
+    ``"docker"``; ``cli.py``'s handler passes ``container_runtime()``) with the
+    solution bind-mounted read-only at ``/sol`` and a fresh host temp directory
+    bind-mounted at ``/out``, invoking the image's ``nethackers.arena.run`` with
     ``--batch`` (JSON ``[[seed, character], ...]``, replacing the legacy
     ``--character``/``--seeds``), ``spec``'s step/timeout parameters, and
     ``--max-parallel-evals`` (``max_parallel_evals``, default 8) -- the cap
@@ -142,9 +148,9 @@ def eval_batch(
     ``evaluator_image`` is set to ``image_digest_resolver(image)`` -- the
     image's resolved content digest, not the (mutable) ``image`` tag passed
     in -- so evidence records exactly which image bytes produced it.
-    ``image_digest_resolver`` defaults to ``_default_image_digest`` (a thin
-    ``docker image inspect`` shell) but, like ``runner``, is injectable so
-    tests never need a real Docker daemon.
+    ``image_digest_resolver`` defaults (when ``None``) to ``_default_image_
+    digest`` bound to ``runtime`` (a thin ``<runtime> image inspect`` shell)
+    but, like ``runner``, is injectable so tests never need a real daemon.
 
     ``Evidence.objective`` is typed ``Objective`` (a single-build config),
     but a batch spans multiple characters, so this synthesizes a faithful
@@ -161,10 +167,15 @@ def eval_batch(
     # repo-relative tree. .absolute() only prefixes the cwd -- it never resolves
     # symlinks, so the content digest below (relative-path based) is unchanged.
     solution_path = Path(solution_path).absolute()
+    # Bind the default digest resolver to the SAME resolved runtime the run
+    # uses (docker/podman -- issue #50); an injected resolver (tests) wins.
+    resolve_digest = image_digest_resolver or (
+        lambda img: _default_image_digest(img, runtime=runtime)
+    )
     with tempfile.TemporaryDirectory() as td:
         out = Path(td) / "results.json"
         cmd = [
-            "docker", "run", "--rm", "--network", "none",
+            runtime, "run", "--rm", "--network", "none",
             "--name", container_name("arena"), *label_args(),
             # Silence AutoAscend's numpy RuntimeWarning flood at interpreter
             # startup, for every process in the container (a plain in-arena
@@ -198,7 +209,7 @@ def eval_batch(
     return Evidence.from_results(
         solution_digest=_solution_digest(solution_path),
         objective=objective,
-        evaluator_image=image_digest_resolver(image),
+        evaluator_image=resolve_digest(image),
         results=results,
         created_at=now,
     )

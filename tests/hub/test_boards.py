@@ -125,6 +125,34 @@ def test_asc_median_mean_ranks_by_ascensions_then_median_then_mean_not_by_mean_a
     assert by_id[id_a]["reference"] == {"repo": "r", "commit": "c"}
 
 
+def test_board_row_carries_its_programs_registration_date(tmp_path):
+    """The website's identity leaderboard shows a "registered" cell per row. It
+    used to resolve that date through a client-side index built from ONE PAGE of
+    /programs, so any program older than that page rendered "date unknown" (22 of
+    33 rank-1 elites on prod). ``_finalize_row`` already reads the ``solutions``
+    row for ``reference`` -- the date is in the same row, so carry it and the
+    board becomes self-sufficient."""
+    store = _new_store(tmp_path)
+    _seed(store, [_atom(solution_digest="sha256:a", seed=0, progression=0.5)])
+
+    row = board(store, _spec(aggregation="mean"))[0]
+
+    assert row["registered_at"] == "2026-01-01T00:00:00Z"
+    # ...alongside the reference it already carried, so a row needs no index
+    assert row["reference"] == {"repo": "r", "commit": "c"}
+
+
+def test_aggregate_board_row_carries_the_registration_date_too(tmp_path):
+    """Both builders share ``_finalize_row``; the generalist/role boards feed the
+    same popup, so they must not diverge."""
+    store = _new_store(tmp_path)
+    _seed(store, [_atom(solution_digest="sha256:a", seed=0, progression=0.5)])
+
+    row = aggregate_board(store, [_atom().identity])[0]
+
+    assert row["registered_at"] == "2026-01-01T00:00:00Z"
+
+
 def test_mean_aggregation_ranks_purely_by_mean_progression(tmp_path):
     # Property 2: an objective with aggregation="mean" ranks by mean
     # progression descending -- ignoring ascensions entirely ("low" has

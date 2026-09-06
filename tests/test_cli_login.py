@@ -47,6 +47,26 @@ def test_login_saves_resolved_identity(monkeypatch, capsys):
     assert "castiel" in capsys.readouterr().err
 
 
+def test_login_github_unreachable_message_names_github_not_the_hub(monkeypatch, capsys):
+    # issue #50: `login` talks to github.com, never the local hub. A
+    # reachability failure there must NOT be blamed on the hub / "docker
+    # compose up -d" (the blanket httpx handler's message) -- it must name
+    # GitHub and point at the network/DNS.
+    from nethackers.hubclient.register import GitHubUnreachable
+
+    def _boom(**_k):
+        raise GitHubUnreachable("https://github.com/login/device/code")
+
+    monkeypatch.setattr(cli, "device_login", _boom)
+    rc = cli.main(["login"])
+    assert rc == 1
+    err = capsys.readouterr().err.lower()
+    assert "github" in err
+    assert "network" in err or "dns" in err
+    assert "cannot reach the hub" not in err
+    assert "docker compose" not in err
+
+
 def test_login_prompt_emits_clickable_hyperlink(monkeypatch):
     """The verification URL is emitted as an OSC 8 terminal hyperlink -- so a
     click opens the browser -- not merely styled text the terminal might fail to

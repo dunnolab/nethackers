@@ -9,13 +9,17 @@
 import json
 import random
 import shutil
+from collections import Counter
 from pathlib import Path
 
 from pytest import approx
 
+from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
 from nethackers.harness import loop as loop_mod
-from nethackers.harness.loop import IterationResult, run_loop
+from nethackers.harness.archive import UNION, CellArchive
+from nethackers.harness.loop import IterationResult, _pick_cell, run_loop
 from nethackers.harness.metering import TokenUsage
+from nethackers.harness.refs import Attempt
 from nethackers.harness.store import LocalTreeStore
 
 
@@ -205,6 +209,20 @@ def _spy_batches(monkeypatch):
         seen.append((str(tree), frozenset(c for _s, c in spec.batch)))
         return real(tree, spec, image, **kw)
     monkeypatch.setattr(loop_mod, "evaluate", spy)
+    return seen
+
+
+def _spy_assemble(monkeypatch):
+    """Record the `attempts` list passed to refs.assemble on every call (once
+    per iteration), delegating to the real assemble so /refs/ is still built
+    on disk. Lets a test inspect the actual Attempt objects the loop recorded
+    (hypothesis/per_identity/overall/eval_json), not just their rendered text."""
+    seen: list[list[Attempt]] = []
+    real = loop_mod.refs.assemble
+    def spy(dest, **kw):
+        seen.append(list(kw["attempts"]))
+        return real(dest, **kw)
+    monkeypatch.setattr(loop_mod.refs, "assemble", spy)
     return seen
 
 
@@ -478,6 +496,37 @@ def test_on_state_carries_parent_snapshot_and_generation(tmp_path):
     assert mut["parent_dev"] == cold["best_dev"]      # == the seed's score
 
 
+def test_on_state_resolves_union_parent_snapshot(tmp_path):
+    """_emit's parent-snapshot guard checked `cell in archive.cells`, but a
+    union-sampled iteration names cell="union" -- a key that lives in
+    archive.union, never in archive.cells -- so the payload silently kept its
+    blank defaults (parent_digest="") on every union-sampled iteration. A
+    2-identity set with NO hub elites scores the seed on the full union at
+    cold start, seeding archive.union immediately; rng=random.Random(0) is
+    known to draw "union" as _pick_cell's very first pick for this label
+    order (["wiz-elf-cha-mal", "wiz-orc-cha-mal", "union"], weights [1,1,2]).
+    A flat fitness function ties the seed's own score everywhere, so the
+    union cell never moves off the cold-start seed during the run -- the
+    'mutating' snapshot must match it exactly."""
+    a, b = "wiz-elf-cha-mal", "wiz-orc-cha-mal"
+    seed_tree = _seed_tree(tmp_path / "seed")
+    tree_store = LocalTreeStore(tmp_path / "store")
+    cold_seed_digest = tree_store.save(seed_tree)  # same digest run_loop computes
+    states: list[dict] = []
+    run_loop(
+        objective=f"{a},{b}", seed_tree=seed_tree, tree_store=tree_store,
+        operator=_ImprovingOperator(), hub=_FakeHub(), image="img:dev", token="t",
+        owner="dev", iterations=1, now_fn=lambda: "2026-08-26T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.5),  # flat: nothing ever beats the cold-start seed
+        workdir=tmp_path / "work", rng=random.Random(0),
+        on_state=states.append)
+    mut = next(s for s in states if s["phase"] == "mutating")
+    assert mut["cell"] == UNION                        # confirms this run drew the union cell
+    assert mut["parent_digest"] == cold_seed_digest     # NOT "" -- the pre-fix blank default
+    assert mut["parent_dev"] == approx(0.5)             # archive.union.score at cold start
+    assert mut["parent_means"] == approx({a: 0.5, b: 0.5})
+
+
 def test_iteration_result_stopped_reason_defaults_to_none():
     assert IterationResult(False, "baseline").stopped_reason is None
 
@@ -533,7 +582,11 @@ def test_maplites_keeps_a_one_identity_improver(tmp_path):
         rng=random.Random(0))
     win = next(r for r in results if r.improved)
     assert win.registered is True
-    assert win.improved == ["wiz-elf-cha-mal"]
+    # cold start (no hub elites) scores the seed on the FULL union in one
+    # eval, so the union cell is already seeded (0.2) before iteration 1; this
+    # child's union mean (0.9+0.1)/2=0.5 beats it too -- deterministically,
+    # regardless of which cell _pick_cell drew as the mutation parent.
+    assert win.improved == ["wiz-elf-cha-mal", "union"]
 
 
 def test_maplites_registers_every_scored_program(tmp_path):
@@ -551,8 +604,11 @@ def test_maplites_registers_every_scored_program(tmp_path):
 
 
 def test_maplites_picks_a_random_cell(tmp_path):
-    # With a seeded rng and a 2-identity set, the mutated cell is the rng's
-    # choice; the "mutating" state names it.
+    # With a seeded rng and a 2-identity set, the mutated cell is _pick_cell's
+    # weighted draw; the "mutating" state names it. Cold start here has NO hub
+    # elites, so the seed is scored on the full union in one eval and the
+    # union cell is already seeded before iteration 1 -- so the draw is over
+    # all THREE labels (identities + "union"), not just the two identities.
     states = []
     run_loop(
         objective="wiz-elf-cha-mal,wiz-orc-cha-mal",
@@ -563,7 +619,7 @@ def test_maplites_picks_a_random_cell(tmp_path):
         runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
         on_state=states.append, rng=random.Random(0))
     mut = next(s for s in states if s["phase"] == "mutating")
-    assert mut["cell"] in ("wiz-elf-cha-mal", "wiz-orc-cha-mal")
+    assert mut["cell"] in ("wiz-elf-cha-mal", "wiz-orc-cha-mal", UNION)
 
 
 def test_loop_registers_regressions_on_a_per_identity_drop(tmp_path):
@@ -606,9 +662,11 @@ def test_loop_no_regressions_for_a_single_identity_objective(tmp_path):
     assert win.regressions is None
 
 
-# -- amendment: a RUN-GLOBAL attempt history (uncapped, not per-cell, not
-# cross-run) carried into the mutator's brief as NOTES, so it avoids
-# re-deriving a dead mutation. Notes only -- the code tree is never copied.
+# -- amendment: a RUN-GLOBAL attempt history (capped at _ATTEMPT_REFS_CAP, not
+# per-cell, not cross-run) carried into the mutator via /refs/attempts.md (a
+# per-identity scores table) and /refs/attempts/<n>/ (the real code, with its
+# own eval.json) -- never in the brief itself -- so it avoids re-deriving a
+# dead mutation.
 
 class _HypothesisOperator:
     """Records the brief handed to each call, and writes a distinct VERSION
@@ -627,53 +685,74 @@ class _HypothesisOperator:
 
 
 def test_maplites_brief_carries_earlier_attempt_notes(tmp_path):
+    # The brief itself no longer carries attempt history (brief.py dropped
+    # `attempts` entirely) -- the history now lives in /refs/attempts.md,
+    # rebuilt fresh each iteration from the run-global `attempts` list.
     op = _HypothesisOperator()
+    workdir = tmp_path / "work"
     run_loop(
         objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
         tree_store=LocalTreeStore(tmp_path / "store"), operator=op, hub=_FakeHub(),
         image="img:dev", token="t", owner="dev", iterations=3,
         now_fn=lambda: "2026-08-26T00:00:00Z",
         runner=_fitness_runner(lambda v: 0.2 if v == 0 else 0.1),  # every mutant regresses
-        workdir=tmp_path / "work", rng=random.Random(0))
+        workdir=workdir, rng=random.Random(0))
     assert len(op.briefs) == 3
-    assert "iter-1" not in op.briefs[0]                 # first iteration: no history yet
-    assert "iter-1" in op.briefs[1]                     # iter 2 sees iter 1's attempt...
-    assert "try tactic 1" in op.briefs[1]               # ...including its real hypothesis
-    assert "improved no cell" in op.briefs[1]           # ...and its outcome
-    assert "iter-1" in op.briefs[2] and "iter-2" in op.briefs[2]   # run-global, not per-cell
+    for brief in op.briefs:
+        assert "try tactic" not in brief and "iter-1" not in brief   # no attempt leaked in
+
+    refs0 = (workdir / "refs-0" / "attempts.md").read_text()
+    assert "(none yet)" in refs0                        # first iteration: no history yet
+
+    refs1 = (workdir / "refs-1" / "attempts.md").read_text()
+    assert "| 1 |" in refs1                              # iter 2 sees iter 1's attempt...
+    assert "try tactic 1" in refs1                       # ...including its real hypothesis...
+    assert "0.100" in refs1                              # ...and its per-identity score
+
+    refs2 = (workdir / "refs-2" / "attempts.md").read_text()
+    assert "| 1 |" in refs2 and "| 2 |" in refs2          # run-global, not per-cell
 
 
-def _brief_for(tag: str, logs: list[tuple[str, str]]) -> str:
-    for t, line in logs:
-        if t == tag and "nethackers_brief" in line:
-            return json.loads(line)["text"]
-    raise AssertionError(f"no brief logged for {tag}")
-
-
-def test_maplites_attempt_history_is_uncapped_across_the_run(tmp_path):
-    # Every mutant regresses -> 5 straight "improved no cell" iterations. The
-    # run-global history is UNCAPPED (unlike the old <=3 per-island cap), so
-    # iteration 5's brief still carries a note for all four earlier attempts.
-    logs: list[tuple[str, str]] = []
+def test_attempts_are_capped_at_three(tmp_path):
+    # Every mutant regresses -> 5 straight "improved no cell" iterations, each
+    # recorded as an Attempt. Unlike the design this replaces (a brief-text
+    # history, uncapped across the whole run), the run-global Attempt history
+    # is CAPPED at _ATTEMPT_REFS_CAP (3) -- both /refs/attempts.md and
+    # /refs/attempts/ must never hold more than the 3 most-recent attempts.
+    workdir = tmp_path / "work"
     run_loop(
         objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
         tree_store=LocalTreeStore(tmp_path / "store"), operator=_AlwaysRejectingOperator(),
         hub=_FakeHub(), image="img:dev", token="t", owner="dev", iterations=5,
         now_fn=lambda: "2026-08-26T00:00:00Z",
         runner=_fitness_runner(lambda v: 0.2 if v == 0 else 0.1),
-        workdir=tmp_path / "work", rng=random.Random(0),
-        on_log=lambda tag, line: logs.append((tag, line)))
-    brief5 = _brief_for("iter 5/5", logs)
-    for i in range(1, 5):
-        assert f"iter-{i}" in brief5   # all four earlier attempts, none dropped
+        workdir=workdir, rng=random.Random(0))
+    # refs-k is built from the attempts recorded by the k PRIOR iterations --
+    # never more than 3 trees, even once more than 3 have been tried.
+    expected = [0, 1, 2, 3, 3]
+    for k, want in enumerate(expected):
+        refs = workdir / f"refs-{k}"
+        attempts_dir = refs / "attempts"
+        count = len(list(attempts_dir.iterdir())) if attempts_dir.exists() else 0
+        assert count == want, f"refs-{k}: expected {want} attempt tree(s), got {count}"
+        rows = [ln for ln in (refs / "attempts.md").read_text().splitlines()
+                if ln.startswith("|") and ln.split("|")[1].strip().isdigit()]
+        assert len(rows) == want
+    # by the last iteration's /refs/ (built from attempts 1-4), the cap has
+    # actually evicted the oldest -- "1" is gone, "2"/"3"/"4" remain.
+    final_md = (workdir / "refs-4" / "attempts.md").read_text()
+    assert "| 1 |" not in final_md
+    assert "| 2 |" in final_md and "| 3 |" in final_md and "| 4 |" in final_md
 
 
 def test_maplites_provisions_recent_rejected_attempt_trees_into_refs(tmp_path):
     # Restore the /refs/attempts channel: each iteration's mutator can inspect
-    # the CODE of recent rejected attempts (diff/read it), not just their brief
-    # notes. Every mutant here regresses ("improved no cell"), so by the 5th
+    # the CODE of recent rejected attempts (diff/read it), not just a score.
+    # Every mutant here regresses ("improved no cell"), so by the 5th
     # iteration /refs/attempts holds the 3 most-recent rejected trees -- capped
-    # and recency-ordered, so the oldest (iter-1) is evicted.
+    # and recency-ordered, so the oldest (label "1") is evicted. Folder labels
+    # are the plain iteration number ("2"/"3"/"4"), not "iter-2"/... -- that
+    # prefix was a brief-text convention that no longer exists.
     workdir = tmp_path / "work"
     run_loop(
         objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
@@ -684,11 +763,15 @@ def test_maplites_provisions_recent_rejected_attempt_trees_into_refs(tmp_path):
         workdir=workdir, rng=random.Random(0))
     attempts = workdir / "refs-4" / "attempts"          # /refs for the 5th iteration (k=4)
     labels = sorted(p.name for p in attempts.iterdir())
-    assert labels == ["iter-2", "iter-3", "iter-4"]     # 3 most-recent; iter-1 evicted by the cap
-    # the copied tree is the real rejected mutant, not a stub: iter-4 == VERSION 4
-    assert (attempts / "iter-4" / "bot.py").read_text().strip() == "VERSION = 4"
+    assert labels == ["2", "3", "4"]                    # 3 most-recent; "1" evicted by the cap
+    # the copied tree is the real rejected mutant, not a stub: "4" == VERSION 4
+    assert (attempts / "4" / "bot.py").read_text().strip() == "VERSION = 4"
+    # each kept attempt carries its own per-seed eval.json (the real score,
+    # not just the code) -- the richer signal the redesign adds.
+    for label in labels:
+        assert (attempts / label / "eval.json").exists()
     context = (workdir / "refs-4" / "CONTEXT.md").read_text()
-    assert "iter-4" in context                          # the manifest lists them (not "(none yet)")
+    assert "attempts.md" in context and "attempts/<n>/" in context
 
 
 def test_maplites_first_iteration_has_no_attempt_trees(tmp_path):
@@ -730,19 +813,65 @@ class _InheritedHypothesisOperator:
 def test_brief_note_reports_the_mutations_own_hypothesis_not_an_inherited_one(tmp_path):
     # The reported bug, end to end: iter 1 wins and its hypothesis lands in
     # agent.py; iters 2+ inherit that comment and add their own in zzz.py. The
-    # note for iter 2 in iter 3's brief must be iter 2's OWN "new idea 2", not
-    # the inherited "inherited early idea" (which the pre-fix scan returned).
+    # Attempt recorded for iter 2 (surfaced in iter 3's /refs/attempts.md) must
+    # carry iter 2's OWN "new idea 2", not the inherited "inherited early
+    # idea" (which the pre-fix scan returned). _hypothesis_of's diff-against-
+    # parent logic is unchanged -- this proves its output lands correctly in
+    # the new /refs/ location.
     op = _InheritedHypothesisOperator()
+    workdir = tmp_path / "work"
     run_loop(
         objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
         tree_store=LocalTreeStore(tmp_path / "store"), operator=op, hub=_FakeHub(),
         image="img:dev", token="t", owner="dev", iterations=3,
         now_fn=lambda: "2026-08-26T00:00:00Z",
         runner=_fitness_runner(lambda v: [0.2, 0.9, 0.1, 0.1][v]),   # v1 wins; v2,v3 don't
-        workdir=tmp_path / "work", rng=random.Random(0))
-    brief3 = op.briefs[2]                                        # the 3rd mutation's brief
-    assert "iter-2: tried 'new idea 2'" in brief3                # its OWN hypothesis...
-    assert "iter-2: tried 'inherited early idea'" not in brief3  # ...not the inherited one
+        workdir=workdir, rng=random.Random(0))
+    refs2 = (workdir / "refs-2" / "attempts.md").read_text()   # /refs/ for the 3rd mutation
+    row2 = next(ln for ln in refs2.splitlines() if ln.startswith("| 2 |"))
+    assert "new idea 2" in row2                  # its OWN hypothesis...
+    assert "inherited early idea" not in row2    # ...not the inherited one
+
+
+def test_smoke_gate_reject_not_in_attempts(tmp_path, monkeypatch):
+    # A child that fails the smoke gate has no dev score -- it must not become
+    # an Attempt: no /refs/attempts/<n>/ tree, no /refs/attempts.md row for
+    # it. (Registered AND rejected children that DO reach a dev eval both
+    # become Attempts -- see test_evaluated_attempt_records_scores and
+    # test_maplites_provisions_recent_rejected_attempt_trees_into_refs.)
+    monkeypatch.setattr(loop_mod, "passes_gate",
+                        lambda *a, **k: (False, "smoke episode did not complete"))
+    workdir = tmp_path / "work"
+    results = run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+        hub=_FakeHub(), image="img:dev", token="t", owner="dev", iterations=2,
+        now_fn=lambda: "2026-08-26T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=workdir,
+        rng=random.Random(0))
+    assert results[0].reason == "gate:smoke episode did not complete"
+    refs1 = workdir / "refs-1"                          # the 2nd iteration's /refs/
+    assert not (refs1 / "attempts").exists()
+    assert "(none yet)" in (refs1 / "attempts.md").read_text()
+
+
+def test_evaluated_attempt_records_scores(tmp_path, monkeypatch):
+    # After an evaluated (dev-scored) iteration -- registered here -- its
+    # Attempt must carry real per-identity scores, a real overall, and the
+    # actual per-seed results, not placeholder/empty values.
+    seen = _spy_assemble(monkeypatch)
+    run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+        hub=_FakeHub(), image="img:dev", token="t", owner="dev", iterations=2,
+        now_fn=lambda: "2026-08-26T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
+        rng=random.Random(0))
+    attempt = seen[1][0]           # iter 2's /refs/ sees iter 1's (registered) Attempt
+    assert attempt.label == "1"
+    assert attempt.per_identity == approx({"val-dwa-law-fem": 0.3})
+    assert attempt.overall == approx(0.3)
+    assert attempt.eval_json and json.loads(attempt.eval_json)   # non-empty, valid JSON
 
 
 # -- cold start: each cell is seeded on ITS OWN identity, not the full union --
@@ -888,3 +1017,39 @@ def test_coldstart_warm_cell_mutates_without_error(tmp_path):
         workdir=tmp_path / "work", rng=random.Random(0))
     assert not results[0].reason.startswith("error")   # subset parent_means: regressions+brief ok
     assert results[0].registered is True               # the warm cell mutated and improved a cell
+
+
+# -- _pick_cell: weighted parent draw over the archive's cells. Each identity
+# weight 1, the union cell weight 2 -- but only once a full-coverage program
+# has filled it; before that the draw stays uniform over identities.
+
+def _ev2(means):  # local factory: one episode per identity
+    results = tuple(
+        TrajectoryResult(trajectory_id=i, status="completed", progress=v, ascended=False,
+                         steps=1, turns=1, max_depth=1, end_status="died", error=None,
+                         wall_seconds=0.1, character=c, milestone=None)
+        for i, (c, v) in enumerate(means.items()))
+    return Evidence.from_results(solution_digest="sha256:x",
+                                 objective=Objective(character=None, seed_set="s"),
+                                 evaluator_image="img", results=results, created_at="t")
+
+
+def test_pick_cell_uniform_before_union_exists(tmp_path):
+    arc = CellArchive(["a", "b"])
+    arc.insert("a0", tmp_path / "a0", _ev2({"a": 0.3}))   # partial -> union stays None
+    arc.insert("b0", tmp_path / "b0", _ev2({"b": 0.3}))   # partial -> union stays None
+    assert arc.union is None
+    label, cell = _pick_cell(random.Random(0), arc)
+    assert label in ("a", "b")
+    assert cell is arc.cell(label)
+
+
+def test_pick_cell_weights_union_2x(tmp_path):
+    arc = CellArchive(["a", "b"])
+    arc.insert("gen", tmp_path / "gen", _ev2({"a": 0.5, "b": 0.5}))  # full -> union set
+    assert arc.union is not None
+    rng = random.Random(0)
+    counts = Counter(_pick_cell(rng, arc)[0] for _ in range(6000))
+    # weights: a=1, b=1, union=2  -> union share 2/4 = 0.5
+    assert 0.45 < counts[UNION] / 6000 < 0.55
+    assert _pick_cell(random.Random(0), arc)  # returns without error

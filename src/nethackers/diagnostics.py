@@ -32,6 +32,7 @@ from pathlib import Path
 
 from nethackers import _image_pins
 from nethackers.config import load_stage
+from nethackers.containers import RuntimeReport, container_runtime, probe_container_runtime
 from nethackers.harness import sandbox_preflight
 from nethackers.harness.version import RUN_SCHEMA_VERSION
 from nethackers.hubclient.client import HubClient, HubUnreachable
@@ -123,17 +124,19 @@ class CheckResult:
     items: tuple[CheckItem, ...] = ()
 
 
-def _manifest_reachable(ref: str, *, run=subprocess.run) -> bool:
+def _manifest_reachable(ref: str, *, runtime: str = "docker", run=subprocess.run) -> bool:
     """Cheap existence probe for an image ref that isn't present locally yet:
-    ``docker manifest inspect`` hits the registry's manifest endpoint
+    ``<runtime> manifest inspect`` hits the registry's manifest endpoint
     without pulling any layers, so a not-yet-pulled-but-publishable ref
     ("pullable") can be told apart from one the registry doesn't have / a
     registry that can't be reached at all ("unreachable") -- spec S5.6.
-    ``False`` on ANY failure (404, stale auth, network down, docker itself
+    ``False`` on ANY failure (404, stale auth, network down, runtime itself
     missing): distinguishing *why* isn't doctor's job here -- ``ensure_
-    image``'s own error mapping already covers that at actual-pull time."""
+    image``'s own error mapping already covers that at actual-pull time.
+    ``runtime`` is threaded in from ``run_checks`` (``container_runtime()``) so
+    a podman-only host probes with podman, not a missing ``docker``."""
     try:
-        result = run(["docker", "manifest", "inspect", ref], capture_output=True, timeout=10)
+        result = run([runtime, "manifest", "inspect", ref], capture_output=True, timeout=10)
         return bool(result.returncode == 0)
     except (OSError, subprocess.SubprocessError):
         return False
@@ -147,16 +150,43 @@ def _default_hub_mode(hub: str) -> str | None:
     return HubClient(hub).hub_mode()
 
 
+_RUNTIME_ITEM_STATUS = {"usable": "ok", "absent": "warn", "broken": "fail"}
+
+
 def _check_container_runtime(
-    *, severity: str, caps: tuple[str, ...], docker_available: Callable[[], bool],
+    *, severity: str, caps: tuple[str, ...], runtime_report: Callable[[], RuntimeReport],
 ) -> CheckResult:
-    if docker_available():
+    """OK as soon as ONE runtime (docker/podman) is usable; otherwise a per-CLI
+    breakdown so the user sees WHY -- ``docker`` present but ``info`` failed
+    (daemon down, socket permission denied, rootless unconfigured) vs. nothing
+    installed at all -- instead of a bare 'no working container runtime found'
+    that sends them to restart a daemon that's already up (issue #50). The
+    failing case attaches one ``CheckItem`` per candidate; a ``broken`` one
+    carries the actual ``info`` error as its detail."""
+    report = runtime_report()
+    if report.runtime is not None:
         return CheckResult(id="container_runtime", status="ok", severity=severity,
-                           detail="a working container runtime is available",
-                           fix=None, capabilities=caps)
+                           detail=f"{report.runtime} is available", fix=None,
+                           capabilities=caps)
+    items = tuple(
+        CheckItem(
+            label=c.exe,
+            status=_RUNTIME_ITEM_STATUS[c.state],
+            detail=("available" if c.state == "usable"
+                    else "not installed" if c.state == "absent"
+                    else c.detail),
+        )
+        for c in report.candidates
+    )
+    broken = [c for c in report.candidates if c.state == "broken"]
+    if broken:
+        detail = "; ".join(f"{c.exe}: {c.detail}" for c in broken)  # flattened for -o json
+        fix = "make a container runtime usable (see the error above), or start Docker/Podman"
+    else:
+        detail = "no docker or podman found on PATH"
+        fix = sandbox_preflight.sandbox_hint()
     return CheckResult(id="container_runtime", status="fail", severity=severity,
-                       detail="no working container runtime found",
-                       fix=sandbox_preflight.sandbox_hint(), capabilities=caps)
+                       detail=detail, fix=fix, capabilities=caps, items=items)
 
 
 def _check_image(
@@ -293,10 +323,10 @@ def run_checks(
     *,
     operator: str | None = None,
     hub: str | None = None,
-    docker_available: Callable[[], bool] = sandbox_preflight.docker_available,
+    runtime_report: Callable[[], RuntimeReport] = probe_container_runtime,
     resolve_image: Callable[[str | None, str], str] = sandbox_preflight.resolve_image,
-    image_present: Callable[[str], bool] = sandbox_preflight.image_present,
-    manifest_reachable: Callable[[str], bool] = _manifest_reachable,
+    image_present: Callable[[str], bool] | None = None,
+    manifest_reachable: Callable[[str], bool] | None = None,
     repo_root: Callable[[], Path | None] = sandbox_preflight._repo_root,
     preflight_operator: Callable[[str], str | None] = sandbox_preflight.preflight_operator,
     hub_mode: Callable[[str], str | None] = _default_hub_mode,
@@ -338,6 +368,24 @@ def run_checks(
     effective_hub = hub if hub is not None else load_stage().hub_url
     results: list[CheckResult] = []
 
+    # The two image probes need the SAME container runtime the rest of the
+    # machine uses, so a podman-only host doesn't report a pullable image as
+    # "unreachable" just because there's no `docker` binary (issue #50). Bind
+    # the real defaults to a freshly-resolved runtime here, at call time (never
+    # an import-time bound default -- see the injectable-seam trap); an injected
+    # fake (every test) bypasses this branch entirely.
+    if image_present is None or manifest_reachable is None:
+        _rt = container_runtime() or "docker"
+
+        def _probe_present(ref: str) -> bool:
+            return sandbox_preflight.image_present(ref, runtime=_rt)
+
+        def _probe_manifest(ref: str) -> bool:
+            return _manifest_reachable(ref, runtime=_rt)
+
+        image_present = image_present or _probe_present
+        manifest_reachable = manifest_reachable or _probe_manifest
+
     def _wanted(check_id: str) -> bool:
         return only is None or check_id in only
 
@@ -345,7 +393,7 @@ def run_checks(
         severity, caps = CHECK_SPECS["container_runtime"]
         results.append(_safe("container_runtime", severity, caps,
                              lambda: _check_container_runtime(severity=severity, caps=caps,
-                                                              docker_available=docker_available)))
+                                                              runtime_report=runtime_report)))
 
     if _wanted("arena_image"):
         severity, caps = CHECK_SPECS["arena_image"]

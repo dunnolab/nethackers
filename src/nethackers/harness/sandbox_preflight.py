@@ -21,20 +21,20 @@ builds the local ``:dev``/``:latest`` tag via ``make`` inside a repo checkout,
 or ``docker pull``s a GHCR digest pin otherwise -- never the reverse (INV11:
 a digest ref can't be `-t`-tagged by a build, so it is only ever pulled).
 
-Kept a leaf module (stdlib + auth_inject + pull_events only, the latter
-itself a leaf too) so both ``cli`` and the Textual form can import it
+Kept a leaf module (stdlib + containers + auth_inject + pull_events only, all
+themselves leaves too) so both ``cli`` and the Textual form can import it
 without a cycle.
 """
 from __future__ import annotations
 
 import platform
-import shutil
 import subprocess
 import threading
 from collections.abc import Callable
 from pathlib import Path
 
 from nethackers import _image_pins
+from nethackers.containers import container_runtime
 from nethackers.harness.auth_inject import AuthUnavailable, auth_docker_args
 from nethackers.harness.pull_events import PullEvent, PullParseState, parse_pull_line
 
@@ -52,27 +52,25 @@ def sandbox_hint() -> str:
 
 
 def docker_available(*, run=subprocess.run) -> bool:
-    """A ``docker`` binary on PATH can still have no daemon behind it -- a
-    stopped Colima VM looks exactly like this -- so ``docker info`` is what
-    proves the runtime is usable, not just installed."""
-    if shutil.which("docker") is None:
-        return False
-    try:
-        # Generous but bounded: covers a slow-to-answer Colima VM without
-        # hanging indefinitely if the runtime is just gone.
-        result = run(["docker", "info"], capture_output=True, timeout=10)
-    except (OSError, subprocess.SubprocessError):
-        return False
-    return result.returncode == 0
+    """True iff a usable container runtime (``docker`` OR ``podman``) is present
+    -- a thin bool over ``containers.container_runtime`` for callers that only
+    need yes/no (``preflight``). The richer per-CLI diagnosis ``doctor`` renders
+    is ``containers.probe_container_runtime``. Kept named ``docker_available``
+    for its existing callers, but "docker" here means "a docker-compatible
+    runtime", podman included (issue #50): a binary on PATH whose ``info`` still
+    fails (a stopped Colima VM, a socket permission denial) is not usable."""
+    return container_runtime(run=run) is not None
 
 
-def image_present(image: str, *, docker: str = "docker", run=subprocess.run) -> bool:
-    """Is the mutator image available locally? Cheap ``docker image inspect`` (no
+def image_present(image: str, *, runtime: str = "docker", run=subprocess.run) -> bool:
+    """Is the image available locally? Cheap ``<runtime> image inspect`` (no
     pull). Used to decide whether to auto-build it (``build_mutator_image``) and
     by discovery, so an unbuilt image degrades quietly instead of silently
-    reporting the host CLI's models."""
+    reporting the host CLI's models. ``runtime`` is the resolved container CLI
+    (``container_runtime()``); callers thread it through rather than re-probing,
+    and it defaults to ``"docker"`` for back-compat."""
     try:
-        return run([docker, "image", "inspect", image],
+        return run([runtime, "image", "inspect", image],
                    capture_output=True, timeout=10).returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
@@ -186,7 +184,7 @@ def _final_pull_event(kind: str, ref: str, state: PullParseState, phase: str,
                      layers_complete=complete, detail=detail)
 
 
-def _pull_image(ref: str, kind: str, *, on_line=None,
+def _pull_image(ref: str, kind: str, *, runtime: str = "docker", on_line=None,
                 on_event: Callable[[PullEvent], None] | None = None,
                 popen=subprocess.Popen) -> str | None:
     """``docker pull ref``, streaming combined stdout/stderr to ``on_line``
@@ -211,7 +209,7 @@ def _pull_image(ref: str, kind: str, *, on_line=None,
                            layers_total=None, layers_complete=None, detail=""))
     state = PullParseState()
     try:
-        proc = popen(["docker", "pull", ref], stdout=subprocess.PIPE,
+        proc = popen([runtime, "pull", ref], stdout=subprocess.PIPE,
                      stderr=subprocess.STDOUT, text=True, bufsize=1)
         collected: list[str] = []
         for line in proc.stdout:
@@ -269,7 +267,7 @@ _inflight_lock = threading.Lock()
 _inflight_pulls: dict[str, threading.Event] = {}
 
 
-def ensure_image(ref: str, kind: str, *, on_line=None,
+def ensure_image(ref: str, kind: str, *, runtime: str = "docker", on_line=None,
                  on_event: Callable[[PullEvent], None] | None = None,
                  popen=subprocess.Popen, run=subprocess.run,
                  repo_root=_repo_root) -> str | None:
@@ -302,7 +300,7 @@ def ensure_image(ref: str, kind: str, *, on_line=None,
     acquisition exactly as if it had been the only caller all along.
     """
     while True:
-        if image_present(ref, run=run):
+        if image_present(ref, runtime=runtime, run=run):
             return None
 
         with _inflight_lock:
@@ -320,11 +318,13 @@ def ensure_image(ref: str, kind: str, *, on_line=None,
 
         try:
             if "@sha256:" in ref:
-                return _pull_image(ref, kind, on_line=on_line, on_event=on_event, popen=popen)
+                return _pull_image(ref, kind, runtime=runtime, on_line=on_line,
+                                   on_event=on_event, popen=popen)
             if repo_root() is not None:
                 return _build_image(ref, kind, on_line=on_line, on_event=on_event, popen=popen,
                                     repo_root=repo_root)
-            return _pull_image(ref, kind, on_line=on_line, on_event=on_event, popen=popen)
+            return _pull_image(ref, kind, runtime=runtime, on_line=on_line,
+                               on_event=on_event, popen=popen)
         finally:
             with _inflight_lock:
                 _inflight_pulls.pop(ref, None)
