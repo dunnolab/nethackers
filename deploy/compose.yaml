@@ -6,6 +6,11 @@ services:
     environment:
       NETHACKERS_DB: /data/hub.sqlite3
       NETHACKERS_CLIENT_ID: ${NETHACKERS_CLIENT_ID:?set NETHACKERS_CLIENT_ID}
+      # Verified/hidden-seed tier -- dormant (routes 503) when unset. Values
+      # live in hub.env; the whole tier stays off unless all three are present.
+      NETHACKERS_HIDDEN_SECRET: ${NETHACKERS_HIDDEN_SECRET:-}
+      NETHACKERS_HIDDEN_SEEDS: ${NETHACKERS_HIDDEN_SEEDS:-}
+      NETHACKERS_VERIFIER_TOKENS: ${NETHACKERS_VERIFIER_TOKENS:-}
     expose: ["8000"]
     volumes:
       - /srv/nethackers/data:/data
