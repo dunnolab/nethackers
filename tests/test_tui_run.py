@@ -197,6 +197,15 @@ def test_multi_identity_run_does_not_build_the_single_lineage_chain():
     assert r1.chain == ["seed0", "elite1"]   # single-lineage chain intact
 
 
+def test_apply_iteration_stores_result():
+    from nethackers.harness.loop import IterationResult
+    r = Run("r1", CFG)
+    r.apply_iteration(2, IterationResult(True, "registered", dev_fitness=0.5,
+                                         improved=["val-dwa-law-fem", "union"]))
+    assert r.iter_results[2].dev_fitness == 0.5
+    assert "union" in r.iter_results[2].improved
+
+
 def test_run_tracks_cells_and_coverage_from_state():
     r = Run("r1", EvolveConfig("wiz-elf-cha-mal,wiz-orc-cha-mal", "claude", 3))
     r.apply_state({

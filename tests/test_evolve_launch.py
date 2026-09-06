@@ -136,3 +136,25 @@ def test_run_config_records_run_schema_version(tmp_path):
         tree_store=LocalTreeStore(tmp_path / "store"))
     cfg = json.loads((plan.run_dir / "run.json").read_text())
     assert cfg["run_schema_version"] == RUN_SCHEMA_VERSION
+
+
+def test_run_forwards_on_iteration_and_still_writes_metric(tmp_path, monkeypatch):
+    from nethackers.harness.loop import IterationResult
+    monkeypatch.setattr(launch, "_now", lambda: "2026-09-06T00:00:00+00:00")
+
+    def fake_run_loop(**kw):
+        kw["on_iteration"](1, IterationResult(True, "registered", dev_fitness=0.4,
+                                              improved=["val-dwa-law-fem"]))
+        return ["res"]
+    monkeypatch.setattr(launch, "run_loop", fake_run_loop)
+    p = EvolveParams(objective="val-dwa-law-fem", seed="roots/autoascend",
+                     iterations=1, from_seed=True, workdir=str(tmp_path),
+                     hub="http://h", token="t", owner="dev")
+    plan = prepare_evolve(p)
+    seen = []
+    plan.run({"on_state": lambda s: None, "on_episode": lambda label, ep: None,
+              "on_log": lambda tag, line: None,
+              "on_iteration": lambda it, res: seen.append((it, res))})
+    assert seen and seen[0][0] == 1 and seen[0][1].improved == ["val-dwa-law-fem"]
+    lines = (plan.run_dir / "metrics.jsonl").read_text().splitlines()
+    assert any(json.loads(x)["outcome"] == "registered" for x in lines)  # disk unchanged

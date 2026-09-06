@@ -57,6 +57,7 @@ class Run:
         self.batches: list[Batch] = []
         self.logs: dict[str, list[tuple[str, str]]] = {}
         self.meters: dict[str, Meter] = {}
+        self.iter_results: dict[int, object] = {}   # iteration -> IterationResult
         self.sel_tag: str | None = None
         self.eval_step: tuple[int, int, float] | None = None
         self.mut_start = 0.0
@@ -121,6 +122,13 @@ class Run:
     def apply_log(self, tag: str, line: str) -> None:
         self.logs.setdefault(tag, []).extend(prettify(self.cfg.backend, line))
         self.meters.setdefault(tag, Meter(self.cfg.backend)).observe(line)
+
+    def apply_iteration(self, iteration: int, result: object) -> None:
+        """Fold one completed iteration's IterationResult (harness/loop.py) into
+        the run: registered/rejected, which cells improved (incl. "union"),
+        per-kind usage, causes, and per-seed results. Delivered by the worker's
+        on_iteration callback (launch.py), in addition to metrics.jsonl."""
+        self.iter_results[iteration] = result
 
     def finish(self, *, results: object | None = None,
                error: BaseException | None = None) -> None:

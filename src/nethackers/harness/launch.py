@@ -240,6 +240,12 @@ def prepare_evolve(
         def _on_log(tag: str, line: str) -> None:
             runlog.append_log(run_dir, tag, line)
             callbacks["on_log"](tag, line)
+
+        def _on_iteration(it: int, res) -> None:
+            runlog.append_metric(run_dir, runlog.metric_record(it, res))
+            fwd = callbacks.get("on_iteration")
+            if fwd is not None:
+                fwd(it, res)
         return run_loop(
             objective=params.objective, seed_tree=parent_tree,
             tree_store=store, operator=operator,
@@ -250,8 +256,7 @@ def prepare_evolve(
             runtime=params.runtime,
             now_fn=_now, report=report, on_episode=callbacks["on_episode"],
             on_state=callbacks["on_state"], on_log=_on_log, workdir=run_dir / "work",
-            on_iteration=lambda it, res: runlog.append_metric(
-                run_dir, runlog.metric_record(it, res)),
+            on_iteration=_on_iteration,
             publish=_publisher_for(params.owner, rid, repo_name=params.repo_name,
                                     offline=params.offline),
         ) or []

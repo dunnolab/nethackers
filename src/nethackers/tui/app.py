@@ -323,6 +323,8 @@ class NetHackersApp(App):
                     self._on_run_episode, run, label, ep),
                 "on_log": lambda tag, line: self.call_from_thread(
                     self._on_run_log, run, tag, line),
+                "on_iteration": lambda it, res: self.call_from_thread(
+                    self._on_run_iteration, run, it, res),
                 "stop": run.stop,
             })
         except Exception as exc:
@@ -352,6 +354,12 @@ class NetHackersApp(App):
         m = self._monitor_for(run)
         if m is not None:
             m.render_log(tag)
+
+    def _on_run_iteration(self, run: Run, iteration: int, result: object) -> None:
+        run.apply_iteration(iteration, result)
+        m = self._monitor_for(run)
+        if m is not None:
+            m.render_state()   # Task 9 replaces this with render_iteration
 
     def _finish_run(self, run: Run, results: object | None,
                     error: BaseException | None) -> None:
