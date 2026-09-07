@@ -274,9 +274,11 @@ async function pass2() {
   // The private ("verified") tier needs its own canned data, distinct from
   // router()'s public fixtures -- otherwise this pass could not tell "the grid
   // painted the private tier's own numbers" apart from "the grid is still
-  // showing a leftover public fetch". Shapes match production: /elites and
-  // /board enveloped ({rows:[...]}) with program_id + reference{repo,commit}
-  // rows; /baseline a bare {owner, per_identity, overall} object.
+  // showing a leftover public fetch". These shapes mirror what the page's own
+  // fetch calls read -- that is what a frontend-only file can vouch for, not
+  // a claim about the live API: /elites and /board enveloped ({rows:[...]})
+  // with program_id + reference{repo,commit} rows; /baseline a bare
+  // {owner, per_identity, overall} object.
   const PRIVATE_PER_IDENTITY = {};
   for (const id of IDENTITIES) PRIVATE_PER_IDENTITY[id] = { progression: 0.09, deepest: "Dlvl:6", episodes: 15 };
   const PRIVATE_BASELINE = { owner: "autoascend", per_identity: PRIVATE_PER_IDENTITY, overall: 0.091 };
@@ -290,6 +292,17 @@ async function pass2() {
       registered_at: "2026-08-29T09:30:00+00:00",
       mean_progression: 0.42, median_progression: 0.42, ascensions: 0, deepest: "Sokoban" },
   ] };
+  // Distinct from RECOGNITION (router()'s default, used for the "verified"
+  // tier below) so a bug that dropped the ?tier= param, or reused the cached
+  // private rows for every tier, would show up as wrong row content -- not
+  // just a caption, which is computed from local state (`keepersTier`)
+  // rather than from the response body either way.
+  const RECOGNITION_PUBLIC = {
+    generated_at: "2026-08-27T09:30:00+00:00",
+    keepers: [{ owner: "pubkeeper1", records: 3, identities: [TOUCHED[0]], roles: ["arc"], total_lift: 0.5 }],
+    breakthroughs: [{ owner: "pubbreaker1", identity: TOUCHED[0], gain: 0.1, score: 0.2, previous: 0.1,
+      program_id: "prog_aaa", reference: REF_AAA, at: "2026-08-20T09:30:00+00:00" }],
+  };
   const fetchImpl = (p) => Promise.resolve({ ok: true, status: 200, json: async () => {
     const route = p.split("?")[0];
     const tier = new URLSearchParams(p.split("?")[1] || "").get("tier");
@@ -298,6 +311,7 @@ async function pass2() {
       if (route === "/baseline") return PRIVATE_BASELINE;
       if (route === "/board") return PRIVATE_BOARD;
     }
+    if (route === "/recognition" && tier === "self-reported") return RECOGNITION_PUBLIC;
     return router(p);
   } });
   const dom = makeDom(fetchImpl, errors);
@@ -315,13 +329,47 @@ async function pass2() {
   ok(publicBtn && publicBtn.textContent === "Public Dungeons (15)", "public frontier toggle reads its TIERS label exactly");
   ok(verifiedBtn && verifiedBtn.textContent === "Private Dungeons (15)", "private frontier toggle reads its TIERS label exactly");
 
+  // Tier round trip (controller ruling, not the B2 above): curTier now
+  // DEFAULTS to "verified", so a single verifiedBtn.click() here would
+  // re-press an already-pressed button -- a same-value no-op that exercises
+  // no transition at all. Concretely: if the click handler's
+  // `curTier=b.dataset.tier` (index.html) were mis-refactored to a hardcoded
+  // `curTier="verified"`, that click would still "pass". Round-trip it
+  // instead -- Public first (a genuine change away from the boot default),
+  // then back to Private -- and check the grid follows a fixture value
+  // (the AutoAscend baseline: 6.8% public vs 9.1% private) rather than
+  // something the page could satisfy from local state alone.
+  publicBtn.click();
+  await sleep(60);
+  ok(publicBtn.getAttribute("aria-pressed") === "true" && verifiedBtn.getAttribute("aria-pressed") === "false",
+     "clicking Public presses the public frontier button and releases Private");
+  ok(/6\.8%/.test(q("#gridnote").textContent), "gridnote's AutoAscend overall switches to the public baseline (6.8%)");
+  ok(/unaudited/.test(q("#tiernote-frontier").textContent), "frontier tiernote switches to the public tier's note");
+  const publicProgCells = qa("#rolegrid td.vv:not(.hval):not(.floor):not(.empty)").length;
+  ok(publicProgCells > 0, `public tier paints program cells (${publicProgCells}), not a blanked grid`);
+
   verifiedBtn.click();
   await sleep(60);
+  ok(verifiedBtn.getAttribute("aria-pressed") === "true" && publicBtn.getAttribute("aria-pressed") === "false",
+     "clicking Private re-presses the private frontier button and releases Public");
+  ok(/9\.1%/.test(q("#gridnote").textContent), "gridnote's AutoAscend overall returns to the private baseline (9.1%) -- a real transition, not a same-value no-op");
+  ok(/never seen them/.test(q("#tiernote-frontier").textContent), "frontier tiernote returns to the private tier's note");
   ok(qa("#recordholders tbody tr").length >= 5, "recognition keepers stay visible on the private tier");
   ok(qa("#breakthroughs tbody tr").length >= 5, "recognition breakthroughs stay visible on the private tier");
   const progCells = qa("#rolegrid td.vv:not(.hval):not(.floor):not(.empty)").length;
   ok(progCells > 0, `private tier paints program cells (${progCells}), not a blanked grid`);
   ok(/not yet measured/.test(q("#gridnote").textContent), "the grid note states private coverage honestly");
+
+  // The three dungeon switches are independent: flipping Keepers to Public
+  // must not move Breakthroughs or the Frontier. RECOGNITION_PUBLIC (stubbed
+  // above) is distinct from RECOGNITION, so this also confirms the tier
+  // actually reached the fetch instead of reusing a cached/leftover response.
+  q("[data-tier-group='keepers'][data-tier='self-reported']").click();
+  await sleep(60);
+  ok(/pubkeeper1/.test(q("#recordholders").textContent), "keepers table loads the distinct public-tier fixture, not a leftover private fetch");
+  ok(/PUBLIC DUNGEONS/.test(q("#recordholders caption").textContent), "keepers caption switches to PUBLIC DUNGEONS");
+  ok(/PRIVATE DUNGEONS/.test(q("#breakthroughs caption").textContent), "breakthroughs caption is untouched by the keepers switch: still PRIVATE DUNGEONS");
+  ok(verifiedBtn.getAttribute("aria-pressed") === "true", "the frontier's Private button is still pressed after flipping Keepers alone");
 
   ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
   dom.window.close();

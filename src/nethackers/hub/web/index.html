@@ -676,10 +676,26 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
         <h2 class="sec"><span class="glyph">&amp;</span> Hackers moving the frontier</h2>
         <p class="lead">Recognition is attached to concrete records, roles, and source commits &mdash; not collapsed into one global score.</p>
         <div class="subh">Frontier Keepers</div>
-        <p class="famedesc">Current self-reported identity leaders above AutoAscend. Click a row for the hacker's complete contribution history.</p>
+        <div class="controls">
+          <span class="lbl">dungeons:</span>
+          <span class="grp">
+            <button class="bevel" data-tier="self-reported" data-tier-group="keepers" aria-pressed="false">Public Dungeons (15)</button>
+            <button class="bevel" data-tier="verified" data-tier-group="keepers" aria-pressed="true">Private Dungeons (15)</button>
+          </span>
+          <p class="tiernote" id="tiernote-keepers" aria-live="polite"></p>
+        </div>
+        <p class="famedesc">Current identity leaders above AutoAscend. Click a row for the hacker's complete contribution history.</p>
         <div id="recordholders"><div class="emptyblock">Loading frontier keepers&hellip;</div></div>
         <div class="subh">Greatest Breakthroughs</div>
-        <p class="famedesc">A newest-first log of every submission that advanced an identity frontier. Click a row for the exact submission.</p>
+        <div class="controls">
+          <span class="lbl">dungeons:</span>
+          <span class="grp">
+            <button class="bevel" data-tier="self-reported" data-tier-group="breakthroughs" aria-pressed="false">Public Dungeons (15)</button>
+            <button class="bevel" data-tier="verified" data-tier-group="breakthroughs" aria-pressed="true">Private Dungeons (15)</button>
+          </span>
+          <p class="tiernote" id="tiernote-breakthroughs" aria-live="polite"></p>
+        </div>
+        <p class="famedesc" id="bkdesc"></p>
         <div id="breakthroughs"><div class="emptyblock">Loading breakthroughs&hellip;</div></div>
       </section>
 
@@ -854,7 +870,8 @@ __)/\_//(\/(/\)/\//\/\|_)__</pre>
    Where an endpoint does not carry a field the render wants, we render "—" /
    omit it -- never a fabricated value (honest standings is the whole point). */
 let STATS=null;                      // live platform totals from /stats
-let WALL_OF_FAME={keepers:[],breakthroughs:[]};
+let keepersTier="verified", breakthroughsTier="verified";
+const FAME_BY_TIER={};
 const FAME_PAGE_SIZE=5;
 const FAME_LIMITS={keepers:FAME_PAGE_SIZE,breakthroughs:FAME_PAGE_SIZE};
 const HACKER_PAGE=50;                 // rows in the hacker popup's program table (each costs a /identities fetch)
@@ -1250,6 +1267,16 @@ document.querySelectorAll("[data-tier-group='frontier']").forEach(b=>b.addEventL
   tierNote($("#tiernote-frontier"), curTier);
   await Promise.all([loadUniverse(curTier), loadBaseline(curTier)]);
   renderFrontier(); }));
+[["keepers",()=>keepersTier,v=>keepersTier=v],
+ ["breakthroughs",()=>breakthroughsTier,v=>breakthroughsTier=v]].forEach(([group,get,set])=>{
+  document.querySelectorAll(`[data-tier-group='${group}']`).forEach(b=>b.addEventListener("click",async()=>{
+    set(b.dataset.tier);
+    document.querySelectorAll(`[data-tier-group='${group}']`).forEach(x=>x.setAttribute("aria-pressed", x.dataset.tier===get()?"true":"false"));
+    tierNote($(`#tiernote-${group}`), get());
+    await loadRecognition(get());
+    renderRecognition();
+  }));
+});
 
 /* ===================== frontier heatmap ===================== */
 function renderFrontier(){
@@ -1338,10 +1365,22 @@ function renderFrontier(){
 /* ===================== recognition ===================== */
 function renderRecognition(){
   const holders=$("#recordholders"), breakthroughs=$("#breakthroughs");
+  const kFame=FAME_BY_TIER[keepersTier]||{keepers:[]};
+  const bFame=FAME_BY_TIER[breakthroughsTier]||{breakthroughs:[]};
+  /* "newest first" means something different per tier: public breakthroughs
+     replay achievement order (created_at = when the hacker's result landed);
+     private breakthroughs replay VERIFICATION order (created_at = when our
+     worker got around to running it). Presenting verification order as an
+     achievement timeline would be a false claim, so the description flips
+     with the tier instead of asserting one story for both. */
+  const bkdesc=$("#bkdesc");
+  if(bkdesc) bkdesc.innerHTML = breakthroughsTier==="verified"
+    ? `Every result that cleared the AutoAscend floor on an identity, <b>ordered by when it was verified</b> &mdash; not by when it was achieved. Click a row for the exact submission.`
+    : `A newest-first log of every submission that advanced an identity frontier. Click a row for the exact submission.`;
   if(holders){
-    const people=WALL_OF_FAME.keepers||[];
+    const people=kFame.keepers||[];
     const visible=people.slice(0,FAME_LIMITS.keepers);
-    holders.innerHTML=people.length?`<div class="tablewrap"><table class="grid fametable"><caption>FRONTIER KEEPERS &middot; ${TIERS["self-reported"].caption}</caption>
+    holders.innerHTML=people.length?`<div class="tablewrap"><table class="grid fametable"><caption>FRONTIER KEEPERS &middot; ${TIERS[keepersTier].caption}</caption>
       <thead><tr><th>#</th><th class="l">hacker</th><th>frontiers</th><th class="l">roles represented</th><th>combined lift</th></tr></thead>
       <tbody>${visible.map((p,i)=>`<tr data-owner="${esc(p.owner)}" tabindex="0" role="button" aria-label="Open contributions by @${esc(p.owner)}">
         <td class="rk ${i<3?'top':''}">${i+1}</td><td class="l owner">@${esc(p.owner)}</td><td>${p.records}</td>
@@ -1359,9 +1398,9 @@ function renderRecognition(){
       more.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); expand(); } }); }
   }
   if(breakthroughs){
-    const people=WALL_OF_FAME.breakthroughs||[];
+    const people=bFame.breakthroughs||[];
     const visible=people.slice(0,FAME_LIMITS.breakthroughs);
-    breakthroughs.innerHTML=people.length?`<div class="tablewrap"><table class="grid fametable famelog"><caption>GREATEST BREAKTHROUGHS &middot; NEWEST FIRST</caption>
+    breakthroughs.innerHTML=people.length?`<div class="tablewrap"><table class="grid fametable famelog"><caption>GREATEST BREAKTHROUGHS &middot; ${TIERS[breakthroughsTier].caption}</caption>
       <thead><tr><th class="l">registered</th><th class="l">hacker</th><th class="l">identity</th><th>before</th><th>result</th><th>advance</th></tr></thead>
       <tbody>${visible.map((p,i)=>`<tr data-breakthrough="${i}" tabindex="0" role="button" aria-label="Open breakthrough submission by @${esc(p.owner)}">
         <td class="l">${esc(fmtDate(p.at))}</td><td class="l owner">@${esc(p.owner)}</td><td class="l">${esc(p.identity)}</td>
@@ -1576,9 +1615,11 @@ async function loadBaseline(tier){
   return BASELINE_BY_TIER[tier];
 }
 
-async function loadRecognition(){
-  try{ WALL_OF_FAME=await jget("/recognition"); }
-  catch(e){ WALL_OF_FAME={keepers:[],breakthroughs:[]}; }
+async function loadRecognition(tier){
+  if(FAME_BY_TIER[tier]) return FAME_BY_TIER[tier];
+  try{ FAME_BY_TIER[tier]=await jget(`/recognition?tier=${encodeURIComponent(tier)}`); }
+  catch(e){ FAME_BY_TIER[tier]={keepers:[],breakthroughs:[]}; }
+  return FAME_BY_TIER[tier];
 }
 
 /* Bootstrap: fetch everything, adapt into the render state, then do the first render.
@@ -1590,10 +1631,12 @@ async function boot(){
                renderMarquee(marqueeStatsLine(s)); setUpdated(s.last_registered_at); })
     .catch(()=>{ STATS=null; odo($("#odoProg"),0,5); odo($("#odoPlay"),0,5); });
   const objP  = jget("/objectives").then(o=>{ OBJ_EP = Object.fromEntries(o.map(x=>[x.name, x.episodes])); }).catch(()=>{ OBJ_EP = {}; });
-  await Promise.all([statsP,objP,loadRecognition()]);
+  await Promise.all([statsP,objP,loadRecognition("verified")]);
   await Promise.all([loadUniverse(curTier), loadBaseline(curTier)]);
   HONOR_UNIVERSE = await loadUniverse("self-reported");
   tierNote($("#tiernote-frontier"), curTier);
+  tierNote($("#tiernote-keepers"), keepersTier);
+  tierNote($("#tiernote-breakthroughs"), breakthroughsTier);
   renderFrontier(); renderRecognition();
 }
 boot();
