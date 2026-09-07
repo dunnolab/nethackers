@@ -304,6 +304,13 @@ def run_loop(
         origins[entry["program_id"]] = _origin(
             "hub", handle=entry.get("owner"), sha=ref.get("commit"), repo=ref.get("repo"))
 
+    # Emit the cold-start frame BEFORE the (potentially long, 2*N*b-episode)
+    # evals so the monitor shows the identities, their champion labels, and the
+    # AutoAscend floor immediately -- then each cell fills in as it's scored
+    # below. Without this the first frame lands only after the WHOLE cold-start
+    # finishes, leaving the user staring at an empty Progress table.
+    _emit("cold-start", 0)
+
     frontier_results: list[TrajectoryResult] = []   # every cold-start episode -> baseline tally
     for d, (tree_path, idents) in owned.items():
         report(f"cold-start · scoring {d[:8]} on {len(idents)} cell(s) …")
@@ -314,6 +321,7 @@ def run_loop(
             max_parallel_evals=max_parallel_evals)
         archive.insert(d, tree_path, ev)
         frontier_results.extend(ev.results)
+        _emit("cold-start", 0)   # this champion's cell(s) now scored -> fill them in live
 
     seed_idents = [i for i in identities if i not in elites]
     if seed_idents:
@@ -325,6 +333,7 @@ def run_loop(
             max_parallel_evals=max_parallel_evals)
         archive.insert(seed_digest, tree_store.path(seed_digest), seed_ev)
         frontier_results.extend(seed_ev.results)
+        _emit("cold-start", 0)   # seed-owned cells now scored
 
     # Seed the UNION cell from the hub's best-on-average champion (spec §5.1):
     # one full-union eval so BEST OVERALL is a real, full-detail incumbent from
@@ -346,6 +355,7 @@ def run_loop(
             ref = entry.get("reference") or {}
             origins[entry["program_id"]] = _origin(
                 "hub", handle=entry.get("owner"), sha=ref.get("commit"), repo=ref.get("repo"))
+            _emit("cold-start", 0)   # BEST OVERALL union cell now seeded -> show it
 
     # base_dev is the frontier the run departs from -- the mean of the cells'
     # starting elite scores -- NOT a separate full-union seed eval (dropped). The

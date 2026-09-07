@@ -434,7 +434,13 @@ class RunMonitor(Screen):
                 lines.append(f"  {ident:<18} ← {inc[1]}   ({inc[0]:.2f})")
             bo = self.run.best_overall(0)
             lines.append(f"best overall = {bo[1]}   x̄ {bo[0]:.2f}")
-            lines.append("[dim]no mutation at init — evaluating the seeds[/]")
+            scored = sum(len(b.rows_by_index) for b in self.run.batches)
+            if self.run.state.get("phase") == "cold-start":
+                lines.append(f"[dim]no mutation at init — evaluating the seeds "
+                             f"· {scored} episode(s) scored ⊙[/]")
+            else:
+                lines.append(f"[dim]no mutation at init — {scored} seed episode(s) "
+                             f"evaluated[/]")
             return lines
         if status == "pending":
             return ["[dim]iteration not started[/]"]
@@ -620,7 +626,14 @@ class RunMonitor(Screen):
         if not self._ready:
             return   # pre-mount race (see __init__) -- on_mount will backfill
         self._render_iters()
-        if self.run.iteration_status(self.sel_iter) == "running":
+        if self.sel_iter == 0 and self.run.state.get("phase") == "cold-start":
+            # Cold-start streams cells in one champion at a time (loop.py emits
+            # per insert). Rebuild the init Progress table + proclog on each
+            # frame so the identities appear and their scores fill in live,
+            # instead of the table sitting empty until the whole cold-start ends.
+            self._rebuild_score()
+            self._render_proclog()
+        elif self.run.iteration_status(self.sel_iter) == "running":
             self._update_score()
         self._render_statusline()
 
