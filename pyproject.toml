@@ -1,6 +1,6 @@
 [project]
 name = "nethackers"
-version = "0.22.0"
+version = "0.22.1"
 description = "Solve NetHack by evolving symbolic players — evaluation and registration core."
 readme = "README.md"
 requires-python = ">=3.11"
