@@ -237,7 +237,14 @@ table.grid caption{ text-align:left; background:var(--indigo); color:#fff; font-
 .regime label{ cursor:pointer; margin-right:12px; }
 .gridnote{  font-size:.76rem; color:#55555c; margin:16px auto 2px; max-width:76ch;
   text-align:center; line-height:1.55; text-wrap:pretty; }
-.tiernote{ grid-column:1/-1; font-size:.74rem; color:#55555c; margin:-2px 0 0; }
+/* The tier's explanation lives behind this marker rather than as a permanent
+   line of prose under every switch. It rides the page's existing .ref popup
+   system (REFS/data-k), so hover, focus and click all behave like every other
+   glossary marker. .ref sets a dotted bottom border; override for the circle. */
+.ref.tierhelp{ display:inline-flex; align-items:center; justify-content:center;
+  width:15px; height:15px; margin-left:3px; border:1px solid var(--indigo-2);
+  border-radius:50%; font-size:.64rem; font-weight:700; color:var(--indigo);
+  line-height:1; vertical-align:middle; }
 .gridnote b{ color:var(--indigo); }
 .rolegrid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(238px,1fr)); gap:10px; align-items:start; }
 table.fr{ width:100%; table-layout:fixed; border-collapse:collapse;  font-size:.76rem; }
@@ -654,8 +661,9 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           <span class="grp">
             <button class="bevel" data-tier="self-reported" data-tier-group="frontier" aria-pressed="false">Public Dungeons (15)</button>
             <button class="bevel" data-tier="verified" data-tier-group="frontier" aria-pressed="true">Private Dungeons (15)</button>
+            <span class="ref tierhelp" id="tierhelp-frontier" data-k="dungeons-private"
+              aria-label="What are Private Dungeons?">?</span>
           </span>
-          <p class="tiernote" id="tiernote-frontier" aria-live="polite"></p>
         </div>
         <div class="rolegrid" id="rolegrid"></div>
         <div class="legend">
@@ -682,8 +690,9 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           <span class="grp">
             <button class="bevel" data-tier="self-reported" data-tier-group="keepers" aria-pressed="false">Public Dungeons (15)</button>
             <button class="bevel" data-tier="verified" data-tier-group="keepers" aria-pressed="true">Private Dungeons (15)</button>
+            <span class="ref tierhelp" id="tierhelp-keepers" data-k="dungeons-private"
+              aria-label="What are Private Dungeons?">?</span>
           </span>
-          <p class="tiernote" id="tiernote-keepers" aria-live="polite"></p>
         </div>
         <p class="famedesc">Current identity leaders above AutoAscend. Click a row for the hacker's complete contribution history.</p>
         <div id="recordholders"><div class="emptyblock">Loading frontier keepers&hellip;</div></div>
@@ -693,8 +702,9 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           <span class="grp">
             <button class="bevel" data-tier="self-reported" data-tier-group="breakthroughs" aria-pressed="false">Public Dungeons (15)</button>
             <button class="bevel" data-tier="verified" data-tier-group="breakthroughs" aria-pressed="true">Private Dungeons (15)</button>
+            <span class="ref tierhelp" id="tierhelp-breakthroughs" data-k="dungeons-private"
+              aria-label="What are Private Dungeons?">?</span>
           </span>
-          <p class="tiernote" id="tiernote-breakthroughs" aria-live="polite"></p>
         </div>
         <p class="famedesc" id="bkdesc"></p>
         <div id="breakthroughs"><div class="emptyblock">Loading breakthroughs&hellip;</div></div>
@@ -1147,6 +1157,9 @@ renderMarquee(null);
 const ARX="https://arxiv.org/abs/", WIKI="https://nethackwiki.com/wiki/";
 function role(name,pet,d,art){ return {t:name,d:d,art:"@  the hero\n"+art,s:[["NetHack Wiki",WIKI+name]]}; }
 const REFS={
+  /* --- the two seed sets the board scores on --- */
+  "dungeons-public":{t:"Public Dungeons",d:"The <b>15 practice seeds per identity</b> that anyone can run. The hacker runs them and reports the score themselves &mdash; nobody has re-run it, so these numbers are <b>unaudited</b>.",s:[]},
+  "dungeons-private":{t:"Private Dungeons",d:"<b>15 secret seeds per identity</b>, held by the hub and never published. A trusted verifier runs them on a program that has <b>never seen them</b>, so the score cannot be tuned to the seeds it is measured on.",s:[]},
   /* --- citations --- */
   nle:{t:"The NetHack Learning Environment",d:"The paper that standardized NetHack for ML research and pinned version 3.6.6. Its authors judged a hand-crafted bot that solves NetHack &quot;very unlikely.&quot;",s:[["Kuttler et al., NeurIPS 2020",ARX+"2006.13760"]]},
   challenge:{t:"NeurIPS 2021 NetHack Challenge",d:"483 entrants, <b>zero ascensions</b> in over 500,000 evaluation games. The symbolic AutoAscend won at a median score of 5,300.",s:[["Hambro et al., 2022",ARX+"2203.11889"]]},
@@ -1248,7 +1261,7 @@ let curTier="verified";
    every label, caption and sub-label on the page. The toggle buttons' HTML
    carries a duplicate of the label text too, purely as a pre-JS fallback so
    the page still reads correctly before any script runs; the synchronous
-   line right after `tierNote` below overwrites that markup on parse, so the
+   line right after `tierHelp` below overwrites that markup on parse, so the
    two copies can never drift. */
 const TIERS={
   "self-reported":{label:"Public Dungeons (15)",  caption:"PUBLIC DUNGEONS",
@@ -1256,7 +1269,9 @@ const TIERS={
   "verified":     {label:"Private Dungeons (15)", caption:"PRIVATE DUNGEONS",
     note:"15 secret seeds per identity, run by us on a program that has never seen them"},
 };
-function tierNote(el,tier){ if(el) el.innerHTML=TIERS[tier].note; }
+function tierHelp(el,tier){ if(!el) return;
+  const k=tier==="verified"?"dungeons-private":"dungeons-public";
+  el.dataset.k=k; el.setAttribute("aria-label",`What are ${REFS[k].t}?`); }
 /* The map is authoritative for button text too: markup carries a copy so the
    toggle still reads correctly with JS disabled, and this overwrites it on
    parse so the two can never drift. Covers every [data-tier] button on the
@@ -1265,7 +1280,7 @@ document.querySelectorAll("[data-tier]").forEach(b=>{ b.textContent=TIERS[b.data
 document.querySelectorAll("[data-tier-group='frontier']").forEach(b=>b.addEventListener("click",async()=>{
   curTier=b.dataset.tier;
   document.querySelectorAll("[data-tier-group='frontier']").forEach(x=>x.setAttribute("aria-pressed", x.dataset.tier===curTier?"true":"false"));
-  tierNote($("#tiernote-frontier"), curTier);
+  tierHelp($("#tierhelp-frontier"), curTier);
   await Promise.all([loadUniverse(curTier), loadBaseline(curTier)]);
   renderFrontier(); }));
 [["keepers",()=>keepersTier,v=>keepersTier=v],
@@ -1273,7 +1288,7 @@ document.querySelectorAll("[data-tier-group='frontier']").forEach(b=>b.addEventL
   document.querySelectorAll(`[data-tier-group='${group}']`).forEach(b=>b.addEventListener("click",async()=>{
     set(b.dataset.tier);
     document.querySelectorAll(`[data-tier-group='${group}']`).forEach(x=>x.setAttribute("aria-pressed", x.dataset.tier===get()?"true":"false"));
-    tierNote($(`#tiernote-${group}`), get());
+    tierHelp($(`#tierhelp-${group}`), get());
     await loadRecognition(get());
     renderRecognition();
   }));
@@ -1635,9 +1650,9 @@ async function boot(){
   await Promise.all([statsP,objP,loadRecognition("verified")]);
   await Promise.all([loadUniverse(curTier), loadBaseline(curTier)]);
   HONOR_UNIVERSE = await loadUniverse("self-reported");
-  tierNote($("#tiernote-frontier"), curTier);
-  tierNote($("#tiernote-keepers"), keepersTier);
-  tierNote($("#tiernote-breakthroughs"), breakthroughsTier);
+  tierHelp($("#tierhelp-frontier"), curTier);
+  tierHelp($("#tierhelp-keepers"), keepersTier);
+  tierHelp($("#tierhelp-breakthroughs"), breakthroughsTier);
   renderFrontier(); renderRecognition();
 }
 boot();

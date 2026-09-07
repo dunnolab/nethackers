@@ -344,7 +344,7 @@ async function pass2() {
   ok(publicBtn.getAttribute("aria-pressed") === "true" && verifiedBtn.getAttribute("aria-pressed") === "false",
      "clicking Public presses the public frontier button and releases Private");
   ok(/6\.8%/.test(q("#gridnote").textContent), "gridnote's AutoAscend overall switches to the public baseline (6.8%)");
-  ok(/unaudited/.test(q("#tiernote-frontier").textContent), "frontier tiernote switches to the public tier's note");
+  ok(q("#tierhelp-frontier").dataset.k === "dungeons-public", "frontier ? marker points at the public tier's explanation");
   const publicProgCells = qa("#rolegrid td.vv:not(.hval):not(.floor):not(.empty)").length;
   ok(publicProgCells > 0, `public tier paints program cells (${publicProgCells}), not a blanked grid`);
 
@@ -353,7 +353,7 @@ async function pass2() {
   ok(verifiedBtn.getAttribute("aria-pressed") === "true" && publicBtn.getAttribute("aria-pressed") === "false",
      "clicking Private re-presses the private frontier button and releases Public");
   ok(/9\.1%/.test(q("#gridnote").textContent), "gridnote's AutoAscend overall returns to the private baseline (9.1%) -- a real transition, not a same-value no-op");
-  ok(/never seen them/.test(q("#tiernote-frontier").textContent), "frontier tiernote returns to the private tier's note");
+  ok(q("#tierhelp-frontier").dataset.k === "dungeons-private", "frontier ? marker returns to the private tier's explanation");
   ok(qa("#recordholders tbody tr").length >= 5, "recognition keepers stay visible on the private tier");
   ok(qa("#breakthroughs tbody tr").length >= 5, "recognition breakthroughs stay visible on the private tier");
   const progCells = qa("#rolegrid td.vv:not(.hval):not(.floor):not(.empty)").length;
