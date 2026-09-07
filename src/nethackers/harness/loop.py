@@ -172,6 +172,11 @@ def run_loop(
     archive = CellArchive(identities)
 
     origins: dict[str, dict] = {}
+    # identity -> its pulled hub champion {program_id, score}, known from the
+    # /elites read BEFORE the (long) cold-start eval. Lets the monitor show each
+    # identity's champion label + hub score the moment cold-start starts, instead
+    # of falsely showing AutoAscend until the champion's local eval finishes.
+    elite_of: dict[str, dict] = {}
 
     def _origin(kind, *, handle=None, sha=None, repo=None, iteration=None) -> dict:
         return {"kind": kind, "handle": handle, "sha": sha,
@@ -271,6 +276,7 @@ def run_loop(
             if c.dev_evidence is not None:
                 payload["parent_means"] = aggregate.per_identity_means(c.dev_evidence.results)
         payload["origins"] = dict(origins)
+        payload["elite_of"] = dict(elite_of)
         payload["aa_baseline"] = aa_baseline
         u = archive.union
         payload["union"] = (
@@ -300,6 +306,8 @@ def run_loop(
         # see harness/select.py) -- opaque, but stable per distinct champion,
         # which is all this grouping key needs.
         owned.setdefault(entry["program_id"], (tree_path, []))[1].append(ident)
+        elite_of[ident] = {"program_id": entry["program_id"],
+                           "score": float(entry.get("score", 0.0))}
         ref = entry.get("reference") or {}
         origins[entry["program_id"]] = _origin(
             "hub", handle=entry.get("owner"), sha=ref.get("commit"), repo=ref.get("repo"))

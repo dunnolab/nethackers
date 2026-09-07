@@ -293,6 +293,12 @@ class Run:
     def aa_baseline(self) -> dict[str, float]:
         return dict(self.state.get("aa_baseline") or {})
 
+    def elite_of(self) -> dict[str, dict]:
+        """identity -> its pulled hub champion {program_id, score}, emitted from
+        cold-start onward so ``incumbent`` can show the champion's label + score
+        while its local eval is still streaming (before its cell is scored)."""
+        return dict(self.state.get("elite_of") or {})
+
     def active_cell(self) -> str | None:
         """The identity of the cell the current iteration is mutating, or
         None (cold-start / done)."""
@@ -352,9 +358,19 @@ class Run:
 
     def incumbent(self, ident: str, upto_k: int) -> tuple[float, str, str, int | None]:
         cells = self.init_cells
+        elite = self.elite_of().get(ident)
         if ident in cells and self.origins().get(cells[ident]["digest"], {}).get("kind") == "hub":
             label, kind = self._origin_label(cells[ident]["digest"])
             score, j = float(cells[ident]["score"]), None
+        elif elite is not None and self.state.get("phase") == "cold-start":
+            # Cold-start: this identity's hub champion is pulled but its local
+            # eval hasn't scored into a cell yet -- show the champion's label +
+            # its LIVE (partial) local mean, or the hub-reported score until the
+            # first episode lands, instead of falsely showing AutoAscend.
+            label, kind = self._origin_label(elite["program_id"])
+            live = self.candidate_means().get(ident)
+            score = live if live is not None else float(elite.get("score", 0.0))
+            j = None
         else:
             score, label, kind, j = self.aa_baseline().get(ident, 0.0), "AutoAscend", "aa", None
         for k, res in self._completed_iters(upto_k):
@@ -433,9 +449,13 @@ class Run:
     def _per_ident_total(self) -> int:
         """Best-effort per-identity seed count for progress ratios (seeds/ident)."""
         cr = self.init_cell_results or {}
-        if cr:
-            return max((sum(1 for r in v if r.get("character") in (i, None))
-                        for i, v in cr.items()), default=0)
+        # per-identity episode counts from the cold-start snapshot; use them only
+        # if ANY is non-zero (a dict of empty lists -- early cold-start, before
+        # a champion has scored -- must fall through to the live batch, else the
+        # ratio shows "n/0").
+        counts = [sum(1 for r in v if r.get("character") in (i, None)) for i, v in cr.items()]
+        if any(counts):
+            return max(counts)
         batch = self.current_batch()
         if batch and batch.rows() and self.identities():
             return max(1, int(batch.rows()[0].get("total", 0)) // len(self.identities()))

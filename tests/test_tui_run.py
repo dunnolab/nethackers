@@ -465,3 +465,37 @@ def test_run_tracks_cells_and_coverage_from_state():
     assert r.coverage() == (1, 2)
     assert r.active_cell() == "wiz-orc-cha-mal"
     assert r.chain == []   # set run: no single-lineage chain
+
+
+def test_incumbent_shows_pulled_champion_during_cold_start_not_autoascend():
+    # During cold-start, before a champion's cell is scored, incumbent must show
+    # the PULLED hub champion's label + score -- not AutoAscend (which falsely
+    # implies no hub program). Regression for the "sam-hum-law-* <- AutoAscend"
+    # report where a real self-reported champion existed on the hub.
+    ids = ["sam-hum-law-fem", "sam-hum-law-mal"]
+    r = Run("r1", EvolveConfig(",".join(ids), "claude", 3))
+    r.apply_state({"phase": "cold-start", "iteration": 0, "identities": ids, "cells": [],
+                   "origins": {"prog_x": {"kind": "hub", "handle": "vkurenkov",
+                                          "sha": "0386137",
+                                          "repo": "github.com/vkurenkov/nethacker",
+                                          "iteration": None}},
+                   "elite_of": {i: {"program_id": "prog_x", "score": 0.11} for i in ids},
+                   "aa_baseline": {i: 0.08 for i in ids}, "union": None,
+                   "cell_results": {}, "coverage": (0, 2), "cell": None, "generation": 0,
+                   "baseline_dev": 0.0, "best_dev": 0.0, "wins": 0, "tokens": 0,
+                   "detail": "", "parent_digest": "", "parent_dev": 0.0})
+    score, label, kind, _ = r.incumbent("sam-hum-law-fem", 0)
+    assert (kind, label) == ("hub", "vkurenkov @0386137")   # the champion, not AutoAscend
+    assert score == 0.11                                     # hub score until an episode lands
+    # once its eval streams, the shown score tracks the live LOCAL mean
+    r.apply_episode("cold-start · dev [prog_x]",
+                    {"index": 0, "total": 4, "seed": 0, "character": "sam-hum-law-fem",
+                     "progress": 0.2, "status": "died", "turns": 100, "depth": 2})
+    score2, _, kind2, _ = r.incumbent("sam-hum-law-fem", 0)
+    assert kind2 == "hub" and score2 == 0.2
+
+    # ...but after cold-start ends the phase gate stops elite_of from masking the
+    # real (post-eval) state -- an unscored identity falls back to AutoAscend.
+    r.apply_state({**r.state, "phase": "mutating", "iteration": 1})
+    _, label3, kind3, _ = r.incumbent("sam-hum-law-fem", 1)
+    assert kind3 == "aa" and label3 == "AutoAscend"

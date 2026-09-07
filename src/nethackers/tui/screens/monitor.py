@@ -195,6 +195,7 @@ class RunMonitor(Screen):
     RunMonitor #titlebar { height: 1; }
     RunMonitor #title_name { width: 1fr; padding: 0 1; }
     RunMonitor #title_mutator { width: auto; padding: 0 1; }
+    RunMonitor #obj { height: 1; padding: 0 1; color: #d7c9a2; }
     RunMonitor #stage { height: 1fr; }
     RunMonitor #main { height: 1fr; }
     RunMonitor #left { width: 30; }
@@ -249,6 +250,7 @@ class RunMonitor(Screen):
         with Horizontal(id="titlebar"):
             yield Static("[b #d2a24c]⚔ NetHackers · evolve monitor[/]", id="title_name")
             yield Static(id="title_mutator")
+        yield Static(id="obj")   # the token topline (in/out/cache · time)
         with Vertical(id="stage"):
             with Horizontal(id="main"):
                 with Vertical(id="left", classes="panel"):
@@ -288,9 +290,13 @@ class RunMonitor(Screen):
         except NoMatches:
             self.call_after_refresh(self._backfill)
             return
-        idents.add_column("identity", key="id")
-        idents.add_column("best so far", key="best")
-        idents.add_column("this iteration", key="run")
+        # Explicit widths: Textual 8.2.x auto_width columns defer their
+        # content-width measurement to idle, so at first paint they truncate
+        # cells to the *header* width ("sam-hu", "vkurenkov @" with the score
+        # cut). Fixed widths render the full identity / champion@sha / score.
+        idents.add_column("identity", key="id", width=24)
+        idents.add_column("best so far", key="best", width=34)
+        idents.add_column("this iteration", key="run", width=30)
         idents.border_title = " progress by identity "
         idents._valid_fn = self._valid_cell        # hover only on clickable cells
         # #idents now has its columns -- safe to render into it. Flip the
@@ -368,9 +374,11 @@ class RunMonitor(Screen):
         # the row entirely; _row_map/_valid_cell/select routing are already
         # data-driven off _row_map, so simply not appending it is sufficient.
         if len(self.run.identities()) > 1:
-            bo = self.run.best_overall(self.sel_iter)
-            t.add_row(S.best_overall_cell(bo), Text.from_markup(f"[dim]x̄[/] [b]{bo[0]:.2f}[/]"),
-                      "", key="ov")
+            bo = self.run.best_overall(self.sel_iter)   # (score, label, kind, _)
+            # Aligned with the identity rows: name | program+score | hint, so the
+            # champion@sha + x̄ sit in "best so far", not one over-wide cell.
+            t.add_row(Text.from_markup("[b #d2a24c]★ BEST OVERALL[/]"), S.best_cell(bo),
+                      Text.from_markup("[dim]open ▸[/]"), key="ov")
             self._row_map.append(("overall", None))
 
         target = None if is_init else self.run.iter_target(self.sel_iter)
@@ -409,6 +417,10 @@ class RunMonitor(Screen):
             ev = self._row_eval(ident, evals)
             rk = self._row_keys.get(ident)
             if rk is not None:
+                # "best so far" too, not just "this iteration": during cold-start
+                # the champion's live local mean ticks up per episode, and the
+                # AutoAscend->champion label flips once its cell is scored.
+                t.update_cell(rk, "best", S.best_cell(inc), update_width=False)
                 t.update_cell(rk, "run", S.run_cell(ev.avg, ev.revealed, ev.total, inc[0],
                                                      is_init, ev.done), update_width=False)
 
@@ -472,9 +484,27 @@ class RunMonitor(Screen):
             lines.append("[dim]gate: rejected · no improvement[/]")
         return lines
 
-    def _render_statusline(self) -> None:
-        self.query_one("#statusline", Static).update(
+    def _render_topline(self) -> None:
+        # tokens (in/out/cache-write/cache-read) + total wall time -- always
+        # advancing, so it lives up top away from the per-iteration table.
+        self.query_one("#obj", Static).update(
             S.token_subline(self.run.token_usage(), self.run.run_time()))
+
+    def _render_statusline(self) -> None:
+        bo = self.run.best_overall(self.sel_iter)
+        run_k = next((k for k in range(1, self.run.cfg.iterations + 1)
+                      if self.run.iteration_status(k) == "running"), None)
+        if run_k is not None:
+            where = f"iter {run_k}/{self.run.cfg.iterations} running"
+        elif self.run.state.get("phase") == "cold-start":
+            where = "cold-starting"
+        elif not self.run.running:
+            where = "all iterations done"
+        else:
+            where = f"{self.run.cfg.iterations} iterations"
+        viewing = "init" if self.sel_iter == 0 else f"iter {self.sel_iter}"
+        self.query_one("#statusline", Static).update(
+            f" best overall x̄ {bo[0]:.2f}   ·   {where}   ·   viewing {viewing} ")
 
     def _select(self, index: int) -> None:
         self.sel_iter = index
@@ -482,6 +512,7 @@ class RunMonitor(Screen):
         self._render_mutator()
         self._render_proclog()
         self._render_statusline()
+        self._render_topline()
 
     # ---- detail open/close -----------------------------------------------------
     def _open_detail(self) -> None:
@@ -636,6 +667,7 @@ class RunMonitor(Screen):
         elif self.run.iteration_status(self.sel_iter) == "running":
             self._update_score()
         self._render_statusline()
+        self._render_topline()
 
     def render_episode(self, label: str, ep: dict) -> None:
         if not self._ready:
@@ -673,3 +705,4 @@ class RunMonitor(Screen):
         # the run-time clock + cumulative tokens advance every second even
         # between worker events -- keep the status line's subline live.
         self._render_statusline()
+        self._render_topline()
