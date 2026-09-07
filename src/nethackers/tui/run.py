@@ -398,7 +398,8 @@ class Run:
         idents = self.identities()
         total = self._per_ident_total()
         if k == 0:
-            src = {i: self.init_cell_results.get(i, []) for i in idents}
+            src = {i: [r for r in self.init_cell_results.get(i, [])
+                       if r.get("character") in (i, None)] for i in idents}
         elif k in self.iter_results and self.iter_results[k].results is not None:
             src = {i: [] for i in idents}
             for r in self.iter_results[k].results or []:
@@ -418,13 +419,13 @@ class Run:
 
     def _per_ident_total(self) -> int:
         """Best-effort per-identity seed count for progress ratios (seeds/ident)."""
-        cr = self.state.get("cell_results") or {}
+        cr = self.init_cell_results or {}
         if cr:
-            return max((len(v) for v in cr.values()), default=0)
+            return max((sum(1 for r in v if r.get("character") in (i, None))
+                        for i, v in cr.items()), default=0)
         batch = self.current_batch()
-        if batch and self.identities():
-            return max(1, int(batch.rows()[0].get("total", 0)) // len(self.identities())) \
-                if batch.rows() else 0
+        if batch and batch.rows() and self.identities():
+            return max(1, int(batch.rows()[0].get("total", 0)) // len(self.identities()))
         return 0
 
     def iteration_status(self, k: int) -> str:

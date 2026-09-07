@@ -390,6 +390,29 @@ def test_iteration_evals_init_reads_the_cold_start_cell_results_snapshot():
     assert r.iteration_evals(0)["v1"].rows[0]["cause"] == "killed by a newt"
 
 
+def test_iteration_evals_init_filters_by_identity_not_the_whole_cell():
+    """Regression: harness/archive.py's CellArchive.insert stores an elite's
+    FULL union-batch dev_evidence on EVERY identity cell it wins -- so for a
+    champion that owns MORE THAN ONE identity (common for role/generalist
+    objectives), cell_results["v1"] carries BOTH "v1" and "v2" rows.
+    iteration_evals(0) must filter by character -- like the k>0 branch
+    already does -- not read the cell wholesale, which would blend "v2"'s
+    seeds into "v1"'s per-seed table and average."""
+    r = Run("r1", EvolveConfig("v1,v2", "claude", 5))
+    r.apply_state(_cold(cell_results={"v1": [
+        {"character": "v1", "trajectory_id": 1, "progress": 0.5, "status": "completed",
+         "end_status": "died", "ascended": False, "cause_of_death": "killed by a newt",
+         "max_depth": 6, "turns": 900, "wall_seconds": 12.0},
+        {"character": "v2", "trajectory_id": 2, "progress": 0.1, "status": "completed",
+         "end_status": "died", "ascended": False, "cause_of_death": "starvation",
+         "max_depth": 3, "turns": 300, "wall_seconds": 5.0},
+    ]}))
+    ev = r.iteration_evals(0)["v1"]
+    assert len(ev.rows) == 1
+    assert ev.rows[0]["progress"] == 0.5
+    assert ev.avg == 0.5   # NOT 0.3 -- the pre-fix wholesale-cell average
+
+
 def test_run_tracks_cells_and_coverage_from_state():
     r = Run("r1", EvolveConfig("wiz-elf-cha-mal,wiz-orc-cha-mal", "claude", 3))
     r.apply_state({
