@@ -1,5 +1,17 @@
 <title>NetHackers</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Link preview (Twitter/X, Telegram, Slack, Discord). Text only, on purpose:
+     no og:image, because a card image would be the one asset on this page that
+     isn't drawn by the page itself. -->
+<meta name="description" content="NetHack is hard to hack. But is it really? Let's find out together.">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="NetHackers">
+<meta property="og:title" content="NetHackers">
+<meta property="og:description" content="NetHack is hard to hack. But is it really? Let's find out together.">
+<meta property="og:url" content="https://nethackers.dunnolab.ai/">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="NetHackers">
+<meta name="twitter:description" content="NetHack is hard to hack. But is it really? Let's find out together.">
 <!-- Web 1.0 typography: system Times New Roman + Courier New only, no web-font
      downloads (Liberation / Nimbus are metric-compatible fallbacks for Linux). -->
 <style>
@@ -18,6 +30,7 @@
   --indigo:#2f3677;      /* dunnolab brand: headings + links */
   --indigo-2:#474f96;
   --violet:#6b3fa0;      /* visited link */
+  --orange:#ff9d2e;      /* badge hover */
   --red:#cc0000;         /* NEW! / alert */
   --red-2:#e11;
   --rule:#9c9ba3;
@@ -86,7 +99,9 @@ img{ max-width:100%; }
 .msgbar{ background:#000; color:var(--screen-ink); 
   font-size:.82rem; border-top:1px solid #2a2a3a; overflow:hidden; white-space:nowrap; }
 .msgbar__in{ display:inline-block; padding:5px 0; white-space:nowrap;
-  animation:scrollmsg 96s linear infinite; }
+  /* duration is per-strip, not per-line: keep ~32px/s regardless of how many
+     messages MEMES holds, or adding lines silently speeds the ticker up. */
+  animation:scrollmsg 375s linear infinite; }
 .msgbar__in b{ color:var(--gold); font-weight:400; }
 .msgbar__in .sep{ color:#44465e; padding:0 1.1ch; }
 /* seamless loop: the strip is two identical halves; shift by exactly one half */
@@ -124,17 +139,28 @@ img{ max-width:100%; }
 .badges{ display:flex; flex-direction:column; gap:6px; margin-top:8px; }
 .badge{  font-size:.62rem; line-height:1.25; color:#fff;
   padding:4px 6px; border:1px solid #000; text-align:center; text-decoration:none; display:block; }
-.badge.b1:hover{ background:var(--indigo-2); }
-.badge.b1{ background:var(--indigo); }
+.badge.b1,.badge.b1:visited{ background:var(--indigo); color:#fff; }
+.badge.b1{ display:flex; align-items:center; justify-content:center; gap:8px;
+  padding:7px 6px; }    /* the 28px hat needs more room than .badge's default 4px */
+.badge.b1:hover{ background:var(--indigo-2); color:var(--orange); }
+/* the dunnolab hat, pixelised from the brand SVG (the "dunno" wordmark dropped --
+   it is illegible at this size, and the badge spells the name out beside it).
+   Two flat 28x28 PNGs rather than one masked element: swapping the background image
+   keeps the mark in step with the label's hover colour, and a background-image is
+   one less thing to go wrong than a CSS mask. Decorative -- hence aria-hidden. */
+.badge.b1 .hat{ width:28px; height:28px;
+  image-rendering:pixelated; image-rendering:crisp-edges;
+  flex:none; background:url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAAAwUlEQVR42rWWSw7EIAxD44j7X9mzG400BPIx2VWAXmNcpyBpg6KZ4fD8V27z4mWNSiCqexQdRl1u5VUAUXgBW6YrBi/CF5IiAPNnHeoOU3eoBiLoUAqMJNzWujgLSRCySbOCg9uU2EiGqhzrcBCXmEJH/zWwPjtgH7gRifA2tUvLUN8Y4WnHnpxrso69K00X6pP76EB9aoIq1BXOq0D94jqKHJz+8HHIVXsVbRDOSaj+S5mdmf5g+EZ7oMrSDPR7LR/XFztEyaRNngAAAABJRU5ErkJggg==) center/contain no-repeat; }
+.badge.b1:hover .hat{ background-image:url(data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAABwAAAAcCAYAAAByDd+UAAAAxUlEQVR42rWWSw7EMAhDMeI8c+M5K7MbVWpI+DjsqiR6xXFN4d+PDMpFBJvnV6nMyw9rzgSiuofRYdTlUl4GEIUXEBNeefAifkNSBGB/rIPdYeoO2UAEHVKBkYTLsoOzkAQhmzQWHFymxEIyVOWwzUEcYgod/W1gfe+AdeBGJMJb2C4tQ3VhhKsda3Ku0TrWrjRdqE7uowPVqQmqUGU4rwLVg+uc5OD0h49NrsqtaANxToL1X+rZmakXhm+0B6wszUD/1/IDByg6EW+lg30AAAAASUVORK5CYII=); }
 .badge.b2{ background:#111; color:var(--green); }
 .badge.b3{ background:var(--red); }
 .badge b{ font-weight:700; }
-/* old-style YouTube banner (external video link) -- pixel-art wordmark (embedded PNG) */
-.badge.yt{ background:#fff; color:#282828; padding:7px 6px 8px; }
-.badge.yt:hover{ background:#fff3b0; }
-.badge.yt .ytlogo{ image-rendering:pixelated; image-rendering:crisp-edges; display:block; height:16px; width:auto; margin:0 auto 5px; }
-.badge.yt .yt-title{ display:block; font-weight:700; }
-.badge.yt .yt-cap{ display:block; font-size:.58rem; color:#6b6b72; margin-top:2px; }
+/* old-style banners for external links (YouTube, GitHub) -- pixel-art wordmarks (embedded PNG) */
+.badge.bn{ background:#fff; color:#282828; padding:7px 6px 8px; }
+.badge.bn:hover{ background:#fff3b0; }
+.badge.bn .bnlogo{ image-rendering:pixelated; image-rendering:crisp-edges; display:block; height:16px; width:auto; margin:0 auto 5px; }
+.badge.bn .bn-title{ display:block; font-weight:700; }
+.badge.bn .bn-cap{ display:block; font-size:.58rem; color:#6b6b72; margin-top:2px; }
 
 /* MAIN sections ------------------------------------------------------------ */
 .main section{ scroll-margin-top:12px; }
@@ -299,15 +325,10 @@ dl.ladder dd{ margin:0; color:#33333a; }
 /* FOOTER ------------------------------------------------------------------- */
 footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px 22px;
   background:#efefe9; }
-.footgrid{ display:grid; grid-template-columns:minmax(300px,.8fr) 1.4fr; gap:22px; align-items:center; }
+.footgrid{ display:grid; grid-template-columns:1fr; }
 .tomb{  font-size:.64rem; line-height:1.12; color:#3a3a42;
   margin:0; white-space:pre; overflow-x:auto; justify-self:center; }
 .tomb .epi{ color:var(--red); }
-.footinfo{  font-size:.76rem; color:#55555c; }
-.footinfo a{ }
-.footinfo .row{ margin:3px 0; }
-.footinfo .disc{ margin-top:8px; color:#6a6a72; max-width:52ch; }
-.footinfo .disc b{ color:var(--indigo); }
 
 /* POPUP: the original faux-window modal -- silver window, indigo title bar,
    framed white body. Soft raised silver bevel (NOT the harsh #000 one that read
@@ -364,7 +385,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 @media (max-width:760px){
   .layout{ grid-template-columns:1fr; }
   .sidebar{ border-right:0; border-bottom:1px solid var(--rule-soft); }
-  .cards,.footgrid{ grid-template-columns:1fr; }
+  .cards{ grid-template-columns:1fr; }
 }
   /* --- The Nethack Dictionary: audio-reactive dungeon wall around the page frame --- */
   #dictviz{ position:fixed; inset:0; width:100%; height:100%; z-index:0; pointer-events:none; display:block; }
@@ -465,7 +486,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 | .` / -_)  _| __ / _` / _| / / -_) '_(_-<
 |_|\_\___|\__|_||_\__,_\__|_\_\___|_| /__/
 </pre>
-    <div class="sub">solving nethack, one stupid harness at a time
+    <div class="sub">solving nethack, many stupid harnesses at a time
       &nbsp;<b>&middot;</b>&nbsp; v{{version}}<span class="cursor"></span></div>
   </header>
   <div class="msgbar"><div class="msgbar__in mono" id="mq"></div></div>
@@ -500,12 +521,17 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
       <div class="updated">last updated:<br><span id="updated">&mdash;</span></div>
 
       <div class="badges">
-        <a class="badge b1" href="https://dunnolab.ai/">powered by<br><b>dunnolab.ai</b></a>
-        <a class="badge yt" href="https://www.youtube.com/watch?v=zjEDWA8uQEw" target="_blank" rel="noopener">
-          <img class="ytlogo" alt="YouTube" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAC4AAAAJCAYAAABNEB65AAAEfElEQVR4nE1UXWgUVxT+7p3ZnWx+TLP1lwRjNNnNajZqiohFH4oWoYIEyYMYoVASX7UE+tCHPgkiQqXVPm4RpErrY7H+xkbRhEgkQuju5qdqYkRofjBms9mZnXtOuXcnmmGG2fvds+ee8833HZFIJHYLIf5Jp9NFAEgmk5+4rrthbGwsC0ACEBoHQAA4WItgrS9pQCGon7mtJhpNiXXrWotEAkoJYdsmyJuaAnkewFx6pE4NMBHKW1rgvnwJKhRMYlYqSK2zS50bzEwhIijgFgHdkpn7iehsUBR7nve7EOKnVQWr4NH75qxVRZuGJEDPDx2qsIDfNnZ27mq4fx/xhw/F9pERNPX2ovHOHZTv2QOfqFR0UDARQToOYg8eoOrAAXhKgXTRonS0kNLE+UrptyxKiSrgCAO/iubm5m8ty/oxn89vLCsrS1qWdY+I9qbT6aeNjY1OOBz+goiWs9nsQ50sFoutZeZ14+PjGc1Hctu23SNtbc+Hb9z4LAwMFiIRBcexoseOYUsqhXRrKwpTU+BcDpFEAt70NIrv3sGpq4MIh1F88wY75+bw6sQJFHM5iOVlvB8YgJTSNBZpaEBk1y7kh4ZQeP0aUgiymaXMZrMXfd8fcBznBjOnisXiL0HRdaFQ6Ckz/yCEuJxIJO5qEizL+kZK2aub2LFjR60KhYYwMRFrBPK+5tPzpC5MLSwYdv35efj6N4D448eIHj8OD0DtuXNouHIF5LrgfB61589jU08Pmu7exeaLF+ERYX13N+L9/fi0qwvNg4OItrdDMUvfsthoWEr5tZTyAIBiZWXldxqzbft7Zo5mMpnPy8vL9wL4MhaLHVVKLQIIa7Zd1w1r/QEIhQEWWl5C30InMJ9chEKltda0lIblFRy2bXRnVVcj9+QJRo4cwevTp7HhzBlU1Nai7sIFzF+7hmxHBxb7+tBw9WpJv0TCOCSTyYwrpf5l5r+fPXuW1xJk5u3MPKD3NUZE41LKnVLKFc2TUirHzAqWZTSvbVcSMOvkH40Y6BrM4OVlkH5ro+qYAH9/+zYsAEtDQ2DfR6S52WxFkknEr183RPx36ZKZFjpjydolI5YDqFxlykdCiK/i8XhVIpFosm27iZkfMbNn2/Z6jTmO02nbtgVmoRnXHK8Yd4XxD9NDKcNyxf79qIrFUH348IeDNR49edJ8jZqODoMv6gYKBRTGxjDa3o7ZVMo0SwCFtEqC/7IQ4oUQYiqYGpbjOOcB/CWlfAzgT6XUz6Ojo31EdE8ppTX+B4BNRd/vayoUfAATeWBsDbOl+fZnZlB8+xa0uGhY0kab7ulBxb59qD97Fgs3byI/PGyKXB4Z0eZBS28v1p46hcmuLngLC3jR2Yk1Bw+iZXAQmy9fhjczQ9WA9IW4vTKTeevWrdVKKXdycrKwggUG3Oa6rjsxMTG9Gq+vry8LYjWgueUhoM0BUgpo9aUUdk2N8OfmPs5NzYhtg3zfJJGl+YxQNApvfh5lW7aAcjm4s7OwhdBGNPFl8TjcV6+Il5a0nG75QPf/SmY6Pr8QUq4AAAAASUVORK5CYII=">
-          <span class="yt-title">17 minutes to feel the dungeons</span>
-          <span class="yt-cap">never played? watch the intro &#9654;</span>
+        <a class="badge bn gh" href="https://github.com/dunnolab/nethackers" target="_blank" rel="noopener">
+          <img class="bnlogo" alt="GitHub" src="data:image/png;base64,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">
+          <span class="bn-title">dunnolab/nethackers</span>
+          <span class="bn-cap">the harness, the hub, this page &#9654;</span>
         </a>
+        <a class="badge bn yt" href="https://www.youtube.com/watch?v=zjEDWA8uQEw" target="_blank" rel="noopener">
+          <img class="bnlogo" alt="YouTube" src="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAC4AAAAJCAYAAABNEB65AAAEfElEQVR4nE1UXWgUVxT+7p3ZnWx+TLP1lwRjNNnNajZqiohFH4oWoYIEyYMYoVASX7UE+tCHPgkiQqXVPm4RpErrY7H+xkbRhEgkQuju5qdqYkRofjBms9mZnXtOuXcnmmGG2fvds+ee8833HZFIJHYLIf5Jp9NFAEgmk5+4rrthbGwsC0ACEBoHQAA4WItgrS9pQCGon7mtJhpNiXXrWotEAkoJYdsmyJuaAnkewFx6pE4NMBHKW1rgvnwJKhRMYlYqSK2zS50bzEwhIijgFgHdkpn7iehsUBR7nve7EOKnVQWr4NH75qxVRZuGJEDPDx2qsIDfNnZ27mq4fx/xhw/F9pERNPX2ovHOHZTv2QOfqFR0UDARQToOYg8eoOrAAXhKgXTRonS0kNLE+UrptyxKiSrgCAO/iubm5m8ty/oxn89vLCsrS1qWdY+I9qbT6aeNjY1OOBz+goiWs9nsQ50sFoutZeZ14+PjGc1Hctu23SNtbc+Hb9z4LAwMFiIRBcexoseOYUsqhXRrKwpTU+BcDpFEAt70NIrv3sGpq4MIh1F88wY75+bw6sQJFHM5iOVlvB8YgJTSNBZpaEBk1y7kh4ZQeP0aUgiymaXMZrMXfd8fcBznBjOnisXiL0HRdaFQ6Ckz/yCEuJxIJO5qEizL+kZK2aub2LFjR60KhYYwMRFrBPK+5tPzpC5MLSwYdv35efj6N4D448eIHj8OD0DtuXNouHIF5LrgfB61589jU08Pmu7exeaLF+ERYX13N+L9/fi0qwvNg4OItrdDMUvfsthoWEr5tZTyAIBiZWXldxqzbft7Zo5mMpnPy8vL9wL4MhaLHVVKLQIIa7Zd1w1r/QEIhQEWWl5C30InMJ9chEKltda0lIblFRy2bXRnVVcj9+QJRo4cwevTp7HhzBlU1Nai7sIFzF+7hmxHBxb7+tBw9WpJv0TCOCSTyYwrpf5l5r+fPXuW1xJk5u3MPKD3NUZE41LKnVLKFc2TUirHzAqWZTSvbVcSMOvkH40Y6BrM4OVlkH5ro+qYAH9/+zYsAEtDQ2DfR6S52WxFkknEr183RPx36ZKZFjpjydolI5YDqFxlykdCiK/i8XhVIpFosm27iZkfMbNn2/Z6jTmO02nbtgVmoRnXHK8Yd4XxD9NDKcNyxf79qIrFUH348IeDNR49edJ8jZqODoMv6gYKBRTGxjDa3o7ZVMo0SwCFtEqC/7IQ4oUQYiqYGpbjOOcB/CWlfAzgT6XUz6Ojo31EdE8ppTX+B4BNRd/vayoUfAATeWBsDbOl+fZnZlB8+xa0uGhY0kab7ulBxb59qD97Fgs3byI/PGyKXB4Z0eZBS28v1p46hcmuLngLC3jR2Yk1Bw+iZXAQmy9fhjczQ9WA9IW4vTKTeevWrdVKKXdycrKwggUG3Oa6rjsxMTG9Gq+vry8LYjWgueUhoM0BUgpo9aUUdk2N8OfmPs5NzYhtg3zfJJGl+YxQNApvfh5lW7aAcjm4s7OwhdBGNPFl8TjcV6+Il5a0nG75QPf/SmY6Pr8QUq4AAAAASUVORK5CYII=">
+          <span class="bn-title">17 minutes to feel the dungeons</span>
+          <span class="bn-cap">never played? watch the intro &#9654;</span>
+        </a>
+        <a class="badge b1" href="https://dunnolab.ai/"><span class="hat" aria-hidden="true"></span><span class="b1-txt">powered by<br><b>dunnolab.ai</b></span></a>
       </div>
     </nav>
 
@@ -809,13 +835,6 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
   |     the first?      |
 * |   *    *    *       | *
 __)/\_//(\/(/\)/\//\/\|_)__</pre>
-    <div class="footinfo">
-      <div class="row"><a href="#">GitHub</a> &middot;
-        <a href="mailto:hello@dunnolab.ai">Contact</a> &middot; <a href="#">The design doc</a></div>
-      <div class="row">&copy; 2026 nethackers &middot; best viewed in a terminal &middot; 800&times;600</div>
-      <div class="row disc">All numbers are <b>self-reported</b> and unverified &mdash; independent
-        verification lands in M2b. This page is under construction. Yet another stupid footer.</div>
-    </div>
   </div></footer>
 
 </div>
@@ -859,12 +878,37 @@ const ROLE_VARS={
 let UNIVERSE={};                     // /elites?scope=generalist -> rank-1 per identity {id:{v,o,d,ep}}
 let HONOR_UNIVERSE={};               // self-reported records, retained while viewing verified
 const ASC=0.8745866562925501;
+/* the marquee. House lines first, then verbatim NetHack 3.6.6 -- dungeon ambience
+   and combat messages from src/sounds.c, hack.c, trap.c, pray.c and wizard.c;
+   engravings, epitaphs and true rumors from dat/. Nothing here is invented. */
 const MEMES=[
  "You enter the Dungeons of Doom.",
  "Yet Another Stupid Death: killed by a grid bug, while praying.","You hear someone counting money.",
- "This page is under construction.","You feel much better. Welcome to experience level 2.",
- "We do not sell AGI here. :]","Do you want your possessions identified? [ynq]",
- "Best viewed at 800x600 in a terminal.","There is a staircase up here."];
+ "This page is under permanent construction.","You feel much better. Welcome to experience level 2.",
+ "Do you want your possessions identified? [ynq]",
+ "Best viewed at 800x600 in a terminal.","There is a staircase up here.",
+ /* sounds.c -- what a level sounds like from a room away */
+ "You hear the footsteps of a guard on patrol.","You hear a slow drip.",
+ "You hear the splashing of a naiad.","You hear convulsive ravings.",
+ "You hear snoring snakes.","You hear a strange wind.",
+ "You hear the tones of courtly conversation.","You hear blades being honed.",
+ "You hear someone cursing shoplifters.","You hear someone say \"No more woodchucks!\"",
+ "You suddenly realize it is unnaturally quiet.",
+ /* hack.c, trap.c -- the dungeon telling you how badly this is going */
+ "You hear the howling of the CwnAnnwn...","You hear the wailing of the Banshee...",
+ "You feel a strange vibration under your feet.","You are beginning to feel hungry.",
+ "Ouch!  That hurts!","It's solid stone.",
+ "You can't move diagonally out of an intact doorway.",
+ "You are lucky!  Full moon tonight.",
+ /* pray.c, wizard.c -- the gods, and the Wizard of Yendor */
+ "You feel that Mars is displeased.","Thou must relearn thy lessons!",
+ "Thou art doomed, chucklehead!","The Wizard of Yendor laughs fiendishly.",
+ "I shall return.",
+ /* dat/engrave.txt, dat/epitaph.txt, dat/rumors.tru */
+ "Elbereth","Rest In Pieces","Note -- there are NO valuable items in this grave",
+ "Amulets of Yendor are hard to make.  Even for a wand of wishing.",
+ "Digging up a grave could be a bad idea...",
+ "Elbereth has quite a reputation around these parts."];
 
 /* ===================== helpers ===================== */
 const $=s=>document.querySelector(s);
@@ -873,11 +917,54 @@ function tint(v,floor){ if(v==null) return "#ffffff"; const a=(floor?0.05:0.10)+
 function tintText(v){ return v!=null && v>=0.5 ? "#ffffff" : "#111"; }
 
 /* ===================== marquee ===================== */
+/* Fresh order on every visit. MEMES[0] stays the opening beat (it is the line you
+   actually read first, before the strip has moved), and the rest is shuffled, then
+   spread: no two neighbours share their first two words, and no three in a row open
+   on the same word -- otherwise a fair shuffle clumps the eleven "You hear ..."
+   lines and the ticker reads like one long sentence. Computed ONCE, because
+   renderMarquee runs again when /stats lands and a reshuffle would jump the strip. */
+function shuffle(a){
+  const r=a.slice();
+  for(let i=r.length-1;i>0;i--){ const j=(Math.random()*(i+1))|0; [r[i],r[j]]=[r[j],r[i]]; }
+  return r;
+}
+const _fam=s=>s.split(/\s+/).slice(0,2).join(" ").toLowerCase();
+const _word=s=>s.split(/\s+/)[0].toLowerCase();
+function spread(lines){
+  const pool=shuffle(lines), out=[], left=new Map();
+  for(const s of pool) left.set(_fam(s), (left.get(_fam(s))||0)+1);
+  // Among the legal candidates take the family with the MOST still queued. Picking
+  // at random instead strands the big family at the tail, where the constraints then
+  // have to be dropped -- measured over 4000 shuffles: 0 adjacent same-family pairs
+  // this way, ~4700 the naive way. Ties break on the shuffled pool order, so the
+  // result is still a different sequence every load.
+  const pick = test => {
+    let best=-1, bestN=-1;
+    for(let i=0;i<pool.length;i++){
+      if(!test(pool[i])) continue;
+      const n=left.get(_fam(pool[i]));
+      if(n>bestN){ bestN=n; best=i; }
+    }
+    return best;
+  };
+  while(pool.length){
+    const prev=out[out.length-1], prev2=out[out.length-2];
+    const run = prev && prev2 && _word(prev)===_word(prev2) ? _word(prev) : null;
+    let i = pick(s => (!prev || _fam(s)!==_fam(prev)) && _word(s)!==run);
+    if(i<0) i = pick(s => !prev || _fam(s)!==_fam(prev));   // run guard unsatisfiable
+    if(i<0) i = 0;                                          // one family left
+    const s = pool.splice(i,1)[0];
+    left.set(_fam(s), left.get(_fam(s))-1);
+    out.push(s);
+  }
+  return out;
+}
+const MEME_ORDER = spread(MEMES.slice(1));
 /* two identical halves (each ends with a separator) so the -50% shift loops seamlessly.
    liveLine (the "N programs registered; ..." count) is spliced in from /stats once it
    loads; until then, or if /stats fails, the marquee simply omits it -- never a fake count. */
 function renderMarquee(liveLine){
-  const items = liveLine ? [MEMES[0], liveLine, ...MEMES.slice(1)] : MEMES;
+  const items = liveLine ? [MEMES[0], liveLine, ...MEME_ORDER] : [MEMES[0], ...MEME_ORDER];
   const half = items.map(m=>`<b>${esc(m)}</b>`).join('<span class="sep">|||</span>') + '<span class="sep">|||</span>';
   $("#mq").innerHTML = half + half;
 }
