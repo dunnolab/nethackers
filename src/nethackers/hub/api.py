@@ -44,6 +44,8 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
+from nethackers._image_pins import ARENA_IMAGE
+from nethackers.arena.seeds import secret_fingerprint as _fp
 from nethackers.contracts.models import Evidence, ObjectiveSpec
 from nethackers.hub.auth import AuthError, AuthProvider, GitHubAppAuth, LocalStubAuth
 from nethackers.hub.envelope import envelope
@@ -59,6 +61,17 @@ from nethackers.hub.validate import (
     WrongOwner,
     register,
 )
+from nethackers.hub.verify import (
+    UnknownSolution,
+    VerifierAuthError,
+    VerifierConfig,
+    VerifyError,
+    record_attempt,
+    register_verified,
+    register_verified_baseline,
+    resolve_verifier,
+    verify_candidates,
+)
 from nethackers.hub.views.achievements import (
     coverage as achievements_coverage,
     firsts as achievements_firsts,
@@ -68,11 +81,12 @@ from nethackers.hub.views.baseline import read_baseline
 from nethackers.hub.views.boards import aggregate_board, board, resolve_scope
 from nethackers.hub.views.elites import read_elites
 from nethackers.hub.views.hackers import hacker_board, leaders as hackers_leaders
-from nethackers.hub.views.programs import get_program, list_programs
+from nethackers.hub.views.programs import count_programs, get_program, list_programs
 from nethackers.hub.views.progress import read_progress
 from nethackers.hub.views.recognition import read_recognition
 from nethackers.hub.views.solution import read_solution_frontier
 from nethackers.hub.views.stats import read_stats
+from nethackers.hub.views.verified import read_verified, read_verified_baseline
 
 # The index.html file shipped in the wheel package data.
 _INDEX = Path(__file__).parent / "web" / "index.html"
@@ -99,6 +113,44 @@ class RegisterRequest(BaseModel):
     reference: dict[str, str]
     manifest: dict[str, Any]
     evidence: dict[str, Any]
+
+
+class VerifyRequest(BaseModel):
+    """The ``POST /verify`` envelope: a ``repo@commit`` reference (same raw
+    ``{repo, commit}`` dict shape as ``RegisterRequest.reference``, parsed by
+    hand into ``SolutionReference``) plus the verifier's own ``Evidence`` and
+    the ``secret_fingerprint`` it computed over the hidden secret it was
+    handed (``register_verified`` checks that fingerprint, never a raw
+    secret, against the hub's own -- the raw hidden secret never appears in
+    this request)."""
+
+    reference: dict[str, str]
+    evidence: dict[str, Any]
+    secret_fingerprint: str
+
+
+class VerifyBaselineRequest(BaseModel):
+    """The ``POST /verify/baseline`` envelope: ``VerifyRequest`` minus the
+    ``reference``. AutoAscend is the reference floor, not a participant, so
+    there is no ``repo@commit`` to name -- the identity of the submission is
+    fixed by the route itself, not supplied by the caller."""
+
+    evidence: dict[str, Any]
+    secret_fingerprint: str
+
+
+class VerifyAttemptRequest(BaseModel):
+    """The ``POST /verify/attempts`` envelope: a ``repo@commit`` reference,
+    evaluator image digest, secret fingerprint, and attempt outcome
+    (status, optional failure kind and message, identities completed)."""
+
+    reference: dict[str, str]
+    evaluator_image: str
+    secret_fingerprint: str
+    status: str
+    failure_kind: str | None = None
+    message: str | None = None
+    identities_done: int = 0
 
 
 class PollVoteRequest(BaseModel):
@@ -128,13 +180,21 @@ def create_app(
     *,
     catalog: dict[str, ObjectiveSpec] = CATALOG,
     git_factory: Callable[[str], CommitChecker] = lambda token: GitHubRead(token),
+    verifier: VerifierConfig | None = None,
 ) -> FastAPI:
     """Build a hub API app over ``store``/``auth``. Every route is a closure
-    over ``store``/``auth``/``catalog``/``git_factory`` -- see module
-    docstring for the catalog-injection scope. ``git_factory`` maps the
+    over ``store``/``auth``/``catalog``/``git_factory``/``verifier`` -- see
+    module docstring for the catalog-injection scope. ``git_factory`` maps the
     caller's Bearer token to a commit-checker (default: a real ``GitHubRead``;
     tests inject a fake). Reads delegate straight to the view/store functions;
-    nothing here executes candidate code."""
+    nothing here executes candidate code.
+
+    ``verifier`` is the optional ``VerifierConfig`` gating the verified-tier
+    routes (``GET /verify/config``, ``POST /verify``; Tasks 6/7 add more) --
+    defaults to ``None`` (verification unconfigured, routes 503) so every
+    existing call site is unaffected. ``POST /verify`` writes into the
+    isolated ``verified_atoms`` table via ``register_verified`` -- it never
+    touches the self-reported ``atoms`` table ``POST /register`` owns."""
     app = FastAPI()
 
     @app.get("/healthz")
@@ -283,7 +343,8 @@ def create_app(
 
     @app.get("/programs")
     def programs(owner: str | None = None, limit: int = 50, offset: int = 0) -> dict[str, Any]:
-        return envelope(list_programs(store, owner=owner, limit=limit, offset=offset), owner=owner)
+        return envelope(list_programs(store, owner=owner, limit=limit, offset=offset),
+                        owner=owner, total=count_programs(store, owner=owner))
 
     @app.get("/programs/{program_id}/identities")
     def program_identities(program_id: str) -> dict[str, Any]:
@@ -350,6 +411,142 @@ def create_app(
             raise HTTPException(status_code=502, detail=f"{type(e).__name__}: {e}") from e
         return asdict(result)
 
+    @app.get("/verify/config")
+    def verify_config(authorization: str | None = Header(default=None)) -> dict[str, Any]:
+        if verifier is None:
+            raise HTTPException(status_code=503, detail="verification not configured")
+        token = _bearer_token(authorization)
+        try:
+            resolve_verifier(token, verifier)
+        except VerifierAuthError as e:
+            raise HTTPException(status_code=401, detail=str(e)) from e
+        return {"secret": verifier.secret, "seeds": list(verifier.seeds)}
+
+    @app.post("/verify")
+    def verify_solution(
+        body: VerifyRequest, authorization: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        if verifier is None:
+            raise HTTPException(status_code=503, detail="verification not configured")
+        token = _bearer_token(authorization)
+        try:
+            tok_fp = resolve_verifier(token, verifier)
+        except VerifierAuthError as e:
+            raise HTTPException(status_code=401, detail=str(e)) from e
+        try:
+            result = register_verified(
+                store,
+                reference=SolutionReference(**body.reference),
+                evidence=Evidence.from_dict(body.evidence),
+                secret_fingerprint=body.secret_fingerprint,
+                verifier_token_fingerprint=tok_fp,
+                now=datetime.now(UTC).isoformat(),
+                expected_image=ARENA_IMAGE,
+                hub_secret=verifier.secret,
+                seeds=verifier.seeds,
+            )
+        except UnknownSolution as e:
+            raise HTTPException(status_code=404, detail=f"{type(e).__name__}: {e}") from e
+        except VerifyError as e:
+            raise HTTPException(status_code=400, detail=f"{type(e).__name__}: {e}") from e
+        return {
+            "inserted": result.inserted,
+            "ignored": result.total - result.done,
+            "coverage": {"done": result.done, "total": result.total},
+        }
+
+    @app.post("/verify/baseline")
+    def verify_baseline(
+        body: VerifyBaselineRequest, authorization: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        # AutoAscend's hidden-seed floor. Token-gated exactly like POST
+        # /verify -- an unauthenticated writer able to lower the floor would
+        # inflate every program's Delta-vs-AA just as surely as one able to
+        # raise a program's own score.
+        if verifier is None:
+            raise HTTPException(status_code=503, detail="verification not configured")
+        token = _bearer_token(authorization)
+        try:
+            tok_fp = resolve_verifier(token, verifier)
+        except VerifierAuthError as e:
+            raise HTTPException(status_code=401, detail=str(e)) from e
+        try:
+            result = register_verified_baseline(
+                store,
+                evidence=Evidence.from_dict(body.evidence),
+                secret_fingerprint=body.secret_fingerprint,
+                verifier_token_fingerprint=tok_fp,
+                expected_image=ARENA_IMAGE,
+                hub_secret=verifier.secret,
+                seeds=verifier.seeds,
+            )
+        except VerifyError as e:
+            raise HTTPException(status_code=400, detail=f"{type(e).__name__}: {e}") from e
+        return {
+            "inserted": result.inserted,
+            "coverage": {"done": result.done, "total": result.total},
+        }
+
+    @app.post("/verify/attempts")
+    def verify_attempt(
+        body: VerifyAttemptRequest, authorization: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        if verifier is None:
+            raise HTTPException(status_code=503, detail="verification not configured")
+        token = _bearer_token(authorization)
+        try:
+            tok_fp = resolve_verifier(token, verifier)
+        except VerifierAuthError as e:
+            raise HTTPException(status_code=401, detail=str(e)) from e
+        record_attempt(
+            store, reference=SolutionReference(**body.reference),
+            secret_fingerprint=body.secret_fingerprint,
+            evaluator_image=body.evaluator_image,
+            verifier_token_fingerprint=tok_fp, status=body.status,
+            failure_kind=body.failure_kind,
+            message=body.message, identities_done=body.identities_done,
+            now=datetime.now(UTC).isoformat())
+        return {"ok": True}
+
+    @app.get("/verify/candidates")
+    def verify_candidates_route(
+        limit: int = 8, authorization: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        if verifier is None:
+            raise HTTPException(status_code=503, detail="verification not configured")
+        token = _bearer_token(authorization)
+        try:
+            resolve_verifier(token, verifier)
+        except VerifierAuthError as e:
+            raise HTTPException(status_code=401, detail=str(e)) from e
+        rows = verify_candidates(
+            store, secret_fingerprint=_fp(verifier.secret),
+            evaluator_image=ARENA_IMAGE, seeds=verifier.seeds, limit=limit,
+        )
+        return envelope(rows)
+
+    @app.get("/verify/overview")
+    def verify_overview() -> dict[str, Any]:
+        # Public: per-identity aggregates only, never raw per-seed rows or
+        # seed ids (the seeds are secret). ``baseline`` is AutoAscend's floor
+        # on the same hidden seeds under the same epoch -- what makes a
+        # verified progression readable as "vs AutoAscend" rather than a bare
+        # number. It is additive: callers reading only per_identity/overall
+        # are unaffected.
+        empty: dict[str, Any] = {"per_identity": {}, "overall": None}
+        if verifier is None:
+            return {**empty, "baseline": empty}
+        # Explicit kwargs rather than a **dict: the two reads MUST share one
+        # epoch scope (a Delta across epochs is meaningless), and spelling it
+        # out keeps that checkable by the typechecker.
+        fingerprint, seeds = _fp(verifier.secret), verifier.seeds
+        return {
+            **read_verified(store, secret_fingerprint=fingerprint, seeds=seeds,
+                            evaluator_image=ARENA_IMAGE),
+            "baseline": read_verified_baseline(store, secret_fingerprint=fingerprint,
+                                               seeds=seeds, evaluator_image=ARENA_IMAGE),
+        }
+
     return app
 
 
@@ -372,6 +569,13 @@ def create_default_app() -> FastAPI:
       when set, auth is ``LocalStubAuth`` over that map (offline dev/demo).
       Otherwise auth is ``GitHubAppAuth(NETHACKERS_CLIENT_ID)`` (the real
       device-flow validator; ``NETHACKERS_CLIENT_ID`` is then required).
+    - ``NETHACKERS_HIDDEN_SECRET``: the verified-tier hidden-eval secret. When
+      unset, ``verifier`` stays ``None`` and the verified-tier routes 503.
+    - ``NETHACKERS_HIDDEN_SEEDS`` (default ``"[]"``): a JSON list of the
+      hidden seed ints, read only when ``NETHACKERS_HIDDEN_SECRET`` is set.
+    - ``NETHACKERS_VERIFIER_TOKENS``: a comma-separated list of tokens
+      accepted as verifier auth (empties dropped), read only when
+      ``NETHACKERS_HIDDEN_SECRET`` is set.
     """
     db = os.environ.get("NETHACKERS_DB", "/data/hub.db")
     store = Store(db)
@@ -387,4 +591,35 @@ def create_default_app() -> FastAPI:
         auth = LocalStubAuth(json.loads(stub))
     else:
         auth = GitHubAppAuth(os.environ["NETHACKERS_CLIENT_ID"])
-    return create_app(store, auth)
+
+    verifier: VerifierConfig | None = None
+    secret = os.environ.get("NETHACKERS_HIDDEN_SECRET")
+    if secret:
+        seeds = tuple(json.loads(os.environ.get("NETHACKERS_HIDDEN_SEEDS", "[]")))
+        raw_tokens = os.environ.get("NETHACKERS_VERIFIER_TOKENS", "").split(",")
+        tokens = frozenset(t for t in raw_tokens if t)
+        verifier = VerifierConfig(tokens=tokens, secret=secret, seeds=seeds)
+    app = create_app(store, auth, verifier=verifier)
+    _limit_worker_threads(app, int(os.environ.get("NETHACKERS_THREADS", "2")))
+    return app
+
+
+def _limit_worker_threads(app: FastAPI, total: int) -> None:
+    """Cap the threadpool FastAPI runs this package's sync handlers in.
+
+    Every handler here is a sync ``def``, so each request occupies a worker
+    thread doing almost pure Python (rows -> objects -> JSON). AnyIO's
+    default of 40 lets 40 such threads fight over the GIL, and measured
+    throughput *falls* as load rises -- 7.1 page views/s at one client down
+    to 0.4/s at ten, a convoy, not saturation. Capping the pool keeps
+    throughput flat instead: at 40 concurrent clients, 2 threads served
+    ~16x more than 40 did.
+
+    Set via ``NETHACKERS_THREADS`` (default 2). Raise it only alongside
+    evidence -- more threads is what causes the collapse, not what cures
+    it. Applied per worker process, so N uvicorn workers give N*total."""
+    @app.on_event("startup")
+    async def _cap() -> None:  # pragma: no cover - startup hook
+        import anyio.to_thread
+
+        anyio.to_thread.current_default_thread_limiter().total_tokens = total

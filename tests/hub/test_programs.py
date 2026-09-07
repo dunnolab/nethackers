@@ -95,3 +95,37 @@ def test_program_regime_end_to_end_champion_to_identities(tmp_path):
     # The bug this closes: the retired route only ever understood a real
     # solution digest, never an opaque program_id.
     assert client.get(f"/solutions/{pid}/frontier").status_code == 404
+
+
+def _seed_owner(store, owner, n, *, start=0):
+    """``n`` distinct programs for ``owner`` -- enough to page past a limit."""
+    for i in range(start, start + n):
+        commit = f"{i:040x}"
+        store.upsert_solution(f"github.com/{owner}/bot@{commit}",
+                              repo=f"github.com/{owner}/bot", commit_sha=commit,
+                              owner=owner, root=".", entrypoint="bot.py",
+                              registered_at=f"2026-08-24T00:00:{i % 60:02d}Z")
+
+
+def test_programs_envelope_reports_true_total_not_page_length(tmp_path):
+    """The website's hacker popup prints "registered programs" from this
+    response. It read the PAGE LENGTH, so every hacker past the page size was
+    reported as exactly the page size (prod: vkurenkov's 237 programs shown as
+    50). A page cannot know the size of the set it came from -- so the envelope
+    carries the honest ``total`` for the same filter, independent of paging."""
+    client, store = _client(tmp_path)
+    _seed_owner(store, "cinemere", 106)
+    _seed_owner(store, "Luab", 7)
+
+    page = client.get("/programs?owner=cinemere&limit=50").json()
+    assert len(page["rows"]) == 50           # still one page
+    assert page["total"] == 106              # ...of a set this big
+
+    assert client.get("/programs?owner=Luab&limit=50").json()["total"] == 7
+    # unfiltered total counts every owner (106 + 7 + the fixture's 1)
+    assert client.get("/programs?limit=10").json()["total"] == 114
+    # the total is a property of the SET, not of the page: a short tail page
+    # (6 rows past offset 100) still reports 106
+    tail = client.get("/programs?owner=cinemere&limit=50&offset=100").json()
+    assert len(tail["rows"]) == 6 and tail["total"] == 106
+    assert client.get("/programs?owner=nobody&limit=50").json()["total"] == 0

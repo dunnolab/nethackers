@@ -128,6 +128,16 @@ class HubClient:
         }
         return (self._get("/programs", params) or {}).get("rows", [])
 
+    def program_count(self, owner: str) -> int:
+        """``GET /programs?owner=&limit=1`` -> the envelope's ``total``: how many
+        programs ``owner`` has registered, whatever the page size. Counting
+        ``search()`` rows instead caps at ``limit`` -- that is what reported a
+        flat 50 for a hacker with 237. Falls back to counting a page against a
+        hub too old to send ``total`` (undercounting there, exactly as before)."""
+        body = self._get("/programs", {"owner": owner, "limit": 1}) or {}
+        total = body.get("total")
+        return int(total) if isinstance(total, int) else len(self.search(owner) or [])
+
     def show(self, program_id: str) -> Any:
         """``GET /programs/{id}`` -- the ``{id, owner, reference:{repo,
         commit}, registered_at}`` object (a single resource, not enveloped)."""
@@ -186,6 +196,25 @@ class HubClient:
         except HubUnreachable:
             mode = None
         return AuthError(_OFFLINE_401_HINT) if mode != "github" else AuthError(fallback)
+
+    def _get_authed(self, path: str, token: str,
+                    params: dict[str, Any] | None = None) -> Any:
+        kwargs: dict[str, Any] = {"params": params, "headers":
+                                  {"Authorization": f"Bearer {token}"}}
+        if self._timeout is not None:
+            kwargs["timeout"] = self._timeout
+        response = self._http.get(self._base + path, **kwargs)
+        response.raise_for_status()
+        return response.json()
+
+    def _post_authed(self, path: str, token: str, body: dict[str, Any]) -> Any:
+        kwargs: dict[str, Any] = {"json": body, "headers":
+                                  {"Authorization": f"Bearer {token}"}}
+        if self._timeout is not None:
+            kwargs["timeout"] = self._timeout
+        response = self._http.post(self._base + path, **kwargs)
+        response.raise_for_status()
+        return response.json()
 
     def _post_register(self, token: str, reference: dict[str, Any],
                        manifest: dict[str, Any], evidence: dict[str, Any]) -> Any:
@@ -249,6 +278,52 @@ class HubClient:
                     raise self._auth_error_for_401(
                         "the hub rejected the token even after refresh") from exc2
                 raise
+
+    def get_verify_config(self, token: str) -> Any:
+        """``GET /verify/config`` with a ``Bearer`` token."""
+        return self._get_authed("/verify/config", token)
+
+    def get_verify_candidates(self, token: str, *, limit: int = 8) -> Any:
+        """``GET /verify/candidates?limit=`` with a ``Bearer`` token.
+        Envelope unwrapped -- returns the rows."""
+        return (self._get_authed("/verify/candidates", token, {"limit": limit})
+                or {}).get("rows", [])
+
+    def post_verify(self, token: str, *, reference: dict[str, Any],
+                    evidence: dict[str, Any],
+                    secret_fingerprint: str) -> Any:
+        """``POST /verify`` with a ``Bearer`` token and the
+        ``{reference, evidence, secret_fingerprint}`` body."""
+        return self._post_authed("/verify", token, {
+            "reference": reference, "evidence": evidence,
+            "secret_fingerprint": secret_fingerprint})
+
+    def get_verify_overview(self) -> Any:
+        """``GET /verify/overview`` -- public (no token): per-identity
+        aggregates for the verified tier plus AutoAscend's hidden-seed floor
+        under ``baseline``. Never exposes raw seeds."""
+        return self._get("/verify/overview")
+
+    def post_verify_baseline(self, token: str, *, evidence: dict[str, Any],
+                             secret_fingerprint: str) -> Any:
+        """``POST /verify/baseline`` with a ``Bearer`` token: AutoAscend's
+        hidden-seed floor. No ``reference`` -- the floor is not a program."""
+        return self._post_authed("/verify/baseline", token, {
+            "evidence": evidence, "secret_fingerprint": secret_fingerprint,
+        })
+
+    def post_verify_attempt(self, token: str, *, reference: dict[str, Any],
+                            evaluator_image: str, secret_fingerprint: str,
+                            status: str, failure_kind: str | None,
+                            message: str | None, identities_done: int) -> Any:
+        """``POST /verify/attempts`` with a ``Bearer`` token and the attempt
+        details (reference, evaluator_image, secret_fingerprint, status,
+        failure_kind, message, identities_done)."""
+        return self._post_authed("/verify/attempts", token, {
+            "reference": reference, "evaluator_image": evaluator_image,
+            "secret_fingerprint": secret_fingerprint, "status": status,
+            "failure_kind": failure_kind, "message": message,
+            "identities_done": identities_done})
 
 
 def _is_numeric(cell: str) -> bool:

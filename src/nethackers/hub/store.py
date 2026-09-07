@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+import threading
 from pathlib import Path
 from typing import Any
 
@@ -71,6 +72,54 @@ CREATE TABLE IF NOT EXISTS baseline_atoms (
     steps INTEGER NOT NULL,
     evaluator_image TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+CREATE TABLE IF NOT EXISTS verified_atoms (
+    solution_digest TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    tier TEXT NOT NULL,
+    identity TEXT NOT NULL,
+    seed INTEGER NOT NULL,
+    progression REAL NOT NULL,
+    milestone TEXT,
+    ascended INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    turns INTEGER NOT NULL,
+    steps INTEGER NOT NULL,
+    evaluator_image TEXT NOT NULL,
+    secret_fingerprint TEXT NOT NULL,
+    verifier_token_fingerprint TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(solution_digest, identity, seed, secret_fingerprint, evaluator_image)
+);
+CREATE TABLE IF NOT EXISTS verified_baseline_atoms (
+    solution_digest TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    tier TEXT NOT NULL,
+    identity TEXT NOT NULL,
+    seed INTEGER NOT NULL,
+    progression REAL NOT NULL,
+    milestone TEXT,
+    ascended INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    turns INTEGER NOT NULL,
+    steps INTEGER NOT NULL,
+    evaluator_image TEXT NOT NULL,
+    secret_fingerprint TEXT NOT NULL,
+    verifier_token_fingerprint TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(identity, seed, secret_fingerprint, evaluator_image)
+);
+CREATE TABLE IF NOT EXISTS verified_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    solution_digest TEXT NOT NULL,
+    secret_fingerprint TEXT NOT NULL,
+    evaluator_image TEXT NOT NULL,
+    verifier_token_fingerprint TEXT NOT NULL,
+    status TEXT NOT NULL,
+    failure_kind TEXT,
+    message TEXT,
+    identities_done INTEGER NOT NULL,
+    at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 CREATE TABLE IF NOT EXISTS lineage (
     child_digest TEXT NOT NULL REFERENCES solutions(digest),
@@ -128,6 +177,15 @@ _ITER_ATOMS_FILTER_KEYS: frozenset[str] = frozenset(
         "seed", "ascended", "status", "milestone",
     }
 )
+
+_VERIFIED_EXTRA_COLUMNS = ("secret_fingerprint", "verifier_token_fingerprint")
+_ITER_VERIFIED_FILTER_KEYS = _ITER_ATOMS_FILTER_KEYS | {
+    "secret_fingerprint", "evaluator_image", "verifier_token_fingerprint",
+}
+
+_ATTEMPT_COLUMNS = ("solution_digest", "secret_fingerprint", "evaluator_image",
+                    "verifier_token_fingerprint", "status", "failure_kind", "message",
+                    "identities_done", "at")
 
 
 def _migrate_drop_objective_digest(conn: sqlite3.Connection) -> None:
@@ -208,25 +266,58 @@ def _migrate_add_program_id(conn: sqlite3.Connection) -> None:
 
 
 class Store:
-    """A single-connection sqlite3 data layer over the hub's schema.
+    """A sqlite3 data layer over the hub's schema, with ONE CONNECTION PER
+    THREAD.
 
-    Thread-safety beyond ``check_same_thread=False`` is the API task's
-    concern (task-5-context.md); a single connection is fine for M2a.
+    It used to hold a single connection shared by every caller. FastAPI runs
+    this package's sync (``def``) handlers in a worker threadpool, so that
+    connection was used concurrently by many threads -- and ``sqlite3``
+    caches prepared statements *per connection*, so two threads running the
+    same SQL got the same statement object and clobbered each other's
+    results. In practice that surfaced as ``fetchone()`` returning ``None``
+    for a ``SELECT COUNT(*)`` (``read_stats`` crashing with ``'NoneType' is
+    not subscriptable``), short ``zip()``s, and ``InterfaceError: bad
+    parameter or other API misuse``. It needed no load to trigger: the
+    website's boot fans out four parallel requests, so a single visitor
+    could race it.
+
+    Every connection is therefore thread-local and created on first use in
+    that thread. Callers are unaffected: transactions here are always
+    ``with self._conn:`` *within one method call*, and a request is served
+    on one thread, so no transaction ever spans threads. The threadpool is
+    bounded, so the number of connections is too.
     """
 
     def __init__(self, db_path: str | Path) -> None:
-        self._conn: sqlite3.Connection = sqlite3.connect(db_path, check_same_thread=False)
-        # sqlite defaults foreign keys OFF, and it's a per-connection
-        # setting -- required for insert_atoms' FK integrity behavior.
-        self._conn.execute("PRAGMA foreign_keys = ON")
+        self._db_path = str(db_path)
+        self._local = threading.local()
+
+    @property
+    def _conn(self) -> sqlite3.Connection:
+        """This thread's connection, opened (and PRAGMA'd) on first use.
+
+        ``journal_mode=WAL`` matters now that there are concurrent
+        connections: under the default rollback journal a writer locks out
+        every reader, so one ``/register`` would stall the whole site.
+        ``busy_timeout`` makes a contended write wait rather than raise
+        ``SQLITE_BUSY`` immediately."""
+        conn = getattr(self._local, "conn", None)
+        if conn is None:
+            conn = sqlite3.connect(self._db_path, check_same_thread=False)
+            # sqlite defaults foreign keys OFF, and it's a per-connection
+            # setting -- required for insert_atoms' FK integrity behavior.
+            conn.execute("PRAGMA foreign_keys = ON")
+            conn.execute("PRAGMA journal_mode = WAL")
+            conn.execute("PRAGMA busy_timeout = 5000")
+            self._local.conn = conn
+        return conn
 
     @property
     def conn(self) -> sqlite3.Connection:
-        """The store's single live connection (FK pragma already set) --
-        the seam the derived views (Tasks 7-9) use to own their own SQL
-        against the ``attainment``/``attainment_holders`` tables (plus the
-        live ``/elites`` query straight over ``atoms``), without opening a
-        second connection to the same db file."""
+        """This thread's live connection (PRAGMAs already set) -- the seam
+        the derived views (Tasks 7-9) use to own their own SQL against the
+        ``attainment``/``attainment_holders`` tables (plus the live
+        ``/elites`` query straight over ``atoms``)."""
         return self._conn
 
     def init_schema(self) -> None:
@@ -287,6 +378,13 @@ class Store:
         row = self._conn.execute(
             "SELECT digest FROM solutions WHERE program_id = ?", (program_id,)).fetchone()
         return row[0] if row is not None else None
+
+    def iter_solutions(self) -> list[dict[str, Any]]:
+        """Every registered solution, as ``{digest, repo, commit_sha}`` --
+        the source Task 7's ``verify_candidates`` scans to find programs
+        still lacking full verified coverage."""
+        rows = self._conn.execute("SELECT digest, repo, commit_sha FROM solutions").fetchall()
+        return [{"digest": d, "repo": r, "commit_sha": c} for d, r, c in rows]
 
     def random_owners(self, n: int) -> list[str]:
         """Up to ``n`` random distinct hacker handles -- the ``owner``s in
@@ -398,6 +496,52 @@ class Store:
             for (m, t, r, x) in rows
         ]
 
+    def _insert_atom_rows(self, table: str, atoms: list[Atom], *,
+                          extra: tuple[str, ...] = ()) -> int:
+        """``INSERT OR IGNORE`` ``atoms`` into ``table``, appending ``extra``
+        (the epoch/attribution columns the verified tables carry beyond
+        ``_ATOM_COLUMNS``) to every row. Returns rows actually inserted --
+        dedup on the table's own UNIQUE key makes a re-submit a no-op.
+
+        ``table`` is spliced into the SQL, so it is always a module-level
+        literal from this file, never caller input; values stay parametrized.
+        """
+        columns = _ATOM_COLUMNS + _VERIFIED_EXTRA_COLUMNS[: len(extra)]
+        cols = ", ".join(columns)
+        placeholders = ", ".join("?" for _ in columns)
+        inserted = 0
+        with self._conn:
+            for atom in atoms:
+                values = atom.to_dict()
+                row = tuple(values[c] for c in _ATOM_COLUMNS) + extra
+                cur = self._conn.execute(
+                    f"INSERT OR IGNORE INTO {table} ({cols}) VALUES ({placeholders})", row
+                )
+                inserted += cur.rowcount
+        return inserted
+
+    def _iter_atom_rows(self, table: str, allowed: frozenset[str], fname: str,
+                        filters: dict[str, Any]) -> list[Atom]:
+        """Return ``table``'s rows as ``Atom``s, filtered by ``column=value``
+        (AND'ed). Unknown keys raise rather than silently no-op into an
+        unfiltered scan; only whitelisted column names reach the WHERE clause.
+        """
+        unknown = sorted(set(filters) - allowed)
+        if unknown:
+            raise ValueError(f"unknown {fname} filter key(s): {unknown}")
+
+        sql = f"SELECT {_SELECT_ATOM_COLUMNS_SQL} FROM {table}"
+        params = list(filters.values())
+        if filters:
+            sql += " WHERE " + " AND ".join(f"{column} = ?" for column in filters)
+
+        atoms = []
+        for row in self._conn.execute(sql, params).fetchall():
+            values = dict(zip(_ATOM_COLUMNS, row, strict=True))
+            values["ascended"] = bool(values["ascended"])
+            atoms.append(Atom.from_dict(values))
+        return atoms
+
     def insert_baseline_atoms(self, atoms: list[Atom]) -> int:
         """Insert AutoAscend's computed baseline atoms into the isolated
         ``baseline_atoms`` table (no dedup, no FKs -- AutoAscend owns no
@@ -432,3 +576,84 @@ class Store:
             values["ascended"] = bool(values["ascended"])
             atoms.append(Atom.from_dict(values))
         return atoms
+
+    def insert_verified_atoms(
+        self, atoms: list[Atom], *, secret_fingerprint: str,
+        verifier_token_fingerprint: str
+    ) -> int:
+        """Insert verified atoms into the isolated ``verified_atoms`` table
+        (dedup on UNIQUE key, no FKs). Returns the number of rows inserted.
+        """
+        return self._insert_atom_rows(
+            "verified_atoms", atoms,
+            extra=(secret_fingerprint, verifier_token_fingerprint),
+        )
+
+    def iter_verified_atoms(self, **filters: Any) -> list[Atom]:
+        """Return verified atoms matching every ``column=value`` filter
+        (AND'ed). Filter keys include solution_digest, identity, seed, plus
+        secret_fingerprint, evaluator_image, verifier_token_fingerprint.
+        """
+        return self._iter_atom_rows(
+            "verified_atoms", _ITER_VERIFIED_FILTER_KEYS, "iter_verified_atoms", filters,
+        )
+
+    def insert_verified_baseline_atoms(
+        self, atoms: list[Atom], *, secret_fingerprint: str,
+        verifier_token_fingerprint: str
+    ) -> int:
+        """Insert AutoAscend's hidden-seed floor into the isolated
+        ``verified_baseline_atoms`` table (dedup on UNIQUE key, no FKs).
+        Returns the number of rows inserted.
+
+        Isolated from ``verified_atoms`` for the same reason ``baseline_atoms``
+        is isolated from ``atoms``: AutoAscend is the reference floor, never a
+        participant, and a separate table makes that structural rather than
+        dependent on every reader remembering a ``tier`` filter.
+
+        The UNIQUE key omits ``solution_digest`` (which ``verified_atoms``
+        needs to separate participants) because this table has exactly one
+        logical author -- ``(identity, seed, epoch)`` is its natural key, so a
+        recompute under the same epoch is an idempotent no-op no matter which
+        box submits it.
+        """
+        return self._insert_atom_rows(
+            "verified_baseline_atoms", atoms,
+            extra=(secret_fingerprint, verifier_token_fingerprint),
+        )
+
+    def iter_verified_baseline_atoms(self, **filters: Any) -> list[Atom]:
+        """Return hidden-seed baseline atoms matching every ``column=value``
+        filter (AND'ed). Same filter whitelist as ``iter_verified_atoms``."""
+        return self._iter_atom_rows(
+            "verified_baseline_atoms", _ITER_VERIFIED_FILTER_KEYS,
+            "iter_verified_baseline_atoms", filters,
+        )
+
+    def insert_verified_attempt(self, *, solution_digest, secret_fingerprint,
+                                evaluator_image, verifier_token_fingerprint, status,
+                                failure_kind, message, identities_done, at):
+        """Insert an audit record of a verification attempt into the
+        append-only ``verified_attempts`` table. Each call appends a new row.
+        """
+        cols = ", ".join(_ATTEMPT_COLUMNS)
+        placeholders = ", ".join("?" for _ in _ATTEMPT_COLUMNS)
+        vals = (solution_digest, secret_fingerprint, evaluator_image,
+                verifier_token_fingerprint, status, failure_kind, message,
+                identities_done, at)
+        with self._conn:
+            self._conn.execute(f"INSERT INTO verified_attempts ({cols}) VALUES "
+                               f"({placeholders})", vals)
+
+    def latest_verified_attempt(self, solution_digest, *, secret_fingerprint,
+                                evaluator_image):
+        """Return the most recent (highest id) verification attempt for the
+        given solution with the given secret and evaluator, or None if no
+        attempt exists."""
+        cols = ", ".join(_ATTEMPT_COLUMNS)
+        row = self._conn.execute(
+            f"SELECT {cols} FROM verified_attempts"
+            " WHERE solution_digest = ? AND secret_fingerprint = ? AND"
+            " evaluator_image = ? ORDER BY id DESC LIMIT 1",
+            (solution_digest, secret_fingerprint, evaluator_image)).fetchone()
+        return dict(zip(_ATTEMPT_COLUMNS, row, strict=True)) if row else None

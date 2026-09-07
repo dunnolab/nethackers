@@ -195,3 +195,26 @@ def test_main_passes_knob_and_writes_batch_order(tmp_path, monkeypatch):
     assert calls["max_parallel_evals"] == 4
     written = json.loads(out.read_text())
     assert [r["trajectory_id"] for r in written] == [0, 1]  # batch order
+
+
+def test_main_prefers_env_secret_over_argv_default(tmp_path, monkeypatch):
+    captured = {}
+    def fake_run_batch(solution, batch, *, secret, evaluation_id, **kw):
+        captured["secret"] = secret
+        return []
+    monkeypatch.setattr(run_mod, "run_batch", fake_run_batch)
+    monkeypatch.setenv("NETHACK_ARENA_SECRET", "hidden-key")
+    out = tmp_path / "r.json"
+    R.main(["--solution", str(tmp_path), "--batch", "[]", "--out", str(out)])
+    assert captured["secret"] == "hidden-key"
+
+
+def test_main_falls_back_to_public_without_env(tmp_path, monkeypatch):
+    captured = {}
+    def fake_run_batch(solution, batch, *, secret, **kw):
+        captured["secret"] = secret
+        return []
+    monkeypatch.setattr(run_mod, "run_batch", fake_run_batch)
+    monkeypatch.delenv("NETHACK_ARENA_SECRET", raising=False)
+    R.main(["--solution", str(tmp_path), "--batch", "[]", "--out", str(tmp_path / "r.json")])
+    assert captured["secret"] == "public"

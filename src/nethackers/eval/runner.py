@@ -115,18 +115,32 @@ def _default_image_digest(image: str, *, runtime: str | None = None) -> str:
     return out.stdout.strip()
 
 
+# How many of a batch's episodes the arena container runs at once. The arena
+# caps workers at ``min(max_parallel_evals, len(batch))`` PROCESSES, and the
+# container gets no ``--cpus``, so this is effectively "how many host cores to
+# use". 8 is a safe middle default; the right value is per-box (the eval node
+# has 4 CPUs, a dev Mac has 16), which is why callers can override it.
+#
+# Not purely a speed knob: ``action_timeout_seconds`` is WALL-CLOCK
+# (``arena/sandbox.py``'s ``connection.poll``), so oversubscribing a host can
+# cut normal actions and depress the score -- see the ACTION_TIMEOUT_SECONDS
+# note in ``hub/objectives.py`` for the time this corrupted the hub baseline.
+DEFAULT_MAX_PARALLEL_EVALS = 8
+
+
 def eval_batch(
     solution_path: str | Path,
     spec: ObjectiveSpec,
     image: str,
     *,
     now: str,
+    secret: str = "public",
     runtime: str = "docker",
     runner=subprocess.run,
     image_digest_resolver=None,
     on_episode: Callable[[dict], None] | None = None,
     popen=subprocess.Popen,
-    max_parallel_evals: int = 8,
+    max_parallel_evals: int = DEFAULT_MAX_PARALLEL_EVALS,
 ) -> Evidence:
     """Evaluate ``solution_path`` against ``image`` for ``spec``'s published
     ``(seed, character)`` batch and return the resulting ``Evidence``.
@@ -180,6 +194,7 @@ def eval_batch(
             # startup, for every process in the container (a plain in-arena
             # filter didn't hold -- NLE/AutoAscend resets it).
             "-e", "PYTHONWARNINGS=ignore::RuntimeWarning",
+            "-e", f"NETHACK_ARENA_SECRET={secret}",
             "-v", f"{solution_path}:/sol:ro",
             "-v", f"{td}:/out",
             image,

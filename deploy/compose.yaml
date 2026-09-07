@@ -6,6 +6,11 @@ services:
     environment:
       NETHACKERS_DB: /data/hub.sqlite3
       NETHACKERS_CLIENT_ID: ${NETHACKERS_CLIENT_ID:?set NETHACKERS_CLIENT_ID}
+      # Verified/hidden-seed tier -- dormant (routes 503) when unset. Values
+      # live in hub.env; the whole tier stays off unless all three are present.
+      NETHACKERS_HIDDEN_SECRET: ${NETHACKERS_HIDDEN_SECRET:-}
+      NETHACKERS_HIDDEN_SEEDS: ${NETHACKERS_HIDDEN_SEEDS:-}
+      NETHACKERS_VERIFIER_TOKENS: ${NETHACKERS_VERIFIER_TOKENS:-}
     expose: ["8000"]
     volumes:
       - /srv/nethackers/data:/data
@@ -13,9 +18,14 @@ services:
     read_only: true
     tmpfs: ["/tmp:size=64m,mode=1777"]
     init: true
-    pids_limit: 256
-    mem_limit: 512m
-    cpus: 1.0
+    # No cpus:/mem_limit: here on purpose. The hub sizes itself to the machine
+    # -- `nethackers-hub` defaults to one worker per available core, read from
+    # this container's cgroup quota -- so resizing the VM needs no edit here.
+    # A `cpus:` cap would silently cap that too, and the old `mem_limit: 512m`
+    # became an OOM-kill waiting to happen the moment more than ~3 workers ran
+    # (~130 MB each). pids_limit stays as a runaway guard, raised to cover a
+    # worker per core on a large box.
+    pids_limit: 512
     security_opt: ["no-new-privileges:true"]
     cap_drop: ["ALL"]
     healthcheck:
