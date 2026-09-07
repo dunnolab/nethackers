@@ -651,10 +651,10 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
         <div class="controls">
           <span class="lbl">dungeons:</span>
           <span class="grp">
-            <button class="bevel" data-tier="self-reported" data-tier-group="frontier" aria-pressed="true">Public Dungeons (15)</button>
-            <button class="bevel" data-tier="verified" data-tier-group="frontier" aria-pressed="false">Private Dungeons (15)</button>
+            <button class="bevel" data-tier="self-reported" data-tier-group="frontier" aria-pressed="false">Public Dungeons (15)</button>
+            <button class="bevel" data-tier="verified" data-tier-group="frontier" aria-pressed="true">Private Dungeons (15)</button>
           </span>
-          <p class="tiernote" id="tiernote-frontier"></p>
+          <p class="tiernote" id="tiernote-frontier" aria-live="polite"></p>
         </div>
         <div class="gridnote" id="gridnote"></div>
         <div class="rolegrid" id="rolegrid"></div>
@@ -858,7 +858,6 @@ let WALL_OF_FAME={keepers:[],breakthroughs:[]};
 const FAME_PAGE_SIZE=5;
 const FAME_LIMITS={keepers:FAME_PAGE_SIZE,breakthroughs:FAME_PAGE_SIZE};
 const HACKER_PAGE=50;                 // rows in the hacker popup's program table (each costs a /identities fetch)
-let BASELINE={owner:"autoascend",per_identity:{},overall:null};  // raw /baseline
 let OBJ_EP={};                       // {objective: episodes} from /objectives (honest ep for tooltips)
 const ROLE_NAMES={arc:"Archeologist",bar:"Barbarian",cav:"Caveman",hea:"Healer",kni:"Knight",mon:"Monk",
  pri:"Priest",ran:"Ranger",rog:"Rogue",sam:"Samurai",tou:"Tourist",val:"Valkyrie",wiz:"Wizard"};
@@ -877,7 +876,6 @@ const ROLE_VARS={
  tou:["hum-neu-fem","hum-neu-mal"],
  val:["dwa-law-fem","hum-law-fem","hum-neu-fem"],
  wiz:["elf-cha-fem","elf-cha-mal","gno-neu-fem","gno-neu-mal","hum-cha-fem","hum-cha-mal","hum-neu-fem","hum-neu-mal","orc-cha-fem","orc-cha-mal"]};
-let UNIVERSE={};                     // /elites?scope=generalist -> rank-1 per identity {id:{v,o,d,ep}}
 let HONOR_UNIVERSE={};               // self-reported records, retained while viewing verified
 const ASC=0.8745866562925501;
 /* the marquee. House lines first, then verbatim NetHack 3.6.6 -- dungeon ambience
@@ -1224,8 +1222,7 @@ function odo(el,n,digits){ if(!el) return; el.innerHTML=String(n).padStart(digit
 })();
 
 /* ===================== tier ===================== */
-let curTier="self-reported";
-const EMPTY_VERIFIED='No verified programs yet &mdash; verification (M2b) is not live. Everything above the floor is self-reported.';
+let curTier="verified";
 /* The wire keeps `self-reported` / `verified` -- accurate for the machinery
    (a trusted worker produced the verified rows). The site names the SEED SET
    instead, because that is what makes a number worth reading: the program
@@ -1247,26 +1244,28 @@ function tierNote(el,tier){ if(el) el.innerHTML=TIERS[tier].note; }
    parse so the two can never drift. Covers every [data-tier] button on the
    page, including the groups added later. */
 document.querySelectorAll("[data-tier]").forEach(b=>{ b.textContent=TIERS[b.dataset.tier].label; });
-document.querySelectorAll("[data-tier]").forEach(b=>b.addEventListener("click",async()=>{
+document.querySelectorAll("[data-tier-group='frontier']").forEach(b=>b.addEventListener("click",async()=>{
   curTier=b.dataset.tier;
-  document.querySelectorAll("[data-tier]").forEach(x=>x.setAttribute("aria-pressed", x.dataset.tier===curTier?"true":"false"));
-  await loadUniverse();
+  document.querySelectorAll("[data-tier-group='frontier']").forEach(x=>x.setAttribute("aria-pressed", x.dataset.tier===curTier?"true":"false"));
+  tierNote($("#tiernote-frontier"), curTier);
+  await Promise.all([loadUniverse(curTier), loadBaseline(curTier)]);
   renderFrontier(); }));
 
 /* ===================== frontier heatmap ===================== */
 function renderFrontier(){
-  const grid=$("#rolegrid"), note=$("#gridnote"), verified=curTier==="verified";
-  const per=(BASELINE&&BASELINE.per_identity)||{};
+  const grid=$("#rolegrid"), note=$("#gridnote");
+  const BASE=BASELINE_BY_TIER[curTier]||{per_identity:{},overall:null};
+  const UNI=UNIVERSE_BY_TIER[curTier]||{};
+  const per=BASE.per_identity||{};
   /* per-identity datum: state 'prog' (a program's best, heat-tinted), 'floor' (the dim
      AutoAscend floor, shown when nothing has touched the cell yet), or 'none'. aa is the
      identity's own AutoAscend floor -- so every touched cell can report delta = v - aa. */
   function datum(id){
     const aa=(per[id]&&per[id].progression!=null)?per[id].progression:null;
-    if(verified) return {state:'none',v:null,aa};
     let v=null,floor=false;
     /* Community Frontier = best program for this identity, with AutoAscend as
        the visible floor when no registered program beats it. */
-    const pv=(id in UNIVERSE)?UNIVERSE[id].v:null;
+    const pv=(id in UNI)?UNI[id].v:null;
     if(pv!=null&&(aa==null||pv-aa>0.0005)) v=pv;
     else if(aa!=null){ v=aa; floor=true; }
     if(v==null) return {state:'none',v:null,aa};
@@ -1274,9 +1273,9 @@ function renderFrontier(){
     return {state:'prog',v,aa,delta:aa!=null?+(v-aa).toFixed(3):null};
   }
   function rowTitle(id,d){
-    if(d.v==null) return `${id} :: ${verified?'no verified result':'unexplored'}`;
+    if(d.v==null) return `${id} :: unexplored`;
     if(d.state==='floor') return `${id} :: AutoAscend floor ${pct(d.v)} -- best of all here`;
-    const who=UNIVERSE[id]?` :: program record @${UNIVERSE[id].o}, ${UNIVERSE[id].ep} ep`:"";
+    const who=UNI[id]?` :: program record @${UNI[id].o}, ${UNI[id].ep} ep`:"";
     const dl=d.delta!=null?` :: Δ ${fmtP(d.delta)} vs AutoAscend`:"";
     return `${id} :: ${pct(d.v)}${dl}${who}`;
   }
@@ -1318,11 +1317,15 @@ function renderFrontier(){
   }).join("");
 
   const overall=prog?pct(sum/prog):"-";
-  const bv=(BASELINE&&BASELINE.overall!=null)?pct(BASELINE.overall):null;
+  const bv=(BASE&&BASE.overall!=null)?pct(BASE.overall):null;
   const baseLine=bv?` &middot; AutoAscend overall <b>${bv}</b>`:` &middot; AutoAscend not computed yet`;
-  note.innerHTML=(verified
-    ? `<b>verified</b> tier &mdash; no verified results yet (M2b isn't live), so every cell is blank`
-    : `each cell = the <b>best result yet</b> for one identity &mdash; a program's mean where it beats <b>AutoAscend</b>, else the dim floor &middot; <b>${prog}</b> of <b>${total}</b> led by a program, <b>${floor}</b> at the AutoAscend floor`)+baseLine;
+  /* The three cell states are mutually exclusive and sum to 73: led by a
+     program, sitting at the dim floor, or not yet measured. Counted live
+     from the loaded data above -- never hardcoded, so coverage grows on its
+     own as verification proceeds. */
+  note.innerHTML=`each cell = the <b>best result yet</b> for one identity &mdash; a program's mean where it beats <b>AutoAscend</b>, else the dim floor`
+    +` &middot; <b>${prog}</b> of <b>${total}</b> led by a program, <b>${floor}</b> at the AutoAscend floor, <b>${total-prog-floor}</b> not yet measured`
+    +baseLine;
   grid.querySelectorAll(".frontierrow").forEach(tr=>{
     const open=()=>openIdentity(tr.dataset.identity);
     tr.addEventListener("click",open);
@@ -1403,11 +1406,12 @@ function identityDelta(v,aa){
   const d=v-aa; return {text:(d>0?"+":"")+d.toFixed(3),cls:d>0.0005?"dpos":(d<-0.0005?"dneg":"dz")};
 }
 async function openIdentity(identity){
-  const aa=BASELINE&&BASELINE.per_identity&&BASELINE.per_identity[identity];
+  const base=BASELINE_BY_TIER[curTier]||{per_identity:{}};
+  const aa=base.per_identity&&base.per_identity[identity];
   const pbody=pushDetail(`Frontier: ${identity}`, true);
   pbody.innerHTML=`<div class="popupstatus">Loading same-seed results&hellip;</div>`;
   try{
-    const resp=curTier==="verified"?{rows:[]}:await jget(`/board?scope=${encodeURIComponent(identity)}&tier=${encodeURIComponent(curTier)}`);
+    const resp=await jget(`/board?scope=${encodeURIComponent(identity)}&tier=${encodeURIComponent(curTier)}`);
     const rows=resp.rows||[];
     const baseline=aa&&aa.progression!=null?aa.progression:null;
     const body=rows.length?rows.map(r=>{
@@ -1418,7 +1422,7 @@ async function openIdentity(identity){
         <td class="num">${r.median_progression.toFixed(3)}</td><td class="num">${OBJ_EP[identity]!=null?OBJ_EP[identity]:'—'}</td>
         <td>${esc(r.deepest||'—')}</td><td class="num ${delta.cls}">${delta.text}</td>
         <td class="num ${r.ascensions?'star':''}">${r.ascensions||'·'}</td><td>${esc(fmtDate(r.registered_at))}</td></tr>`;
-    }).join(""):`<tr><td colspan="10" class="pend">${curTier==="verified"?EMPTY_VERIFIED:'No program has evaluated this identity yet.'}</td></tr>`;
+    }).join(""):`<tr><td colspan="10" class="pend">No program has evaluated this identity yet.</td></tr>`;
     const aaRow=baseline!=null?`<tr class="base"><td class="num">&middot;</td><td>autoascend</td><td>reference floor</td><td class="num">${baseline.toFixed(3)}</td><td class="num">&mdash;</td><td class="num">${aa.episodes||'—'}</td><td>${esc(aa.deepest||'—')}</td><td class="num dz">&mdash;</td><td class="num">&middot;</td><td>&mdash;</td></tr>`:"";
     pbody.innerHTML=`<div class="tablewrap"><table class="identityboard"><caption>same canonical seed batch &middot; ${TIERS[curTier].caption}</caption><thead><tr><th class="num">#</th><th>hacker</th><th>program</th><th class="num">mean</th><th class="num">median</th><th class="num">ep</th><th>deepest</th><th class="num">&Delta; AA</th><th class="num">&#9733;</th><th>registered</th></tr></thead><tbody>${body}${aaRow}</tbody></table></div>`;
     pbody.querySelectorAll(".ownerlink").forEach(x=>x.addEventListener("click",()=>openHacker(x.dataset.owner)));
@@ -1547,18 +1551,29 @@ async function openHacker(owner){
 /* ===================== live data: fetch + adapt hub JSON into the render state ===================== */
 const jget = async p => { const r = await fetch(p); if(!r.ok) throw new Error(p+" "+r.status); return r.json(); };
 
-/* Frontier "universe": each identity's rank-1 elite. /elites has no episodes, so ep comes
-   from /objectives (the honest per-identity batch size) -- falls back to the 15-episode
-   identity batch if /objectives was unavailable. */
-async function loadUniverse(){
-  if(curTier==="verified"){ UNIVERSE={}; return; }
+/* Frontier "universe" and AutoAscend floor, cached per tier so flipping the
+   toggle never refetches. Both are read at the SAME tier and handed to the
+   grid together -- the server pairs the floor to the tier, and the page must
+   not undo that by mixing a cached public floor into a private view. /elites
+   has no episodes, so ep comes from /objectives (the honest per-identity
+   batch size) -- falls back to the 15-episode identity batch if /objectives
+   was unavailable. */
+const UNIVERSE_BY_TIER={}, BASELINE_BY_TIER={};
+async function loadUniverse(tier){
+  if(UNIVERSE_BY_TIER[tier]) return UNIVERSE_BY_TIER[tier];
   try{
-    const el = await jget("/elites?scope=generalist");
-    const uni = {};
-    for(const r of (el.rows||[])){ if(r.rank===1) uni[r.identity] = {v:r.score, o:r.owner, d:r.program_id, ep:OBJ_EP[r.identity]!=null?OBJ_EP[r.identity]:15}; }
-    UNIVERSE = uni;
-    HONOR_UNIVERSE = uni;
-  }catch(e){ UNIVERSE = {}; }
+    const el=await jget(`/elites?scope=generalist&tier=${encodeURIComponent(tier)}`);
+    const uni={};
+    for(const r of (el.rows||[])){ if(r.rank===1) uni[r.identity]={v:r.score,o:r.owner,d:r.program_id,ep:OBJ_EP[r.identity]!=null?OBJ_EP[r.identity]:15}; }
+    UNIVERSE_BY_TIER[tier]=uni;
+  }catch(e){ UNIVERSE_BY_TIER[tier]={}; }
+  return UNIVERSE_BY_TIER[tier];
+}
+async function loadBaseline(tier){
+  if(BASELINE_BY_TIER[tier]) return BASELINE_BY_TIER[tier];
+  try{ BASELINE_BY_TIER[tier]=await jget(`/baseline?tier=${encodeURIComponent(tier)}`); }
+  catch(e){ BASELINE_BY_TIER[tier]={owner:"autoascend",per_identity:{},overall:null}; }
+  return BASELINE_BY_TIER[tier];
 }
 
 async function loadRecognition(){
@@ -1574,10 +1589,11 @@ async function boot(){
     .then(s=>{ STATS=s; odo($("#odoProg"), s.programs, 5); odo($("#odoPlay"), s.hackers, 5);
                renderMarquee(marqueeStatsLine(s)); setUpdated(s.last_registered_at); })
     .catch(()=>{ STATS=null; odo($("#odoProg"),0,5); odo($("#odoPlay"),0,5); });
-  const baseP = jget("/baseline").then(b=>{ BASELINE = b; }).catch(()=>{ BASELINE = {owner:"autoascend", per_identity:{}, overall:null}; });
   const objP  = jget("/objectives").then(o=>{ OBJ_EP = Object.fromEntries(o.map(x=>[x.name, x.episodes])); }).catch(()=>{ OBJ_EP = {}; });
-  await Promise.all([statsP,baseP,objP,loadRecognition()]);
-  await loadUniverse();
+  await Promise.all([statsP,objP,loadRecognition()]);
+  await Promise.all([loadUniverse(curTier), loadBaseline(curTier)]);
+  HONOR_UNIVERSE = await loadUniverse("self-reported");
+  tierNote($("#tiernote-frontier"), curTier);
   renderFrontier(); renderRecognition();
 }
 boot();

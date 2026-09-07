@@ -23,8 +23,8 @@
  *     three click-through popups -- identity leaderboard (/board?scope=), a
  *     breakthrough submission (/programs/{id} + /identities), and a hacker's
  *     contributions (/programs?owner= + /identities).
- *   pass 2 (verified tier): recognition stays visible (it is self-reported), the
- *     frontier blanks.
+ *   pass 2 (private tier): recognition stays visible (it is self-reported), the
+ *     frontier POPULATES from the verified side-tables.
  *   pass 3 (every fetch rejects): friendly empty states, console clean.
  * /hackers/random's consumer sits behind a canvas getContext("2d") gate that jsdom
  * can't pass without the native `canvas` package (not installed here), so the
@@ -269,20 +269,59 @@ async function pass1() {
 }
 
 async function pass2() {
-  console.log("\n== pass 2: verified tier keeps recognition, blanks the frontier ==");
+  console.log("\n== pass 2: private tier populates the frontier, recognition stays visible ==");
   const errors = [];
-  const dom = makeDom((p) => Promise.resolve({ ok: true, status: 200, json: async () => router(p) }), errors);
+  // The private ("verified") tier needs its own canned data, distinct from
+  // router()'s public fixtures -- otherwise this pass could not tell "the grid
+  // painted the private tier's own numbers" apart from "the grid is still
+  // showing a leftover public fetch". Shapes match production: /elites and
+  // /board enveloped ({rows:[...]}) with program_id + reference{repo,commit}
+  // rows; /baseline a bare {owner, per_identity, overall} object.
+  const PRIVATE_PER_IDENTITY = {};
+  for (const id of IDENTITIES) PRIVATE_PER_IDENTITY[id] = { progression: 0.09, deepest: "Dlvl:6", episodes: 15 };
+  const PRIVATE_BASELINE = { owner: "autoascend", per_identity: PRIVATE_PER_IDENTITY, overall: 0.091 };
+  const PRIVATE_TOUCHED = IDENTITIES.slice(30, 38); // distinct from router()'s TOUCHED (0..10)
+  const REF_PRIVATE = { repo: "github.com/riv/bot", commit: "priv0000abc" };
+  const PRIVATE_ELITES = { rows: PRIVATE_TOUCHED.map((id, i) => ({
+    rank: 1, identity: id, program_id: "prog_priv", owner: "riv", score: 0.4 + i * 0.01, reference: REF_PRIVATE,
+  })) };
+  const PRIVATE_BOARD = { rows: [
+    { rank: 1, program_id: "prog_priv", owner: "riv", reference: REF_PRIVATE,
+      registered_at: "2026-08-29T09:30:00+00:00",
+      mean_progression: 0.42, median_progression: 0.42, ascensions: 0, deepest: "Sokoban" },
+  ] };
+  const fetchImpl = (p) => Promise.resolve({ ok: true, status: 200, json: async () => {
+    const route = p.split("?")[0];
+    const tier = new URLSearchParams(p.split("?")[1] || "").get("tier");
+    if (tier === "verified") {
+      if (route === "/elites") return PRIVATE_ELITES;
+      if (route === "/baseline") return PRIVATE_BASELINE;
+      if (route === "/board") return PRIVATE_BOARD;
+    }
+    return router(p);
+  } });
+  const dom = makeDom(fetchImpl, errors);
   const { document } = dom.window;
   await sleep(200);
   const q = (s) => document.querySelector(s), qa = (s) => [...document.querySelectorAll(s)];
 
-  const verifiedBtn = qa("[data-tier]").find((b) => b.dataset.tier === "verified");
+  // B2 (permanent, controller ruling): TIERS is the single source of truth for
+  // the toggle buttons' text -- the markup's own text is only a pre-JS
+  // fallback, overwritten on parse. Assert the overwrite actually happened, so
+  // a refactor can't silently turn it into a no-op.
+  const frontierBtns = qa("[data-tier-group='frontier']");
+  const publicBtn = frontierBtns.find((b) => b.dataset.tier === "self-reported");
+  const verifiedBtn = frontierBtns.find((b) => b.dataset.tier === "verified");
+  ok(publicBtn && publicBtn.textContent === "Public Dungeons (15)", "public frontier toggle reads its TIERS label exactly");
+  ok(verifiedBtn && verifiedBtn.textContent === "Private Dungeons (15)", "private frontier toggle reads its TIERS label exactly");
+
   verifiedBtn.click();
   await sleep(60);
-  ok(qa("#recordholders tbody tr").length >= 5, "recognition keepers stay visible on the verified tier");
-  ok(qa("#breakthroughs tbody tr").length >= 5, "recognition breakthroughs stay visible on the verified tier");
+  ok(qa("#recordholders tbody tr").length >= 5, "recognition keepers stay visible on the private tier");
+  ok(qa("#breakthroughs tbody tr").length >= 5, "recognition breakthroughs stay visible on the private tier");
   const progCells = qa("#rolegrid td.vv:not(.hval):not(.floor):not(.empty)").length;
-  ok(progCells === 0, "frontier shows no program cells on the verified tier (M2b not live)");
+  ok(progCells > 0, `private tier paints program cells (${progCells}), not a blanked grid`);
+  ok(/not yet measured/.test(q("#gridnote").textContent), "the grid note states private coverage honestly");
 
   ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
   dom.window.close();
