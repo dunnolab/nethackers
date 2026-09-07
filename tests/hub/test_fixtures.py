@@ -28,7 +28,15 @@ from fastapi.testclient import TestClient
 
 from nethackers.hub.api import create_app
 from nethackers.hub.auth import LocalStubAuth
-from nethackers.hub.fixtures import ALPHA, BETA, GAMMA, IDENTITY_A, IDENTITY_B, IDENTITY_C, load_fixtures
+from nethackers.hub.fixtures import (
+    ALPHA,
+    BETA,
+    GAMMA,
+    IDENTITY_A,
+    IDENTITY_B,
+    IDENTITY_C,
+    load_fixtures,
+)
 from nethackers.hub.ids import program_id
 from nethackers.hub.store import Store
 

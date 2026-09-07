@@ -88,7 +88,9 @@ def test_identity_c_specifically_has_no_verified_floor(store):
 def test_fixtures_populate_the_public_floor(store):
     body = read_baseline(store)
     assert body["overall"] is not None
-    assert body["per_identity"], "no public AA floor -- every Delta reads '—' on the public tier too"
+    assert body["per_identity"], (
+        "no public AA floor -- every Delta reads '—' on the public tier too"
+    )
 
 
 def test_fixtures_public_recognition_renders_keepers_and_breakthroughs(store):
@@ -97,4 +99,6 @@ def test_fixtures_public_recognition_renders_keepers_and_breakthroughs(store):
     # floor at all, so this asserts real rows, not merely a non-empty floor.
     body = read_recognition(store)
     assert body["keepers"], "no public keepers -- Frontier Keepers would render empty"
-    assert body["breakthroughs"], "no public breakthroughs -- Greatest Breakthroughs would render empty"
+    assert body["breakthroughs"], (
+        "no public breakthroughs -- Greatest Breakthroughs would render empty"
+    )
