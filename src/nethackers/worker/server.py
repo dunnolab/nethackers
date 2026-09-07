@@ -19,8 +19,10 @@ import argparse
 import os
 import time
 
+from nethackers.eval.runner import DEFAULT_MAX_PARALLEL_EVALS
+from nethackers.hub.ids import AUTOASCEND_TREE
 from nethackers.hubclient.client import HubClient
-from nethackers.worker.verify import verify_program
+from nethackers.worker.verify import compute_hidden_baseline, verify_program
 
 
 def _parse_reference(repo_at_commit: str) -> dict[str, str]:
@@ -41,8 +43,17 @@ def _parser() -> argparse.ArgumentParser:
     p.add_argument("program", nargs="?", help="one-shot: a repo@commit to verify, then exit")
     p.add_argument("--hub", default=os.environ.get("NETHACKERS_HUB", "http://localhost:8000"))
     p.add_argument("--token", default=os.environ.get("NETHACKERS_VERIFIER_TOKEN"))
+    p.add_argument("--baseline", action="store_true",
+                   help="one-shot: compute AutoAscend's hidden-seed floor, then exit")
+    p.add_argument("--tree", default=AUTOASCEND_TREE,
+                   help="--baseline only: path to the AutoAscend tree "
+                        f"(default: {AUTOASCEND_TREE})")
     p.add_argument("--once", action="store_true", help="process one candidate pass then exit")
     p.add_argument("--limit", type=int, default=8)
+    p.add_argument("--max-parallel-evals", type=int, default=DEFAULT_MAX_PARALLEL_EVALS,
+                   help="episodes the arena runs at once (~cores used); tune per box: "
+                        f"the default {DEFAULT_MAX_PARALLEL_EVALS} oversubscribes a 4-CPU "
+                        "node and underuses a 16-core one")
     return p
 
 
@@ -52,9 +63,19 @@ def main(argv: list[str] | None = None) -> None:
         raise SystemExit("a verifier token is required (--token or NETHACKERS_VERIFIER_TOKEN)")
     client = HubClient(args.hub)
 
+    if args.baseline:  # one-shot: compute the reference floor, then exit
+        # Deliberately never enters the candidate loop below: the floor is not
+        # a participant, and this run is hours long -- an operator asking for
+        # a floor should get exactly that, then their shell back.
+        config = client.get_verify_config(args.token)
+        status = compute_hidden_baseline(client, args.token, config, args.tree,
+                                         max_parallel_evals=args.max_parallel_evals)
+        raise SystemExit(0 if status == "succeeded" else 1)
+
     if args.program:  # one-shot: verify the given reference, then exit
         config = client.get_verify_config(args.token)
-        status = verify_program(client, args.token, config, _parse_reference(args.program))
+        status = verify_program(client, args.token, config, _parse_reference(args.program),
+                                max_parallel_evals=args.max_parallel_evals)
         raise SystemExit(0 if status == "succeeded" else 1)
 
     # Daemon (default) / --once: fetch-config -> fetch-candidates -> verify
@@ -86,7 +107,8 @@ def main(argv: list[str] | None = None) -> None:
             continue
         for cand in candidates:
             try:
-                verify_program(client, args.token, config, cand["reference"])
+                verify_program(client, args.token, config, cand["reference"],
+                               max_parallel_evals=args.max_parallel_evals)
             except Exception:
                 continue
         if args.once:

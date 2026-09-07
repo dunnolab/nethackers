@@ -16,11 +16,9 @@ from datetime import UTC, datetime
 from nethackers.contracts.models import Evidence, ObjectiveSpec
 from nethackers.harness.evaluate import evaluate as _evaluate
 from nethackers.hub.atoms import evidence_to_atoms
+from nethackers.hub.ids import AUTOASCEND_ID, AUTOASCEND_TREE
 from nethackers.hub.objectives import CATALOG
 from nethackers.hub.store import Store
-
-AUTOASCEND_TREE = "roots/autoascend"
-AUTOASCEND_ID = "autoascend"
 
 
 def compute_baseline(store: Store, specs: Iterable[ObjectiveSpec], *, image: str, now: str,

@@ -68,6 +68,7 @@ from nethackers.hub.verify import (
     VerifyError,
     record_attempt,
     register_verified,
+    register_verified_baseline,
     resolve_verifier,
     verify_candidates,
 )
@@ -85,7 +86,7 @@ from nethackers.hub.views.progress import read_progress
 from nethackers.hub.views.recognition import read_recognition
 from nethackers.hub.views.solution import read_solution_frontier
 from nethackers.hub.views.stats import read_stats
-from nethackers.hub.views.verified import read_verified
+from nethackers.hub.views.verified import read_verified, read_verified_baseline
 
 # The index.html file shipped in the wheel package data.
 _INDEX = Path(__file__).parent / "web" / "index.html"
@@ -124,6 +125,16 @@ class VerifyRequest(BaseModel):
     this request)."""
 
     reference: dict[str, str]
+    evidence: dict[str, Any]
+    secret_fingerprint: str
+
+
+class VerifyBaselineRequest(BaseModel):
+    """The ``POST /verify/baseline`` envelope: ``VerifyRequest`` minus the
+    ``reference``. AutoAscend is the reference floor, not a participant, so
+    there is no ``repo@commit`` to name -- the identity of the submission is
+    fixed by the route itself, not supplied by the caller."""
+
     evidence: dict[str, Any]
     secret_fingerprint: str
 
@@ -444,6 +455,38 @@ def create_app(
             "coverage": {"done": result.done, "total": result.total},
         }
 
+    @app.post("/verify/baseline")
+    def verify_baseline(
+        body: VerifyBaselineRequest, authorization: str | None = Header(default=None)
+    ) -> dict[str, Any]:
+        # AutoAscend's hidden-seed floor. Token-gated exactly like POST
+        # /verify -- an unauthenticated writer able to lower the floor would
+        # inflate every program's Delta-vs-AA just as surely as one able to
+        # raise a program's own score.
+        if verifier is None:
+            raise HTTPException(status_code=503, detail="verification not configured")
+        token = _bearer_token(authorization)
+        try:
+            tok_fp = resolve_verifier(token, verifier)
+        except VerifierAuthError as e:
+            raise HTTPException(status_code=401, detail=str(e)) from e
+        try:
+            result = register_verified_baseline(
+                store,
+                evidence=Evidence.from_dict(body.evidence),
+                secret_fingerprint=body.secret_fingerprint,
+                verifier_token_fingerprint=tok_fp,
+                expected_image=ARENA_IMAGE,
+                hub_secret=verifier.secret,
+                seeds=verifier.seeds,
+            )
+        except VerifyError as e:
+            raise HTTPException(status_code=400, detail=f"{type(e).__name__}: {e}") from e
+        return {
+            "inserted": result.inserted,
+            "coverage": {"done": result.done, "total": result.total},
+        }
+
     @app.post("/verify/attempts")
     def verify_attempt(
         body: VerifyAttemptRequest, authorization: str | None = Header(default=None)
@@ -484,14 +527,22 @@ def create_app(
 
     @app.get("/verify/overview")
     def verify_overview() -> dict[str, Any]:
+        # Public: per-identity aggregates only, never raw per-seed rows or
+        # seed ids (the seeds are secret). ``baseline`` is AutoAscend's floor
+        # on the same hidden seeds under the same epoch -- what makes a
+        # verified progression readable as "vs AutoAscend" rather than a bare
+        # number. It is additive: callers reading only per_identity/overall
+        # are unaffected.
+        empty: dict[str, Any] = {"per_identity": {}, "overall": None}
         if verifier is None:
-            return {"per_identity": {}, "overall": None}
-        return read_verified(
-            store,
-            secret_fingerprint=_fp(verifier.secret),
-            seeds=verifier.seeds,
-            evaluator_image=ARENA_IMAGE,
-        )
+            return {**empty, "baseline": empty}
+        scope = {
+            "secret_fingerprint": _fp(verifier.secret),
+            "seeds": verifier.seeds,
+            "evaluator_image": ARENA_IMAGE,
+        }
+        return {**read_verified(store, **scope),
+                "baseline": read_verified_baseline(store, **scope)}
 
     return app
 

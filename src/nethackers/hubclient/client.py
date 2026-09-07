@@ -298,6 +298,20 @@ class HubClient:
             "reference": reference, "evidence": evidence,
             "secret_fingerprint": secret_fingerprint})
 
+    def get_verify_overview(self) -> Any:
+        """``GET /verify/overview`` -- public (no token): per-identity
+        aggregates for the verified tier plus AutoAscend's hidden-seed floor
+        under ``baseline``. Never exposes raw seeds."""
+        return self._get("/verify/overview")
+
+    def post_verify_baseline(self, token: str, *, evidence: dict[str, Any],
+                             secret_fingerprint: str) -> Any:
+        """``POST /verify/baseline`` with a ``Bearer`` token: AutoAscend's
+        hidden-seed floor. No ``reference`` -- the floor is not a program."""
+        return self._post_authed("/verify/baseline", token, {
+            "evidence": evidence, "secret_fingerprint": secret_fingerprint,
+        })
+
     def post_verify_attempt(self, token: str, *, reference: dict[str, Any],
                             evaluator_image: str, secret_fingerprint: str,
                             status: str, failure_kind: str | None,
