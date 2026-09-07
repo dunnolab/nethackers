@@ -136,11 +136,14 @@ table, and the epoch predicate **together**:
 | `self-reported` | `atoms` | `baseline_atoms` | `tier = ?` |
 | `verified` | `verified_atoms` | `verified_baseline_atoms` | `secret_fingerprint = ? AND evaluator_image = ? AND seed IN (…)` |
 
-Because the pair is handed out together, a verified read **cannot** reach the
-published-seed floor. The invariant stops being a convention every future reader
-has to remember and becomes something the call shape will not let you express. A
-rotated secret, a re-pinned arena image, or a retired seed all drop out in one
-place rather than at four call sites.
+Because the pair is handed out together, correct pairing is what a caller gets
+by default: one `Source` yields both the scores and the floor that belongs with
+them. Defeating it takes deliberately constructing a *second* `Source` and
+cross-reading — so the invariant is a strong default, **not** an impossibility,
+and code review still owes the both-tables call sites a look. Of the four views,
+only `read_recognition` reads both, so that is the one place the check bites; it
+resolves one `Source` and reuses it. A rotated secret, a re-pinned arena image,
+or a retired seed all drop out in one place rather than at four call sites.
 
 `source_for("verified", None)` — verifier not configured — raises; the API maps
 it to 503, matching the rest of `/verify/*`.
@@ -296,8 +299,11 @@ ask for.
   fills in as verification proceeds.
 - Empty private cells **mirror the self-reported rule**: dim AA floor where a
   private floor exists, blank otherwise.
-- The epoch invariant is enforced structurally, in `source_for`, by handing out
-  the atom and baseline tables as a pair.
+- The epoch invariant is defaulted structurally, in `source_for`, by handing out
+  the atom and baseline tables as a pair. It is a strong default, not an
+  impossibility: two separately-constructed `Source`s can still be cross-read, so
+  `read_recognition` (the only view reading both tables) must resolve one
+  `Source` and reuse it.
 - Missing private floor produces **no Δ**, never a borrowed one; recognition's
   `baseline.get(identity, 0.0)` default is removed and such identities are
   **excluded** from keepers and breakthroughs (§4.4).
