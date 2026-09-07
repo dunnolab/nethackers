@@ -332,14 +332,15 @@ def create_app(
                 status_code=400,
                 detail="?metric= is gone; use /achievements/coverage or /achievements/firsts",
             )
+        _source_guard(tier)
         if scope in catalog and catalog[scope].kind == "identity":
-            rows = board(store, catalog[scope], tier=tier)
+            rows = board(store, catalog[scope], tier=tier, epoch=_epoch())
         else:
             try:
                 _kind, ids = resolve_scope(scope)
             except ValueError as e:
                 raise HTTPException(status_code=404, detail=f"unknown scope: {scope!r}") from e
-            rows = aggregate_board(store, ids, tier=tier)
+            rows = aggregate_board(store, ids, tier=tier, epoch=_epoch())
         return envelope(rows, scope=scope, tier=tier)
 
     @app.get("/hackers")

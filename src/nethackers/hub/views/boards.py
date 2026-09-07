@@ -39,6 +39,7 @@ from nethackers.hub.ids import program_id
 from nethackers.hub.objectives import FACETS, IDENTITIES, ROLES
 from nethackers.hub.store import Store
 from nethackers.hub.views.milestones import deepest_milestone
+from nethackers.hub.views.source import Epoch, source_for
 
 _IDENTITY_SET = frozenset(IDENTITIES)
 
@@ -124,7 +125,8 @@ def _finalize_row(store: Store, rank: int, entry: dict[str, Any]) -> dict[str, A
 
 
 def board(
-    store: Store, objective: ObjectiveSpec, *, tier: str = "self-reported"
+    store: Store, objective: ObjectiveSpec, *, tier: str = "self-reported",
+    epoch: Epoch | None = None,
 ) -> list[dict[str, Any]]:
     """Rank solutions on ``objective``'s *identity* at ``tier``, purely on
     read.
@@ -147,7 +149,9 @@ def board(
     if sort_key is None:
         raise ValueError(f"unknown board aggregation: {objective.aggregation!r}")
 
-    atoms = store.iter_atoms(identity=objective.characters()[0], tier=tier)
+    atoms = source_for(tier, epoch).iter_atoms(
+        store, identity=objective.characters()[0]
+    )
 
     grouped: dict[str, list[Atom]] = {}
     for atom in atoms:
@@ -174,7 +178,8 @@ def board(
 
 
 def aggregate_board(
-    store: Store, ids: Sequence[str], *, tier: str = "self-reported"
+    store: Store, ids: Sequence[str], *, tier: str = "self-reported",
+    epoch: Epoch | None = None,
 ) -> list[dict[str, Any]]:
     """Macro-average board over ``ids`` (generalist = all 73; a role = its
     identities). Each identity is scored on ``iter_atoms(identity=ident)``,
@@ -187,10 +192,11 @@ def aggregate_board(
       per-identity means over covered ids.
     Ranked coverage desc, mean desc, ``solution_digest`` asc. Emits the same
     uniform ``/board`` row as ``board()`` (see ``_finalize_row``). Pure read."""
+    source = source_for(tier, epoch)
     per_solution: dict[str, dict[str, Any]] = {}
     for ident in ids:
         by_sol: dict[str, list[Atom]] = {}
-        for atom in store.iter_atoms(identity=ident, tier=tier):
+        for atom in source.iter_atoms(store, identity=ident):
             by_sol.setdefault(atom.solution_digest, []).append(atom)
         for sol, group in by_sol.items():
             entry = per_solution.setdefault(
