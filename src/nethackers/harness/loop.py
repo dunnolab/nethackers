@@ -270,10 +270,14 @@ def run_loop(
             payload["parent_dev"] = c.score
             if c.dev_evidence is not None:
                 payload["parent_means"] = aggregate.per_identity_means(c.dev_evidence.results)
-        payload["origins"] = origins
+        payload["origins"] = dict(origins)
         payload["aa_baseline"] = aa_baseline
-        payload["union"] = ({"score": archive.union.score, "digest": archive.union.digest}
-                            if archive.union is not None else None)
+        u = archive.union
+        payload["union"] = (
+            {"score": u.score, "digest": u.digest,
+             "results": [r.to_dict() for r in u.dev_evidence.results]
+                        if u.dev_evidence is not None else []}
+            if u is not None else None)
         on_state(payload)
 
     # Cold start: seed each cell on ITS OWN identity's batch. The champions

@@ -122,7 +122,7 @@ class DetailView(Vertical):
             src = (f"[dim]source[/]  [link=file:///runs/{run.rid}/iter{j}/bot.py]"
                    f"bot.py ↗ (this run · iter {j})[/]")
         elif kind == "hub":
-            evals = run.iteration_evals(0)
+            evals = run.union_evals()
             digest = (run.init_union or {}).get("digest")
             origin = (run.origins().get(digest) or {}) if digest else {}
             repo, sha = origin.get("repo"), origin.get("sha")

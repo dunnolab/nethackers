@@ -417,6 +417,19 @@ class Run:
             return {i: EvalView(i, total, []) for i in idents}
         return {i: EvalView(i, total, [_seed_row(r) for r in src.get(i, [])]) for i in idents}
 
+    def union_evals(self) -> dict[str, EvalView]:
+        """Per-identity EvalViews for the BEST OVERALL (union) HUB champion's
+        OWN cold-start union eval (delivered in init_union['results']),
+        grouped by character. {} when no snapshot / no results."""
+        rows_by: dict[str, list[dict]] = {}
+        for r in (self.init_union or {}).get("results") or []:
+            c = r.get("character")
+            if c is not None:
+                rows_by.setdefault(c, []).append(r)
+        total = self._per_ident_total()
+        return {i: EvalView(i, total, [_seed_row(r) for r in rows_by.get(i, [])])
+                for i in self.identities()}
+
     def _per_ident_total(self) -> int:
         """Best-effort per-identity seed count for progress ratios (seeds/ident)."""
         cr = self.init_cell_results or {}

@@ -1129,6 +1129,12 @@ def test_coldstart_seeds_union_from_board_champion(tmp_path):
     assert cold["union"] is not None
     assert cold["union"]["digest"] == "github.com/t/u@33"
     assert cold["origins"]["github.com/t/u@33"]["handle"] == "mikhail"
+    # Regression: the union champion's OWN cold-start union eval (full
+    # coverage -- every identity) must ride along, not just its score/digest
+    # -- the monitor's BEST OVERALL detail has nothing else to render it from.
+    assert cold["union"]["results"]
+    assert {r["character"] for r in cold["union"]["results"]} == {a, b}
+    assert all(r["progress"] == 0.6 for r in cold["union"]["results"])
 
 
 def test_union_seed_skipped_for_single_identity(tmp_path):

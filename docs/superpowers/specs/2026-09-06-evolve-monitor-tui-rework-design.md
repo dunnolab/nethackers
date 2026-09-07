@@ -120,7 +120,7 @@ Two states, per D1:
 - **Currently-evaluating child (live):** the `on_episode` stream fills seed / progress / status / turns / depth as episodes land; cause-of-death and time render `—` (pending). std over the seeds so far.
 - **Any completed evaluation** (a done iteration's child, or an init cell): the full per-seed `TrajectoryResult`s — seed, progress, status ∈ {died, ascended, timed out}, **cause_of_death**, **milestone/depth**, turns, **wall_seconds** — already exist (`dev_ev.results` for a child; each cell's `dev_evidence.results` for cold-start). Deliver them to the live `Run`:
   - **children**: add the per-seed result dicts to the iteration hand-off (extend `IterationResult` with `results: list[dict] | None`, or a parallel argument on the wired `on_iteration`), so a completed iteration carries its per-seed detail.
-  - **init cells**: carry each cold-start cell's `dev_evidence.results` in the `on_state` "cold-start" payload.
+  - **init cells**: carry each cold-start cell's `dev_evidence.results` in the `on_state` "cold-start" payload. The cold-start payload also carries the UNION cell's own `dev_evidence.results` (not only the per-identity cells' results), so the BEST OVERALL detail shows the union champion's own per-seed × identity eval rather than falling back to a per-identity cell's champion.
   - std is computed in the TUI across the seeds; **xp is dropped** (D2; absent from `TrajectoryResult`).
 - **Source link** (clickable): for a `run` origin, the local worktree/tree path; for a `hub` origin, `reference.repo@commit` (a GitHub URL). Both come from the origin (§5.2).
 

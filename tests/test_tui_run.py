@@ -413,6 +413,44 @@ def test_iteration_evals_init_filters_by_identity_not_the_whole_cell():
     assert ev.avg == 0.5   # NOT 0.3 -- the pre-fix wholesale-cell average
 
 
+def test_union_evals_reads_the_union_champions_own_cold_start_eval():
+    """Regression: the BEST OVERALL (union) hub champion is generally NOT any
+    identity's own /elites leader, so it takes no per-identity cell and its
+    own cold-start union eval was never delivered -- show_program's hub
+    branch fell back to iteration_evals(0) (the per-identity CELLS' own
+    champions), rendering a DIFFERENT program's rows under the union
+    champion's label/score. union_evals() must read the union champion's own
+    eval (init_union["results"], carried by harness/loop.py's _emit), grouped
+    by character -- not the per-identity cells."""
+    r = Run("r1", EvolveConfig("v1,v2", "claude", 5))
+    r.apply_state(_cold(
+        cell_results={"v1": [{"character": "v1", "trajectory_id": 1, "progress": 0.9,
+                              "status": "completed", "end_status": "died",
+                              "ascended": False, "cause_of_death": "killed by a newt",
+                              "max_depth": 6, "turns": 900, "wall_seconds": 12.0}]},
+        union={"score": 0.48, "digest": "u1", "results": [
+            {"character": "v1", "trajectory_id": 5, "progress": 0.5, "status": "completed",
+             "end_status": "died", "ascended": False, "cause_of_death": "starvation",
+             "max_depth": 4, "turns": 400, "wall_seconds": 8.0},
+            {"character": "v2", "trajectory_id": 6, "progress": 0.46, "status": "completed",
+             "end_status": "died", "ascended": False, "cause_of_death": "petrification",
+             "max_depth": 5, "turns": 500, "wall_seconds": 9.0},
+        ]}))
+    evals = r.union_evals()
+    assert [row["seed"] for row in evals["v1"].rows] == [5]
+    assert evals["v1"].rows[0]["progress"] == 0.5
+    assert [row["seed"] for row in evals["v2"].rows] == [6]
+    # distinct from the per-identity cell's own champion (seed 1, progress 0.9)
+    assert evals["v1"].rows[0]["progress"] != r.iteration_evals(0)["v1"].rows[0]["progress"]
+
+
+def test_union_evals_empty_when_no_union_snapshot():
+    r = Run("r1", EvolveConfig("v1,v2", "claude", 5))
+    r.apply_state(_cold())   # union=None (no union cell seeded)
+    evals = r.union_evals()
+    assert evals["v1"].rows == [] and evals["v2"].rows == []
+
+
 def test_run_tracks_cells_and_coverage_from_state():
     r = Run("r1", EvolveConfig("wiz-elf-cha-mal,wiz-orc-cha-mal", "claude", 3))
     r.apply_state({

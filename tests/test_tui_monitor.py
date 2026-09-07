@@ -31,7 +31,15 @@ def _run() -> Run:
                    "cells": [{"identity": i, "score": 0.4, "digest": f"d:{i}"} for i in ids],
                    "origins": origins,
                    "aa_baseline": {i: 0.3 for i in ids},
-                   "union": {"score": 0.48, "digest": "u1"},
+                   # the union champion's OWN full-coverage union eval (harness/
+                   # loop.py's _emit carries archive.union.dev_evidence.results) --
+                   # a DIFFERENT program from the per-identity cells' champions
+                   # below (different seed/score), matching real cold-start.
+                   "union": {"score": 0.48, "digest": "u1", "results": [
+                       {"character": i, "trajectory_id": 1, "progress": 0.48,
+                        "status": "completed", "end_status": "died",
+                        "cause_of_death": "petrification", "max_depth": 7,
+                        "turns": 1000, "wall_seconds": 14.0} for i in ids]},
                    "cell_results": {i: [{"character": i, "trajectory_id": 0, "progress": 0.4,
                                          "status": "completed", "end_status": "died",
                                          "cause_of_death": "killed by a newt", "max_depth": 6,
@@ -191,7 +199,63 @@ async def test_best_overall_opens_full_table():
         table = mon.query_one("#d_table", DataTable)
         # the extra leading "identity" column = every seed x every identity
         assert "identity" in _headers(table)
-        assert "wiz-elf-cha-mal" in _dump(table)   # a per-identity row actually rendered
+        text = _dump(table)
+        assert "wiz-elf-cha-mal" in text   # a per-identity row actually rendered
+        # the union champion's OWN eval (Fix B) -- not the per-identity
+        # cells' champions (cell_results' "killed by a newt" seed 0 rows).
+        assert "petrification" in text
+        assert "killed by a newt" not in text
+
+
+async def test_best_overall_detail_shows_the_union_champions_own_rows():
+    """Regression: show_program's hub branch built the BEST OVERALL table
+    from run.iteration_evals(0) -- the per-identity CELLS' own champions --
+    instead of the union champion's own cold-start union eval. The union
+    champion is generally NOT any identity's own /elites leader (it took no
+    per-identity cell here), so the old code showed a DIFFERENT program's
+    rows under the union champion's label/score. Must render the union
+    champion's OWN per-seed rows (init_union["results"])."""
+    ids = ["v1", "v2"]
+    cfg = EvolveConfig("v1,v2", "claude", 3)
+    r = Run("r1", cfg)
+    origins = {f"d:{i}": {"kind": "hub", "handle": "clyde", "sha": "11",
+                          "repo": "github.com/t/a", "iteration": None} for i in ids}
+    origins["u1"] = {"kind": "hub", "handle": "mikhail", "sha": "33",
+                      "repo": "github.com/t/u", "iteration": None}
+    r.apply_state({
+        "phase": "cold-start", "iteration": 0, "identities": ids,
+        "cells": [{"identity": i, "score": 0.9, "digest": f"d:{i}"} for i in ids],
+        "origins": origins, "aa_baseline": {i: 0.3 for i in ids},
+        "union": {"score": 0.48, "digest": "u1", "results": [
+            {"character": "v1", "trajectory_id": 50, "progress": 0.5, "status": "completed",
+             "end_status": "died", "ascended": False, "cause_of_death": "starvation",
+             "max_depth": 4, "turns": 400, "wall_seconds": 8.0},
+            {"character": "v2", "trajectory_id": 60, "progress": 0.46, "status": "completed",
+             "end_status": "died", "ascended": False, "cause_of_death": "petrification",
+             "max_depth": 5, "turns": 500, "wall_seconds": 9.0},
+        ]},
+        # each identity's OWN cell champion is a DIFFERENT, higher-scoring
+        # program than the union champion -- the pre-fix bug rendered THESE
+        # rows under the union champion's label instead.
+        "cell_results": {i: [{"character": i, "trajectory_id": 1, "progress": 0.9,
+                              "status": "completed", "end_status": "died",
+                              "ascended": False, "cause_of_death": "killed by a newt",
+                              "max_depth": 6, "turns": 900, "wall_seconds": 12.0}]
+                         for i in ids},
+        "coverage": (2, 2), "cell": None, "generation": 0,
+        "baseline_dev": 0.0, "best_dev": 0.0, "wins": 0, "tokens": 0, "detail": "",
+        "parent_digest": "", "parent_dev": 0.0})
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        mon.open_program()
+        await pilot.pause()
+        table = mon.query_one("#d_table", DataTable)
+        text = _dump(table)
+        assert "50" in text and "60" in text            # union champion's own seeds
+        assert "starvation" in text and "petrification" in text
+        assert "killed by a newt" not in text           # NOT the per-identity cells' champion
 
 
 async def test_open_run_and_open_best_open_different_programs():
