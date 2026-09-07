@@ -60,6 +60,18 @@ fixture atoms silently invisible rather than loudly wrong.
 ``NETHACKERS_HIDDEN_SECRET``/``NETHACKERS_HIDDEN_SEEDS`` so the offline hub
 process actually reads what these fixtures write -- pinned equal by
 ``tests/test_compose_stage.py``.
+
+A follow-up to the Task 7 work above: ``load_fixtures`` also writes a
+PUBLIC ``baseline_atoms`` floor for all three fixture identities (unlike
+the private tier's deliberately-partial floor, this one is complete --
+mirroring production's public floor, which covers all 73 identities). Its
+absence used to be harmless, but is not any more: ``views.recognition``'s
+missing-floor exclusion (Task 5) means "no floor" now empties the public
+Frontier Keepers / Greatest Breakthroughs tables outright rather than
+crediting against 0.0, and a store with self-reported atoms but no
+self-reported floor hits that on every identity. See the comment at the
+``public_floor`` block in ``load_fixtures`` for the exact per-identity
+numbers.
 """
 
 from __future__ import annotations
@@ -165,6 +177,61 @@ def load_fixtures(store: Store, *, now: str = "2026-01-01T00:00:00Z") -> None:
     ]
     store.insert_atoms(atoms)
     update_attainment(store, atoms, now=now)
+
+    # --- Public floor (published seeds), covering all three fixture
+    # identities. Without this, GET /baseline has zero identities on a
+    # freshly-built local hub, and views.recognition's (Task 5, correct)
+    # missing-floor exclusion then empties BOTH the public Frontier Keepers
+    # and Greatest Breakthroughs tables -- every identity reads "no floor,
+    # skip" instead of "below floor" or "above floor". Production never
+    # shows this because its public AutoAscend floor already covers all 73
+    # identities; these rows make the local/offline stack representative of
+    # that instead of a degenerate all-excluded state.
+    #
+    # Floor milestone is "Dlvl:2" (progression ACHIEVEMENTS["Dlvl:2"] ==
+    # 0.015392269075361172) for all three identities -- verified clearly
+    # below each identity's own self-reported participant mean, not assumed
+    # (see the exact numbers this comment cites, computed the same way
+    # views.elites/views.recognition compute them -- AVG(progression) per
+    # (identity, solution_digest)):
+    #   IDENTITY_A (ALPHA, its only solution): mean == 0.05072234371255046
+    #     -- margin 0.0353 (~3.3x the floor)
+    #   IDENTITY_B (BETA, the identity's winning solution): mean ==
+    #     0.36237358331775976 -- margin 0.3470 (~23.5x the floor). GAMMA's
+    #     own mean (0.010610689182117753) sits BELOW this floor -- a
+    #     realistic below-AutoAscend solution that simply isn't the
+    #     identity's winner, not a bug.
+    #   IDENTITY_C (DELTA, its only solution): mean == 0.026484110958570013
+    #     -- margin 0.0111 (~1.7x the floor, the smallest of the three, but
+    #     still ~22x ``views.recognition._MIN_LIFT`` (0.0005) -- nowhere
+    #     near float-noise territory).
+    # Seeds 0-3, matching the range IDENTITY_A's own public participant
+    # atoms above use; baseline_atoms has no UNIQUE constraint (unlike
+    # verified_baseline_atoms), so there is no pairing requirement to a
+    # specific participant seed. ---
+    public_floor = [
+        replace(
+            _atom(ALPHA, identity=IDENTITY_A, seed=s, milestone="Dlvl:2",
+                  ascended=False, turns=100, steps=150),
+            solution_digest="autoascend", owner="autoascend", tier="baseline",
+        )
+        for s in (0, 1, 2, 3)
+    ] + [
+        replace(
+            _atom(BETA, identity=IDENTITY_B, seed=s, milestone="Dlvl:2",
+                  ascended=False, turns=100, steps=150),
+            solution_digest="autoascend", owner="autoascend", tier="baseline",
+        )
+        for s in (0, 1, 2, 3)
+    ] + [
+        replace(
+            _atom(DELTA, identity=IDENTITY_C, seed=s, milestone="Dlvl:2",
+                  ascended=False, turns=100, steps=150),
+            solution_digest="autoascend", owner="autoascend", tier="baseline",
+        )
+        for s in (0, 1, 2, 3)
+    ]
+    store.insert_baseline_atoms(public_floor)
 
     # --- Private tier (hidden seeds). IDENTITY_A and IDENTITY_B get a floor;
     # IDENTITY_C deliberately gets a result with NO floor, reproducing
