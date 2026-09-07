@@ -93,10 +93,22 @@ is the whole point the label should make.
 "Private Dungeons" it reads as if the two differ only in seed choice. They also
 differ in **who ran them**, and nobody has audited the public ones.
 
-The `note` above therefore renders as a sub-label under each toggle and flips
-with the tier. This also retires a real defect: captions today say
-`SELF-REPORTED*` and `self-reported*`, but **nothing on the page ever defines
-that asterisk**. A sentence replaces a dangling footnote marker.
+The `note` therefore has to appear somewhere that flips with the tier. This
+also retires a real defect: captions today say `SELF-REPORTED*` and
+`self-reported*`, but **nothing on the page ever defines that asterisk**.
+
+**Amended during implementation.** This first shipped as a sub-label rendered
+under each toggle. In review the author found a permanent line of prose under
+all three switches too heavy, and it moved behind a `?` marker beside the
+buttons, riding the page's existing `REFS`/`data-k` glossary popup so hover,
+focus and click all behave like every other reference on the page.
+
+The amendment satisfies the same requirement better than the original. The
+defect being fixed was an *undefined* marker; a `?` that opens a titled
+explanation is self-defining in a way the bare `*` never was. It also bought
+room to say more than a one-line label allowed — the public entry now states
+plainly that nobody re-runs the hacker's numbers, and the private entry states
+that no one can write a program against seeds it cannot see.
 
 ### 3.4 Future compatibility
 
@@ -292,8 +304,10 @@ ask for.
 **Decided:**
 - Website vocabulary is **Public Dungeons (15)** / **Private Dungeons (15)**;
   DB and API `tier` values are unchanged.
-- The trust caveat moves into a **sub-label** under each toggle, flipping with
-  the tier, replacing an asterisk the page never defined.
+- The trust caveat moves out of the caption and into tier-flipping copy,
+  replacing an asterisk the page never defined. **Amended in implementation**
+  (§3.3): shipped as a `?` glossary marker beside each toggle rather than a
+  permanent sub-label.
 - **Three independent** tier switches (Frontier, Keepers, Breakthroughs).
 - **Private is the default** everywhere, with no coverage threshold — the grid
   fills in as verification proceeds.
