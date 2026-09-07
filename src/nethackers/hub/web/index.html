@@ -236,6 +236,7 @@ table.grid caption{ text-align:left; background:var(--indigo); color:#fff; font-
 .regime{  font-size:.8rem; }
 .regime label{ cursor:pointer; margin-right:12px; }
 .gridnote{  font-size:.78rem; color:#55555c; margin:.2rem 0 .8rem; }
+.tiernote{ grid-column:1/-1; font-size:.74rem; color:#55555c; margin:-2px 0 0; }
 .gridnote b{ color:var(--indigo); }
 .rolegrid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(238px,1fr)); gap:10px; align-items:start; }
 table.fr{ width:100%; table-layout:fixed; border-collapse:collapse;  font-size:.76rem; }
@@ -648,11 +649,12 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
         <p class="lead">Mean <span class="ref" data-k="progression">progression</span> (0&ndash;100%) across all <span class="ref" data-k="identities">73 identities</span>, and how far each sits above the
           <span class="ref" data-k="autoascend"><b>AutoAscend floor</b></span>. Click any identity for its directly comparable leaderboard, sources, episodes, dates, and current holder.</p>
         <div class="controls">
-          <span class="lbl">tier:</span>
+          <span class="lbl">dungeons:</span>
           <span class="grp">
-            <button class="bevel" data-tier="self-reported" aria-pressed="true">Self-reported</button>
-            <button class="bevel" data-tier="verified" aria-pressed="false">Verified</button>
+            <button class="bevel" data-tier="self-reported" data-tier-group="frontier" aria-pressed="true">Public Dungeons (15)</button>
+            <button class="bevel" data-tier="verified" data-tier-group="frontier" aria-pressed="false">Private Dungeons (15)</button>
           </span>
+          <p class="tiernote" id="tiernote-frontier"></p>
         </div>
         <div class="gridnote" id="gridnote"></div>
         <div class="rolegrid" id="rolegrid"></div>
@@ -1224,6 +1226,18 @@ function odo(el,n,digits){ if(!el) return; el.innerHTML=String(n).padStart(digit
 /* ===================== tier ===================== */
 let curTier="self-reported";
 const EMPTY_VERIFIED='No verified programs yet &mdash; verification (M2b) is not live. Everything above the floor is self-reported.';
+/* The wire keeps `self-reported` / `verified` -- accurate for the machinery
+   (a trusted worker produced the verified rows). The site names the SEED SET
+   instead, because that is what makes a number worth reading: the program
+   never saw the private dungeons. Every label, caption and sub-label on the
+   page reads from this one map; no tier string is written in markup. */
+const TIERS={
+  "self-reported":{label:"Public Dungeons (15)",  caption:"PUBLIC DUNGEONS",
+    note:"15 seeds per identity, run and reported by the hacker &mdash; unaudited"},
+  "verified":     {label:"Private Dungeons (15)", caption:"PRIVATE DUNGEONS",
+    note:"15 secret seeds per identity, run by us on a program that has never seen them"},
+};
+function tierNote(el,tier){ if(el) el.innerHTML=TIERS[tier].note; }
 document.querySelectorAll("[data-tier]").forEach(b=>b.addEventListener("click",async()=>{
   curTier=b.dataset.tier;
   document.querySelectorAll("[data-tier]").forEach(x=>x.setAttribute("aria-pressed", x.dataset.tier===curTier?"true":"false"));
@@ -1315,7 +1329,7 @@ function renderRecognition(){
   if(holders){
     const people=WALL_OF_FAME.keepers||[];
     const visible=people.slice(0,FAME_LIMITS.keepers);
-    holders.innerHTML=people.length?`<div class="tablewrap"><table class="grid fametable"><caption>FRONTIER KEEPERS &middot; SELF-REPORTED*</caption>
+    holders.innerHTML=people.length?`<div class="tablewrap"><table class="grid fametable"><caption>FRONTIER KEEPERS &middot; ${TIERS["self-reported"].caption}</caption>
       <thead><tr><th>#</th><th class="l">hacker</th><th>frontiers</th><th class="l">roles represented</th><th>combined lift</th></tr></thead>
       <tbody>${visible.map((p,i)=>`<tr data-owner="${esc(p.owner)}" tabindex="0" role="button" aria-label="Open contributions by @${esc(p.owner)}">
         <td class="rk ${i<3?'top':''}">${i+1}</td><td class="l owner">@${esc(p.owner)}</td><td>${p.records}</td>
@@ -1397,7 +1411,7 @@ async function openIdentity(identity){
         <td class="num ${r.ascensions?'star':''}">${r.ascensions||'·'}</td><td>${esc(fmtDate(r.registered_at))}</td></tr>`;
     }).join(""):`<tr><td colspan="10" class="pend">${curTier==="verified"?EMPTY_VERIFIED:'No program has evaluated this identity yet.'}</td></tr>`;
     const aaRow=baseline!=null?`<tr class="base"><td class="num">&middot;</td><td>autoascend</td><td>reference floor</td><td class="num">${baseline.toFixed(3)}</td><td class="num">&mdash;</td><td class="num">${aa.episodes||'—'}</td><td>${esc(aa.deepest||'—')}</td><td class="num dz">&mdash;</td><td class="num">&middot;</td><td>&mdash;</td></tr>`:"";
-    pbody.innerHTML=`<div class="tablewrap"><table class="identityboard"><caption>same canonical seed batch &middot; ${curTier.toUpperCase()}${curTier==="self-reported"?'*':''}</caption><thead><tr><th class="num">#</th><th>hacker</th><th>program</th><th class="num">mean</th><th class="num">median</th><th class="num">ep</th><th>deepest</th><th class="num">&Delta; AA</th><th class="num">&#9733;</th><th>registered</th></tr></thead><tbody>${body}${aaRow}</tbody></table></div>`;
+    pbody.innerHTML=`<div class="tablewrap"><table class="identityboard"><caption>same canonical seed batch &middot; ${TIERS[curTier].caption}</caption><thead><tr><th class="num">#</th><th>hacker</th><th>program</th><th class="num">mean</th><th class="num">median</th><th class="num">ep</th><th>deepest</th><th class="num">&Delta; AA</th><th class="num">&#9733;</th><th>registered</th></tr></thead><tbody>${body}${aaRow}</tbody></table></div>`;
     pbody.querySelectorAll(".ownerlink").forEach(x=>x.addEventListener("click",()=>openHacker(x.dataset.owner)));
   }catch(e){ pbody.innerHTML=`<div class="popupstatus">Could not load this identity leaderboard.</div>`; }
 }
@@ -1474,7 +1488,7 @@ async function openBreakthrough(event){
       <span class="k">roles evaluated</span><span class="v">${roles.length?roles.map(r=>esc(ROLE_NAMES[r]||r)).join(", "):"—"}</span>
       <span class="k">identities evaluated</span><span class="v">${frontier.length} of 73</span>
       <span class="k">evaluation episodes</span><span class="v">${episodes}</span>
-      <span class="k">tier</span><span class="v">self-reported*</span>
+      <span class="k">tier</span><span class="v">${TIERS["self-reported"].label}</span>
     </div>
     <div class="clickhint">This submission moved ${esc(event.identity)} from ${(event.previous*100).toFixed(1)}% to ${(event.score*100).toFixed(1)}%, measured against the community frontier that existed when it was registered.</div>`;
   }catch(e){
@@ -1513,7 +1527,7 @@ async function openHacker(owner){
         <span class="k">latest registration</span><span class="v">${esc(newest)}</span>
       </div></div>
     <div class="minihead">${clipped?`programs -- newest ${shown} of ${total}:`:"programs -- newest first:"}</div>
-    ${solutions.length?`<div class="tablewrap"><table class="identityboard"><caption>REGISTERED PROGRAMS &middot; SELF-REPORTED*</caption><thead><tr><th>program</th><th>roles</th><th class="num">identities</th><th class="num">episodes</th><th class="num">records</th><th>best identity</th><th>registered</th></tr></thead><tbody>${solutions.map(programRow).join("")}</tbody></table></div>`:'<div class="popupstatus">No registered programs found.</div>'}`;
+    ${solutions.length?`<div class="tablewrap"><table class="identityboard"><caption>REGISTERED PROGRAMS &middot; ${TIERS["self-reported"].caption}</caption><thead><tr><th>program</th><th>roles</th><th class="num">identities</th><th class="num">episodes</th><th class="num">records</th><th>best identity</th><th>registered</th></tr></thead><tbody>${solutions.map(programRow).join("")}</tbody></table></div>`:'<div class="popupstatus">No registered programs found.</div>'}`;
     pbody.querySelector(".ghavatar-slot").replaceWith(ghAvatar(owner));
   }catch(e){
     pbody.innerHTML=`<div class="popupstatus">Could not load this hacker's program details.</div>`;
