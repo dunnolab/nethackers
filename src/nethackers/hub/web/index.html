@@ -1158,8 +1158,8 @@ const ARX="https://arxiv.org/abs/", WIKI="https://nethackwiki.com/wiki/";
 function role(name,pet,d,art){ return {t:name,d:d,art:"@  the hero\n"+art,s:[["NetHack Wiki",WIKI+name]]}; }
 const REFS={
   /* --- the two seed sets the board scores on --- */
-  "dungeons-public":{t:"Public Dungeons",d:"The <b>15 practice seeds per identity</b> that anyone can run. The hacker runs them and reports the score themselves &mdash; nobody has re-run it, so these numbers are <b>unaudited</b>.",s:[]},
-  "dungeons-private":{t:"Private Dungeons",d:"<b>15 secret seeds per identity</b>, held by the hub and never published. A trusted verifier runs them on a program that has <b>never seen them</b>, so the score cannot be tuned to the seeds it is measured on.",s:[]},
+  "dungeons-public":{t:"Public Dungeons",d:"<b>15 practice seeds per identity</b>, one dungeon each, published so anyone can run them. The hacker runs them and reports the score; nobody re-runs them, so these numbers are <b>unaudited</b>.",s:[]},
+  "dungeons-private":{t:"Private Dungeons",d:"<b>15 secret seeds per identity</b>, one dungeon each. The hub holds them and never publishes them. A trusted verifier runs each program on dungeons it has <b>never seen</b>, so nobody can tune a program to the dungeons it is scored on.",s:[]},
   /* --- citations --- */
   nle:{t:"The NetHack Learning Environment",d:"The paper that standardized NetHack for ML research and pinned version 3.6.6. Its authors judged a hand-crafted bot that solves NetHack &quot;very unlikely.&quot;",s:[["Kuttler et al., NeurIPS 2020",ARX+"2006.13760"]]},
   challenge:{t:"NeurIPS 2021 NetHack Challenge",d:"483 entrants, <b>zero ascensions</b> in over 500,000 evaluation games. The symbolic AutoAscend won at a median score of 5,300.",s:[["Hambro et al., 2022",ARX+"2203.11889"]]},
@@ -1391,7 +1391,7 @@ function renderRecognition(){
      with the tier instead of asserting one story for both. */
   const bkdesc=$("#bkdesc");
   if(bkdesc) bkdesc.innerHTML = breakthroughsTier==="verified"
-    ? `Every result that cleared the AutoAscend floor on an identity, <b>ordered by when it was verified</b> &mdash; not by when it was achieved. Click a row for the exact submission.`
+    ? `Every result that cleared the AutoAscend floor on an identity, <b>ordered by when our verifier reached it</b> &mdash; not by when the hacker got there. Click a row for the exact submission.`
     : `A newest-first log of every submission that advanced an identity frontier. Click a row for the exact submission.`;
   if(holders){
     const people=kFame.keepers||[];
@@ -1402,7 +1402,7 @@ function renderRecognition(){
         <td class="rk ${i<3?'top':''}">${i+1}</td><td class="l owner">@${esc(p.owner)}</td><td>${p.records}</td>
         <td class="roles">${p.roles.map(r=>esc(ROLE_NAMES[r]||r)).join(', ')}</td><td class="dpos">+${(p.total_lift*100).toFixed(1)} pp</td></tr>`).join("")}</tbody></table></div>
         ${visible.length<people.length?`<div class="more" data-fame-more="keepers" role="button" tabindex="0">[ --More-- ]</div>`:""}`
-      :`<div class="emptyblock">No participant is above AutoAscend yet.</div>`;
+      :`<div class="emptyblock">No hacker is above AutoAscend yet.</div>`;
     holders.querySelectorAll("tbody tr").forEach(row=>{
       const open=()=>openHacker(row.dataset.owner);
       row.addEventListener("click",open);

@@ -382,7 +382,7 @@ async function pass3() {
   const { document } = dom.window;
   await sleep(200);
   const q = (s) => document.querySelector(s);
-  ok(/No participant is above AutoAscend/i.test(q("#recordholders").textContent), "keepers show the empty recognition state offline");
+  ok(/No hacker is above AutoAscend/i.test(q("#recordholders").textContent), "keepers show the empty recognition state offline");
   ok(/No breakthroughs above AutoAscend/i.test(q("#breakthroughs").textContent), "breakthroughs show the empty recognition state offline");
   // honesty: /stats failed -> the marquee omits the count line and the freshness stamp stays a neutral dash
   ok(!/programs registered/.test(q("#mq").textContent), "marquee omits the stats line when /stats fails");
