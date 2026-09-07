@@ -6,11 +6,14 @@ The hub stores two measurement regimes in two isolated table pairs:
 verifier). A score from one regime is meaningless against a floor from the
 other -- different seeds, so the Delta measures nothing.
 
-``Source`` exists to make that impossible rather than merely discouraged: it
-hands out the atom table and its MATCHING baseline table together, so there is
-no call shape in which a caller can pair a verified score with the published
-floor. A rotated secret, a re-pinned arena image, or a retired seed all drop
-out here, once, instead of at four separate call sites.
+``Source`` exists to make that unlikely and require deliberate effort rather than
+being a trap: a single Source instance hands out the atom table and its MATCHING
+baseline table together, so the paired regime is the natural usage and the path
+of least resistance. Defeating the pairing requires constructing two separate
+Sources. A rotated secret, a re-pinned arena image, or a retired seed all drop
+out here, once, instead of at four separate call sites. Later views that read
+both atoms and baseline (such as ``views/recognition.py``) must resolve a single
+Source and reuse it for both reads.
 
 Note what is deliberately NOT routed through this module: ``GET /atoms``
 returns raw per-atom rows including ``seed``. The hidden seeds are secret, so
@@ -55,7 +58,9 @@ class Source:
 
     def where(self, alias: str = "") -> tuple[str, tuple[Any, ...]]:
         """The SQL predicate selecting this tier's rows, and its parameters.
-        ``alias`` prefixes every column for queries that alias the table."""
+        Valid against the atoms table only; ``iter_baseline_atoms`` handles the
+        baseline table's predicate. ``alias`` prefixes every column for queries
+        that alias the table."""
         prefix = f"{alias}." if alias else ""
         if self.epoch is None:
             return f"{prefix}tier = ?", (self.tier,)
