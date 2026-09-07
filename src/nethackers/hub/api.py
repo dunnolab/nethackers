@@ -276,10 +276,11 @@ def create_app(
         return read_baseline(store, tier=tier, epoch=_epoch())
 
     @app.get("/recognition")
-    def recognition() -> dict[str, Any]:
+    def recognition(tier: str = "self-reported") -> dict[str, Any]:
         # Compound object -- {generated_at, keepers, breakthroughs} -- for the
-        # website "Wall of Fame". Deliberately self-reported-tier only.
-        return read_recognition(store)
+        # website's Frontier Keepers and Greatest Breakthroughs tables.
+        _source_guard(tier)
+        return read_recognition(store, tier=tier, epoch=_epoch())
 
     @app.get("/progress")
     def progress(scope: str | None = None, tier: str = "self-reported") -> dict[str, Any]:
