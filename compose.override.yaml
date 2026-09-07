@@ -18,3 +18,10 @@ services:
     environment:
       NETHACKERS_STUB_IDENTITIES: '{"offline-token":"offline"}'
       NETHACKERS_LOAD_FIXTURES: "1"
+      # Offline private tier. Mirrors fixtures.DEV_HIDDEN_SECRET /
+      # DEV_HIDDEN_SEEDS so the fixture atoms land inside the epoch the hub
+      # reads; without these, ?tier=verified 503s and Private Dungeons is
+      # untestable locally. Fake values -- production's are GitHub secrets.
+      NETHACKERS_HIDDEN_SECRET: "offline-hidden-secret"
+      NETHACKERS_HIDDEN_SEEDS: "[900001, 900002, 900003]"
+      NETHACKERS_VERIFIER_TOKENS: "offline-verifier-token"

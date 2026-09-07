@@ -1,8 +1,11 @@
 """Hub boards view (M2a Task 9): the third derived view -- rankings computed
 PURELY on read, nothing stored. A board is scored on its objective's
-*identity*: ``store.iter_atoms(identity=objective.characters()[0],
-tier=tier)``. See task-9-context.md -- the crux was its original RESOLUTION
-over the brief's wording ("filter atoms to the objective's characters"):
+*identity*: ``source_for(tier, epoch).iter_atoms(store,
+identity=objective.characters()[0])`` -- ``tier`` selects the table
+(self-reported reads ``atoms``; verified reads ``verified_atoms``, scoped to
+``epoch``; see ``views.source``). See task-9-context.md -- the crux was its
+original RESOLUTION over the brief's wording ("filter atoms to the
+objective's characters"):
 filtering by character would lump in atoms produced under OTHER objectives
 (different published seeds) on the same identity, so two solutions could be
 ranked on different atom-sets -- breaking the spec Sec2 comparability
@@ -39,6 +42,7 @@ from nethackers.hub.ids import program_id
 from nethackers.hub.objectives import FACETS, IDENTITIES, ROLES
 from nethackers.hub.store import Store
 from nethackers.hub.views.milestones import deepest_milestone
+from nethackers.hub.views.source import Epoch, source_for
 
 _IDENTITY_SET = frozenset(IDENTITIES)
 
@@ -124,14 +128,17 @@ def _finalize_row(store: Store, rank: int, entry: dict[str, Any]) -> dict[str, A
 
 
 def board(
-    store: Store, objective: ObjectiveSpec, *, tier: str = "self-reported"
+    store: Store, objective: ObjectiveSpec, *, tier: str = "self-reported",
+    epoch: Epoch | None = None,
 ) -> list[dict[str, Any]]:
     """Rank solutions on ``objective``'s *identity* at ``tier``, purely on
     read.
 
     Filtering: scored on every atom on ``objective.characters()[0]``
     (``random``/``all`` are retired, so each identity has exactly one
-    canonical objective -- see module docstring).
+    canonical objective -- see module docstring). ``tier`` selects the
+    table via ``views.source.source_for``: self-reported reads ``atoms``,
+    verified reads ``verified_atoms`` scoped to ``epoch``.
 
     Atoms are grouped by ``solution_digest`` and aggregated in Python:
     ``owner`` (constant per solution -- any atom's), ``ascensions`` (count
@@ -147,7 +154,9 @@ def board(
     if sort_key is None:
         raise ValueError(f"unknown board aggregation: {objective.aggregation!r}")
 
-    atoms = store.iter_atoms(identity=objective.characters()[0], tier=tier)
+    atoms = source_for(tier, epoch).iter_atoms(
+        store, identity=objective.characters()[0]
+    )
 
     grouped: dict[str, list[Atom]] = {}
     for atom in atoms:
@@ -174,23 +183,28 @@ def board(
 
 
 def aggregate_board(
-    store: Store, ids: Sequence[str], *, tier: str = "self-reported"
+    store: Store, ids: Sequence[str], *, tier: str = "self-reported",
+    epoch: Epoch | None = None,
 ) -> list[dict[str, Any]]:
     """Macro-average board over ``ids`` (generalist = all 73; a role = its
-    identities). Each identity is scored on ``iter_atoms(identity=ident)``,
-    preserving same-seeds comparability per component (every atom for an
-    identity sits on that identity's canonical batch); a solution's
-    per-identity means are then rolled up:
+    identities). ``tier`` selects the table via ``views.source.source_for``:
+    self-reported reads ``atoms``, verified reads ``verified_atoms`` scoped
+    to ``epoch``. Each identity is scored on that source's
+    ``iter_atoms(store, identity=ident)``, preserving same-seeds
+    comparability per component (every atom for an identity sits on that
+    identity's canonical batch); a solution's per-identity means are then
+    rolled up:
       ``coverage`` = #identities in ``ids`` it has >=1 atom on,
       ``identities_total`` = ``len(ids)``,
       ``mean_progression``/``median_progression`` = mean/median of its
       per-identity means over covered ids.
     Ranked coverage desc, mean desc, ``solution_digest`` asc. Emits the same
     uniform ``/board`` row as ``board()`` (see ``_finalize_row``). Pure read."""
+    source = source_for(tier, epoch)
     per_solution: dict[str, dict[str, Any]] = {}
     for ident in ids:
         by_sol: dict[str, list[Atom]] = {}
-        for atom in store.iter_atoms(identity=ident, tier=tier):
+        for atom in source.iter_atoms(store, identity=ident):
             by_sol.setdefault(atom.solution_digest, []).append(atom)
         for sol, group in by_sol.items():
             entry = per_solution.setdefault(

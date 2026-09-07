@@ -42,11 +42,45 @@ moves to a *strictly earlier* ``first_at`` (task-7-context.md) -- so with
 every atom in one call sharing the same ``now``, ties resolve to whichever
 atom this module lists first (GAMMA, deliberately listed before BETA's
 ``IDENTITY_B`` atoms), not to insertion/DB order.
+
+Since Task 7, ``load_fixtures`` also seeds the private (verified) tier, so
+the offline hub (``compose.override.yaml``, ``make hub``) has something to
+show for ``?tier=verified`` instead of an empty Private Dungeons view.
+Those atoms are a separate, deliberately asymmetric set: IDENTITY_A and
+IDENTITY_B each get a verified AutoAscend floor, IDENTITY_C gets a verified
+result and NO floor -- reproducing production's real "verified on more
+identities than the floor covers yet" state, which is the case that must be
+EXCLUDED from keepers/breakthroughs rather than credited against a floor of
+0.0. They are inserted under ``secret_fingerprint(DEV_HIDDEN_SECRET)`` and
+stamped with the real pinned ``ARENA_IMAGE`` (never the self-reported
+tier's fake ``_EVALUATOR_IMAGE`` below) -- the hub filters every verified
+read on exactly that secret/image pair, so getting either wrong makes the
+fixture atoms silently invisible rather than loudly wrong.
+``DEV_HIDDEN_SECRET``/``DEV_HIDDEN_SEEDS`` mirror ``compose.override.yaml``'s
+``NETHACKERS_HIDDEN_SECRET``/``NETHACKERS_HIDDEN_SEEDS`` so the offline hub
+process actually reads what these fixtures write -- pinned equal by
+``tests/test_compose_stage.py``.
+
+A follow-up to the Task 7 work above: ``load_fixtures`` also writes a
+PUBLIC ``baseline_atoms`` floor for all three fixture identities (unlike
+the private tier's deliberately-partial floor, this one is complete --
+mirroring production's public floor, which covers all 73 identities). Its
+absence used to be harmless, but is not any more: ``views.recognition``'s
+missing-floor exclusion (Task 5) means "no floor" now empties the public
+Frontier Keepers / Greatest Breakthroughs tables outright rather than
+crediting against 0.0, and a store with self-reported atoms but no
+self-reported floor hits that on every identity. See the comment at the
+``public_floor`` block in ``load_fixtures`` for the exact per-identity
+numbers.
 """
 
 from __future__ import annotations
 
+from dataclasses import replace
+
+from nethackers._image_pins import ARENA_IMAGE
 from nethackers.arena.progress import ACHIEVEMENTS
+from nethackers.arena.seeds import secret_fingerprint
 from nethackers.contracts.models import Atom, ResultStatus
 from nethackers.hub.store import Store
 from nethackers.hub.views.attainment import update_attainment
@@ -75,6 +109,13 @@ _COMMIT_BY_DIGEST: dict[str, str] = {
     DELTA: "d4" * 20,
 }
 _EVALUATOR_IMAGE = "nethackers/arena@sha256:" + "f" * 64
+
+# Offline private-tier epoch. Mirrored by compose.override.yaml's
+# NETHACKERS_HIDDEN_SECRET / NETHACKERS_HIDDEN_SEEDS -- pinned equal by
+# tests/test_compose_stage.py. Fake values for dev only; production's live in
+# GitHub secrets.
+DEV_HIDDEN_SECRET = "offline-hidden-secret"
+DEV_HIDDEN_SEEDS: tuple[int, ...] = (900001, 900002, 900003)
 
 
 def load_fixtures(store: Store, *, now: str = "2026-01-01T00:00:00Z") -> None:
@@ -137,6 +178,113 @@ def load_fixtures(store: Store, *, now: str = "2026-01-01T00:00:00Z") -> None:
     store.insert_atoms(atoms)
     update_attainment(store, atoms, now=now)
 
+    # --- Public floor (published seeds), covering all three fixture
+    # identities. Without this, GET /baseline has zero identities on a
+    # freshly-built local hub, and views.recognition's (Task 5, correct)
+    # missing-floor exclusion then empties BOTH the public Frontier Keepers
+    # and Greatest Breakthroughs tables -- every identity reads "no floor,
+    # skip" instead of "below floor" or "above floor". Production never
+    # shows this because its public AutoAscend floor already covers all 73
+    # identities; these rows make the local/offline stack representative of
+    # that instead of a degenerate all-excluded state.
+    #
+    # Floor milestone is "Dlvl:2" (progression ACHIEVEMENTS["Dlvl:2"] ==
+    # 0.015392269075361172) for all three identities -- verified clearly
+    # below each identity's own self-reported participant mean, not assumed
+    # (see the exact numbers this comment cites, computed the same way
+    # views.elites/views.recognition compute them -- AVG(progression) per
+    # (identity, solution_digest)):
+    #   IDENTITY_A (ALPHA, its only solution): mean == 0.05072234371255046
+    #     -- margin 0.0353 (~3.3x the floor)
+    #   IDENTITY_B (BETA, the identity's winning solution): mean ==
+    #     0.36237358331775976 -- margin 0.3470 (~23.5x the floor). GAMMA's
+    #     own mean (0.010610689182117753) sits BELOW this floor -- a
+    #     realistic below-AutoAscend solution that simply isn't the
+    #     identity's winner, not a bug.
+    #   IDENTITY_C (DELTA, its only solution): mean == 0.026484110958570013
+    #     -- margin 0.0111 (~1.7x the floor, the smallest of the three, but
+    #     still ~22x ``views.recognition._MIN_LIFT`` (0.0005) -- nowhere
+    #     near float-noise territory).
+    # Seeds 0-3, matching the range IDENTITY_A's own public participant
+    # atoms above use; baseline_atoms has no UNIQUE constraint (unlike
+    # verified_baseline_atoms), so there is no pairing requirement to a
+    # specific participant seed. ---
+    public_floor = [
+        replace(
+            _atom(ALPHA, identity=IDENTITY_A, seed=s, milestone="Dlvl:2",
+                  ascended=False, turns=100, steps=150),
+            solution_digest="autoascend", owner="autoascend", tier="baseline",
+        )
+        for s in (0, 1, 2, 3)
+    ] + [
+        replace(
+            _atom(BETA, identity=IDENTITY_B, seed=s, milestone="Dlvl:2",
+                  ascended=False, turns=100, steps=150),
+            solution_digest="autoascend", owner="autoascend", tier="baseline",
+        )
+        for s in (0, 1, 2, 3)
+    ] + [
+        replace(
+            _atom(DELTA, identity=IDENTITY_C, seed=s, milestone="Dlvl:2",
+                  ascended=False, turns=100, steps=150),
+            solution_digest="autoascend", owner="autoascend", tier="baseline",
+        )
+        for s in (0, 1, 2, 3)
+    ]
+    # insert_baseline_atoms (store.py) has no dedup, no UNIQUE key -- unlike
+    # every other write load_fixtures makes. create_default_app calls
+    # load_fixtures on every startup, and the hubdata volume survives a
+    # restart, so without this guard the public floor's episode count
+    # doubles on every restart (4 -> 8 -> 12, observed in prod). Skip once
+    # any public baseline row already exists, restoring the "re-running
+    # this against the same store is safe" promise this function's own
+    # docstring makes.
+    if not store.iter_baseline_atoms():
+        store.insert_baseline_atoms(public_floor)
+
+    # --- Private tier (hidden seeds). IDENTITY_A and IDENTITY_B get a floor;
+    # IDENTITY_C deliberately gets a result with NO floor, reproducing
+    # production's "program result, no AutoAscend floor yet" state -- the case
+    # that must be EXCLUDED from keepers/breakthroughs rather than credited
+    # against 0.0. ---
+    fingerprint = secret_fingerprint(DEV_HIDDEN_SECRET)
+    verified = [
+        _verified_atom(ALPHA, identity=IDENTITY_A, seed=s, milestone=m,
+                       ascended=False, turns=500, steps=800)
+        for s, m in zip(DEV_HIDDEN_SEEDS, ("Dlvl:8", "Dlvl:5", "Dlvl:6"), strict=True)
+    ] + [
+        _verified_atom(BETA, identity=IDENTITY_B, seed=s, milestone=m,
+                       ascended=False, turns=600, steps=900)
+        for s, m in zip(DEV_HIDDEN_SEEDS, ("Dlvl:4", "Dlvl:6", "Dlvl:3"), strict=True)
+    ] + [
+        _verified_atom(DELTA, identity=IDENTITY_C, seed=s, milestone=m,
+                       ascended=False, turns=340, steps=480)
+        for s, m in zip(DEV_HIDDEN_SEEDS, ("Dlvl:5", "Dlvl:6", "Dlvl:4"), strict=True)
+    ]
+    store.insert_verified_atoms(
+        verified, secret_fingerprint=fingerprint,
+        verifier_token_fingerprint="offline-verifier",
+    )
+    floor = [
+        replace(
+            _verified_atom(ALPHA, identity=IDENTITY_A, seed=s, milestone="Dlvl:3",
+                           ascended=False, turns=200, steps=300),
+            solution_digest="autoascend", owner="autoascend", tier="baseline",
+        )
+        for s in DEV_HIDDEN_SEEDS
+    ] + [
+        replace(
+            _verified_atom(BETA, identity=IDENTITY_B, seed=s, milestone="Dlvl:2",
+                           ascended=False, turns=150, steps=220),
+            solution_digest="autoascend", owner="autoascend", tier="baseline",
+        )
+        for s in DEV_HIDDEN_SEEDS
+    ]
+    store.insert_verified_baseline_atoms(
+        floor, secret_fingerprint=fingerprint,
+        verifier_token_fingerprint="offline-verifier",
+    )
+
 
 def _atom(
     solution_digest: str,
@@ -172,4 +320,25 @@ def _atom(
         turns=turns,
         steps=steps,
         evaluator_image=_EVALUATOR_IMAGE,
+    )
+
+
+def _verified_atom(
+    solution_digest: str, *, identity: str, seed: int, milestone: str | None,
+    ascended: bool, turns: int, steps: int, progression: float | None = None,
+    status: ResultStatus = "completed",
+) -> Atom:
+    """One fixture atom for the private tier. Two differences from ``_atom``:
+    ``tier="verified"`` (kept for consistency with production's verified
+    rows -- nothing actually filters ``verified_atoms`` by ``tier``; reads
+    key off ``secret_fingerprint``/``evaluator_image``/``seed`` instead), and
+    ``evaluator_image=ARENA_IMAGE``, which IS load-bearing: the hub filters
+    verified reads on the real pinned arena, so a fixture stamped with the
+    fake ``_EVALUATOR_IMAGE`` would be silently invisible to every
+    private-tier view."""
+    return replace(
+        _atom(solution_digest, identity=identity, seed=seed, milestone=milestone,
+              ascended=ascended, turns=turns, steps=steps, progression=progression,
+              status=status),
+        tier="verified", evaluator_image=ARENA_IMAGE,
     )

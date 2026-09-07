@@ -186,7 +186,7 @@ ul.hard li b{ color:var(--indigo); }
 /* controls (retro) */
 .controls{ display:grid; grid-template-columns:max-content 1fr; gap:7px 14px; align-items:center;
   margin:.6rem 0 .8rem;  font-size:.8rem; max-width:600px; }
-.controls .lbl{ color:#55555c; text-align:right; white-space:nowrap; }
+.controls .lbl{ color:#55555c; text-align:right; white-space:nowrap; font-weight:700; }
 .controls .grp{ display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
 .bevel{ background:var(--silver); border:2px solid; border-color:var(--silver-hi) var(--silver-lo) var(--silver-lo) var(--silver-hi);
   padding:3px 10px; cursor:pointer;  font-size:.78rem; color:#111; }
@@ -235,7 +235,16 @@ table.grid caption{ text-align:left; background:var(--indigo); color:#fff; font-
 .frtop{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:.3rem 0 .7rem; }
 .regime{  font-size:.8rem; }
 .regime label{ cursor:pointer; margin-right:12px; }
-.gridnote{  font-size:.78rem; color:#55555c; margin:.2rem 0 .8rem; }
+.gridnote{  font-size:.76rem; color:#55555c; margin:16px auto 2px; max-width:76ch;
+  text-align:center; line-height:1.55; text-wrap:pretty; }
+/* The tier's explanation lives behind this marker rather than as a permanent
+   line of prose under every switch. It rides the page's existing .ref popup
+   system (REFS/data-k), so hover, focus and click all behave like every other
+   glossary marker. .ref sets a dotted bottom border; override for the circle. */
+.ref.tierhelp{ display:inline-flex; align-items:center; justify-content:center;
+  width:15px; height:15px; margin-left:3px; border:1px solid var(--indigo-2);
+  border-radius:50%; font-size:.64rem; font-weight:700; color:var(--indigo);
+  line-height:1; vertical-align:middle; }
 .gridnote b{ color:var(--indigo); }
 .rolegrid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(238px,1fr)); gap:10px; align-items:start; }
 table.fr{ width:100%; table-layout:fixed; border-collapse:collapse;  font-size:.76rem; }
@@ -648,13 +657,14 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
         <p class="lead">Mean <span class="ref" data-k="progression">progression</span> (0&ndash;100%) across all <span class="ref" data-k="identities">73 identities</span>, and how far each sits above the
           <span class="ref" data-k="autoascend"><b>AutoAscend floor</b></span>. Click any identity for its directly comparable leaderboard, sources, episodes, dates, and current holder.</p>
         <div class="controls">
-          <span class="lbl">tier:</span>
+          <span class="lbl">dungeons:</span>
           <span class="grp">
-            <button class="bevel" data-tier="self-reported" aria-pressed="true">Self-reported</button>
-            <button class="bevel" data-tier="verified" aria-pressed="false">Verified</button>
+            <button class="bevel" data-tier="self-reported" data-tier-group="frontier" aria-pressed="false">Public Dungeons (15)</button>
+            <button class="bevel" data-tier="verified" data-tier-group="frontier" aria-pressed="true">Private Dungeons (15)</button>
+            <span class="ref tierhelp" id="tierhelp-frontier" data-k="dungeons-private"
+              aria-label="What are Private Dungeons?">?</span>
           </span>
         </div>
-        <div class="gridnote" id="gridnote"></div>
         <div class="rolegrid" id="rolegrid"></div>
         <div class="legend">
           <span>progression:</span>
@@ -664,6 +674,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           <span><span class="sw" style="background:#1a7a2e"></span> &Delta; above floor &middot; <span style="color:var(--red)">below</span></span>
           <span><span class="sw" style="background:var(--red)"></span> &#9733; ascended &ge; 87.5%</span>
         </div>
+        <div class="gridnote" id="gridnote"></div>
       </section>
 
       <hr class="rule">
@@ -674,10 +685,28 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
         <h2 class="sec"><span class="glyph">&amp;</span> Hackers moving the frontier</h2>
         <p class="lead">Recognition is attached to concrete records, roles, and source commits &mdash; not collapsed into one global score.</p>
         <div class="subh">Frontier Keepers</div>
-        <p class="famedesc">Current self-reported identity leaders above AutoAscend. Click a row for the hacker's complete contribution history.</p>
+        <div class="controls">
+          <span class="lbl">dungeons:</span>
+          <span class="grp">
+            <button class="bevel" data-tier="self-reported" data-tier-group="keepers" aria-pressed="false">Public Dungeons (15)</button>
+            <button class="bevel" data-tier="verified" data-tier-group="keepers" aria-pressed="true">Private Dungeons (15)</button>
+            <span class="ref tierhelp" id="tierhelp-keepers" data-k="dungeons-private"
+              aria-label="What are Private Dungeons?">?</span>
+          </span>
+        </div>
+        <p class="famedesc">Current identity leaders above AutoAscend. Click a row for the hacker's complete contribution history.</p>
         <div id="recordholders"><div class="emptyblock">Loading frontier keepers&hellip;</div></div>
         <div class="subh">Greatest Breakthroughs</div>
-        <p class="famedesc">A newest-first log of every submission that advanced an identity frontier. Click a row for the exact submission.</p>
+        <div class="controls">
+          <span class="lbl">dungeons:</span>
+          <span class="grp">
+            <button class="bevel" data-tier="self-reported" data-tier-group="breakthroughs" aria-pressed="false">Public Dungeons (15)</button>
+            <button class="bevel" data-tier="verified" data-tier-group="breakthroughs" aria-pressed="true">Private Dungeons (15)</button>
+            <span class="ref tierhelp" id="tierhelp-breakthroughs" data-k="dungeons-private"
+              aria-label="What are Private Dungeons?">?</span>
+          </span>
+        </div>
+        <p class="famedesc" id="bkdesc"></p>
         <div id="breakthroughs"><div class="emptyblock">Loading breakthroughs&hellip;</div></div>
       </section>
 
@@ -852,11 +881,11 @@ __)/\_//(\/(/\)/\//\/\|_)__</pre>
    Where an endpoint does not carry a field the render wants, we render "—" /
    omit it -- never a fabricated value (honest standings is the whole point). */
 let STATS=null;                      // live platform totals from /stats
-let WALL_OF_FAME={keepers:[],breakthroughs:[]};
+let keepersTier="verified", breakthroughsTier="verified";
+const FAME_BY_TIER={};
 const FAME_PAGE_SIZE=5;
 const FAME_LIMITS={keepers:FAME_PAGE_SIZE,breakthroughs:FAME_PAGE_SIZE};
 const HACKER_PAGE=50;                 // rows in the hacker popup's program table (each costs a /identities fetch)
-let BASELINE={owner:"autoascend",per_identity:{},overall:null};  // raw /baseline
 let OBJ_EP={};                       // {objective: episodes} from /objectives (honest ep for tooltips)
 const ROLE_NAMES={arc:"Archeologist",bar:"Barbarian",cav:"Caveman",hea:"Healer",kni:"Knight",mon:"Monk",
  pri:"Priest",ran:"Ranger",rog:"Rogue",sam:"Samurai",tou:"Tourist",val:"Valkyrie",wiz:"Wizard"};
@@ -875,7 +904,6 @@ const ROLE_VARS={
  tou:["hum-neu-fem","hum-neu-mal"],
  val:["dwa-law-fem","hum-law-fem","hum-neu-fem"],
  wiz:["elf-cha-fem","elf-cha-mal","gno-neu-fem","gno-neu-mal","hum-cha-fem","hum-cha-mal","hum-neu-fem","hum-neu-mal","orc-cha-fem","orc-cha-mal"]};
-let UNIVERSE={};                     // /elites?scope=generalist -> rank-1 per identity {id:{v,o,d,ep}}
 let HONOR_UNIVERSE={};               // self-reported records, retained while viewing verified
 const ASC=0.8745866562925501;
 /* the marquee. House lines first, then verbatim NetHack 3.6.6 -- dungeon ambience
@@ -1129,6 +1157,9 @@ renderMarquee(null);
 const ARX="https://arxiv.org/abs/", WIKI="https://nethackwiki.com/wiki/";
 function role(name,pet,d,art){ return {t:name,d:d,art:"@  the hero\n"+art,s:[["NetHack Wiki",WIKI+name]]}; }
 const REFS={
+  /* --- the two seed sets the board scores on --- */
+  "dungeons-public":{t:"Public Dungeons",d:"<b>15 practice seeds per identity</b>, one dungeon each, published so anyone can run them. The hacker runs them and reports the score; nobody re-runs them, so these numbers are <b>unaudited</b>.",s:[]},
+  "dungeons-private":{t:"Private Dungeons",d:"<b>15 secret seeds per identity</b>, one dungeon each. The hub holds them and never publishes them. A trusted verifier runs each program on dungeons it has <b>never seen</b>, so no one can write a program against them.",s:[]},
   /* --- citations --- */
   nle:{t:"The NetHack Learning Environment",d:"The paper that standardized NetHack for ML research and pinned version 3.6.6. Its authors judged a hand-crafted bot that solves NetHack &quot;very unlikely.&quot;",s:[["Kuttler et al., NeurIPS 2020",ARX+"2006.13760"]]},
   challenge:{t:"NeurIPS 2021 NetHack Challenge",d:"483 entrants, <b>zero ascensions</b> in over 500,000 evaluation games. The symbolic AutoAscend won at a median score of 5,300.",s:[["Hambro et al., 2022",ARX+"2203.11889"]]},
@@ -1222,28 +1253,60 @@ function odo(el,n,digits){ if(!el) return; el.innerHTML=String(n).padStart(digit
 })();
 
 /* ===================== tier ===================== */
-let curTier="self-reported";
-const EMPTY_VERIFIED='No verified programs yet &mdash; verification (M2b) is not live. Everything above the floor is self-reported.';
-document.querySelectorAll("[data-tier]").forEach(b=>b.addEventListener("click",async()=>{
+let curTier="verified";
+/* The wire keeps `self-reported` / `verified` -- accurate for the machinery
+   (a trusted worker produced the verified rows). The site names the SEED SET
+   instead, because that is what makes a number worth reading: the program
+   never saw the private dungeons. This map is the single source of truth for
+   every label and caption on the page. The toggle buttons' HTML
+   carries a duplicate of the label text too, purely as a pre-JS fallback so
+   the page still reads correctly before any script runs; the synchronous
+   line right after `tierHelp` below overwrites that markup on parse, so the
+   two copies can never drift. */
+const TIERS={
+  "self-reported":{label:"Public Dungeons (15)",  caption:"PUBLIC DUNGEONS"},
+  "verified":     {label:"Private Dungeons (15)", caption:"PRIVATE DUNGEONS"},
+};
+function tierHelp(el,tier){ if(!el) return;
+  const k=tier==="verified"?"dungeons-private":"dungeons-public";
+  el.dataset.k=k; el.setAttribute("aria-label",`What are ${REFS[k].t}?`); }
+/* The map is authoritative for button text too: markup carries a copy so the
+   toggle still reads correctly with JS disabled, and this overwrites it on
+   parse so the two can never drift. Covers every [data-tier] button on the
+   page, including the groups added later. */
+document.querySelectorAll("[data-tier]").forEach(b=>{ b.textContent=TIERS[b.dataset.tier].label; });
+document.querySelectorAll("[data-tier-group='frontier']").forEach(b=>b.addEventListener("click",async()=>{
   curTier=b.dataset.tier;
-  document.querySelectorAll("[data-tier]").forEach(x=>x.setAttribute("aria-pressed", x.dataset.tier===curTier?"true":"false"));
-  await loadUniverse();
+  document.querySelectorAll("[data-tier-group='frontier']").forEach(x=>x.setAttribute("aria-pressed", x.dataset.tier===curTier?"true":"false"));
+  tierHelp($("#tierhelp-frontier"), curTier);
+  await Promise.all([loadUniverse(curTier), loadBaseline(curTier)]);
   renderFrontier(); }));
+[["keepers",()=>keepersTier,v=>keepersTier=v],
+ ["breakthroughs",()=>breakthroughsTier,v=>breakthroughsTier=v]].forEach(([group,get,set])=>{
+  document.querySelectorAll(`[data-tier-group='${group}']`).forEach(b=>b.addEventListener("click",async()=>{
+    set(b.dataset.tier);
+    document.querySelectorAll(`[data-tier-group='${group}']`).forEach(x=>x.setAttribute("aria-pressed", x.dataset.tier===get()?"true":"false"));
+    tierHelp($(`#tierhelp-${group}`), get());
+    await loadRecognition(get());
+    renderRecognition();
+  }));
+});
 
 /* ===================== frontier heatmap ===================== */
 function renderFrontier(){
-  const grid=$("#rolegrid"), note=$("#gridnote"), verified=curTier==="verified";
-  const per=(BASELINE&&BASELINE.per_identity)||{};
+  const grid=$("#rolegrid"), note=$("#gridnote");
+  const BASE=BASELINE_BY_TIER[curTier]||{per_identity:{},overall:null};
+  const UNI=UNIVERSE_BY_TIER[curTier]||{};
+  const per=BASE.per_identity||{};
   /* per-identity datum: state 'prog' (a program's best, heat-tinted), 'floor' (the dim
      AutoAscend floor, shown when nothing has touched the cell yet), or 'none'. aa is the
      identity's own AutoAscend floor -- so every touched cell can report delta = v - aa. */
   function datum(id){
     const aa=(per[id]&&per[id].progression!=null)?per[id].progression:null;
-    if(verified) return {state:'none',v:null,aa};
     let v=null,floor=false;
     /* Community Frontier = best program for this identity, with AutoAscend as
        the visible floor when no registered program beats it. */
-    const pv=(id in UNIVERSE)?UNIVERSE[id].v:null;
+    const pv=(id in UNI)?UNI[id].v:null;
     if(pv!=null&&(aa==null||pv-aa>0.0005)) v=pv;
     else if(aa!=null){ v=aa; floor=true; }
     if(v==null) return {state:'none',v:null,aa};
@@ -1251,9 +1314,9 @@ function renderFrontier(){
     return {state:'prog',v,aa,delta:aa!=null?+(v-aa).toFixed(3):null};
   }
   function rowTitle(id,d){
-    if(d.v==null) return `${id} :: ${verified?'no verified result':'unexplored'}`;
+    if(d.v==null) return `${id} :: unexplored`;
     if(d.state==='floor') return `${id} :: AutoAscend floor ${pct(d.v)} -- best of all here`;
-    const who=UNIVERSE[id]?` :: program record @${UNIVERSE[id].o}, ${UNIVERSE[id].ep} ep`:"";
+    const who=UNI[id]?` :: program record @${UNI[id].o}, ${UNI[id].ep} ep`:"";
     const dl=d.delta!=null?` :: Δ ${fmtP(d.delta)} vs AutoAscend`:"";
     return `${id} :: ${pct(d.v)}${dl}${who}`;
   }
@@ -1277,16 +1340,22 @@ function renderFrontier(){
   const roleOrder=Object.keys(ROLE_NAMES).slice().sort((a,b)=>ROLE_VARS[b].length-ROLE_VARS[a].length); // most identities first
   grid.innerHTML=roleOrder.map(role=>{
     const ids=ROLE_VARS[role].map(v=>({v,id:role+"-"+v,d:datum(role+"-"+v)}));
-    let tSum=0,tAA=0,tN=0,shownSum=0,shownN=0;
+    let liftSum=0,liftN=0,shownSum=0,shownN=0,roleProg=0;   // liftN counts only cells whose lift is DEFINED; roleProg = this role's program-led cells
     ids.forEach(({d})=>{ total++;
-      if(d.state==='prog'){ prog++; sum+=d.v; tSum+=d.v; if(d.aa!=null) tAA+=d.aa; tN++; shownSum+=d.v; shownN++; }
-      else if(d.state==='floor'){ floor++; shownSum+=d.v; shownN++; } });
+      if(d.state==='prog'){ prog++; roleProg++; sum+=d.v; shownSum+=d.v; shownN++;
+        if(d.aa!=null){ liftSum+=d.v-d.aa; liftN++; } }          // no floor -> lift undefined, excluded
+      else if(d.state==='floor'){ floor++; shownSum+=d.v; shownN++; liftN++; } });  // at the floor = 0 lift
     const roleAvg=shownN?(shownSum/shownN):null;                 // average across the best-of-all cells
-    const roleLift=(tN&&shownN)?((tSum-tAA)/shownN):null;        // avg lift over ALL cells (floor = 0 lift)
-    // header on the same 3 columns as the identity rows: name | avg % | delta (rendered exactly as a cell -- 'aa' when all-floor)
+    const roleLift=liftN?(liftSum/liftN):null;                   // avg lift over cells whose lift is DEFINED (undefined -> null, never credited as 0)
+    // header on the same 3 columns as the identity rows: name | avg % | delta, rendered exactly as a cell:
+    // 'aa' when roleLift is defined but no cell here is program-led (every shown cell sits at the floor --
+    // roleProg===0, so roleLift can only be the degenerate 0 those floor cells contribute); the real averaged
+    // lift when a program leads AND at least one shown cell has a floor to measure against (roleLift defined,
+    // roleProg>0); an em dash when a program leads but nothing here has a floor yet (roleLift undefined,
+    // roleAvg defined); '.' when nothing in the role has been measured at all.
     const head=`<tr class="frhead"><td class="vn rn"><span class="ref" data-k="role-${role}">${ROLE_NAMES[role]}</span></td>`
       +`<td class="vv hval">${roleAvg!=null?pct(roleAvg):'&middot;'}</td>`
-      +(roleLift!=null?dSigned(roleLift):(roleAvg!=null?aaTd:noTd))+`</tr>`;
+      +(roleLift!=null?(roleProg?dSigned(roleLift):aaTd):(roleAvg!=null?dSigned(null):noTd))+`</tr>`;
     const body=ids.map(({v,id,d})=>{
       const dtd=d.state==='prog'?dSigned(d.delta):(d.state==='floor'?aaTd:noTd);
       return `<tr class="frontierrow" data-identity="${esc(id)}" tabindex="0" role="button" aria-label="Open leaderboard for ${esc(id)}" title="${esc(rowTitle(id,d))}"><td class="vn">${esc(v)}</td>${valTd(d)}${dtd}</tr>`;
@@ -1295,11 +1364,15 @@ function renderFrontier(){
   }).join("");
 
   const overall=prog?pct(sum/prog):"-";
-  const bv=(BASELINE&&BASELINE.overall!=null)?pct(BASELINE.overall):null;
+  const bv=(BASE&&BASE.overall!=null)?pct(BASE.overall):null;
   const baseLine=bv?` &middot; AutoAscend overall <b>${bv}</b>`:` &middot; AutoAscend not computed yet`;
-  note.innerHTML=(verified
-    ? `<b>verified</b> tier &mdash; no verified results yet (M2b isn't live), so every cell is blank`
-    : `each cell = the <b>best result yet</b> for one identity &mdash; a program's mean where it beats <b>AutoAscend</b>, else the dim floor &middot; <b>${prog}</b> of <b>${total}</b> led by a program, <b>${floor}</b> at the AutoAscend floor`)+baseLine;
+  /* The three cell states are mutually exclusive and sum to 73: led by a
+     program, sitting at the dim floor, or not yet measured. Counted live
+     from the loaded data above -- never hardcoded, so coverage grows on its
+     own as verification proceeds. */
+  note.innerHTML=`each cell = the <b>best result yet</b> for one identity &mdash; a program's mean where it beats <b>AutoAscend</b>, else the dim floor`
+    +` &middot; <b>${prog}</b> of <b>${total}</b> led by a program, <b>${floor}</b> at the AutoAscend floor, <b>${total-prog-floor}</b> not yet measured`
+    +baseLine;
   grid.querySelectorAll(".frontierrow").forEach(tr=>{
     const open=()=>openIdentity(tr.dataset.identity);
     tr.addEventListener("click",open);
@@ -1312,16 +1385,28 @@ function renderFrontier(){
 /* ===================== recognition ===================== */
 function renderRecognition(){
   const holders=$("#recordholders"), breakthroughs=$("#breakthroughs");
+  const kFame=FAME_BY_TIER[keepersTier]||{keepers:[]};
+  const bFame=FAME_BY_TIER[breakthroughsTier]||{breakthroughs:[]};
+  /* "newest first" means something different per tier: public breakthroughs
+     replay achievement order (created_at = when the hacker's result landed);
+     private breakthroughs replay VERIFICATION order (created_at = when our
+     worker got around to running it). Presenting verification order as an
+     achievement timeline would be a false claim, so the description flips
+     with the tier instead of asserting one story for both. */
+  const bkdesc=$("#bkdesc");
+  if(bkdesc) bkdesc.innerHTML = breakthroughsTier==="verified"
+    ? `Every submission that advanced an identity frontier, <b>ordered by when our verifier reached it</b> &mdash; not by when the hacker got there. Click a row for the exact submission.`
+    : `A newest-first log of every submission that advanced an identity frontier. Click a row for the exact submission.`;
   if(holders){
-    const people=WALL_OF_FAME.keepers||[];
+    const people=kFame.keepers||[];
     const visible=people.slice(0,FAME_LIMITS.keepers);
-    holders.innerHTML=people.length?`<div class="tablewrap"><table class="grid fametable"><caption>FRONTIER KEEPERS &middot; SELF-REPORTED*</caption>
+    holders.innerHTML=people.length?`<div class="tablewrap"><table class="grid fametable"><caption>FRONTIER KEEPERS &middot; ${TIERS[keepersTier].caption}</caption>
       <thead><tr><th>#</th><th class="l">hacker</th><th>frontiers</th><th class="l">roles represented</th><th>combined lift</th></tr></thead>
       <tbody>${visible.map((p,i)=>`<tr data-owner="${esc(p.owner)}" tabindex="0" role="button" aria-label="Open contributions by @${esc(p.owner)}">
         <td class="rk ${i<3?'top':''}">${i+1}</td><td class="l owner">@${esc(p.owner)}</td><td>${p.records}</td>
         <td class="roles">${p.roles.map(r=>esc(ROLE_NAMES[r]||r)).join(', ')}</td><td class="dpos">+${(p.total_lift*100).toFixed(1)} pp</td></tr>`).join("")}</tbody></table></div>
         ${visible.length<people.length?`<div class="more" data-fame-more="keepers" role="button" tabindex="0">[ --More-- ]</div>`:""}`
-      :`<div class="emptyblock">No participant is above AutoAscend yet.</div>`;
+      :`<div class="emptyblock">No hacker is above AutoAscend yet.</div>`;
     holders.querySelectorAll("tbody tr").forEach(row=>{
       const open=()=>openHacker(row.dataset.owner);
       row.addEventListener("click",open);
@@ -1333,10 +1418,10 @@ function renderRecognition(){
       more.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); expand(); } }); }
   }
   if(breakthroughs){
-    const people=WALL_OF_FAME.breakthroughs||[];
+    const people=bFame.breakthroughs||[];
     const visible=people.slice(0,FAME_LIMITS.breakthroughs);
-    breakthroughs.innerHTML=people.length?`<div class="tablewrap"><table class="grid fametable famelog"><caption>GREATEST BREAKTHROUGHS &middot; NEWEST FIRST</caption>
-      <thead><tr><th class="l">registered</th><th class="l">hacker</th><th class="l">identity</th><th>before</th><th>result</th><th>advance</th></tr></thead>
+    breakthroughs.innerHTML=people.length?`<div class="tablewrap"><table class="grid fametable famelog"><caption>GREATEST BREAKTHROUGHS &middot; ${TIERS[breakthroughsTier].caption}</caption>
+      <thead><tr><th class="l">${breakthroughsTier==="verified"?"verified":"registered"}</th><th class="l">hacker</th><th class="l">identity</th><th>before</th><th>result</th><th>advance</th></tr></thead>
       <tbody>${visible.map((p,i)=>`<tr data-breakthrough="${i}" tabindex="0" role="button" aria-label="Open breakthrough submission by @${esc(p.owner)}">
         <td class="l">${esc(fmtDate(p.at))}</td><td class="l owner">@${esc(p.owner)}</td><td class="l">${esc(p.identity)}</td>
         <td>${(p.previous*100).toFixed(1)}%</td><td>${(p.score*100).toFixed(1)}%</td><td class="dpos">+${(p.gain*100).toFixed(1)} pp</td></tr>`).join("")}</tbody></table></div>
@@ -1380,11 +1465,12 @@ function identityDelta(v,aa){
   const d=v-aa; return {text:(d>0?"+":"")+d.toFixed(3),cls:d>0.0005?"dpos":(d<-0.0005?"dneg":"dz")};
 }
 async function openIdentity(identity){
-  const aa=BASELINE&&BASELINE.per_identity&&BASELINE.per_identity[identity];
+  const base=BASELINE_BY_TIER[curTier]||{per_identity:{}};
+  const aa=base.per_identity&&base.per_identity[identity];
   const pbody=pushDetail(`Frontier: ${identity}`, true);
   pbody.innerHTML=`<div class="popupstatus">Loading same-seed results&hellip;</div>`;
   try{
-    const resp=curTier==="verified"?{rows:[]}:await jget(`/board?scope=${encodeURIComponent(identity)}&tier=${encodeURIComponent(curTier)}`);
+    const resp=await jget(`/board?scope=${encodeURIComponent(identity)}&tier=${encodeURIComponent(curTier)}`);
     const rows=resp.rows||[];
     const baseline=aa&&aa.progression!=null?aa.progression:null;
     const body=rows.length?rows.map(r=>{
@@ -1395,9 +1481,9 @@ async function openIdentity(identity){
         <td class="num">${r.median_progression.toFixed(3)}</td><td class="num">${OBJ_EP[identity]!=null?OBJ_EP[identity]:'—'}</td>
         <td>${esc(r.deepest||'—')}</td><td class="num ${delta.cls}">${delta.text}</td>
         <td class="num ${r.ascensions?'star':''}">${r.ascensions||'·'}</td><td>${esc(fmtDate(r.registered_at))}</td></tr>`;
-    }).join(""):`<tr><td colspan="10" class="pend">${curTier==="verified"?EMPTY_VERIFIED:'No program has evaluated this identity yet.'}</td></tr>`;
+    }).join(""):`<tr><td colspan="10" class="pend">No program has evaluated this identity yet.</td></tr>`;
     const aaRow=baseline!=null?`<tr class="base"><td class="num">&middot;</td><td>autoascend</td><td>reference floor</td><td class="num">${baseline.toFixed(3)}</td><td class="num">&mdash;</td><td class="num">${aa.episodes||'—'}</td><td>${esc(aa.deepest||'—')}</td><td class="num dz">&mdash;</td><td class="num">&middot;</td><td>&mdash;</td></tr>`:"";
-    pbody.innerHTML=`<div class="tablewrap"><table class="identityboard"><caption>same canonical seed batch &middot; ${curTier.toUpperCase()}${curTier==="self-reported"?'*':''}</caption><thead><tr><th class="num">#</th><th>hacker</th><th>program</th><th class="num">mean</th><th class="num">median</th><th class="num">ep</th><th>deepest</th><th class="num">&Delta; AA</th><th class="num">&#9733;</th><th>registered</th></tr></thead><tbody>${body}${aaRow}</tbody></table></div>`;
+    pbody.innerHTML=`<div class="tablewrap"><table class="identityboard"><caption>same canonical seed batch &middot; ${TIERS[curTier].caption}</caption><thead><tr><th class="num">#</th><th>hacker</th><th>program</th><th class="num">mean</th><th class="num">median</th><th class="num">ep</th><th>deepest</th><th class="num">&Delta; AA</th><th class="num">&#9733;</th><th>registered</th></tr></thead><tbody>${body}${aaRow}</tbody></table></div>`;
     pbody.querySelectorAll(".ownerlink").forEach(x=>x.addEventListener("click",()=>openHacker(x.dataset.owner)));
   }catch(e){ pbody.innerHTML=`<div class="popupstatus">Could not load this identity leaderboard.</div>`; }
 }
@@ -1474,9 +1560,10 @@ async function openBreakthrough(event){
       <span class="k">roles evaluated</span><span class="v">${roles.length?roles.map(r=>esc(ROLE_NAMES[r]||r)).join(", "):"—"}</span>
       <span class="k">identities evaluated</span><span class="v">${frontier.length} of 73</span>
       <span class="k">evaluation episodes</span><span class="v">${episodes}</span>
-      <span class="k">tier</span><span class="v">self-reported*</span>
+      <span class="k">tier</span><span class="v">${TIERS[breakthroughsTier].label}</span>
     </div>
-    <div class="clickhint">This submission moved ${esc(event.identity)} from ${(event.previous*100).toFixed(1)}% to ${(event.score*100).toFixed(1)}%, measured against the community frontier that existed when it was registered.</div>`;
+    <div class="clickhint">This submission moved ${esc(event.identity)} from ${(event.previous*100).toFixed(1)}% to ${(event.score*100).toFixed(1)}%, measured against the community frontier that existed ${breakthroughsTier==="verified"?"when our verifier reached it":"when it was registered"}.</div>
+    <div class="clickhint">Roles evaluated, identities evaluated and episodes above are always read from the public dungeons, regardless of tier.</div>`;
   }catch(e){
     pbody.innerHTML=`<div class="popupstatus">Could not load this breakthrough submission.</div>`;
   }
@@ -1513,7 +1600,7 @@ async function openHacker(owner){
         <span class="k">latest registration</span><span class="v">${esc(newest)}</span>
       </div></div>
     <div class="minihead">${clipped?`programs -- newest ${shown} of ${total}:`:"programs -- newest first:"}</div>
-    ${solutions.length?`<div class="tablewrap"><table class="identityboard"><caption>REGISTERED PROGRAMS &middot; SELF-REPORTED*</caption><thead><tr><th>program</th><th>roles</th><th class="num">identities</th><th class="num">episodes</th><th class="num">records</th><th>best identity</th><th>registered</th></tr></thead><tbody>${solutions.map(programRow).join("")}</tbody></table></div>`:'<div class="popupstatus">No registered programs found.</div>'}`;
+    ${solutions.length?`<div class="tablewrap"><table class="identityboard"><caption>REGISTERED PROGRAMS &middot; ${TIERS["self-reported"].caption}</caption><thead><tr><th>program</th><th>roles</th><th class="num">identities</th><th class="num">episodes</th><th class="num">records</th><th>best identity</th><th>registered</th></tr></thead><tbody>${solutions.map(programRow).join("")}</tbody></table></div>`:'<div class="popupstatus">No registered programs found.</div>'}`;
     pbody.querySelector(".ghavatar-slot").replaceWith(ghAvatar(owner));
   }catch(e){
     pbody.innerHTML=`<div class="popupstatus">Could not load this hacker's program details.</div>`;
@@ -1524,23 +1611,36 @@ async function openHacker(owner){
 /* ===================== live data: fetch + adapt hub JSON into the render state ===================== */
 const jget = async p => { const r = await fetch(p); if(!r.ok) throw new Error(p+" "+r.status); return r.json(); };
 
-/* Frontier "universe": each identity's rank-1 elite. /elites has no episodes, so ep comes
-   from /objectives (the honest per-identity batch size) -- falls back to the 15-episode
-   identity batch if /objectives was unavailable. */
-async function loadUniverse(){
-  if(curTier==="verified"){ UNIVERSE={}; return; }
+/* Frontier "universe" and AutoAscend floor, cached per tier so flipping the
+   toggle never refetches. Both are read at the SAME tier and handed to the
+   grid together -- the server pairs the floor to the tier, and the page must
+   not undo that by mixing a cached public floor into a private view. /elites
+   has no episodes, so ep comes from /objectives (the honest per-identity
+   batch size) -- falls back to the 15-episode identity batch if /objectives
+   was unavailable. */
+const UNIVERSE_BY_TIER={}, BASELINE_BY_TIER={};
+async function loadUniverse(tier){
+  if(UNIVERSE_BY_TIER[tier]) return UNIVERSE_BY_TIER[tier];
   try{
-    const el = await jget("/elites?scope=generalist");
-    const uni = {};
-    for(const r of (el.rows||[])){ if(r.rank===1) uni[r.identity] = {v:r.score, o:r.owner, d:r.program_id, ep:OBJ_EP[r.identity]!=null?OBJ_EP[r.identity]:15}; }
-    UNIVERSE = uni;
-    HONOR_UNIVERSE = uni;
-  }catch(e){ UNIVERSE = {}; }
+    const el=await jget(`/elites?scope=generalist&tier=${encodeURIComponent(tier)}`);
+    const uni={};
+    for(const r of (el.rows||[])){ if(r.rank===1) uni[r.identity]={v:r.score,o:r.owner,d:r.program_id,ep:OBJ_EP[r.identity]!=null?OBJ_EP[r.identity]:15}; }
+    UNIVERSE_BY_TIER[tier]=uni;
+  }catch(e){ UNIVERSE_BY_TIER[tier]={}; }
+  return UNIVERSE_BY_TIER[tier];
+}
+async function loadBaseline(tier){
+  if(BASELINE_BY_TIER[tier]) return BASELINE_BY_TIER[tier];
+  try{ BASELINE_BY_TIER[tier]=await jget(`/baseline?tier=${encodeURIComponent(tier)}`); }
+  catch(e){ BASELINE_BY_TIER[tier]={owner:"autoascend",per_identity:{},overall:null}; }
+  return BASELINE_BY_TIER[tier];
 }
 
-async function loadRecognition(){
-  try{ WALL_OF_FAME=await jget("/recognition"); }
-  catch(e){ WALL_OF_FAME={keepers:[],breakthroughs:[]}; }
+async function loadRecognition(tier){
+  if(FAME_BY_TIER[tier]) return FAME_BY_TIER[tier];
+  try{ FAME_BY_TIER[tier]=await jget(`/recognition?tier=${encodeURIComponent(tier)}`); }
+  catch(e){ FAME_BY_TIER[tier]={keepers:[],breakthroughs:[]}; }
+  return FAME_BY_TIER[tier];
 }
 
 /* Bootstrap: fetch everything, adapt into the render state, then do the first render.
@@ -1551,10 +1651,13 @@ async function boot(){
     .then(s=>{ STATS=s; odo($("#odoProg"), s.programs, 5); odo($("#odoPlay"), s.hackers, 5);
                renderMarquee(marqueeStatsLine(s)); setUpdated(s.last_registered_at); })
     .catch(()=>{ STATS=null; odo($("#odoProg"),0,5); odo($("#odoPlay"),0,5); });
-  const baseP = jget("/baseline").then(b=>{ BASELINE = b; }).catch(()=>{ BASELINE = {owner:"autoascend", per_identity:{}, overall:null}; });
   const objP  = jget("/objectives").then(o=>{ OBJ_EP = Object.fromEntries(o.map(x=>[x.name, x.episodes])); }).catch(()=>{ OBJ_EP = {}; });
-  await Promise.all([statsP,baseP,objP,loadRecognition()]);
-  await loadUniverse();
+  await Promise.all([statsP,objP,loadRecognition("verified")]);
+  await Promise.all([loadUniverse(curTier), loadBaseline(curTier)]);
+  HONOR_UNIVERSE = await loadUniverse("self-reported");
+  tierHelp($("#tierhelp-frontier"), curTier);
+  tierHelp($("#tierhelp-keepers"), keepersTier);
+  tierHelp($("#tierhelp-breakthroughs"), breakthroughsTier);
   renderFrontier(); renderRecognition();
 }
 boot();

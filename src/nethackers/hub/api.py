@@ -85,6 +85,7 @@ from nethackers.hub.views.programs import count_programs, get_program, list_prog
 from nethackers.hub.views.progress import read_progress
 from nethackers.hub.views.recognition import read_recognition
 from nethackers.hub.views.solution import read_solution_frontier
+from nethackers.hub.views.source import Epoch, VerificationUnavailable, source_for
 from nethackers.hub.views.stats import read_stats
 from nethackers.hub.views.verified import read_verified, read_verified_baseline
 
@@ -197,6 +198,28 @@ def create_app(
     touches the self-reported ``atoms`` table ``POST /register`` owns."""
     app = FastAPI()
 
+    def _epoch() -> Epoch | None:
+        """The one verified epoch this hub can currently read, or None when no
+        verifier is configured. ``ARENA_IMAGE`` is the pinned arena the hub
+        accepts evidence from, so it is also the only image whose verified
+        atoms are comparable."""
+        if verifier is None:
+            return None
+        return Epoch(
+            secret_fingerprint=_fp(verifier.secret),
+            evaluator_image=ARENA_IMAGE,
+            seeds=verifier.seeds,
+        )
+
+    def _source_guard(tier: str) -> None:
+        """503 for a verified read on a hub with no verifier, matching the rest
+        of /verify/*. Called before a view so the failure is an HTTP status,
+        not a 500."""
+        try:
+            source_for(tier, _epoch())
+        except VerificationUnavailable as e:
+            raise HTTPException(status_code=503, detail=str(e)) from e
+
     @app.get("/healthz")
     def healthz() -> dict[str, str]:
         # `auth` is additive (offline-identity/effective-identity feature): an
@@ -248,14 +271,16 @@ def create_app(
         return read_stats(store)
 
     @app.get("/baseline")
-    def baseline() -> dict[str, Any]:
-        return read_baseline(store)
+    def baseline(tier: str = "self-reported") -> dict[str, Any]:
+        _source_guard(tier)
+        return read_baseline(store, tier=tier, epoch=_epoch())
 
     @app.get("/recognition")
-    def recognition() -> dict[str, Any]:
+    def recognition(tier: str = "self-reported") -> dict[str, Any]:
         # Compound object -- {generated_at, keepers, breakthroughs} -- for the
-        # website "Wall of Fame". Deliberately self-reported-tier only.
-        return read_recognition(store)
+        # website's Frontier Keepers and Greatest Breakthroughs tables.
+        _source_guard(tier)
+        return read_recognition(store, tier=tier, epoch=_epoch())
 
     @app.get("/progress")
     def progress(scope: str | None = None, tier: str = "self-reported") -> dict[str, Any]:
@@ -287,8 +312,9 @@ def create_app(
 
     @app.get("/elites")
     def elites(scope: str = "generalist", tier: str = "self-reported") -> dict[str, Any]:
+        _source_guard(tier)
         try:
-            rows = read_elites(store, scope=scope, tier=tier)
+            rows = read_elites(store, scope=scope, tier=tier, epoch=_epoch())
         except ValueError as e:
             raise HTTPException(status_code=404, detail=f"unknown scope: {scope!r}") from e
         return envelope(rows, scope=scope, tier=tier)
@@ -308,14 +334,15 @@ def create_app(
                 status_code=400,
                 detail="?metric= is gone; use /achievements/coverage or /achievements/firsts",
             )
+        _source_guard(tier)
         if scope in catalog and catalog[scope].kind == "identity":
-            rows = board(store, catalog[scope], tier=tier)
+            rows = board(store, catalog[scope], tier=tier, epoch=_epoch())
         else:
             try:
                 _kind, ids = resolve_scope(scope)
             except ValueError as e:
                 raise HTTPException(status_code=404, detail=f"unknown scope: {scope!r}") from e
-            rows = aggregate_board(store, ids, tier=tier)
+            rows = aggregate_board(store, ids, tier=tier, epoch=_epoch())
         return envelope(rows, scope=scope, tier=tier)
 
     @app.get("/hackers")

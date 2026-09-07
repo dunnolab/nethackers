@@ -5,41 +5,19 @@ helper to report per-solution verification progress."""
 
 from __future__ import annotations
 
-import statistics
 from typing import Any
 
 from nethackers.hub.objectives import IDENTITIES
 from nethackers.hub.store import Store
-from nethackers.hub.views.milestones import deepest_milestone
+from nethackers.hub.views.baseline import per_identity_fold
 
 
 def _aggregate(atoms, seeds) -> dict[str, Any]:
     """Fold hidden-seed atoms into ``{per_identity, overall}``, keeping only
-    seeds still in the current hidden list. ``overall`` is the mean OF THE
-    PER-IDENTITY MEANS (not of raw episodes), so an identity with more
-    episodes recorded doesn't weigh more heavily than the rest.
-
-    ``overall`` is ``None``, never ``0.0``, when nothing has been measured --
-    "not computed yet" and "scored zero" are different claims, and conflating
-    them would show every program beating an uncomputed floor."""
-    seed_set = frozenset(seeds)
-    per: dict[str, list] = {}
-    for a in atoms:
-        if a.seed in seed_set:
-            per.setdefault(a.identity, []).append(a)
-    per_identity = {
-        ident: {
-            "progression": round(statistics.mean(x.progression for x in g), 3),
-            "deepest": deepest_milestone([x.milestone for x in g]),
-            "episodes": len(g),
-        }
-        for ident, g in per.items()
-    }
-    overall: float | None = None
-    if per_identity:
-        progressions = [c["progression"] for c in per_identity.values()]
-        overall = round(statistics.mean(progressions), 3)
-    return {"per_identity": per_identity, "overall": overall}
+    seeds still in the current hidden list. The fold itself is
+    ``views.baseline.per_identity_fold`` -- one implementation, two tables."""
+    live = frozenset(seeds)
+    return per_identity_fold([a for a in atoms if a.seed in live])
 
 
 def read_verified(
