@@ -117,6 +117,7 @@ class Run:
         # whatever cell a later run child has since taken.
         self.init_cells: dict[str, dict] = {}
         self.init_union: dict | None = None
+        self.init_cell_results: dict[str, list[dict]] = {}
         self.chain: list[str] = []
         self.ledger_rows: list[tuple[int, bool, str]] = []
         self.counts: dict[str, int] = {}
@@ -139,6 +140,7 @@ class Run:
         if state.get("phase") == "cold-start":
             self.init_cells = {c["identity"]: c for c in (state.get("cells") or [])}
             self.init_union = state.get("union")
+            self.init_cell_results = state.get("cell_results") or {}
         phase = state["phase"]
         if phase == "mutating":
             self.mut_start = time.monotonic()
@@ -396,7 +398,7 @@ class Run:
         idents = self.identities()
         total = self._per_ident_total()
         if k == 0:
-            src = {i: (self.state.get("cell_results") or {}).get(i, []) for i in idents}
+            src = {i: self.init_cell_results.get(i, []) for i in idents}
         elif k in self.iter_results and self.iter_results[k].results is not None:
             src = {i: [] for i in idents}
             for r in self.iter_results[k].results or []:

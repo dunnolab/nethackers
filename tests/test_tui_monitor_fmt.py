@@ -35,6 +35,9 @@ def test_ep_time_is_seconds_under_a_minute_else_minutes_and_seconds():
     assert S.ep_time(9) == "9s"
     assert S.ep_time(134) == "2m 14s"
     assert S.ep_time(60) == "1m 00s"
+    # production always passes floats (wall_seconds) -- lock int(round()) too.
+    assert S.ep_time(9.0) == "9s"
+    assert S.ep_time(134.0) == "2m 14s"
 
 
 def test_best_cell_colors_by_kind_and_shows_score():

@@ -343,6 +343,53 @@ def test_iteration_evals_init_completed_running():
     assert len(r.iteration_evals(2)["v1"].rows) == 2   # the actually-running iteration
 
 
+def test_iteration_evals_init_reads_the_cold_start_cell_results_snapshot():
+    """Regression: iteration_evals(0) read LIVE state["cell_results"], but
+    harness/loop.py rebuilds cell_results[i] on every _emit from
+    archive.cells[i].dev_evidence, and archive.insert wholesale-replaces the
+    cell (dev_evidence included) once a run child beats it. So after a child
+    takes a hub champion's cell, a past-iteration open_best()/show_program()
+    would show the champion's label/link (Fix 1/3) but the per-seed TABLE
+    underneath would show the CHILD's episodes mislabeled as the champion's.
+    Must read the frozen cold-start snapshot (init_cell_results), exactly
+    like init_cells/init_union."""
+    r = Run("r1", EvolveConfig("v1", "claude", 5))
+    r.apply_state({
+        "phase": "cold-start", "iteration": 0, "identities": ["v1"],
+        "cells": [{"identity": "v1", "score": 0.42, "digest": "d1"}],
+        "origins": {"d1": {"kind": "hub", "handle": "clyde", "sha": "11",
+                            "repo": "github.com/t/a", "iteration": None}},
+        "aa_baseline": {"v1": 0.28}, "union": None,
+        "cell_results": {"v1": [{"character": "v1", "trajectory_id": 7,
+            "progress": 0.4, "status": "completed", "end_status": "died",
+            "ascended": False, "cause_of_death": "killed by a newt",
+            "max_depth": 6, "turns": 900, "wall_seconds": 12.0}]},
+        "coverage": (1, 1), "cell": None, "generation": 0,
+        "baseline_dev": 0.0, "best_dev": 0.0, "wins": 0, "tokens": 0, "detail": "",
+        "parent_digest": "", "parent_dev": 0.0})
+    # the live archive later drifts to a run child's own eval -- harness/loop.py
+    # rebuilds cell_results[i] from archive.cells[i].dev_evidence every _emit,
+    # and archive.insert wholesale-replaces the cell once a child beats it.
+    r.apply_state({
+        "phase": "registered", "iteration": 1, "identities": ["v1"],
+        "cells": [{"identity": "v1", "score": 0.6, "digest": "child1"}],
+        "origins": {"d1": {"kind": "hub", "handle": "clyde", "sha": "11",
+                            "repo": "github.com/t/a", "iteration": None},
+                    "child1": {"kind": "run", "handle": "dev", "sha": None,
+                               "repo": None, "iteration": 1}},
+        "aa_baseline": {"v1": 0.28}, "union": None,
+        "cell_results": {"v1": [{"character": "v1", "trajectory_id": 3,
+            "progress": 0.6, "status": "completed", "end_status": "died",
+            "ascended": False, "cause_of_death": "starvation",
+            "max_depth": 9, "turns": 1500, "wall_seconds": 30.0}]},
+        "coverage": (1, 1), "cell": "v1", "generation": 1,
+        "baseline_dev": 0.0, "best_dev": 0.0, "wins": 1, "tokens": 0, "detail": "",
+        "parent_digest": "", "parent_dev": 0.0})
+    # the CHAMPION's cold-start row -- NOT "starvation", which is what reading
+    # live state would wrongly return.
+    assert r.iteration_evals(0)["v1"].rows[0]["cause"] == "killed by a newt"
+
+
 def test_run_tracks_cells_and_coverage_from_state():
     r = Run("r1", EvolveConfig("wiz-elf-cha-mal,wiz-orc-cha-mal", "claude", 3))
     r.apply_state({
