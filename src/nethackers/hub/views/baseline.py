@@ -1,6 +1,7 @@
-"""AutoAscend reference floor: per-identity aggregates over baseline_atoms
-(mean progression, deepest milestone reached, episode count). Same milestone
-ordering (ACHIEVEMENTS) the attainment view uses."""
+"""AutoAscend reference floor: per-identity aggregates (mean progression,
+deepest milestone reached, episode count) over ``baseline_atoms`` for the
+self-reported tier and ``verified_baseline_atoms`` for the verified tier.
+Same milestone ordering (ACHIEVEMENTS) the attainment view uses."""
 
 from __future__ import annotations
 
@@ -51,6 +52,16 @@ def read_baseline(
     """AutoAscend's floor for ``tier`` -- ``baseline_atoms`` for the
     self-reported tier, ``verified_baseline_atoms`` (epoch-scoped) for the
     verified one. The source pairs the floor to the tier, so a hidden-seed
-    board can never be handed the published-seed floor."""
+    board can never be handed the published-seed floor.
+
+    An unrecognized ``tier`` falls through ``source_for`` to ``epoch=None``
+    and so reads the same published ``baseline_atoms`` floor as
+    "self-reported", rather than the zero rows an unknown tier gets on the
+    participant-atoms views. This is a deliberate ruling, not a gap: baseline
+    rows carry no participant ``tier`` column to filter on (``iter_baseline_atoms``
+    never applies one -- see ``views.source``), so there is nothing to make
+    empty. Failing open to the existing public floor risks no epoch violation
+    and no seed leak, so special-casing a value nothing sends would be
+    speculative complexity."""
     source = source_for(tier, epoch)
     return {"owner": "autoascend", **per_identity_fold(source.iter_baseline_atoms(store))}

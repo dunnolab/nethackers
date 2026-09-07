@@ -11,15 +11,16 @@ from nethackers.hub.api import create_app
 from nethackers.hub.auth import LocalStubAuth
 from nethackers.hub.store import Store
 from nethackers.hub.verify import VerifierConfig
+from nethackers.hub.views.baseline import read_baseline
 
 IDENT = "val-dwa-law-fem"
 SECRET, SEEDS = "dev-secret", (11, 22)
 
 
-def _aa(seed, progression, image=ARENA_IMAGE):
+def _aa(seed, progression, image=ARENA_IMAGE, identity=IDENT):
     return Atom(
         solution_digest="autoascend", owner="autoascend", tier="baseline",
-        identity=IDENT, seed=seed, progression=progression, milestone="Dlvl:4",
+        identity=identity, seed=seed, progression=progression, milestone="Dlvl:4",
         ascended=False, status="completed", turns=10, steps=20,
         evaluator_image=image,
     )
@@ -74,3 +75,32 @@ def test_verified_baseline_never_exposes_a_seed(store):
 def test_verified_baseline_503s_without_a_verifier(store):
     assert _client(store, verifier=None).get(
         "/baseline?tier=verified").status_code == 503
+
+
+def test_overall_weights_identities_equally_not_episodes(tmp_path):
+    """``overall`` must be the mean OF THE PER-IDENTITY MEANS, not a flat mean
+    over every raw episode -- otherwise an identity with more episodes
+    recorded would outweigh the rest. Every other test touching ``overall``
+    in this suite (and in test_baseline_view.py / test_verified_baseline_view.py)
+    uses a single identity, or several identities with exactly one episode
+    each, where the two formulas agree and so can't tell them apart.
+
+    Here identity-a has 3 episodes at progression 0.9 (mean 0.9) and
+    identity-b has 1 episode at progression 0.1 (mean 0.1):
+      mean-of-means      = (0.9 + 0.1) / 2         = 0.5   <- correct, asserted
+      flat mean over all = (0.9+0.9+0.9+0.1) / 4    = 0.7   <- wrong, would
+                                                                 pass every
+                                                                 other test.
+    """
+    s = Store(str(tmp_path / "hub.db"))
+    s.init_schema()
+    s.insert_baseline_atoms([
+        _aa(0, 0.9, identity="identity-a"),
+        _aa(1, 0.9, identity="identity-a"),
+        _aa(2, 0.9, identity="identity-a"),
+        _aa(3, 0.1, identity="identity-b"),
+    ])
+    body = read_baseline(s)
+    assert body["per_identity"]["identity-a"]["progression"] == pytest.approx(0.9)
+    assert body["per_identity"]["identity-b"]["progression"] == pytest.approx(0.1)
+    assert body["overall"] == pytest.approx(0.5)
