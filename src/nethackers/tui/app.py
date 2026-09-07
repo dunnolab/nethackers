@@ -360,7 +360,7 @@ class NetHackersApp(App):
         run.apply_iteration(iteration, result)
         m = self._monitor_for(run)
         if m is not None:
-            m.render_state()   # Task 9 replaces this with render_iteration
+            m.render_iteration(iteration, result)
 
     def _finish_run(self, run: Run, results: object | None,
                     error: BaseException | None) -> None:

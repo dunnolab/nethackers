@@ -116,6 +116,10 @@ class Run:
         self.logs: dict[str, list[tuple[str, str]]] = {}
         self.meters: dict[str, Meter] = {}
         self.iter_results: dict[int, IterationResult] = {}   # iteration -> result
+        # iteration -> {"target": state["cell"], "seed_desc": ...}, recorded at
+        # the "mutating" state so the monitor's ✎ marker + process log can name
+        # which cell/seed a not-yet-decided iteration is mutating.
+        self.iter_meta: dict[int, dict] = {}
         self.sel_tag: str | None = None
         self.eval_step: tuple[int, int, float] | None = None
         self.mut_start = 0.0
@@ -130,6 +134,10 @@ class Run:
             tag = self.tag(state["iteration"])
             self.logs.setdefault(tag, [])
             self.sel_tag = tag
+            self.iter_meta[state["iteration"]] = {
+                "target": state.get("cell"),
+                "seed_desc": ("best overall cell (union)" if state.get("cell") == "union"
+                              else f"{state.get('cell')} cell elite")}
         elif phase in ("evaluating-dev", "evaluating-held") and prev != phase:
             self.eval_step = None
         # The single-lineage chain is only meaningful for a single-identity
@@ -415,3 +423,9 @@ class Run:
         if self.state.get("iteration") == k and self.running:
             return "running"
         return "pending"
+
+    def iter_target(self, k: int) -> str | None:
+        """The cell/identity iteration ``k`` mutates (or "union"), from the
+        "mutating" state recorded into ``iter_meta`` -- None before that
+        iteration has started."""
+        return (self.iter_meta.get(k) or {}).get("target")
