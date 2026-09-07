@@ -251,6 +251,44 @@ def test_incumbent_starts_at_champion_or_autoascend_and_propagates():
     assert (round(score, 2), kind, j) == (0.5, "run", 1) and label == "run · iter 1"
 
 
+def test_incumbent_reads_the_cold_start_snapshot_not_live_state():
+    """Regression: once a run child takes a cell, state["cells"]/["origins"]
+    are OVERWRITTEN to the latest archive on every on_state emit -- so if
+    incumbent() read them live, a past-iteration view (upto_k=1, i.e. BEFORE
+    the child's win) would see the child's digest (kind "run") instead of the
+    hub champion that was actually incumbent at that point, and wrongly
+    collapse to AutoAscend. incumbent() must read the FROZEN cold-start
+    snapshot (init_cells/origins as of cold-start) for the starting point,
+    only propagating forward through completed iterations."""
+    from nethackers.harness.loop import IterationResult
+    r = Run("r1", EvolveConfig("v1", "claude", 5))
+    hub_origin = {"kind": "hub", "handle": "clyde", "sha": "11",
+                  "repo": "github.com/t/a", "iteration": None}
+    r.apply_state({
+        "phase": "cold-start", "iteration": 0,
+        "cells": [{"identity": "v1", "score": 0.42, "digest": "d1"}],
+        "origins": {"d1": hub_origin}, "aa_baseline": {"v1": 0.28},
+        "baseline_dev": 0.0, "best_dev": 0.0, "wins": 0, "tokens": 0,
+        "detail": "", "parent_digest": "", "parent_dev": 0.0, "generation": 0})
+    # a run child later takes v1's cell -- the LIVE cells/origins now show the
+    # child (kind "run"), overwriting the cold-start snapshot in self.state.
+    run_origin = {"kind": "run", "handle": "dev", "sha": None, "repo": None, "iteration": 1}
+    r.apply_state({
+        "phase": "registered", "iteration": 1,
+        "cells": [{"identity": "v1", "score": 0.6, "digest": "child1"}],
+        "origins": {"d1": hub_origin, "child1": run_origin},  # merged, as a real emit would be
+        "aa_baseline": {"v1": 0.28},
+        "baseline_dev": 0.0, "best_dev": 0.0, "wins": 1, "tokens": 0,
+        "detail": "", "parent_digest": "", "parent_dev": 0.0, "generation": 1})
+    r.apply_iteration(1, IterationResult(True, "registered", improved=["v1"],
+                                         results=[{"character": "v1", "progress": 0.6}]))
+    # going INTO iter 1 (i.e. before the win is folded in): still the hub
+    # champion -- NOT AutoAscend, which is what reading live state would give.
+    assert r.incumbent("v1", upto_k=1) == (0.42, "clyde @11", "hub", None)
+    # after iter 1: propagated to the run win, as before.
+    assert r.incumbent("v1", upto_k=2) == (0.6, "run · iter 1", "run", 1)
+
+
 def test_best_overall_uses_union_then_propagates_and_falls_back():
     from nethackers.harness.loop import IterationResult
     r = Run("r1", EvolveConfig("v1,v2", "claude", 5))

@@ -109,6 +109,14 @@ class Run:
         self.finished_at: float | None = None
 
         self.state: dict = dict(_INITIAL_STATE)
+        # The cold-start archive/union, frozen as of the LAST cold-start-phase
+        # emit -- unlike self.state["cells"]/["union"], which are overwritten
+        # to the latest live archive on every subsequent emit. incumbent()/
+        # best_overall() need this frozen starting point so a past-iteration
+        # view still shows the champion that was actually incumbent THEN, not
+        # whatever cell a later run child has since taken.
+        self.init_cells: dict[str, dict] = {}
+        self.init_union: dict | None = None
         self.chain: list[str] = []
         self.ledger_rows: list[tuple[int, bool, str]] = []
         self.counts: dict[str, int] = {}
@@ -128,6 +136,9 @@ class Run:
     def apply_state(self, state: dict) -> None:
         prev = self.state.get("phase")
         self.state = state
+        if state.get("phase") == "cold-start":
+            self.init_cells = {c["identity"]: c for c in (state.get("cells") or [])}
+            self.init_union = state.get("union")
         phase = state["phase"]
         if phase == "mutating":
             self.mut_start = time.monotonic()
@@ -338,7 +349,7 @@ class Run:
                 if 0 < k < upto_k and self.iter_results[k].results is not None]
 
     def incumbent(self, ident: str, upto_k: int) -> tuple[float, str, str, int | None]:
-        cells = {c["identity"]: c for c in self.cells()}
+        cells = self.init_cells
         if ident in cells and self.origins().get(cells[ident]["digest"], {}).get("kind") == "hub":
             label, kind = self._origin_label(cells[ident]["digest"])
             score, j = float(cells[ident]["score"]), None
@@ -354,7 +365,7 @@ class Run:
         return score, label, kind, j
 
     def best_overall(self, upto_k: int) -> tuple[float, str, str, int | None]:
-        union = self.state.get("union")
+        union = self.init_union
         if union is not None:
             label, kind = self._origin_label(union["digest"])
             score, j = float(union["score"]), None
