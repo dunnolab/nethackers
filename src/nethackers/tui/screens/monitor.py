@@ -12,13 +12,16 @@ app forwards live worker events (``render_state``/``render_episode``/
 detaches the view -- the run keeps running -- and ``s`` stops it. The screen
 holds no worker (the app owns it).
 
-Per-seed detail (clicking a program cell to see its per-seed breakdown) is a
-STUB in this task: ``DetailView`` composes its widgets but never renders, and
-``open_best``/``open_run``/``open_program`` are no-ops -- Task 10 fills these
-in. The click-routing itself (``on_data_table_cell_selected`` et al.) is real
-now, so Task 10 only has to fill the open_*/show_* bodies.
+Per-seed detail (clicking a program cell to see its per-seed breakdown) is an
+embedded, toggled ``DetailView`` panel (not a pushed screen -- the Textual
+8.2.8 None-visual-on-a-toggled-panel gotcha, guarded in ``_clicktable.py``).
+``open_best``/``open_run``/``open_program`` build the per-seed (or, for BEST
+OVERALL, full seed x identity) table from the ``Run`` accessors and hand it to
+``DetailView``; a "back" button (no shortcut) returns to the tabs.
 """
 from __future__ import annotations
+
+from statistics import pstdev
 
 from rich.text import Text
 from textual.app import ComposeResult
@@ -52,8 +55,18 @@ _KIND_STYLE = {"assistant": "", "tool": "cyan", "result": "green b", "meta": "di
 class DetailView(Vertical):
     """Per-program evaluation window (embedded panel, not a pushed screen):
     a per-seed table for one program, or the BEST OVERALL program's full
-    seed x identity table. STUB in this task -- Task 10 renders it; here it
-    only needs to compose so the screen mounts and stays reachable."""
+    seed x identity table. Holds the ``Run`` (set once, at construction --
+    mirrors ``RunMonitor.run``) purely so ``refresh_live`` can re-pull a
+    still-streaming eval's rows without the screen having to hand them over
+    on every episode."""
+
+    def __init__(self, run: Run, *, id: str | None = None,
+                 classes: str | None = None) -> None:
+        super().__init__(id=id, classes=classes)
+        self.run = run
+        self.kind = "eval"                          # eval | program | baseline
+        self._live: tuple[int, str] | None = None    # (iteration, ident) if streaming
+        self._src = ""
 
     def compose(self) -> ComposeResult:
         yield Static(id="d_head")
@@ -63,16 +76,115 @@ class DetailView(Vertical):
 
     def show_eval(self, rows: list[dict], total: int, title: str, src: str,
                   live_ref: tuple[int, str] | None = None) -> None:
-        """STUB (Task 10): render the per-seed table for one program."""
+        """One program's per-seed table (no xp -- D2)."""
+        self.kind = "eval"
+        self._live = live_ref
+        self._src = src
+        self.border_title = title
+        t = self.query_one("#d_table", DataTable)
+        t.clear(columns=True)
+        t.add_columns("seed", "progress", "status", "cause of death",
+                      "depth", "turns", "time")
+        self._render_eval(rows, total)
+
+    def show_baseline(self, title: str, score: float) -> None:
+        """D5: AutoAscend is a hub-owned reference score, not a local tree --
+        there is nothing to re-run, so no per-seed table, just the average
+        and an honest note."""
+        self.kind = "baseline"
+        self._live = None
+        self.border_title = title
+        self.query_one("#d_head", Static).update(Text.from_markup(
+            f"x̄ [b #ffd54a]{score:.2f}[/]   [dim]baseline · no per-seed breakdown[/]"))
+        self.query_one("#d_src", Static).update(Text.from_markup(
+            "[dim]source[/]  [dim]AutoAscend baseline · not a repository[/]"))
+        self.query_one("#d_table", DataTable).clear(columns=True)
 
     def show_program(self, run: Run, info: tuple[float, str, str, int | None]) -> None:
-        """STUB (Task 10): render BEST OVERALL's full seed x identity table."""
+        """The BEST OVERALL (union-cell) program's FULL table -- every seed on
+        every identity: the hub champion's cold-start union eval, or a run
+        child's own eval once it has taken the union cell."""
+        score, label, kind, j = info
+        self.kind = "program"
+        self._live = None
+        if kind == "aa":
+            self.show_baseline(f" BEST OVERALL · {label} ", score)
+            return
+        self.border_title = f" BEST OVERALL · {label} · all evaluations "
+        t = self.query_one("#d_table", DataTable)
+        t.clear(columns=True)
+        t.add_columns("identity", "seed", "progress", "status", "cause of death",
+                      "depth", "turns", "time")
+        idents = run.identities()
+        evals: dict[str, EvalView] = {}
+        if kind == "run" and j is not None:
+            evals = run.iteration_evals(j)
+            src = (f"[dim]source[/]  [link=file:///runs/{run.rid}/iter{j}/bot.py]"
+                   f"bot.py ↗ (this run · iter {j})[/]")
+        elif kind == "hub":
+            evals = run.iteration_evals(0)
+            digest = (run.state.get("union") or {}).get("digest")
+            origin = (run.origins().get(digest) or {}) if digest else {}
+            repo, sha = origin.get("repo"), origin.get("sha")
+            src = (f"[dim]source[/]  [link=https://{repo}/commit/{sha}]{repo}@{sha} ↗[/]"
+                   if repo and sha else "[dim]source[/]  [dim]origin unknown[/]")
+        else:
+            # kind == "run" but best_overall() couldn't resolve WHICH iteration
+            # (its upto_k propagation only re-derives a STRICT improvement over
+            # the already-current union score, so a union held by an earlier
+            # "run" win it can't re-beat leaves j None) -- render the table
+            # honestly empty rather than guessing at the wrong iteration.
+            src = "[dim]source[/]  [dim]origin iteration unknown[/]"
+        self.query_one("#d_head", Static).update(Text.from_markup(
+            f"[b #d2a24c]{label}[/]   x̄ [b #ffd54a]{score:.2f}[/]   "
+            f"[dim]{len(idents)} identities[/]"))
+        self.query_one("#d_src", Static).update(Text.from_markup(src))
+        for ident in idents:
+            ev = evals.get(ident)
+            if ev is None:
+                continue
+            for row in ev.rows:
+                glyph, color = S.status_glyph(row["status"])
+                t.add_row(ident, str(row["seed"]), f'{row["progress"]:.2f}',
+                          Text(f'{glyph} {row["status"]}', style=color),
+                          Text(row["cause"] or "—", style="#7c745f" if not row["cause"] else ""),
+                          str(row["depth"]) if row["depth"] is not None else "—",
+                          f'{row["turns"]:,}' if row["turns"] is not None else "—",
+                          S.dur(row["time"]) if row["time"] is not None else "—")
 
     def refresh_live(self) -> None:
-        """STUB (Task 10): re-render a live (in-progress) eval in place."""
+        """Only a currently-streaming candidate's own table updates in place;
+        BEST OVERALL's full table and the AutoAscend baseline note are static
+        snapshots (re-opened, not ticked)."""
+        if self._live is None or not self.display or self.kind != "eval":
+            return
+        it, ident = self._live
+        ev = self.run.iteration_evals(it)[ident]
+        self._render_eval(ev.rows, ev.total)
 
-    def close_detail(self) -> None:
-        """STUB (Task 10)."""
+    def _render_eval(self, rows: list[dict], total: int) -> None:
+        if not rows:
+            head = Text.from_markup("[dim]pending — no episodes yet[/]")
+        else:
+            scores = [float(r["progress"]) for r in rows]
+            avg = sum(scores) / len(scores)
+            std = pstdev(scores) if len(scores) > 1 else 0.0
+            done = "done" if total > 0 and len(rows) >= total else "computing ⊙"
+            head = Text.from_markup(
+                f"x̄ [b #ffd54a]{avg:.2f}[/]   std [b]{std:.2f}[/]"
+                f"   seeds [b]{len(rows)}/{total}[/]   [dim]{done}[/]")
+        self.query_one("#d_head", Static).update(head)
+        self.query_one("#d_src", Static).update(Text.from_markup(self._src))
+        t = self.query_one("#d_table", DataTable)
+        t.clear()
+        for row in rows:
+            glyph, color = S.status_glyph(row["status"])
+            t.add_row(str(row["seed"]), f'{row["progress"]:.2f}',
+                      Text(f'{glyph} {row["status"]}', style=color),
+                      Text(row["cause"] or "—", style="#7c745f" if not row["cause"] else ""),
+                      str(row["depth"]) if row["depth"] is not None else "—",
+                      f'{row["turns"]:,}' if row["turns"] is not None else "—",
+                      S.dur(row["time"]) if row["time"] is not None else "—")
 
 
 class RunMonitor(Screen):
@@ -150,7 +262,7 @@ class RunMonitor(Screen):
                                      wrap=True, markup=True, highlight=False)
                     with TabPane("Logs", id="tab_proclog"):
                         yield Static(id="proclog", classes="panel")
-            yield DetailView(id="detailview", classes="panel")
+            yield DetailView(self.run, id="detailview", classes="panel")
         yield Static(id="statusline", classes="statusline")
         yield Footer()
 
@@ -249,10 +361,17 @@ class RunMonitor(Screen):
 
         # BEST OVERALL (the union cell) sits IN the table, first (openable)
         # row -- it UPDATES as the run finds a child with a better average.
-        bo = self.run.best_overall(self.sel_iter)
-        t.add_row(S.best_overall_cell(bo), Text.from_markup(f"[dim]x̄[/] [b]{bo[0]:.2f}[/]"),
-                  "", key="ov")
-        self._row_map.append(("overall", None))
+        # I8: for a single-identity objective the harness never seeds/moves
+        # the union cell (archive.py's `len(identities) > 1` guard) -- showing
+        # it would freeze at the AutoAscend baseline forever, misleadingly
+        # implying no progress while the one identity's own row improves. Omit
+        # the row entirely; _row_map/_valid_cell/select routing are already
+        # data-driven off _row_map, so simply not appending it is sufficient.
+        if len(self.run.identities()) > 1:
+            bo = self.run.best_overall(self.sel_iter)
+            t.add_row(S.best_overall_cell(bo), Text.from_markup(f"[dim]x̄[/] [b]{bo[0]:.2f}[/]"),
+                      "", key="ov")
+            self._row_map.append(("overall", None))
 
         target = None if is_init else self.run.iter_target(self.sel_iter)
         evals = self.run.iteration_evals(self.sel_iter)
@@ -358,17 +477,71 @@ class RunMonitor(Screen):
         self._render_proclog()
         self._render_statusline()
 
-    # ---- detail open/close (STUBS -- Task 10) --------------------------------
+    # ---- detail open/close -----------------------------------------------------
+    def _open_detail(self) -> None:
+        self.query_one("#main").display = False
+        self.query_one("#detailview").display = True
+
+    def close_detail(self) -> None:
+        self.query_one("#detailview").display = False
+        self.query_one("#main").display = True
+
+    @property
+    def detail_open(self) -> bool:
+        return self.query_one("#detailview").display
+
     def open_best(self, ident: str) -> None:
-        """STUB (Task 10): open the incumbent ("best so far") program."""
+        """Open the incumbent ("best so far") program for ``ident``: a run
+        child (local source), a hub champion (re-run locally at init -- D3;
+        source links to the GitHub reference), or the AutoAscend floor
+        (D5 -- no per-seed table)."""
+        score, label, kind, j = self.run.incumbent(ident, self.sel_iter)
+        title = f" {ident} · {label} "
+        dv = self.query_one("#detailview", DetailView)
+        if kind == "run" and j is not None:
+            ev = self.run.iteration_evals(j)[ident]
+            src = (f"[dim]source[/]  [link=file:///runs/{self.run.rid}/iter{j}/{ident}/bot.py]"
+                   f"bot.py ↗[/]")
+            dv.show_eval(ev.rows, ev.total, title, src)
+        elif kind == "hub":
+            ev = self.run.iteration_evals(0)[ident]
+            digest = next((c["digest"] for c in self.run.cells() if c["identity"] == ident), None)
+            origin = (self.run.origins().get(digest) or {}) if digest else {}
+            repo, sha = origin.get("repo"), origin.get("sha")
+            src = (f"[dim]source[/]  [link=https://{repo}/commit/{sha}]{repo}@{sha} ↗[/]"
+                   if repo and sha else "[dim]source[/]  [dim]origin unknown[/]")
+            dv.show_eval(ev.rows, ev.total, title, src)
+        else:
+            dv.show_baseline(title, score)
+        self._open_detail()
 
     def open_run(self, ident: str) -> None:
-        """STUB (Task 10): open this iteration's candidate for ``ident``."""
+        """Open this iteration's own candidate for ``ident`` -- always a local
+        run child, live while the iteration is still evaluating."""
+        ev = self.run.iteration_evals(self.sel_iter)[ident]
+        title = f" {ident} · iter {self.sel_iter} "
+        src = (f"[dim]source[/]  [link=file:///runs/{self.run.rid}/iter{self.sel_iter}/"
+               f"{ident}/bot.py]bot.py ↗[/]")
+        self.query_one("#detailview", DetailView).show_eval(
+            ev.rows, ev.total, title, src, live_ref=(self.sel_iter, ident))
+        self._open_detail()
 
     def open_program(self) -> None:
-        """STUB (Task 10): open the BEST OVERALL (union cell) program."""
+        """Open the BEST OVERALL (union cell) program's full seed x identity
+        table."""
+        info = self.run.best_overall(self.sel_iter)
+        self.query_one("#detailview", DetailView).show_program(self.run, info)
+        self._open_detail()
+
+    def _refresh_detail_if_open(self) -> None:
+        if self.detail_open:
+            self.query_one("#detailview", DetailView).refresh_live()
 
     # ---- events ---------------------------------------------------------------
+    def on_button_pressed(self, event: Button.Pressed) -> None:
+        if event.button.id == "back":
+            self.close_detail()
+
     def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
         if not self._ready:
             # populating #iters (on_mount's _render_iters, before _backfill
@@ -456,6 +629,7 @@ class RunMonitor(Screen):
             return
         self._update_score()
         self._render_proclog()
+        self._refresh_detail_if_open()   # a live open_run() table gains a row
 
     def render_log(self, tag: str) -> None:
         if not self._ready:
@@ -478,6 +652,9 @@ class RunMonitor(Screen):
             # have raised the incumbent/BEST OVERALL baseline the viewed
             # iteration's row is computed against.
             self._rebuild_score()
+        # a still-open open_run() table upgrades from live (cause/time "—")
+        # to the decided iteration's full per-seed detail (§5.5).
+        self._refresh_detail_if_open()
 
     def _tick(self) -> None:
         # the run-time clock + cumulative tokens advance every second even
