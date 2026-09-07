@@ -184,13 +184,9 @@ ul.hard li b{ color:var(--indigo); }
 .factoids li{ margin:2px 0; }
 
 /* controls (retro) */
-/* Centred above its table, caption-style: label + buttons on one line, the
-   tier's sub-label centred on the line beneath. Flex rather than the old
-   2-column grid so the row can centre as a unit; .tiernote therefore breaks
-   to its own line with flex-basis:100%, not grid-column. */
-.controls{ display:flex; flex-wrap:wrap; justify-content:center; align-items:center; gap:7px 12px;
-  margin:.6rem auto .8rem;  font-size:.8rem; }
-.controls .lbl{ color:#55555c; white-space:nowrap; font-weight:700; }
+.controls{ display:grid; grid-template-columns:max-content 1fr; gap:7px 14px; align-items:center;
+  margin:.6rem 0 .8rem;  font-size:.8rem; max-width:600px; }
+.controls .lbl{ color:#55555c; text-align:right; white-space:nowrap; font-weight:700; }
 .controls .grp{ display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
 .bevel{ background:var(--silver); border:2px solid; border-color:var(--silver-hi) var(--silver-lo) var(--silver-lo) var(--silver-hi);
   padding:3px 10px; cursor:pointer;  font-size:.78rem; color:#111; }
@@ -241,7 +237,7 @@ table.grid caption{ text-align:left; background:var(--indigo); color:#fff; font-
 .regime label{ cursor:pointer; margin-right:12px; }
 .gridnote{  font-size:.76rem; color:#55555c; margin:16px auto 2px; max-width:76ch;
   text-align:center; line-height:1.55; text-wrap:pretty; }
-.tiernote{ flex-basis:100%; text-align:center; font-size:.74rem; color:#55555c; margin:-2px 0 0; }
+.tiernote{ grid-column:1/-1; font-size:.74rem; color:#55555c; margin:-2px 0 0; }
 .gridnote b{ color:var(--indigo); }
 .rolegrid{ display:grid; grid-template-columns:repeat(auto-fill,minmax(238px,1fr)); gap:10px; align-items:start; }
 table.fr{ width:100%; table-layout:fixed; border-collapse:collapse;  font-size:.76rem; }
