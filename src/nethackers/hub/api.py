@@ -271,8 +271,9 @@ def create_app(
         return read_stats(store)
 
     @app.get("/baseline")
-    def baseline() -> dict[str, Any]:
-        return read_baseline(store)
+    def baseline(tier: str = "self-reported") -> dict[str, Any]:
+        _source_guard(tier)
+        return read_baseline(store, tier=tier, epoch=_epoch())
 
     @app.get("/recognition")
     def recognition() -> dict[str, Any]:
