@@ -287,20 +287,31 @@ async function pass2() {
   // {owner, per_identity, overall} object.
   const PRIVATE_PER_IDENTITY = {};
   for (const id of IDENTITIES) PRIVATE_PER_IDENTITY[id] = { progression: 0.09, deepest: "Dlvl:6", episodes: 15 };
-  // C1 regression guard: every identity above gets a floor EXCEPT one --
-  // mon-hum-neu-mal, mirroring fixtures.py's IDENTITY_C (a verified RESULT
-  // with no verified FLOOR for it yet). An all-floored fixture is exactly
-  // how the real renderFrontier bug (a role header crediting an unfloored
-  // cell's raw score as lift against an implicit 0.0) survived ten reviews.
-  delete PRIVATE_PER_IDENTITY["mon-hum-neu-mal"];
+  // Strip the floor from EVERY Monk identity, not just mon-hum-neu-mal, so
+  // the Monk role ends up with exactly one measured cell: a program leading
+  // mon-hum-neu-mal with NO floor to compare against (mirrors fixtures.py's
+  // IDENTITY_C -- a verified RESULT with no verified FLOOR); its other 5
+  // identities are fully unmeasured, matching production (round 2's live
+  // repro: Monk had exactly one cell with any data at all). This
+  // single-cell-role shape is a regression guard for two separate bugs:
+  //  - C1 (the lift-accumulator bug): with every OTHER identity floored,
+  //    the floorless cell's raw score used to leak into the role header's
+  //    numerator uncancelled, fabricating a positive "lift" -- see the
+  //    dpos-class assertion below.
+  //  - the header-marker bug (round 2): a role with a program leading but
+  //    no floor anywhere in it has roleLift genuinely undefined (not the
+  //    degenerate 0 a floor-only role gives) -- the header must show an em
+  //    dash, not the 'aa' chip that means "sits at the floor" -- see the
+  //    Monk-header assertion below.
+  for (const v of ["hum-cha-fem", "hum-cha-mal", "hum-law-fem", "hum-law-mal", "hum-neu-fem", "hum-neu-mal"]) {
+    delete PRIVATE_PER_IDENTITY["mon-" + v];
+  }
   const PRIVATE_BASELINE = { owner: "autoascend", per_identity: PRIVATE_PER_IDENTITY, overall: 0.091 };
   // Shifted from slice(30,38) so mon-hum-neu-mal is the ONLY touched Monk
-  // identity (its 5 siblings stay floor-only) -- otherwise Monk's other
-  // genuinely-floored-and-beaten cells would contribute their own real lift,
-  // and the bug would hide behind a merely-smaller (still positive) role
-  // average instead of the clean "no lift at all" the assertions below
-  // check for. Still distinct from router()'s public TOUCHED (0..10); still
-  // 8 identities (pri picks up the 3 this displaces from mon).
+  // identity -- otherwise Monk's other genuinely-beaten cells would
+  // contribute their own real lift and mask the bugs above. Still distinct
+  // from router()'s public TOUCHED (0..10); still 8 identities (pri picks
+  // up the 3 this displaces from mon).
   const PRIVATE_TOUCHED = IDENTITIES.slice(33, 41);
   const REF_PRIVATE = { repo: "github.com/riv/bot", commit: "priv0000abc" };
   const PRIVATE_ELITES = { rows: PRIVATE_TOUCHED.map((id, i) => ({
@@ -398,6 +409,22 @@ async function pass2() {
   const monkHeadDelta = monkRow.closest("table.fr").querySelector("tr.frhead td.dcol");
   ok(!monkHeadDelta.classList.contains("dpos"),
      `Monk's role header must not show a positive lift fabricated from mon-hum-neu-mal's unfloored score (class="${monkHeadDelta.className}", text="${monkHeadDelta.textContent.trim()}")`);
+
+  // Header-marker regression guard (round 2): 'aa' means "sits at the
+  // AutoAscend floor" and an em dash means "no floor to compare against" --
+  // renderFrontier's fallback used to hand these out backwards for two role
+  // shapes. Monk (constructed above with zero floors anywhere in the role)
+  // is program-led but has nothing to measure against: it must show the em
+  // dash, not 'aa' (which would falsely claim the role sits at the floor).
+  ok(monkHeadDelta.textContent.trim() === "\u2014" && !monkHeadDelta.querySelector(".aachip"),
+     `Monk's role header (program-led, no floor anywhere in the role) must show an em dash, not the 'aa' floor chip (class="${monkHeadDelta.className}", text="${monkHeadDelta.textContent.trim()}")`);
+  // kni (Knight) has no touched identity at all -- both its cells sit at
+  // the blanket 0.09 floor, so roleLift is the degenerate 0 those floor
+  // cells contribute. It must show 'aa' (a real role average, but nothing
+  // beats AutoAscend anywhere in it), never a fake-precise "+0.0%".
+  const kniHeadDelta = q('#rolegrid tr.frontierrow[data-identity="kni-hum-law-fem"]').closest("table.fr").querySelector("tr.frhead td.dcol");
+  ok(!!kniHeadDelta.querySelector(".aachip"),
+     `Knight's role header (every cell at the floor) must show the 'aa' chip, not a fabricated "+0.0%" (class="${kniHeadDelta.className}", text="${kniHeadDelta.textContent.trim()}")`);
 
   // The three dungeon switches are independent: flipping Keepers to Public
   // must not move Breakthroughs or the Frontier. RECOGNITION_PUBLIC (stubbed

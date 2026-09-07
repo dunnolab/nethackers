@@ -1340,17 +1340,22 @@ function renderFrontier(){
   const roleOrder=Object.keys(ROLE_NAMES).slice().sort((a,b)=>ROLE_VARS[b].length-ROLE_VARS[a].length); // most identities first
   grid.innerHTML=roleOrder.map(role=>{
     const ids=ROLE_VARS[role].map(v=>({v,id:role+"-"+v,d:datum(role+"-"+v)}));
-    let liftSum=0,liftN=0,shownSum=0,shownN=0;   // liftN counts only cells whose lift is DEFINED
+    let liftSum=0,liftN=0,shownSum=0,shownN=0,roleProg=0;   // liftN counts only cells whose lift is DEFINED; roleProg = this role's program-led cells
     ids.forEach(({d})=>{ total++;
-      if(d.state==='prog'){ prog++; sum+=d.v; shownSum+=d.v; shownN++;
+      if(d.state==='prog'){ prog++; roleProg++; sum+=d.v; shownSum+=d.v; shownN++;
         if(d.aa!=null){ liftSum+=d.v-d.aa; liftN++; } }          // no floor -> lift undefined, excluded
       else if(d.state==='floor'){ floor++; shownSum+=d.v; shownN++; liftN++; } });  // at the floor = 0 lift
     const roleAvg=shownN?(shownSum/shownN):null;                 // average across the best-of-all cells
     const roleLift=liftN?(liftSum/liftN):null;                   // avg lift over cells whose lift is DEFINED (undefined -> null, never credited as 0)
-    // header on the same 3 columns as the identity rows: name | avg % | delta (rendered exactly as a cell -- 'aa' when all-floor)
+    // header on the same 3 columns as the identity rows: name | avg % | delta, rendered exactly as a cell:
+    // 'aa' when roleLift is defined but no cell here is program-led (every shown cell sits at the floor --
+    // roleProg===0, so roleLift can only be the degenerate 0 those floor cells contribute); the real averaged
+    // lift when a program leads AND at least one shown cell has a floor to measure against (roleLift defined,
+    // roleProg>0); an em dash when a program leads but nothing here has a floor yet (roleLift undefined,
+    // roleAvg defined); '.' when nothing in the role has been measured at all.
     const head=`<tr class="frhead"><td class="vn rn"><span class="ref" data-k="role-${role}">${ROLE_NAMES[role]}</span></td>`
       +`<td class="vv hval">${roleAvg!=null?pct(roleAvg):'&middot;'}</td>`
-      +(roleLift!=null?dSigned(roleLift):(roleAvg!=null?aaTd:noTd))+`</tr>`;
+      +(roleLift!=null?(roleProg?dSigned(roleLift):aaTd):(roleAvg!=null?dSigned(null):noTd))+`</tr>`;
     const body=ids.map(({v,id,d})=>{
       const dtd=d.state==='prog'?dSigned(d.delta):(d.state==='floor'?aaTd:noTd);
       return `<tr class="frontierrow" data-identity="${esc(id)}" tabindex="0" role="button" aria-label="Open leaderboard for ${esc(id)}" title="${esc(rowTitle(id,d))}"><td class="vn">${esc(v)}</td>${valTd(d)}${dtd}</tr>`;
