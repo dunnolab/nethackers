@@ -38,7 +38,7 @@ class _Client:
     way the real ``GET /verify/overview`` does."""
 
     def __init__(self, covered: dict[str, int] | None = None):
-        self.submitted = []
+        self.submitted: list[dict] = []
         self._covered = covered or {}
 
     def get_verify_overview(self):

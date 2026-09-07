@@ -536,13 +536,16 @@ def create_app(
         empty: dict[str, Any] = {"per_identity": {}, "overall": None}
         if verifier is None:
             return {**empty, "baseline": empty}
-        scope = {
-            "secret_fingerprint": _fp(verifier.secret),
-            "seeds": verifier.seeds,
-            "evaluator_image": ARENA_IMAGE,
+        # Explicit kwargs rather than a **dict: the two reads MUST share one
+        # epoch scope (a Delta across epochs is meaningless), and spelling it
+        # out keeps that checkable by the typechecker.
+        fingerprint, seeds = _fp(verifier.secret), verifier.seeds
+        return {
+            **read_verified(store, secret_fingerprint=fingerprint, seeds=seeds,
+                            evaluator_image=ARENA_IMAGE),
+            "baseline": read_verified_baseline(store, secret_fingerprint=fingerprint,
+                                               seeds=seeds, evaluator_image=ARENA_IMAGE),
         }
-        return {**read_verified(store, **scope),
-                "baseline": read_verified_baseline(store, **scope)}
 
     return app
 
