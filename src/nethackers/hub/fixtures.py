@@ -231,7 +231,16 @@ def load_fixtures(store: Store, *, now: str = "2026-01-01T00:00:00Z") -> None:
         )
         for s in (0, 1, 2, 3)
     ]
-    store.insert_baseline_atoms(public_floor)
+    # insert_baseline_atoms (store.py) has no dedup, no UNIQUE key -- unlike
+    # every other write load_fixtures makes. create_default_app calls
+    # load_fixtures on every startup, and the hubdata volume survives a
+    # restart, so without this guard the public floor's episode count
+    # doubles on every restart (4 -> 8 -> 12, observed in prod). Skip once
+    # any public baseline row already exists, restoring the "re-running
+    # this against the same store is safe" promise this function's own
+    # docstring makes.
+    if not store.iter_baseline_atoms():
+        store.insert_baseline_atoms(public_floor)
 
     # --- Private tier (hidden seeds). IDENTITY_A and IDENTITY_B get a floor;
     # IDENTITY_C deliberately gets a result with NO floor, reproducing
@@ -319,11 +328,14 @@ def _verified_atom(
     ascended: bool, turns: int, steps: int, progression: float | None = None,
     status: ResultStatus = "completed",
 ) -> Atom:
-    """One fixture atom for the private tier. Two differences from ``_atom``
-    matter and both are load-bearing: ``tier="verified"``, and
-    ``evaluator_image=ARENA_IMAGE`` -- the hub filters verified reads on the
-    real pinned arena, so a fixture stamped with the fake ``_EVALUATOR_IMAGE``
-    would be silently invisible to every private-tier view."""
+    """One fixture atom for the private tier. Two differences from ``_atom``:
+    ``tier="verified"`` (kept for consistency with production's verified
+    rows -- nothing actually filters ``verified_atoms`` by ``tier``; reads
+    key off ``secret_fingerprint``/``evaluator_image``/``seed`` instead), and
+    ``evaluator_image=ARENA_IMAGE``, which IS load-bearing: the hub filters
+    verified reads on the real pinned arena, so a fixture stamped with the
+    fake ``_EVALUATOR_IMAGE`` would be silently invisible to every
+    private-tier view."""
     return replace(
         _atom(solution_digest, identity=identity, seed=seed, milestone=milestone,
               ascended=ascended, turns=turns, steps=steps, progression=progression,

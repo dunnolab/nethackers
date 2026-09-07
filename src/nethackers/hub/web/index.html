@@ -1159,7 +1159,7 @@ function role(name,pet,d,art){ return {t:name,d:d,art:"@  the hero\n"+art,s:[["N
 const REFS={
   /* --- the two seed sets the board scores on --- */
   "dungeons-public":{t:"Public Dungeons",d:"<b>15 practice seeds per identity</b>, one dungeon each, published so anyone can run them. The hacker runs them and reports the score; nobody re-runs them, so these numbers are <b>unaudited</b>.",s:[]},
-  "dungeons-private":{t:"Private Dungeons",d:"<b>15 secret seeds per identity</b>, one dungeon each. The hub holds them and never publishes them. A trusted verifier runs each program on dungeons it has <b>never seen</b>, so nobody can tune a program to the dungeons it is scored on.",s:[]},
+  "dungeons-private":{t:"Private Dungeons",d:"<b>15 secret seeds per identity</b>, one dungeon each. The hub holds them and never publishes them. A trusted verifier runs each program on dungeons it has <b>never seen</b>, so no one can write a program against them.",s:[]},
   /* --- citations --- */
   nle:{t:"The NetHack Learning Environment",d:"The paper that standardized NetHack for ML research and pinned version 3.6.6. Its authors judged a hand-crafted bot that solves NetHack &quot;very unlikely.&quot;",s:[["Kuttler et al., NeurIPS 2020",ARX+"2006.13760"]]},
   challenge:{t:"NeurIPS 2021 NetHack Challenge",d:"483 entrants, <b>zero ascensions</b> in over 500,000 evaluation games. The symbolic AutoAscend won at a median score of 5,300.",s:[["Hambro et al., 2022",ARX+"2203.11889"]]},
@@ -1258,16 +1258,14 @@ let curTier="verified";
    (a trusted worker produced the verified rows). The site names the SEED SET
    instead, because that is what makes a number worth reading: the program
    never saw the private dungeons. This map is the single source of truth for
-   every label, caption and sub-label on the page. The toggle buttons' HTML
+   every label and caption on the page. The toggle buttons' HTML
    carries a duplicate of the label text too, purely as a pre-JS fallback so
    the page still reads correctly before any script runs; the synchronous
    line right after `tierHelp` below overwrites that markup on parse, so the
    two copies can never drift. */
 const TIERS={
-  "self-reported":{label:"Public Dungeons (15)",  caption:"PUBLIC DUNGEONS",
-    note:"15 seeds per identity, run and reported by the hacker &mdash; unaudited"},
-  "verified":     {label:"Private Dungeons (15)", caption:"PRIVATE DUNGEONS",
-    note:"15 secret seeds per identity, run by us on a program that has never seen them"},
+  "self-reported":{label:"Public Dungeons (15)",  caption:"PUBLIC DUNGEONS"},
+  "verified":     {label:"Private Dungeons (15)", caption:"PRIVATE DUNGEONS"},
 };
 function tierHelp(el,tier){ if(!el) return;
   const k=tier==="verified"?"dungeons-private":"dungeons-public";
@@ -1342,12 +1340,13 @@ function renderFrontier(){
   const roleOrder=Object.keys(ROLE_NAMES).slice().sort((a,b)=>ROLE_VARS[b].length-ROLE_VARS[a].length); // most identities first
   grid.innerHTML=roleOrder.map(role=>{
     const ids=ROLE_VARS[role].map(v=>({v,id:role+"-"+v,d:datum(role+"-"+v)}));
-    let tSum=0,tAA=0,tN=0,shownSum=0,shownN=0;
+    let liftSum=0,liftN=0,shownSum=0,shownN=0;   // liftN counts only cells whose lift is DEFINED
     ids.forEach(({d})=>{ total++;
-      if(d.state==='prog'){ prog++; sum+=d.v; tSum+=d.v; if(d.aa!=null) tAA+=d.aa; tN++; shownSum+=d.v; shownN++; }
-      else if(d.state==='floor'){ floor++; shownSum+=d.v; shownN++; } });
+      if(d.state==='prog'){ prog++; sum+=d.v; shownSum+=d.v; shownN++;
+        if(d.aa!=null){ liftSum+=d.v-d.aa; liftN++; } }          // no floor -> lift undefined, excluded
+      else if(d.state==='floor'){ floor++; shownSum+=d.v; shownN++; liftN++; } });  // at the floor = 0 lift
     const roleAvg=shownN?(shownSum/shownN):null;                 // average across the best-of-all cells
-    const roleLift=(tN&&shownN)?((tSum-tAA)/shownN):null;        // avg lift over ALL cells (floor = 0 lift)
+    const roleLift=liftN?(liftSum/liftN):null;                   // avg lift over cells whose lift is DEFINED (undefined -> null, never credited as 0)
     // header on the same 3 columns as the identity rows: name | avg % | delta (rendered exactly as a cell -- 'aa' when all-floor)
     const head=`<tr class="frhead"><td class="vn rn"><span class="ref" data-k="role-${role}">${ROLE_NAMES[role]}</span></td>`
       +`<td class="vv hval">${roleAvg!=null?pct(roleAvg):'&middot;'}</td>`
@@ -1391,7 +1390,7 @@ function renderRecognition(){
      with the tier instead of asserting one story for both. */
   const bkdesc=$("#bkdesc");
   if(bkdesc) bkdesc.innerHTML = breakthroughsTier==="verified"
-    ? `Every result that cleared the AutoAscend floor on an identity, <b>ordered by when our verifier reached it</b> &mdash; not by when the hacker got there. Click a row for the exact submission.`
+    ? `Every submission that advanced an identity frontier, <b>ordered by when our verifier reached it</b> &mdash; not by when the hacker got there. Click a row for the exact submission.`
     : `A newest-first log of every submission that advanced an identity frontier. Click a row for the exact submission.`;
   if(holders){
     const people=kFame.keepers||[];
@@ -1417,7 +1416,7 @@ function renderRecognition(){
     const people=bFame.breakthroughs||[];
     const visible=people.slice(0,FAME_LIMITS.breakthroughs);
     breakthroughs.innerHTML=people.length?`<div class="tablewrap"><table class="grid fametable famelog"><caption>GREATEST BREAKTHROUGHS &middot; ${TIERS[breakthroughsTier].caption}</caption>
-      <thead><tr><th class="l">registered</th><th class="l">hacker</th><th class="l">identity</th><th>before</th><th>result</th><th>advance</th></tr></thead>
+      <thead><tr><th class="l">${breakthroughsTier==="verified"?"verified":"registered"}</th><th class="l">hacker</th><th class="l">identity</th><th>before</th><th>result</th><th>advance</th></tr></thead>
       <tbody>${visible.map((p,i)=>`<tr data-breakthrough="${i}" tabindex="0" role="button" aria-label="Open breakthrough submission by @${esc(p.owner)}">
         <td class="l">${esc(fmtDate(p.at))}</td><td class="l owner">@${esc(p.owner)}</td><td class="l">${esc(p.identity)}</td>
         <td>${(p.previous*100).toFixed(1)}%</td><td>${(p.score*100).toFixed(1)}%</td><td class="dpos">+${(p.gain*100).toFixed(1)} pp</td></tr>`).join("")}</tbody></table></div>
@@ -1556,9 +1555,10 @@ async function openBreakthrough(event){
       <span class="k">roles evaluated</span><span class="v">${roles.length?roles.map(r=>esc(ROLE_NAMES[r]||r)).join(", "):"—"}</span>
       <span class="k">identities evaluated</span><span class="v">${frontier.length} of 73</span>
       <span class="k">evaluation episodes</span><span class="v">${episodes}</span>
-      <span class="k">tier</span><span class="v">${TIERS["self-reported"].label}</span>
+      <span class="k">tier</span><span class="v">${TIERS[breakthroughsTier].label}</span>
     </div>
-    <div class="clickhint">This submission moved ${esc(event.identity)} from ${(event.previous*100).toFixed(1)}% to ${(event.score*100).toFixed(1)}%, measured against the community frontier that existed when it was registered.</div>`;
+    <div class="clickhint">This submission moved ${esc(event.identity)} from ${(event.previous*100).toFixed(1)}% to ${(event.score*100).toFixed(1)}%, measured against the community frontier that existed ${breakthroughsTier==="verified"?"when our verifier reached it":"when it was registered"}.</div>
+    <div class="clickhint">Roles evaluated, identities evaluated and episodes above are always read from the public dungeons, regardless of tier.</div>`;
   }catch(e){
     pbody.innerHTML=`<div class="popupstatus">Could not load this breakthrough submission.</div>`;
   }

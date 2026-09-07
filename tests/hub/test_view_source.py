@@ -1,7 +1,8 @@
 """views/source.py: the (tier, epoch) -> row-source resolver that makes the
 epoch invariant structural. A verified Source hands out verified_atoms AND
-verified_baseline_atoms together, so no caller can pair a hidden-seed score
-with the published-seed floor."""
+verified_baseline_atoms together, so pairing a hidden-seed score with the
+published-seed floor takes deliberate effort rather than being the natural
+path."""
 
 import pytest
 

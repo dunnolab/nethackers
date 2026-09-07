@@ -28,7 +28,7 @@ from fastapi.testclient import TestClient
 
 from nethackers.hub.api import create_app
 from nethackers.hub.auth import LocalStubAuth
-from nethackers.hub.fixtures import ALPHA, BETA, GAMMA, IDENTITY_A, IDENTITY_B, load_fixtures
+from nethackers.hub.fixtures import ALPHA, BETA, GAMMA, IDENTITY_A, IDENTITY_B, IDENTITY_C, load_fixtures
 from nethackers.hub.ids import program_id
 from nethackers.hub.store import Store
 
@@ -140,6 +140,36 @@ def test_no_milestone_none_atom_leaks_into_attainment(tmp_path: Any) -> None:
 
     assert cells != []
     assert all(c["milestone"] is not None for c in cells)
+
+
+def test_load_fixtures_is_idempotent_for_the_public_floor(tmp_path: Any) -> None:
+    # insert_baseline_atoms (store.py) has no dedup and no UNIQUE key --
+    # unlike every other write load_fixtures makes (upsert_solution,
+    # add_lineage, insert_atoms, insert_verified_atoms, ... are all keyed or
+    # OR-IGNORE'd). create_default_app calls load_fixtures on every startup,
+    # and the hubdata volume survives a restart, so a naive re-run used to
+    # double the public floor's per-identity episode count on each restart
+    # (4 -> 8 -> 12, observed in prod). This is the regression guard for the
+    # fix (a `store.iter_baseline_atoms()` emptiness check around the
+    # insert): call load_fixtures twice against the same store and confirm
+    # the public floor doesn't grow the second time.
+    store = Store(tmp_path / "hub.db")
+    store.init_schema()
+
+    load_fixtures(store)
+    first = {
+        identity: len(store.iter_baseline_atoms(identity=identity))
+        for identity in (IDENTITY_A, IDENTITY_B, IDENTITY_C)
+    }
+    assert first == {IDENTITY_A: 4, IDENTITY_B: 4, IDENTITY_C: 4}  # seeds 0-3 each
+
+    load_fixtures(store)
+    second = {
+        identity: len(store.iter_baseline_atoms(identity=identity))
+        for identity in (IDENTITY_A, IDENTITY_B, IDENTITY_C)
+    }
+
+    assert second == first
 
 
 # NOTE: test_board_random_ranks_the_ascended_solution_first was removed here

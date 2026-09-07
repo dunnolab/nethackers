@@ -49,8 +49,10 @@ class Epoch:
 
 @dataclass(frozen=True)
 class Source:
-    """One tier's rows. Built by ``source_for``; never constructed directly by
-    a view, so the table pairing can't be split apart."""
+    """One tier's rows. Built by ``source_for``, not constructed directly by
+    a view in practice -- nothing in the type stops it, but ``source_for`` is
+    the natural, least-effort path, so the table pairing stays a strong
+    default rather than an impossibility."""
 
     atoms_table: str
     tier: str

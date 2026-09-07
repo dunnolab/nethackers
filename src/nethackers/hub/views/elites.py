@@ -72,16 +72,20 @@ def read_elites(
     epoch: Epoch | None = None,
 ) -> list[dict[str, Any]]:
     """Top-``k`` solutions per identity in ``scope``'s identity set, computed
-    live over ``atoms`` -- always current, nothing stored or recomputed.
-    Raises ``ValueError`` for an unknown ``scope`` (``resolve_scope`` --
-    mapping that to a 404 is the caller's job, same as ``/board``).
+    live over the tier's atoms table (``atoms`` for self-reported,
+    ``verified_atoms`` for verified) -- always current, nothing stored or
+    recomputed. Raises ``ValueError`` for an unknown ``scope``
+    (``resolve_scope`` -- mapping that to a 404 is the caller's job, same as
+    ``/board``).
 
     Each row: ``{rank, identity, program_id, owner, score, reference}``.
     ``owner`` and ``reference`` (``{repo, commit}``) both come from the same
-    ``LEFT JOIN`` onto the registered ``solutions`` row (the FK
-    ``insert_atoms`` enforces means this always resolves in practice), and
-    ``program_id`` (``nethackers.hub.ids.program_id``) replaces the old
-    ``solution_digest``.
+    ``LEFT JOIN`` onto the registered ``solutions`` row. Only ``atoms``
+    carries an FK to ``solutions`` -- ``verified_atoms`` does not -- but the
+    join still resolves in practice on both, because ``register_verified``
+    looks up ``get_solution`` first and refuses to write verified atoms for
+    a solution that isn't registered. ``program_id``
+    (``nethackers.hub.ids.program_id``) replaces the old ``solution_digest``.
 
     ``tier`` selects the rows via ``views.source.source_for``: the
     self-reported tier ranks over ``atoms``, the verified tier over

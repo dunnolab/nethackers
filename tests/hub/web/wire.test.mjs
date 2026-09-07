@@ -23,8 +23,14 @@
  *     three click-through popups -- identity leaderboard (/board?scope=), a
  *     breakthrough submission (/programs/{id} + /identities), and a hacker's
  *     contributions (/programs?owner= + /identities).
- *   pass 2 (private tier): recognition stays visible (it is self-reported), the
- *     frontier POPULATES from the verified side-tables.
+ *   pass 2 (private tier): the frontier POPULATES from the verified
+ *     side-tables, using a distinct canned fixture from pass 1's public one
+ *     (so "painted the private numbers" can't be confused with "still
+ *     showing a stale public fetch"); the tier toggle is ROUND-TRIPPED
+ *     Public then back to Private, since curTier now defaults to "verified"
+ *     and a single click would be a same-value no-op; recognition stays
+ *     visible on the private tier too, and the frontier/keepers/
+ *     breakthroughs tier switches are asserted INDEPENDENT of each other.
  *   pass 3 (every fetch rejects): friendly empty states, console clean.
  * /hackers/random's consumer sits behind a canvas getContext("2d") gate that jsdom
  * can't pass without the native `canvas` package (not installed here), so the
@@ -281,8 +287,21 @@ async function pass2() {
   // {owner, per_identity, overall} object.
   const PRIVATE_PER_IDENTITY = {};
   for (const id of IDENTITIES) PRIVATE_PER_IDENTITY[id] = { progression: 0.09, deepest: "Dlvl:6", episodes: 15 };
+  // C1 regression guard: every identity above gets a floor EXCEPT one --
+  // mon-hum-neu-mal, mirroring fixtures.py's IDENTITY_C (a verified RESULT
+  // with no verified FLOOR for it yet). An all-floored fixture is exactly
+  // how the real renderFrontier bug (a role header crediting an unfloored
+  // cell's raw score as lift against an implicit 0.0) survived ten reviews.
+  delete PRIVATE_PER_IDENTITY["mon-hum-neu-mal"];
   const PRIVATE_BASELINE = { owner: "autoascend", per_identity: PRIVATE_PER_IDENTITY, overall: 0.091 };
-  const PRIVATE_TOUCHED = IDENTITIES.slice(30, 38); // distinct from router()'s TOUCHED (0..10)
+  // Shifted from slice(30,38) so mon-hum-neu-mal is the ONLY touched Monk
+  // identity (its 5 siblings stay floor-only) -- otherwise Monk's other
+  // genuinely-floored-and-beaten cells would contribute their own real lift,
+  // and the bug would hide behind a merely-smaller (still positive) role
+  // average instead of the clean "no lift at all" the assertions below
+  // check for. Still distinct from router()'s public TOUCHED (0..10); still
+  // 8 identities (pri picks up the 3 this displaces from mon).
+  const PRIVATE_TOUCHED = IDENTITIES.slice(33, 41);
   const REF_PRIVATE = { repo: "github.com/riv/bot", commit: "priv0000abc" };
   const PRIVATE_ELITES = { rows: PRIVATE_TOUCHED.map((id, i) => ({
     rank: 1, identity: id, program_id: "prog_priv", owner: "riv", score: 0.4 + i * 0.01, reference: REF_PRIVATE,
@@ -359,6 +378,26 @@ async function pass2() {
   const progCells = qa("#rolegrid td.vv:not(.hval):not(.floor):not(.empty)").length;
   ok(progCells > 0, `private tier paints program cells (${progCells}), not a blanked grid`);
   ok(/not yet measured/.test(q("#gridnote").textContent), "the grid note states private coverage honestly");
+
+  // C1 regression guard: mon-hum-neu-mal has a private RESULT but no private
+  // FLOOR (deleted from PRIVATE_PER_IDENTITY above) -- datum() correctly
+  // reports aa:null for it, so its own row's delta must be an undefined em
+  // dash, never a number computed against an implicit 0.0. The bug summed
+  // AutoAscend only over cells that HAD a floor while averaging lift over
+  // every SHOWN cell, so this cell's raw score leaked into the numerator
+  // with nothing subtracted -- inflating the Monk role header into a false
+  // positive "lift" it never earned. This is the regression guard for that
+  // bug: it fails against the pre-fix accumulator (tSum/tAA/tN), which would
+  // show the Monk header's delta cell as class="dpos" (green, "+6.7%") here.
+  const monkRow = q('#rolegrid tr.frontierrow[data-identity="mon-hum-neu-mal"]');
+  ok(monkRow.querySelector("td.vv").textContent.trim() === "40.0%",
+     "mon-hum-neu-mal shows its real private-tier score (40.0%)");
+  const monkRowDelta = monkRow.querySelector("td.dcol");
+  ok(monkRowDelta.textContent.trim() === "\u2014",
+     `mon-hum-neu-mal's own delta cell reads an em dash, not a fabricated number (got "${monkRowDelta.textContent.trim()}")`);
+  const monkHeadDelta = monkRow.closest("table.fr").querySelector("tr.frhead td.dcol");
+  ok(!monkHeadDelta.classList.contains("dpos"),
+     `Monk's role header must not show a positive lift fabricated from mon-hum-neu-mal's unfloored score (class="${monkHeadDelta.className}", text="${monkHeadDelta.textContent.trim()}")`);
 
   // The three dungeon switches are independent: flipping Keepers to Public
   // must not move Breakthroughs or the Frontier. RECOGNITION_PUBLIC (stubbed
