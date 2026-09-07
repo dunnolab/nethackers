@@ -91,6 +91,24 @@ CREATE TABLE IF NOT EXISTS verified_atoms (
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(solution_digest, identity, seed, secret_fingerprint, evaluator_image)
 );
+CREATE TABLE IF NOT EXISTS verified_baseline_atoms (
+    solution_digest TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    tier TEXT NOT NULL,
+    identity TEXT NOT NULL,
+    seed INTEGER NOT NULL,
+    progression REAL NOT NULL,
+    milestone TEXT,
+    ascended INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    turns INTEGER NOT NULL,
+    steps INTEGER NOT NULL,
+    evaluator_image TEXT NOT NULL,
+    secret_fingerprint TEXT NOT NULL,
+    verifier_token_fingerprint TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(identity, seed, secret_fingerprint, evaluator_image)
+);
 CREATE TABLE IF NOT EXISTS verified_attempts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     solution_digest TEXT NOT NULL,
@@ -478,6 +496,52 @@ class Store:
             for (m, t, r, x) in rows
         ]
 
+    def _insert_atom_rows(self, table: str, atoms: list[Atom], *,
+                          extra: tuple[str, ...] = ()) -> int:
+        """``INSERT OR IGNORE`` ``atoms`` into ``table``, appending ``extra``
+        (the epoch/attribution columns the verified tables carry beyond
+        ``_ATOM_COLUMNS``) to every row. Returns rows actually inserted --
+        dedup on the table's own UNIQUE key makes a re-submit a no-op.
+
+        ``table`` is spliced into the SQL, so it is always a module-level
+        literal from this file, never caller input; values stay parametrized.
+        """
+        columns = _ATOM_COLUMNS + _VERIFIED_EXTRA_COLUMNS[: len(extra)]
+        cols = ", ".join(columns)
+        placeholders = ", ".join("?" for _ in columns)
+        inserted = 0
+        with self._conn:
+            for atom in atoms:
+                values = atom.to_dict()
+                row = tuple(values[c] for c in _ATOM_COLUMNS) + extra
+                cur = self._conn.execute(
+                    f"INSERT OR IGNORE INTO {table} ({cols}) VALUES ({placeholders})", row
+                )
+                inserted += cur.rowcount
+        return inserted
+
+    def _iter_atom_rows(self, table: str, allowed: frozenset[str], fname: str,
+                        filters: dict[str, Any]) -> list[Atom]:
+        """Return ``table``'s rows as ``Atom``s, filtered by ``column=value``
+        (AND'ed). Unknown keys raise rather than silently no-op into an
+        unfiltered scan; only whitelisted column names reach the WHERE clause.
+        """
+        unknown = sorted(set(filters) - allowed)
+        if unknown:
+            raise ValueError(f"unknown {fname} filter key(s): {unknown}")
+
+        sql = f"SELECT {_SELECT_ATOM_COLUMNS_SQL} FROM {table}"
+        params = list(filters.values())
+        if filters:
+            sql += " WHERE " + " AND ".join(f"{column} = ?" for column in filters)
+
+        atoms = []
+        for row in self._conn.execute(sql, params).fetchall():
+            values = dict(zip(_ATOM_COLUMNS, row, strict=True))
+            values["ascended"] = bool(values["ascended"])
+            atoms.append(Atom.from_dict(values))
+        return atoms
+
     def insert_baseline_atoms(self, atoms: list[Atom]) -> int:
         """Insert AutoAscend's computed baseline atoms into the isolated
         ``baseline_atoms`` table (no dedup, no FKs -- AutoAscend owns no
@@ -520,43 +584,51 @@ class Store:
         """Insert verified atoms into the isolated ``verified_atoms`` table
         (dedup on UNIQUE key, no FKs). Returns the number of rows inserted.
         """
-        cols = ", ".join(_ATOM_COLUMNS + _VERIFIED_EXTRA_COLUMNS)
-        placeholders = ", ".join("?" for _ in _ATOM_COLUMNS + _VERIFIED_EXTRA_COLUMNS)
-        inserted = 0
-        with self._conn:
-            for atom in atoms:
-                values = atom.to_dict()
-                row = tuple(
-                    values[c] for c in _ATOM_COLUMNS
-                ) + (secret_fingerprint, verifier_token_fingerprint)
-                cur = self._conn.execute(
-                    f"INSERT OR IGNORE INTO verified_atoms ({cols}) VALUES ({placeholders})",
-                    row,
-                )
-                inserted += cur.rowcount
-        return inserted
+        return self._insert_atom_rows(
+            "verified_atoms", atoms,
+            extra=(secret_fingerprint, verifier_token_fingerprint),
+        )
 
     def iter_verified_atoms(self, **filters: Any) -> list[Atom]:
         """Return verified atoms matching every ``column=value`` filter
         (AND'ed). Filter keys include solution_digest, identity, seed, plus
         secret_fingerprint, evaluator_image, verifier_token_fingerprint.
         """
-        unknown = sorted(set(filters) - _ITER_VERIFIED_FILTER_KEYS)
-        if unknown:
-            raise ValueError(f"unknown iter_verified_atoms filter key(s): {unknown}")
+        return self._iter_atom_rows(
+            "verified_atoms", _ITER_VERIFIED_FILTER_KEYS, "iter_verified_atoms", filters,
+        )
 
-        sql = f"SELECT {_SELECT_ATOM_COLUMNS_SQL} FROM verified_atoms"
-        params = list(filters.values())
-        if filters:
-            sql += " WHERE " + " AND ".join(f"{column} = ?" for column in filters)
+    def insert_verified_baseline_atoms(
+        self, atoms: list[Atom], *, secret_fingerprint: str,
+        verifier_token_fingerprint: str
+    ) -> int:
+        """Insert AutoAscend's hidden-seed floor into the isolated
+        ``verified_baseline_atoms`` table (dedup on UNIQUE key, no FKs).
+        Returns the number of rows inserted.
 
-        rows = self._conn.execute(sql, params).fetchall()
-        atoms = []
-        for row in rows:
-            values = dict(zip(_ATOM_COLUMNS, row, strict=True))
-            values["ascended"] = bool(values["ascended"])
-            atoms.append(Atom.from_dict(values))
-        return atoms
+        Isolated from ``verified_atoms`` for the same reason ``baseline_atoms``
+        is isolated from ``atoms``: AutoAscend is the reference floor, never a
+        participant, and a separate table makes that structural rather than
+        dependent on every reader remembering a ``tier`` filter.
+
+        The UNIQUE key omits ``solution_digest`` (which ``verified_atoms``
+        needs to separate participants) because this table has exactly one
+        logical author -- ``(identity, seed, epoch)`` is its natural key, so a
+        recompute under the same epoch is an idempotent no-op no matter which
+        box submits it.
+        """
+        return self._insert_atom_rows(
+            "verified_baseline_atoms", atoms,
+            extra=(secret_fingerprint, verifier_token_fingerprint),
+        )
+
+    def iter_verified_baseline_atoms(self, **filters: Any) -> list[Atom]:
+        """Return hidden-seed baseline atoms matching every ``column=value``
+        filter (AND'ed). Same filter whitelist as ``iter_verified_atoms``."""
+        return self._iter_atom_rows(
+            "verified_baseline_atoms", _ITER_VERIFIED_FILTER_KEYS,
+            "iter_verified_baseline_atoms", filters,
+        )
 
     def insert_verified_attempt(self, *, solution_digest, secret_fingerprint,
                                 evaluator_image, verifier_token_fingerprint, status,

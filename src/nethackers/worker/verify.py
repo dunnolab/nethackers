@@ -8,7 +8,7 @@ from pathlib import Path
 from nethackers._image_pins import ARENA_IMAGE
 from nethackers.arena.seeds import secret_fingerprint
 from nethackers.contracts.models import ObjectiveSpec
-from nethackers.eval.runner import eval_batch
+from nethackers.eval.runner import DEFAULT_MAX_PARALLEL_EVALS, eval_batch
 from nethackers.hub.objectives import CATALOG, IDENTITIES
 from nethackers.hubclient.pull import pull
 
@@ -23,8 +23,70 @@ def verified_identity_spec(identity: str, seeds) -> ObjectiveSpec:
                    batch=tuple((seed, identity) for seed in seeds))
 
 
+def compute_hidden_baseline(client, token, config, tree, *, image=ARENA_IMAGE,
+                            eval_fn=eval_batch, now_fn=_now, identities=IDENTITIES,
+                            log=print,
+                            max_parallel_evals=DEFAULT_MAX_PARALLEL_EVALS) -> str:
+    """Compute AutoAscend's hidden-seed floor from a local ``tree`` and submit
+    it per identity, returning ``"succeeded"``/``"failed"``.
+
+    ``verify_program``'s sibling for the reference floor, with three
+    deliberate differences. There is no ``pull_fn``: the floor is a local
+    AutoAscend tree the operator points at, not a ``repo@commit`` -- the
+    floor has no ``solutions`` row and must never get one. There is no
+    attempt bookkeeping: ``verified_attempts`` is keyed by solution digest,
+    which the floor doesn't have, so a failure surfaces as a non-zero exit
+    and a log line instead. And it RESUMES: at ~1095 episodes this run takes
+    hours, so identities the hub already holds a complete batch for (every
+    hidden seed covered, this epoch) are skipped rather than recomputed.
+
+    Partial coverage is not coverage -- an identity missing even one seed is
+    recomputed in full, since a batch is submitted whole. Each identity is
+    submitted as soon as it finishes, so a crash at identity 50 keeps the
+    49 already banked.
+    """
+    secret = config["secret"]
+    seeds = tuple(config["seeds"])
+    fp = secret_fingerprint(secret)
+
+    todo = [i for i in identities if i not in _covered_identities(client, len(seeds))]
+    log(f"baseline: {len(todo)} identity/identities to compute "
+        f"({len(identities) - len(todo)} already covered), {len(seeds)} hidden seeds each")
+
+    for n, identity in enumerate(todo, start=1):
+        spec = verified_identity_spec(identity, seeds)
+        try:
+            evidence = eval_fn(tree, spec, image, now=now_fn(), secret=secret,
+                               max_parallel_evals=max_parallel_evals)
+            client.post_verify_baseline(token, evidence=evidence.to_dict(),
+                                        secret_fingerprint=fp)
+        except Exception as e:  # the eval container or the hub submission failed
+            log(f"baseline: {identity} failed ({n}/{len(todo)}): {str(e)[-500:]}")
+            return "failed"
+        log(f"baseline: {identity} done ({n}/{len(todo)})")
+
+    return "succeeded"
+
+
+def _covered_identities(client, per_identity_total: int) -> frozenset[str]:
+    """Identities whose floor is already complete for the current epoch, read
+    off the public overview. A hub too old to serve a ``baseline`` block, or
+    one that errors, yields an empty set -- the run then recomputes
+    everything, which is wasteful but never wrong."""
+    try:
+        baseline = client.get_verify_overview().get("baseline") or {}
+        per_identity = baseline.get("per_identity") or {}
+    except Exception:
+        return frozenset()
+    return frozenset(
+        ident for ident, agg in per_identity.items()
+        if agg.get("episodes", 0) >= per_identity_total
+    )
+
+
 def verify_program(client, token, config, reference, *, image=ARENA_IMAGE, pull_fn=pull,
-                   eval_fn=eval_batch, now_fn=_now, identities=IDENTITIES) -> str:
+                   eval_fn=eval_batch, now_fn=_now, identities=IDENTITIES,
+                   max_parallel_evals=DEFAULT_MAX_PARALLEL_EVALS) -> str:
     secret = config["secret"]
     seeds = tuple(config["seeds"])
     fp = secret_fingerprint(secret)
@@ -53,7 +115,8 @@ def verify_program(client, token, config, reference, *, image=ARENA_IMAGE, pull_
         for identity in identities:
             spec = verified_identity_spec(identity, seeds)
             try:
-                evidence = eval_fn(tree, spec, image, now=now_fn(), secret=secret)
+                evidence = eval_fn(tree, spec, image, now=now_fn(), secret=secret,
+                                   max_parallel_evals=max_parallel_evals)
             except Exception as e:  # the eval container itself crashed
                 return fail("crashed", e)
             try:

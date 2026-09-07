@@ -43,7 +43,7 @@ def test_verified_identity_spec_uses_config_seeds():
 def test_verify_program_submits_per_identity_and_reports_success():
     client = _Client()
     status = verify_program(client, "vt", CONFIG, REF, pull_fn=lambda ref, dest: dest,
-                            eval_fn=lambda tree, spec, image, *, now, secret: _evidence(spec),
+                            eval_fn=lambda tree, spec, image, *, now, secret, **kw: _evidence(spec),
                             now_fn=lambda: "t", identities=("val-dwa-law-fem", "wiz-elf-cha-mal"))
     assert status == "succeeded"
     assert len(client.verified) == 2                      # one submit per identity
@@ -85,7 +85,7 @@ def test_verify_program_reports_infra_error_on_post_verify_failure():
             raise RuntimeError("hub 503")
     client = _FlakyClient()
     status = verify_program(client, "vt", CONFIG, REF, pull_fn=lambda ref, dest: dest,
-                            eval_fn=lambda tree, spec, image, *, now, secret: _evidence(spec),
+                            eval_fn=lambda tree, spec, image, *, now, secret, **kw: _evidence(spec),
                             now_fn=lambda: "t", identities=("val-dwa-law-fem",))
     assert status == "failed"
     assert client.attempts[-1]["failure_kind"] == "infra_error"
