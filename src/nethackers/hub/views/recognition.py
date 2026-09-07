@@ -1,12 +1,13 @@
 """Durable, achievement-based hacker recognition for the website.
 
 Served at ``GET /recognition`` (the UI still heads the section "Wall of
-Fame"). Two ledgers over the self-reported tier: the current identity
-record-holders grouped by hacker ("keepers"), and every all-time one-step
-frontier advance ("breakthroughs"). Breakthrough rows are program-bearing --
-the opaque ``program_id`` + ``reference {repo, commit}``, never
-``solution_digest`` -- per the hub API redesign, and the response carries the
-envelope's ``generated_at`` as-of.
+Fame"). Two ledgers, computed for whichever tier is requested and each
+measured against the floor that pairs with that tier (``views.source``):
+the current identity record-holders grouped by hacker ("keepers"), and
+every all-time one-step frontier advance ("breakthroughs"). Breakthrough
+rows are program-bearing -- the opaque ``program_id`` + ``reference {repo,
+commit}``, never ``solution_digest`` -- per the hub API redesign, and the
+response carries the envelope's ``generated_at`` as-of.
 """
 
 from __future__ import annotations
@@ -38,8 +39,12 @@ def read_recognition(
     tier (``views.source``), so a hidden-seed lift is never taken over the
     published-seed floor.
 
-    An identity with **no floor in this tier is skipped entirely** -- see
-    ``_floor_for`` below.
+    An identity with no floor in this tier is skipped entirely, in both
+    ledgers -- keepers and breakthroughs. A lift with no floor is not a
+    small lift; it is not a measurement, and crediting it against 0.0 would
+    hand the hacker the program's entire score. The check
+    (``baseline.get(identity) is None``) is applied inline at the top of
+    each loop, before that identity's candidates are considered.
     """
     source = source_for(tier, epoch)
     baseline_groups: dict[str, list[float]] = {}

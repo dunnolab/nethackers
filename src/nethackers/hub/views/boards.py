@@ -1,8 +1,11 @@
 """Hub boards view (M2a Task 9): the third derived view -- rankings computed
 PURELY on read, nothing stored. A board is scored on its objective's
-*identity*: ``store.iter_atoms(identity=objective.characters()[0],
-tier=tier)``. See task-9-context.md -- the crux was its original RESOLUTION
-over the brief's wording ("filter atoms to the objective's characters"):
+*identity*: ``source_for(tier, epoch).iter_atoms(store,
+identity=objective.characters()[0])`` -- ``tier`` selects the table
+(self-reported reads ``atoms``; verified reads ``verified_atoms``, scoped to
+``epoch``; see ``views.source``). See task-9-context.md -- the crux was its
+original RESOLUTION over the brief's wording ("filter atoms to the
+objective's characters"):
 filtering by character would lump in atoms produced under OTHER objectives
 (different published seeds) on the same identity, so two solutions could be
 ranked on different atom-sets -- breaking the spec Sec2 comparability
@@ -133,7 +136,9 @@ def board(
 
     Filtering: scored on every atom on ``objective.characters()[0]``
     (``random``/``all`` are retired, so each identity has exactly one
-    canonical objective -- see module docstring).
+    canonical objective -- see module docstring). ``tier`` selects the
+    table via ``views.source.source_for``: self-reported reads ``atoms``,
+    verified reads ``verified_atoms`` scoped to ``epoch``.
 
     Atoms are grouped by ``solution_digest`` and aggregated in Python:
     ``owner`` (constant per solution -- any atom's), ``ascensions`` (count
@@ -182,10 +187,13 @@ def aggregate_board(
     epoch: Epoch | None = None,
 ) -> list[dict[str, Any]]:
     """Macro-average board over ``ids`` (generalist = all 73; a role = its
-    identities). Each identity is scored on ``iter_atoms(identity=ident)``,
-    preserving same-seeds comparability per component (every atom for an
-    identity sits on that identity's canonical batch); a solution's
-    per-identity means are then rolled up:
+    identities). ``tier`` selects the table via ``views.source.source_for``:
+    self-reported reads ``atoms``, verified reads ``verified_atoms`` scoped
+    to ``epoch``. Each identity is scored on that source's
+    ``iter_atoms(store, identity=ident)``, preserving same-seeds
+    comparability per component (every atom for an identity sits on that
+    identity's canonical batch); a solution's per-identity means are then
+    rolled up:
       ``coverage`` = #identities in ``ids`` it has >=1 atom on,
       ``identities_total`` = ``len(ids)``,
       ``mean_progression``/``median_progression`` = mean/median of its
