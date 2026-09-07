@@ -146,6 +146,96 @@ async def test_best_overall_opens_full_table():
         assert "wiz-elf-cha-mal" in _dump(table)   # a per-identity row actually rendered
 
 
+async def test_open_run_and_open_best_open_different_programs():
+    """``open_run`` (this iteration's own candidate) and ``open_best`` (the
+    incumbent) must open DIFFERENT programs once the incumbent has propagated
+    to a prior iteration's win -- not the same detail twice. Regression test
+    for open_run, which previously had no coverage at all."""
+    r = _run()
+    r.apply_iteration(1, IterationResult(True, "registered", improved=["wiz-elf-cha-mal"],
+        dev_fitness=0.5, results=[{"character": "wiz-elf-cha-mal", "trajectory_id": 0,
+            "progress": 0.5, "status": "completed", "end_status": "died", "ascended": False,
+            "cause_of_death": "starvation", "max_depth": 8, "turns": 1200, "wall_seconds": 20.0}]))
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        mon._select(2)   # viewing iteration 2 -> incumbent propagated to iter 1
+        dv = mon.query_one("#detailview")
+        table = mon.query_one("#d_table", DataTable)
+
+        mon.open_best("wiz-elf-cha-mal")
+        await pilot.pause()
+        best_title, best_rows = dv.border_title, table.row_count
+
+        mon.close_detail()
+        await pilot.pause()
+        mon.open_run("wiz-elf-cha-mal")
+        await pilot.pause()
+        run_title, run_rows = dv.border_title, table.row_count
+
+        # best-so-far = the propagated iter-1 win (1 seed row, cause known);
+        # this-iteration = iter 2's own candidate, which hasn't started yet
+        # (0 rows) -- genuinely different programs, not the same view twice.
+        assert best_title == " wiz-elf-cha-mal · run · iter 1 "
+        assert run_title == " wiz-elf-cha-mal · iter 2 "
+        assert best_title != run_title
+        assert best_rows == 1
+        assert run_rows == 0
+
+
+async def test_open_run_live_refresh_gains_rows_then_upgrades_on_completion():
+    """§5.5: a RUNNING iteration's open_run() table starts empty, gains a row
+    per streamed episode (cause/time pending -> "--"), and -- once the
+    iteration is decided -- the SAME still-open table upgrades in place to
+    the full cause/depth/turns/time detail. Regression test for
+    _refresh_detail_if_open(), which previously had no coverage at all."""
+    r = _run()
+    ids = ["wiz-elf-cha-mal", "wiz-orc-cha-mal", "val-dwa-law-fem"]
+    r.apply_state({"phase": "evaluating-dev", "iteration": 1, "identities": ids,
+                   "cells": [{"identity": i, "score": 0.4, "digest": f"d:{i}"} for i in ids],
+                   "origins": {}, "aa_baseline": {i: 0.3 for i in ids}, "union": None,
+                   "cell_results": {i: [] for i in ids}, "coverage": (3, 3),
+                   "cell": "wiz-elf-cha-mal", "generation": 1,
+                   "baseline_dev": 0.0, "best_dev": 0.0, "wins": 0, "tokens": 0, "detail": "",
+                   "parent_digest": "", "parent_dev": 0.0})
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        mon._select(1)
+        mon.open_run("wiz-elf-cha-mal")
+        await pilot.pause()
+        table = mon.query_one("#d_table", DataTable)
+        assert table.row_count == 0   # nothing streamed yet
+
+        ep = {"index": 0, "total": 1, "seed": 5, "character": "wiz-elf-cha-mal",
+              "progress": 0.3, "status": "died", "turns": 200, "depth": 2}
+        r.apply_episode("iter 1/3 · dev", ep)
+        mon.render_episode("iter 1/3 · dev", ep)
+        await pilot.pause()
+        assert table.row_count == 1
+        row = table.get_row_at(0)
+        assert str(row[0]) == "5"    # seed
+        assert str(row[3]) == "—"    # cause of death -- pending
+        assert str(row[6]) == "—"    # time -- pending
+
+        result = IterationResult(True, "registered", improved=["wiz-elf-cha-mal"],
+            dev_fitness=0.3, results=[{"character": "wiz-elf-cha-mal", "trajectory_id": 5,
+                "progress": 0.3, "status": "completed", "end_status": "died",
+                "ascended": False, "cause_of_death": "killed by a jackal", "max_depth": 2,
+                "turns": 200, "wall_seconds": 9.0}])
+        r.apply_iteration(1, result)
+        mon.render_iteration(1, result)
+        await pilot.pause()
+        assert table.row_count == 1        # same row, upgraded in place
+        row = table.get_row_at(0)
+        assert str(row[3]) == "killed by a jackal"
+        assert str(row[4]) == "2"          # depth
+        assert str(row[5]) == "200"        # turns
+        assert str(row[6]) != "—"          # a real duration now
+
+
 async def test_n1_run_has_no_best_overall_row():
     """I8: a single-identity objective never seeds/moves the union cell
     (harness/archive.py's ``len(identities) > 1`` guard), so BEST OVERALL
