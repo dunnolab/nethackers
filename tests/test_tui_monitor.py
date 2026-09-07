@@ -120,6 +120,54 @@ async def test_open_best_so_far_shows_per_seed_table_with_cause():
         assert "starvation" in _dump(table)   # the propagated iter-1 row rendered
 
 
+async def test_open_best_hub_source_link_uses_the_cold_start_snapshot_not_the_live_cell():
+    """Regression: open_best's "hub" branch re-derived the source-link digest
+    from the LIVE cell archive (self.run.cells()) -- once a run child takes
+    v1's cell, a past-iteration view whose incumbent() is still "hub" (Fix 1's
+    snapshot-based incumbent) would look up the CHILD's origin (no repo/sha ->
+    "origin unknown") for the link instead of the champion's, even though the
+    label/score still say "hub". Must use the cold-start snapshot
+    (run.init_cells), matching incumbent()'s own source of truth."""
+    from nethackers.harness.loop import IterationResult
+    cfg = EvolveConfig("v1", "claude", 3)
+    r = Run("r1", cfg)
+    hub_origin = {"kind": "hub", "handle": "clyde", "sha": "11",
+                  "repo": "github.com/t/a", "iteration": None}
+    r.apply_state({
+        "phase": "cold-start", "iteration": 0, "identities": ["v1"],
+        "cells": [{"identity": "v1", "score": 0.42, "digest": "d1"}],
+        "origins": {"d1": hub_origin}, "aa_baseline": {"v1": 0.28},
+        "union": None, "cell_results": {"v1": []}, "coverage": (1, 1),
+        "cell": None, "generation": 0,
+        "baseline_dev": 0.0, "best_dev": 0.0, "wins": 0, "tokens": 0, "detail": "",
+        "parent_digest": "", "parent_dev": 0.0})
+    # a run child later takes v1's cell -- the LIVE cells/origins now show the
+    # child (kind "run", no repo/sha), overwriting the cold-start snapshot.
+    child_origin = {"kind": "run", "handle": "dev", "sha": None, "repo": None, "iteration": 1}
+    r.apply_state({
+        "phase": "registered", "iteration": 1, "identities": ["v1"],
+        "cells": [{"identity": "v1", "score": 0.6, "digest": "child1"}],
+        "origins": {"d1": hub_origin, "child1": child_origin},  # merged, as a real emit would be
+        "aa_baseline": {"v1": 0.28}, "union": None, "cell_results": {"v1": []},
+        "coverage": (1, 1), "cell": "v1", "generation": 1,
+        "baseline_dev": 0.0, "best_dev": 0.0, "wins": 1, "tokens": 0, "detail": "",
+        "parent_digest": "", "parent_dev": 0.0})
+    r.apply_iteration(1, IterationResult(True, "registered", improved=["v1"],
+                                         results=[{"character": "v1", "progress": 0.6}]))
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        mon._select(1)   # viewing iter 1 itself -> incumbent(v1, upto_k=1) is BEFORE the win
+        assert mon.run.incumbent("v1", mon.sel_iter)[2] == "hub"   # sanity: still "hub"
+        mon.open_best("v1")
+        await pilot.pause()
+        assert mon.detail_open is True
+        src_text = str(mon.query_one("#d_src").render())
+        assert "github.com/t/a" in src_text and "11" in src_text   # champion's link
+        assert "origin unknown" not in src_text                    # not the child's
+
+
 async def test_back_button_closes_detail():
     host = _Host(_run())
     async with host.run_test(size=(140, 42)) as pilot:

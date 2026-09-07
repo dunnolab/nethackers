@@ -123,7 +123,7 @@ class DetailView(Vertical):
                    f"bot.py ↗ (this run · iter {j})[/]")
         elif kind == "hub":
             evals = run.iteration_evals(0)
-            digest = (run.state.get("union") or {}).get("digest")
+            digest = (run.init_union or {}).get("digest")
             origin = (run.origins().get(digest) or {}) if digest else {}
             repo, sha = origin.get("repo"), origin.get("sha")
             src = (f"[dim]source[/]  [link=https://{repo}/commit/{sha}]{repo}@{sha} ↗[/]"
@@ -505,7 +505,7 @@ class RunMonitor(Screen):
             dv.show_eval(ev.rows, ev.total, title, src)
         elif kind == "hub":
             ev = self.run.iteration_evals(0)[ident]
-            digest = next((c["digest"] for c in self.run.cells() if c["identity"] == ident), None)
+            digest = (self.run.init_cells.get(ident) or {}).get("digest")
             origin = (self.run.origins().get(digest) or {}) if digest else {}
             repo, sha = origin.get("repo"), origin.get("sha")
             src = (f"[dim]source[/]  [link=https://{repo}/commit/{sha}]{repo}@{sha} ↗[/]"
