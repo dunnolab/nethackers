@@ -20,6 +20,13 @@ sits inside the hidden identity x seed spec. Atoms are always forced to
 ``evidence.tier`` is never trusted -- the same pattern
 ``baseline_compute.compute_baseline`` uses to force ``tier="baseline"``.
 
+``register_verified_baseline`` is the third writer here: AutoAscend's
+hidden-seed reference floor, into its own ``verified_baseline_atoms`` table.
+It shares the hidden-eval trust ladder (``_check_hidden_evidence``) with
+``register_verified`` but skips the solution lookup entirely -- the floor has
+no ``solutions`` row and must never get one, or it would rank as a participant
+against the programs it exists to measure.
+
 Kept minimal -- later tasks (6/7) extend this module further (attempt
 bookkeeping, batching) on top of this write path.
 """
@@ -33,7 +40,7 @@ from dataclasses import dataclass, replace
 from nethackers.arena.seeds import secret_fingerprint as _fingerprint
 from nethackers.contracts.models import Evidence
 from nethackers.hub.atoms import evidence_to_atoms
-from nethackers.hub.ids import program_id as _program_id
+from nethackers.hub.ids import AUTOASCEND_ID, program_id as _program_id
 from nethackers.hub.objectives import IDENTITIES
 from nethackers.hub.store import Store
 from nethackers.hub.validate import SolutionReference
@@ -106,6 +113,107 @@ class VerifyResult:
     total: int
 
 
+@dataclass(frozen=True)
+class BaselineVerifyResult:
+    """What a successful ``register_verified_baseline`` reports back.
+    ``done``/``total`` are the FLOOR's coverage over the full hidden identity
+    x seed grid for this epoch -- the same shape ``VerifyResult`` reports for
+    a participant, so a caller tracks a multi-call baseline run the same way
+    it tracks a multi-call verification. There is no ``owner``/``solution_id``
+    because the floor has neither: it is always AutoAscend."""
+
+    inserted: int
+    done: int
+    total: int
+
+
+def _check_hidden_evidence(evidence: Evidence, *, secret_fingerprint: str,
+                           expected_image: str, hub_secret: str,
+                           seeds: tuple[int, ...]) -> None:
+    """The trust ladder every hidden-seed submission must clear, participant
+    or floor, in order: the evidence ran under the pinned arena image
+    (``ParityMismatch``); it was produced under the hub's CURRENT hidden
+    secret, not a stale one from before a rotation (``StaleSecret``); every
+    result sits inside the hidden identity x seed spec (``BadBatch``); every
+    result's progress is finite (``NonFiniteMetrics``). Raises before the
+    caller writes anything -- a rejected submission stores nothing."""
+    if evidence.evaluator_image != expected_image:
+        raise ParityMismatch(
+            f"evaluator_image {evidence.evaluator_image!r} != pinned arena image {expected_image!r}"
+        )
+
+    if secret_fingerprint != _fingerprint(hub_secret):
+        raise StaleSecret("secret_fingerprint does not match the current hidden secret")
+
+    seed_set = frozenset(seeds)
+    for result in evidence.results:
+        if result.character not in _IDENTITY_SET or result.trajectory_id not in seed_set:
+            raise BadBatch(
+                f"({result.character}, {result.trajectory_id}) is outside the hidden spec"
+            )
+
+    if not all(math.isfinite(result.progress) for result in evidence.results):
+        raise NonFiniteMetrics("some result's progress is not finite")
+
+
+def register_verified_baseline(
+    store: Store,
+    *,
+    evidence: Evidence,
+    secret_fingerprint: str,
+    verifier_token_fingerprint: str,
+    expected_image: str,
+    hub_secret: str,
+    seeds: tuple[int, ...],
+) -> BaselineVerifyResult:
+    """Write AutoAscend's hidden-seed floor into the isolated
+    ``verified_baseline_atoms`` table.
+
+    ``register_verified``'s sibling, and deliberately a shorter ladder: it
+    skips the ``solutions`` lookup entirely because AutoAscend has no
+    ``solutions`` row and must never acquire one -- a row would make the
+    reference floor rank as a participant against the programs it exists to
+    measure. Ownership is therefore the constant ``AUTOASCEND_ID`` rather
+    than something resolved from the hub, and ``tier`` is forced to
+    ``"baseline"`` via ``replace`` -- the caller's ``evidence.tier`` is never
+    trusted, mirroring how ``register_verified`` forces ``"verified"``.
+
+    Everything trust-bearing about hidden-seed evidence is still enforced,
+    via the shared ``_check_hidden_evidence`` ladder: parity, secret epoch,
+    batch membership, finite metrics. A floor submitted from an unpinned
+    image or off-spec seeds would silently corrupt every Delta-vs-AA on the
+    board, so it is rejected exactly as a participant's would be.
+
+    Idempotent: ``insert_verified_baseline_atoms`` dedups on its own unique
+    key, so a re-run under the same epoch reports ``inserted == 0`` while
+    ``done`` still reports true coverage.
+    """
+    _check_hidden_evidence(evidence, secret_fingerprint=secret_fingerprint,
+                           expected_image=expected_image, hub_secret=hub_secret, seeds=seeds)
+
+    atoms = [
+        replace(atom, tier="baseline")
+        for atom in evidence_to_atoms(evidence, owner=AUTOASCEND_ID,
+                                      solution_id=AUTOASCEND_ID)
+    ]
+    inserted = store.insert_verified_baseline_atoms(
+        atoms, secret_fingerprint=secret_fingerprint,
+        verifier_token_fingerprint=verifier_token_fingerprint,
+    )
+
+    seed_set = frozenset(seeds)
+    covered = [
+        atom
+        for atom in store.iter_verified_baseline_atoms(
+            secret_fingerprint=secret_fingerprint, evaluator_image=expected_image
+        )
+        if atom.seed in seed_set
+    ]
+    return BaselineVerifyResult(
+        inserted=inserted, done=len(covered), total=len(IDENTITIES) * len(seeds)
+    )
+
+
 def record_attempt(store, *, reference, secret_fingerprint, evaluator_image,
                    verifier_token_fingerprint, status, failure_kind, message,
                    identities_done, now):
@@ -154,23 +262,9 @@ def register_verified(
     if row is None:
         raise UnknownSolution(f"{solution_id} is not registered")
 
-    if evidence.evaluator_image != expected_image:
-        raise ParityMismatch(
-            f"evaluator_image {evidence.evaluator_image!r} != pinned arena image {expected_image!r}"
-        )
-
-    if secret_fingerprint != _fingerprint(hub_secret):
-        raise StaleSecret("secret_fingerprint does not match the current hidden secret")
-
+    _check_hidden_evidence(evidence, secret_fingerprint=secret_fingerprint,
+                           expected_image=expected_image, hub_secret=hub_secret, seeds=seeds)
     seed_set = frozenset(seeds)
-    for result in evidence.results:
-        if result.character not in _IDENTITY_SET or result.trajectory_id not in seed_set:
-            raise BadBatch(
-                f"({result.character}, {result.trajectory_id}) is outside the hidden spec"
-            )
-
-    if not all(math.isfinite(result.progress) for result in evidence.results):
-        raise NonFiniteMetrics("some result's progress is not finite")
 
     owner = row["owner"]
     atoms = [
