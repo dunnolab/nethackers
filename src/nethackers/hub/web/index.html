@@ -1229,8 +1229,12 @@ const EMPTY_VERIFIED='No verified programs yet &mdash; verification (M2b) is not
 /* The wire keeps `self-reported` / `verified` -- accurate for the machinery
    (a trusted worker produced the verified rows). The site names the SEED SET
    instead, because that is what makes a number worth reading: the program
-   never saw the private dungeons. Every label, caption and sub-label on the
-   page reads from this one map; no tier string is written in markup. */
+   never saw the private dungeons. This map is the single source of truth for
+   every label, caption and sub-label on the page. The toggle buttons' HTML
+   carries a duplicate of the label text too, purely as a pre-JS fallback so
+   the page still reads correctly before any script runs; the synchronous
+   line right after `tierNote` below overwrites that markup on parse, so the
+   two copies can never drift. */
 const TIERS={
   "self-reported":{label:"Public Dungeons (15)",  caption:"PUBLIC DUNGEONS",
     note:"15 seeds per identity, run and reported by the hacker &mdash; unaudited"},
@@ -1238,6 +1242,11 @@ const TIERS={
     note:"15 secret seeds per identity, run by us on a program that has never seen them"},
 };
 function tierNote(el,tier){ if(el) el.innerHTML=TIERS[tier].note; }
+/* The map is authoritative for button text too: markup carries a copy so the
+   toggle still reads correctly with JS disabled, and this overwrites it on
+   parse so the two can never drift. Covers every [data-tier] button on the
+   page, including the groups added later. */
+document.querySelectorAll("[data-tier]").forEach(b=>{ b.textContent=TIERS[b.dataset.tier].label; });
 document.querySelectorAll("[data-tier]").forEach(b=>b.addEventListener("click",async()=>{
   curTier=b.dataset.tier;
   document.querySelectorAll("[data-tier]").forEach(x=>x.setAttribute("aria-pressed", x.dataset.tier===curTier?"true":"false"));
