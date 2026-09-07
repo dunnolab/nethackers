@@ -24,6 +24,13 @@ from nethackers.hub.ids import AUTOASCEND_TREE
 from nethackers.hubclient.client import HubClient
 from nethackers.worker.verify import compute_hidden_baseline, verify_program
 
+# httpx defaults to a 5s timeout, which is far too tight for this workload:
+# a POST carrying an identity's 15 atoms goes to a hub that is concurrently
+# serving other verifiers plus the public site, and losing the write throws
+# away the completed episodes behind it (an identity is submitted whole).
+# A verifier is a batch job measured in hours, so it can afford to wait.
+HUB_TIMEOUT_SECONDS = 60.0
+
 
 def _parse_reference(repo_at_commit: str) -> dict[str, str]:
     """Split a one-shot ``"repo@commit"`` CLI arg into the
@@ -61,7 +68,7 @@ def main(argv: list[str] | None = None) -> None:
     args = _parser().parse_args(argv)
     if not args.token:
         raise SystemExit("a verifier token is required (--token or NETHACKERS_VERIFIER_TOKEN)")
-    client = HubClient(args.hub)
+    client = HubClient(args.hub, timeout=HUB_TIMEOUT_SECONDS)
 
     if args.baseline:  # one-shot: compute the reference floor, then exit
         # Deliberately never enters the candidate loop below: the floor is not

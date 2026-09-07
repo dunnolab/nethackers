@@ -280,3 +280,62 @@ def test_cli_parallelism_also_reaches_program_verification(monkeypatch):
     server.main(["--hub", "http://h", "--token", "vt", "--once",
                  "--max-parallel-evals", "6"])
     assert seen["max_parallel_evals"] == 6
+
+
+# ---------------------------------------------------------------------------
+# Hub submission robustness. A verifier run is a batch job of hours: losing a
+# completed 15-episode identity because a write exceeded httpx's 5s default --
+# against a hub concurrently serving verification traffic -- is unacceptable,
+# and the failure it logged ("timed out", no type) was undiagnosable.
+# ---------------------------------------------------------------------------
+
+
+def test_worker_gives_the_hub_client_a_generous_explicit_timeout(monkeypatch):
+    """httpx defaults to 5s. A POST of 15 atoms to a busy hub can exceed
+    that, and the completed episodes are then thrown away."""
+    seen = {}
+
+    class _C(_StubHub):
+        def __init__(self, *a, **kw):
+            seen["args"], seen["kwargs"] = a, kw
+
+    monkeypatch.setattr(server, "HubClient", _C)
+    monkeypatch.setattr(server, "compute_hidden_baseline", lambda *a, **kw: "succeeded")
+    with pytest.raises(SystemExit):
+        server.main(["--hub", "http://h", "--token", "vt", "--baseline"])
+    assert seen["kwargs"].get("timeout") is not None, "worker must not inherit httpx's 5s default"
+    assert seen["kwargs"]["timeout"] >= 30
+
+
+def test_failure_log_names_the_exception_type():
+    """`str(e)` alone gave a bare 'timed out' with no clue whether it was the
+    evaluator or the hub, or which timeout fired."""
+    lines = []
+
+    class _C(_Client):
+        def post_verify_baseline(self, token, *, evidence, secret_fingerprint):
+            raise TimeoutError("timed out")
+
+    compute_hidden_baseline(
+        _C(), "vt", CONFIG, "roots/autoascend",
+        eval_fn=lambda tree, spec, image, *, now, secret, **kw: _evidence(spec),
+        now_fn=lambda: "t", identities=("val-dwa-law-fem",), log=lines.append)
+    failure = [ln for ln in lines if "failed" in ln]
+    assert failure and "TimeoutError" in failure[0], failure
+
+
+def test_progress_lines_are_flushed_not_buffered(capsys):
+    """An hours-long batch job whose progress sits in a 4KB stdout buffer is
+    unmonitorable -- `tail -f` and `journalctl` show nothing until it exits.
+    The default logger must flush each line."""
+    import io
+
+    stream = io.StringIO()
+    flushes = []
+    stream.flush = lambda: flushes.append(len(stream.getvalue()))
+
+    from nethackers.worker.verify import _log
+
+    _log("baseline: something happened", stream=stream)
+    assert "baseline: something happened" in stream.getvalue()
+    assert flushes, "logger must flush, or progress is invisible until exit"

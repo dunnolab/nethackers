@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sys
 import tempfile
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -11,6 +12,14 @@ from nethackers.contracts.models import ObjectiveSpec
 from nethackers.eval.runner import DEFAULT_MAX_PARALLEL_EVALS, eval_batch
 from nethackers.hub.objectives import CATALOG, IDENTITIES
 from nethackers.hubclient.pull import pull
+
+
+def _log(message: str, *, stream=None) -> None:
+    """Print one progress line and FLUSH it. Python line-buffers stdout only
+    when it is a tty; redirected to a file or captured by journald it uses a
+    block buffer, so an hours-long run shows nothing until it exits -- which
+    is exactly when the progress stopped being useful."""
+    print(message, file=stream if stream is not None else sys.stdout, flush=True)
 
 
 def _now() -> str:
@@ -25,7 +34,7 @@ def verified_identity_spec(identity: str, seeds) -> ObjectiveSpec:
 
 def compute_hidden_baseline(client, token, config, tree, *, image=ARENA_IMAGE,
                             eval_fn=eval_batch, now_fn=_now, identities=IDENTITIES,
-                            log=print,
+                            log=_log,
                             max_parallel_evals=DEFAULT_MAX_PARALLEL_EVALS) -> str:
     """Compute AutoAscend's hidden-seed floor from a local ``tree`` and submit
     it per identity, returning ``"succeeded"``/``"failed"``.
@@ -61,7 +70,11 @@ def compute_hidden_baseline(client, token, config, tree, *, image=ARENA_IMAGE,
             client.post_verify_baseline(token, evidence=evidence.to_dict(),
                                         secret_fingerprint=fp)
         except Exception as e:  # the eval container or the hub submission failed
-            log(f"baseline: {identity} failed ({n}/{len(todo)}): {str(e)[-500:]}")
+            # Name the type: a bare str(e) on a timeout reads only "timed
+            # out", which says nothing about whether the evaluator or the hub
+            # submission failed.
+            log(f"baseline: {identity} failed ({n}/{len(todo)}): "
+                f"{type(e).__name__}: {str(e)[-500:]}")
             return "failed"
         log(f"baseline: {identity} done ({n}/{len(todo)})")
 
