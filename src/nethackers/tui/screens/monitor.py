@@ -150,7 +150,7 @@ class DetailView(Vertical):
                           Text(row["cause"] or "—", style="#7c745f" if not row["cause"] else ""),
                           str(row["depth"]) if row["depth"] is not None else "—",
                           f'{row["turns"]:,}' if row["turns"] is not None else "—",
-                          S.dur(row["time"]) if row["time"] is not None else "—")
+                          S.ep_time(row["time"]) if row["time"] is not None else "—")
 
     def refresh_live(self) -> None:
         """Only a currently-streaming candidate's own table updates in place;
@@ -184,7 +184,7 @@ class DetailView(Vertical):
                       Text(row["cause"] or "—", style="#7c745f" if not row["cause"] else ""),
                       str(row["depth"]) if row["depth"] is not None else "—",
                       f'{row["turns"]:,}' if row["turns"] is not None else "—",
-                      S.dur(row["time"]) if row["time"] is not None else "—")
+                      S.ep_time(row["time"]) if row["time"] is not None else "—")
 
 
 class RunMonitor(Screen):

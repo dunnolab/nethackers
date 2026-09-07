@@ -77,6 +77,12 @@ def dur(seconds: float) -> str:
     return f"{h}h {m:02d}m" if h else f"{m}m"
 
 
+def ep_time(seconds: float) -> str:
+    """Per-episode clock time: seconds under a minute, else Xm SSs."""
+    s = int(round(seconds))
+    return f"{s // 60}m {s % 60:02d}s" if s >= 60 else f"{s}s"
+
+
 def role_full(role: str) -> str:
     return ROLE_FULL.get(role, role)
 

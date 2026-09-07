@@ -28,6 +28,15 @@ def test_dur_is_hours_and_minutes_no_seconds():
     assert S.dur(3 * 3600 + 25 * 60 + 9) == "3h 25m"
 
 
+def test_ep_time_is_seconds_under_a_minute_else_minutes_and_seconds():
+    # per-episode clock time (DetailView's per-seed "time" column) needs
+    # second-granularity -- unlike dur() (hours/minutes, for TOTAL run time),
+    # a 9-second episode must not round down to "0m".
+    assert S.ep_time(9) == "9s"
+    assert S.ep_time(134) == "2m 14s"
+    assert S.ep_time(60) == "1m 00s"
+
+
 def test_best_cell_colors_by_kind_and_shows_score():
     txt = str(S.best_cell((0.42, "clyde @11", "hub", None)))
     assert "clyde @11" in txt and "0.42" in txt
