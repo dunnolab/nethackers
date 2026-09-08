@@ -32,6 +32,11 @@
  *     visible on the private tier too, and the frontier/keepers/
  *     breakthroughs tier switches are asserted INDEPENDENT of each other.
  *   pass 3 (every fetch rejects): friendly empty states, console clean.
+ *   pass 5 (loading shimmer): with every fetch parked on a gate, the frontier
+ *     grid + both fame tables are already in the FIRST paint -- real labels,
+ *     churning NetHack glyphs in the cells whose values are still in flight --
+ *     and every placeholder is gone once the data lands. Also covers the
+ *     re-shimmer on an unfetched tier and the no-flash on a cached one.
  * /hackers/random's consumer sits behind a canvas getContext("2d") gate that jsdom
  * can't pass without the native `canvas` package (not installed here), so the
  * passes never reach it; a source-level check guards its .rows unwrap instead.
@@ -494,10 +499,124 @@ async function pass4() {
   dom.window.close();
 }
 
+
+async function pass5() {
+  console.log("\n== pass 5: loading shimmer (skeleton -> real data) ==");
+  const errors = [];
+  // Every fetch parks on a gate we control, so the LOADING state is observable
+  // instead of being a microtask wide. Re-armable, to cover the tier toggle too.
+  let gate, release;
+  const arm = () => { gate = new Promise((r) => { release = r; }); };
+  arm();
+  const dom = makeDom((p) => gate.then(() => ({ ok: true, status: 200, json: async () => router(p) })), errors);
+  const { document } = dom.window;
+  const q = (s) => document.querySelector(s), qa = (s) => [...document.querySelectorAll(s)];
+  const glyphs = (sel) => qa(sel).map((e) => e.textContent).join("");
+
+  // (a) FIRST PAINT -- we have not awaited once, so no fetch has resolved yet.
+  ok(qa("#rolegrid table.fr").length === 13, "frontier skeleton is in the first paint: 13 role tables");
+  ok(qa("#rolegrid tr:not(.frhead)").length === 73, "frontier skeleton draws all 73 identity rows before any data");
+  ok(qa("#rolegrid td.vv .shim").length === 86 && qa("#rolegrid td.dcol .shim").length === 86,
+     "frontier value + delta cells shimmer (73 identities + 13 role headers each)");
+
+  // the whole point of shimmering CELLS only: the labels are page constants, so
+  // they are real text from the first frame and must never churn.
+  ok(qa("#rolegrid td.vn .shim").length === 0, "frontier identity/role labels are real text, never shimmered");
+  ok(/Valkyrie/.test(q("#rolegrid").textContent) && /dwa-law-fem/.test(q("#rolegrid").textContent),
+     "skeleton labels carry the real role + variant names");
+  ok(qa("#rolegrid tr.frontierrow").length === 0, "skeleton rows are inert -- no leaderboard to open yet");
+
+  ok(qa("#recordholders tbody tr").length === 5 && qa("#breakthroughs tbody tr").length === 5,
+     "both fame tables show FAME_PAGE_SIZE (5) placeholder rows");
+  ok(qa("#recordholders tbody td").length === qa("#recordholders tbody td .shim").length &&
+     qa("#breakthroughs tbody td").length === qa("#breakthroughs tbody td .shim").length,
+     "every fame placeholder cell shimmers -- the row COUNT is unknown, unlike the frontier's");
+  ok(/PRIVATE DUNGEONS/.test(q("#recordholders caption").textContent) &&
+     /hacker/.test(q("#recordholders thead").textContent),
+     "fame skeleton keeps the real caption + column headers");
+  ok(!/Loading frontier keepers/.test(document.body.textContent), "the pre-JS 'Loading...' block is replaced");
+  ok(!qa("#recordholders .more, #breakthroughs .more").length, "no [ --More-- ] control on a skeleton");
+
+  // 227 cells of random glyphs would be read out as noise, so they are hidden
+  // from assistive tech and the three regions announce themselves as busy.
+  ok(qa(".shim").every((e) => e.getAttribute("aria-hidden") === "true"), "placeholder glyphs are aria-hidden");
+  ok(["#rolegrid", "#recordholders", "#breakthroughs"].every((sel) => q(sel).getAttribute("aria-busy") === "true"),
+     "all three loading regions are marked aria-busy");
+
+  // (b) the glyphs actually churn, and come from the avatar's NetHack pool
+  const before = glyphs(".shim");
+  await sleep(300);
+  ok(glyphs(".shim") !== before, "the shared ticker re-rolls the placeholder glyphs");
+  // A placeholder churns the KIND of value its cell will hold: percentages
+  // flicker through percentages, names through NetHack glyphs.
+  const POOL = new Set("@dfx&;:eFD)[(!?/=\"*$%.#|-<>^{}".split(""));
+  const kind = (k) => qa(`.shim[data-t="${k}"]`).map((e) => e.textContent);
+  ok(kind("text").length > 0 && kind("text").every((t) => [...t].every((c) => POOL.has(c))),
+     "text/name cells churn NetHack glyphs, same pool as the avatar");
+  ok(qa('#rolegrid .shim[data-t="pct"]').length === 86 && kind("pct").every((t) => /^\d\d\.\d%$/.test(t)),
+     "frontier value cells churn well-formed percentages, not glyphs");
+  ok(qa('#breakthroughs .shim[data-t="pct"]').length === 10, "the log's before/result columns churn percentages too");
+  ok(kind("spct").length === 86 && kind("spct").every((t) => /^[+-]\d\.\d%$/.test(t)),
+     "frontier delta cells churn SIGNED percentages");
+  // lift and advance are gains by construction (both renders hardcode "+"), so a
+  // placeholder that flickered negative would promise a value the column cannot hold
+  ok(kind("pp").length > 0 && kind("pp").every((t) => /^\+\d\.\d pp$/.test(t)), "lift/advance cells churn positive pp only");
+  ok(kind("date").length === 5 && kind("date").every((t) => /^\d\d [A-Z][a-z]{2} 2026, \d\d:\d\d UTC$/.test(t)),
+     "the breakthrough log's date column churns well-formed dates");
+  ok(kind("int").length > 0 && kind("int").every((t) => /^\d$/.test(t)), "count columns churn single digits");
+  // a placeholder that changed LENGTH between frames would jitter the text under it
+  const widths = (sel) => qa(sel).map((e) => e.textContent.length).join(",");
+  const w1 = widths(".shim");
+  await sleep(200);
+  ok(widths(".shim") === w1, "every placeholder kind is fixed-width -- no jitter as it churns");
+  // the shimmer must never wear the clothing of a real value
+  ok(!qa("#rolegrid .shim").some((e) => /dpos|dneg|asc|floor/.test(e.closest("td").className)),
+     "a churning number never carries the heat/delta styling a real standing earns");
+
+  // (c) data lands -> every placeholder is gone, replaced by the real render
+  release();
+  await sleep(200);
+  ok(qa(".shim").length === 0, "no placeholder survives the real render");
+  ok(qa("#rolegrid td.vv:not(.hval)").length === 73, "frontier renders its 73 real cells after boot");
+  ok(qa("#rolegrid tr.frontierrow").length === 73, "rows become clickable once there is a leaderboard behind them");
+  ok(qa("#recordholders tbody tr").length === 5 && /@keeper1/.test(q("#recordholders").textContent),
+     "fame tables show real rows");
+  ok(dom.window.eval("SHIM_TIMER") === 0, "the ticker stops itself once the last placeholder is gone");
+  ok(["#rolegrid", "#recordholders", "#breakthroughs"].every((sel) => !q(sel).hasAttribute("aria-busy")),
+     "aria-busy is cleared once the real values are in -- never left asserting a finished load is pending");
+
+  // shimmer -> real dissolves rather than pops, staggered so the table develops
+  ok(["#rolegrid", "#recordholders", "#breakthroughs"].every((sel) => q(sel).classList.contains("settle")),
+     "the regions that were shimmering animate their new values in");
+  ok(/--d:\s*\d+ms/.test(q("#rolegrid table.fr").getAttribute("style") || ""),
+     "real role tables carry the stagger offset the fade reads");
+  ok(/--d:\s*\d+ms/.test(q("#recordholders tbody tr").getAttribute("style") || ""),
+     "real fame rows carry the stagger offset too");
+
+  // (d) an UNCACHED tier flips back to the skeleton; a cached one must not flash
+  arm();
+  [...document.querySelectorAll("[data-tier-group='frontier']")].find((b) => b.dataset.tier === "self-reported").click();
+  await sleep(0);
+  ok(qa("#rolegrid td.vv .shim").length === 86, "switching to an unfetched tier shimmers the values again");
+  ok(qa("#rolegrid td.vn .shim").length === 0, "... and still only the values");
+  release();
+  await sleep(150);
+  ok(qa(".shim").length === 0, "the new tier's data clears the shimmer");
+
+  await sleep(950);                                  // let the previous flip's fade class expire
+  [...document.querySelectorAll("[data-tier-group='frontier']")].find((b) => b.dataset.tier === "verified").click();
+  ok(qa(".shim").length === 0, "returning to a CACHED tier does not flash a skeleton");
+  ok(!q("#rolegrid").classList.contains("settle"), "...and does not animate values that were never shimmering");
+
+  ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
+  dom.window.close();
+}
+
 await pass1();
 await pass2();
 await pass3();
 await pass4();
+await pass5();
 checkDictvizRandomWiring();
 console.log("\n" + (failures === 0 ? "ALL PASSED" : failures + " CHECK(S) FAILED"));
 process.exit(failures === 0 ? 0 : 1);
