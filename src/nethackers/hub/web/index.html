@@ -58,7 +58,7 @@ body{
     linear-gradient(rgba(255,255,255,.35),rgba(255,255,255,.35)),
     repeating-linear-gradient(0deg,transparent 0 3px,rgba(0,0,0,.012) 3px 4px);
 }
-.mono, .masthead, #demo, #demoMsg, .msgbar, #dictbar, .orc-speak, .orc-cap, .orc-bars, .orc-median, .orc-nrow, .orc-cmp, .od span, h2.sec .glyph, table.grid, table.fr, table.dtable, .identityboard, .term, .tomb, .refpop pre.ra, .wayh .wl, .src{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; }
+.mono, .masthead, #demo, #demoMsg, .msgbar, #dictbar, .orc-speak, .orc-cap, .orc-bars, .orc-median, .orc-nrow, .orc-cmp, .od span, h2.sec .glyph, table.grid, table.fr, table.dtable, .identityboard, .term, .tomb, .refpop pre.ra, .src{ font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace; }
 a{ color:var(--indigo); text-decoration:underline; text-underline-offset:2px; }
 a:visited{ color:var(--violet); }
 a:hover{ color:var(--red); background:#fff3b0; }
@@ -288,15 +288,7 @@ table.fr{ width:100%; table-layout:fixed; border-collapse:collapse;  font-size:.
 .legend .ramp{ display:inline-flex; height:11px; width:120px; border:1px solid var(--silver-lo); }
 .legend .ramp i{ flex:1; } .legend .sw{ display:inline-block; width:11px; height:11px; border:1px solid #000; vertical-align:-1px; }
 
-/* CONTRIBUTE --------------------------------------------------------------- */
-.menu2{  font-size:.9rem; margin:.4rem 0 1rem; }
-.menu2 div{ margin:5px 0; }
-.menu2 .k{ color:var(--red); font-weight:700; }
-.menu2 .d{ color:#55555c; }
-.wayh{ font-family:"Times New Roman","Liberation Serif","Nimbus Roman",Times,serif; font-weight:700; color:var(--indigo); font-size:1.2rem; margin:1.3rem 0 .3rem; }
-.wayh .wl{  color:var(--red); margin-right:.35rem; }
-#contribute p a{  font-size:.86rem; }
-#contribute .term{ max-width:660px; }
+.term{ max-width:620px; }
 .term{ background:var(--screen); color:var(--screen-ink); border:1px solid #000; padding:9px 11px;
    font-size:.78rem; line-height:1.65; overflow-x:auto; white-space:pre; }
 .term .p{ color:var(--gold); } .term .c{ color:var(--screen-dim); }
@@ -318,6 +310,16 @@ table.dtable caption{ text-align:left; background:var(--indigo); color:#fff; fon
 .dtable td.a{ text-align:center; font-weight:700; white-space:nowrap; }
 .dtable td.a.z{ color:var(--red); }
 .dtable tbody tr:nth-child(even) td{ background:#f6f6fa; }
+/* contests table: fixed column widths so the first column stops wrapping to
+   one word per line, and our own row reads as the subject, not an also-ran */
+table.contests{ table-layout:fixed; }
+table.contests .c1{ width:22%; } table.contests .c2{ width:33%; } table.contests .c3{ width:45%; }
+table.contests tbody tr.us td{ background:#eef0fb; }
+table.contests tbody tr.us td:first-child{ box-shadow:inset 3px 0 0 var(--indigo); }
+.tablewrap.noframe{ border:0; }
+/* draft marker -- grep `class="todo"` to find unfinished copy before launch */
+.todo{ font-family:"Courier New",Courier,monospace; font-size:.72rem; font-weight:700; letter-spacing:.06em;
+  background:var(--gold); color:#1a1a20; padding:1px 6px; border:1px solid #8a6d1f; white-space:nowrap; }
 .dfn{  font-size:.72rem; color:#55555c; margin:6px 0 0; }
 .dfn b{ color:var(--indigo); }
 
@@ -530,8 +532,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
         <li><span class="k">[3]</span> <a href="#frontier">The Frontier</a></li>
         <li><span class="k">[4]</span> <a href="#hackers">Hackers</a></li>
         <li><span class="k">[5]</span> <a href="#oracle">The Oracle</a> <span class="new">VOTE!</span></li>
-        <li><span class="k">[6]</span> <a href="#contribute">Contribute</a></li>
-        <li><span class="k">[7]</span> <a href="#faq">FAQ</a></li>
+        <li><span class="k">[6]</span> <a href="#faq">FAQ</a></li>
       </ol>
 
       <h4>Registered</h4>
@@ -626,6 +627,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           best <span class="ref" data-k="elite"><b>elites</b></span>; anyone can pull one, improve it, and register the result &mdash; so <b>one
           contributor's improvement becomes everyone's parent.</b> The hub never runs your search and assigns
           no work; how you make bots is entirely up to you.</p>
+
       </section>
 
       <hr class="rule">
@@ -657,14 +659,14 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           <span class="ref" data-k="codepolicies">Code as Policies</span> composes perception, control, and tools into
           executable robot behavior. NetHack is a cheap, fast arena for studying long-horizon planning, skill
           composition, tool creation, and generalization to unfamiliar seeds &mdash; without a robot lab.
-          <a href="#">&raquo; the paper &amp; hub API</a></p>
+          <a href="https://github.com/dunnolab/nethackers/blob/main/docs/verification.md" target="_blank" rel="noopener">&raquo; how held-out evaluation works</a></p>
 
         <div class="subh">If you just think it's cool</div>
         <p>You don't need to be good at NetHack, or an ML researcher. A coding agent and a laptop will do.
           Point it at a bot, watch it evolve and climb the board, and go for something no machine has managed in
           nearly four decades: get a program to win. It runs locally, it is genuinely addictive (a slot machine of
           stupid deaths and small breakthroughs), and every win you register becomes someone else's starting point
-          &mdash; your name on the frontier. <a href="#contribute">&raquo; start solving</a></p>
+          &mdash; your name on the frontier. <a href="https://github.com/dunnolab/nethackers" target="_blank" rel="noopener">&raquo; start solving</a></p>
       </section>
 
       <hr class="rule">
@@ -781,52 +783,23 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 
       <hr class="rule">
 
-      <!-- CONTRIBUTE -->
-      <section id="contribute">
-        <h2 class="sec"><span class="glyph">?</span> Contribute</h2>
-        <p class="lead">The platform evaluates and registers <b>programs</b>, and never meters the search
-          that made them &mdash; so there are two ways to pitch in.</p>
-
-        <h3 class="wayh"><span class="wl">a)</span> Join the distributed evolution</h3>
-        <p>You don't build a bot from scratch, and you don't need to be good at NetHack. Your machine joins a
-          shared evolutionary <span class="ref" data-k="harness">harness</span>: it pulls the current best
-          <span class="ref" data-k="elite"><b>elite</b></span> from the hub, a coding agent (Claude Code or Codex)
-          mutates it in a sandboxed arena, and every validated win registers back &mdash; becoming the next parent
-          for everyone. Concurrent runs cooperate through the hub. Needs Docker.</p>
-        <div class="term"><span class="c"># one-time GitHub sign-in</span>
-<span class="p">$</span> pip install nethackers
-<span class="p">$</span> nethackers login
-<span class="c"># evolve, and watch it climb (or die)</span>
-<span class="p">$</span> nethackers evolve --objective val-dwa-law-fem</div>
-        <p><a href="#">&raquo; Read the quickstart</a></p>
-
-        <h3 class="wayh"><span class="wl">b)</span> Bring your own harness</h3>
-        <p>Study the search, not the game. Any agentic loop is fair &mdash; we score only what its bots do:
-          validated win-rate, tokens per candidate, evals-to-first-win, cost per win. Conform to the
-          <span class="ref" data-k="arenabot"><span class="mono">ArenaBot</span></span> contract and register a
-          <span class="mono">repo@commit</span>. Our own hermetic coding-agent evolver is just the worked example.</p>
-        <div class="term"><span class="c"># your program lives at a public repo@commit</span>
-<span class="p">$</span> nethackers submit ./my-program --objective ...
-<span class="c"># anyone can fetch and build on it, anywhere</span>
-<span class="p">$</span> nethackers pull github.com/you/nethacker@a1b2c3d</div>
-        <p><a href="#">&raquo; Read the paper &amp; hub API</a></p>
-
-        <p class="dfn">The one lesson we'll spoil for free: a coding agent that remembers yesterday's run stops
-          exploring, so seal your operator from <b>its own past</b>, not only from the evaluator.</p>
-      </section>
-
-      <hr class="rule">
-
       <!-- FAQ -->
       <section id="faq">
         <h2 class="sec"><span class="glyph">%</span> FAQ</h2>
 
         <div class="subh">How is this different from the other NetHack competitions?</div>
         <p>Same dungeon, three different jobs.</p>
-        <div class="tablewrap"><table class="dtable">
+        <div class="tablewrap noframe"><table class="dtable contests">
           <caption>THREE NETHACK CONTESTS &mdash; WHAT EACH ONE ACTUALLY BUILDS</caption>
+          <colgroup><col class="c1"><col class="c2"><col class="c3"></colgroup>
           <thead><tr><th>Competition</th><th>Your job</th><th>Evaluation</th></tr></thead>
           <tbody>
+            <tr class="us">
+              <td><b>NetHackers</b></td>
+              <td>Build an autonomous symbolic bot that plays NLE's NetHack&nbsp;3.6.6.</td>
+              <td>An ongoing, open leaderboard for progression and ascension across fixed identities, with every bot
+                available as a starting point for the next improvement.</td>
+            </tr>
             <tr>
               <td><a href="https://nethackchallenge.com/">NeurIPS NetHack Challenge&nbsp;2021</a></td>
               <td>Build an agent to play the full game through NLE&nbsp;3.6.6.</td>
@@ -837,14 +810,14 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
               <td>Port NetHack&nbsp;5.0 from C and Lua to readable ES6 JavaScript.</td>
               <td>Bit-exact screen and PRNG parity on public and held-out sessions, followed by a generalization phase.</td>
             </tr>
-            <tr>
-              <td><b>NetHackers</b></td>
-              <td>Build an autonomous symbolic bot that plays NLE's NetHack&nbsp;3.6.6.</td>
-              <td>An ongoing, open leaderboard for progression and ascension across fixed identities, with every bot
-                available as a starting point for the next improvement.</td>
-            </tr>
           </tbody>
         </table></div>
+
+        <div class="subh">How does this compare to ARC-AGI?</div>
+        <p><span class="ref" data-k="arcagi">ARC-AGI</span> removes prior knowledge to test whether you can
+          <b>invent</b> a rule from a few examples. NetHack hands you all the knowledge up front and tests whether you
+          can <b>use</b> it for a hundred thousand steps without falling apart.
+          <span class="todo">[TO BE EXPANDED]</span></p>
 
         <div class="subh">Why AutoAscend?</div>
         <p>Because it is a strong starting point, not a finished answer.
@@ -856,10 +829,6 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           post-Mines plan still turns into TODOs. That is exactly what we want from a seed: enough competence to reach
           interesting states, and enough legible mistakes for humans and coding agents to start fixing immediately.</p>
 
-        <div class="subh">Does one lucky run count?</div>
-        <p>No. Programs are ranked across repeated seeded games, and verification uses
-          <span class="ref" data-k="heldout">held-out seeds</span>. The target is a bot that generalizes, not a seed
-          that happens to be friendly.</p>
       </section>
 
     </main>
