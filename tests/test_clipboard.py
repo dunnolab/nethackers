@@ -43,6 +43,7 @@ def test_copy_passes_text_via_stdin():
 
     clipboard.copy("WDJB-MJHT", run=run)
     assert got["input"] == "WDJB-MJHT"
+    assert got["timeout"] == clipboard._COPY_TIMEOUT
 
 
 def test_copy_treats_tool_failure_as_fall_through():
@@ -52,3 +53,16 @@ def test_copy_treats_tool_failure_as_fall_through():
         return None
 
     assert clipboard.copy("hi", run=run) is True
+
+
+def test_copy_treats_hung_tool_as_fall_through():
+    seen = []
+
+    def run(cmd, **kw):
+        seen.append(cmd[0])
+        if cmd[0] == "pbcopy":
+            raise subprocess.TimeoutExpired(cmd, kw["timeout"])
+        return None
+
+    assert clipboard.copy("hi", run=run) is True
+    assert seen == ["pbcopy", "wl-copy"]

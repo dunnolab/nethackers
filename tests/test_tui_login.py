@@ -12,6 +12,7 @@ thread would be racy -- exactly the escape hatch the modal exposes for tests.
 from __future__ import annotations
 
 import asyncio
+import threading
 
 from textual.app import App, ComposeResult
 from textual.widgets import Static
@@ -103,12 +104,42 @@ async def test_login_modal_show_displays_code_and_copies_it(monkeypatch):
         host.push_screen(modal)
         await pilot.pause()
         modal._show("https://github.com/login/device", "WDJB-MJHT")
+        for _ in range(200):
+            await asyncio.sleep(0.01)
+            if "code" in copied:
+                break
         await pilot.pause()
         panel = str(modal.query_one("#login_panel", Static).render())
 
     assert "WDJB-MJHT" in panel                     # the code the user types
     assert "github.com/login/device" in panel       # the URL to open
     assert copied["code"] == "WDJB-MJHT"             # the code was put on the clipboard
+
+
+async def test_login_modal_shows_code_without_waiting_for_clipboard(monkeypatch):
+    monkeypatch.setattr(login_mod.LoginModal, "_flow", lambda self: None)
+    release = threading.Event()
+
+    def blocked_copy(_text):
+        # The real helper is bounded too; this deliberately blocking fake proves
+        # it no longer runs on Textual's UI thread before the code is rendered.
+        release.wait(timeout=2)
+        return False
+
+    monkeypatch.setattr(login_mod.clipboard, "copy", blocked_copy)
+
+    host = _Host()
+    async with host.run_test() as pilot:
+        modal = LoginModal()
+        host.push_screen(modal)
+        await pilot.pause()
+        started = asyncio.get_running_loop().time()
+        modal._show("https://github.com/login/device", "WDJB-MJHT")
+        assert asyncio.get_running_loop().time() - started < 0.25
+        await pilot.pause()
+        panel = str(modal.query_one("#login_panel", Static).render())
+        assert "WDJB-MJHT" in panel
+        release.set()
 
 
 async def test_login_modal_url_is_clickable_hyperlink(monkeypatch):

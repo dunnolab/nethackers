@@ -13,6 +13,12 @@ from collections.abc import Callable, Sequence
 
 Run = Callable[..., object]
 
+# Clipboard helpers normally consume stdin and exit immediately (some fork a
+# small selection-owning process first).  A broken display server can instead
+# leave them waiting forever.  Login calls this helper before it can finish
+# presenting the device code, so keep the best-effort nicety strictly bounded.
+_COPY_TIMEOUT = 1.0
+
 _CANDIDATES: tuple[Sequence[str], ...] = (
     ("pbcopy",),
     ("wl-copy",),
@@ -26,8 +32,16 @@ def copy(text: str, *, run: Run = subprocess.run) -> bool:
     """Copy ``text`` to the system clipboard; return ``True`` if a tool worked."""
     for cmd in _CANDIDATES:
         try:
-            run(list(cmd), input=text, text=True, check=True, capture_output=True)
+            run(
+                list(cmd), input=text, text=True, check=True, capture_output=True,
+                timeout=_COPY_TIMEOUT,
+            )
             return True
-        except (FileNotFoundError, subprocess.CalledProcessError, OSError):
+        except (
+            FileNotFoundError,
+            subprocess.CalledProcessError,
+            subprocess.TimeoutExpired,
+            OSError,
+        ):
             continue
     return False
