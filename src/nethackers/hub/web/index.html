@@ -829,6 +829,20 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           post-Mines plan still turns into TODOs. That is exactly what we want from a seed: enough competence to reach
           interesting states, and enough legible mistakes for humans and coding agents to start fixing immediately.</p>
 
+        <div class="subh">Why not BOINC or an &ldquo;@home&rdquo; project?</div>
+        <p>Because <span class="ref" data-k="boinc">volunteer computing</span> solves the opposite problem. BOINC ships
+          code the project wrote and signed to machines it does not trust, then validates results by having two of them
+          agree. Both halves invert here. The untrusted thing is the <b>code</b> &mdash; a stranger's bot, or a coding
+          agent running with its permission prompts switched off &mdash; and a volunteer's side of that bargain is that
+          they never have to read it, because the project signed it and stands behind it. We cannot make that promise
+          about code we neither wrote nor reviewed, and routing it in as an input file to a signed wrapper only means
+          the signature stops covering the part that actually runs. Agreement would not buy us much either: a bot
+          overfitted to the public seeds is not a disagreement between hosts, it is a number every replica reproduces
+          perfectly. The only check that catches it is re-running on dungeons the author has never seen &mdash; and a
+          volunteer machine cannot hold a secret. Cycles were never the scarce thing anyway; a full private pass is
+          roughly a thousand episodes, hours on one box. What is scarce is good programs, and the agent tokens to find
+          them. So the hub hands out no work at all: you search on your own machine, and we keep the link.</p>
+
       </section>
 
     </main>
@@ -1161,6 +1175,7 @@ const REFS={
   grandchallenge:{t:"A grand challenge for AI",d:"The researchers behind NLE proposed NetHack as &quot;the most accessible grand challenge&quot; for AI: &quot;it won't solve AI, but it will unlock pathways towards better AI.&quot; Years on, no method has come close.",s:[["Grefenstette et al., via TechCrunch","https://techcrunch.com/2021/06/09/decades-old-ascii-adventure-nethack-may-hint-at-the-future-of-ai/"],["The NetHack Learning Environment",ARX+"2006.13760"]]},
   imagenet:{t:"ImageNet / ILSVRC",d:"The annual benchmark whose ratchet drove image-recognition error from <b>28% to ~2%</b> &mdash; a standing challenge, not a one-shot contest.",s:[["Russakovsky et al., 2015",ARX+"1409.0575"]]},
   fishtest:{t:"Fishtest",d:"Stockfish's volunteer distributed-testing framework &mdash; the model for coordinating many machines around one trusted evaluation.",s:[["official-stockfish/fishtest","https://github.com/official-stockfish/fishtest"]]},
+  boinc:{t:"BOINC / volunteer computing",d:"The platform behind SETI@home and its successors. A project signs its own application with a key kept off the network, ships it to volunteer machines, and validates results by <b>replication</b> &mdash; running each job on two hosts and comparing. Volunteers donate cycles; they never contribute code.",s:[["BOINC","https://boinc.berkeley.edu/"],["Anderson, 2019",ARX+"1903.01699"]]},
   aspire:{t:"ASPIRE",d:"A self-improving robotics system that diagnoses failed rollouts, rewrites code-as-policy programs, validates the repairs, and saves successful behaviors as reusable skills for new long-horizon tasks.",s:[["NVIDIA GEAR","https://research.nvidia.com/labs/gear/aspire/"]]},
   codepolicies:{t:"Code as Policies",d:"Robot policies expressed as executable programs: language models compose perception and control APIs, feedback loops, and recursively defined helper functions into embodied behavior.",s:[["Liang et al., 2022","https://code-as-policies.github.io/"]]},
   autoascend:{t:"AutoAscend",d:"The hand-engineered symbolic winner of the NeurIPS 2021 NetHack Challenge. NetHackers uses it as the reference floor and cold-start seed, not as a solved agent.",s:[["AutoAscend source","https://github.com/maciej-sypetkowski/autoascend"],["Challenge report","https://nethackchallenge.com/report.html"]]},
