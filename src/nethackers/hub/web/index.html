@@ -231,6 +231,24 @@ table.grid caption{ text-align:left; background:var(--indigo); color:#fff; font-
 .famelog td{ font-variant-numeric:tabular-nums; }
 .emptyblock{ color:#777780;  font-size:.78rem; }
 
+/* Loading shimmer -- the churning-glyph placeholder from `.ghavatar .dungeon`,
+   reused for table cells whose value is still in flight. A single shared JS
+   ticker re-rolls the glyphs of every .shim on the page (startShim, below);
+   the breathing is CSS. Under prefers-reduced-motion both stop and the cells
+   settle on one still roll, exactly as the avatar does. */
+.shim{ display:inline-block; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace;
+  color:var(--indigo-2); letter-spacing:0; user-select:none; animation:shimpulse 1.5s ease-in-out infinite; }
+@keyframes shimpulse{ 0%,100%{ opacity:.32; } 50%{ opacity:.72; } }
+@media (prefers-reduced-motion:reduce){ .shim{ animation:none; opacity:.52; } }
+/* ...and out again: the cells that were placeholders dissolve into their real
+   values instead of popping. Only the cells that CHANGED animate -- the row and
+   role labels were already correct, so flickering them would be pure noise. The
+   per-table / per-row `--d` stagger lets the table develop rather than switch in
+   a single frame. `.settle` is added by settle() only when the region really was
+   shimmering, and removed once the animation is spent. */
+.settle td.vv,.settle td.dcol,.settle .fametable tbody td{ animation:cellin .34s ease-out both; animation-delay:var(--d,0ms); }
+@keyframes cellin{ from{ opacity:.12; } to{ opacity:1; } }
+
 /* FRONTIER heatmap --------------------------------------------------------- */
 .frtop{ display:flex; flex-wrap:wrap; gap:10px; align-items:center; margin:.3rem 0 .7rem; }
 .regime{  font-size:.8rem; }
@@ -1248,6 +1266,8 @@ document.querySelectorAll("[data-tier-group='frontier']").forEach(b=>b.addEventL
   curTier=b.dataset.tier;
   document.querySelectorAll("[data-tier-group='frontier']").forEach(x=>x.setAttribute("aria-pressed", x.dataset.tier===curTier?"true":"false"));
   tierHelp($("#tierhelp-frontier"), curTier);
+  // a cached tier resolves in the same tick -- shimmering it would just flash
+  if(!UNIVERSE_BY_TIER[curTier]||!BASELINE_BY_TIER[curTier]) renderFrontierSkeleton();
   await Promise.all([loadUniverse(curTier), loadBaseline(curTier)]);
   renderFrontier(); }));
 [["keepers",()=>keepersTier,v=>keepersTier=v],
@@ -1256,14 +1276,112 @@ document.querySelectorAll("[data-tier-group='frontier']").forEach(b=>b.addEventL
     set(b.dataset.tier);
     document.querySelectorAll(`[data-tier-group='${group}']`).forEach(x=>x.setAttribute("aria-pressed", x.dataset.tier===get()?"true":"false"));
     tierHelp($(`#tierhelp-${group}`), get());
+    if(!FAME_BY_TIER[get()]) showFameSkeleton(group);
     await loadRecognition(get());
     renderRecognition();
   }));
 });
 
+/* ===================== loading shimmer =====================
+   Cells whose value is still in flight churn a placeholder of their own KIND
+   (see SHIM_KIND) -- text falling back to the NetHack glyphs the GitHub avatar
+   uses (NHGLYPHS / ghAvatar, further down -- referenced lazily, since it is
+   declared after this point). ONE ticker drives
+   every .shim on the page; a timer per cell would be hundreds of them for the
+   73-identity grid. It self-stops on the first tick that finds no placeholder
+   left, so a completed render needs no teardown call. */
+const SHIM_MS=110;                       // ghAvatar's re-roll cadence
+let SHIM_TIMER=0;
+const SHIM_PENDING={};                   // region -> "its next real render follows a skeleton"
+const rnd=n=>(Math.random()*n)|0;
+/* A placeholder churns whatever KIND of thing the cell will hold: a percentage
+   cell flickers through percentages, a date through dates, a name or a role
+   through NetHack glyphs. Every generator is FIXED-WIDTH -- a value that
+   changed length 9x/s would jitter the text under it.
+   These digits are never dressed as data: the shimmer keeps its own muted
+   colour and never wears the heat tint or the green/red delta colours a real
+   number earns, so a churning "43.7%" cannot be mistaken for a standing. */
+const _MONS=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
+const pad2=v=>String(v).padStart(2,"0");
+const SHIM_KIND={
+  text: n=>{ let t=""; for(let i=0;i<n;i++) t+=NHGLYPHS[rnd(NHGLYPHS.length)]; return t; },
+  pct:  ()=>`${(10+Math.random()*89.9).toFixed(1)}%`,                     // NN.N%
+  spct: ()=>`${Math.random()<.5?"+":"-"}${(Math.random()*9.9).toFixed(1)}%`,     // +N.N%
+  pp:   ()=>`+${(Math.random()*9.9).toFixed(1)} pp`,   // always a gain: both columns that use it hardcode "+"
+  int:  n=>{ let t=String(1+rnd(9)); for(let i=1;i<n;i++) t+=rnd(10); return t; },
+  date: ()=>`${pad2(1+rnd(28))} ${_MONS[rnd(12)]} 2026, ${pad2(rnd(24))}:${pad2(rnd(60))} UTC`,
+};
+const shim=(kind,n)=>`<span class="shim" data-t="${kind}"${n?` data-n="${n}"`:""} aria-hidden="true"></span>`;
+function shimRoll(){
+  const cells=document.querySelectorAll(".shim");
+  if(!cells.length){ if(SHIM_TIMER){ clearInterval(SHIM_TIMER); SHIM_TIMER=0; } return; }
+  cells.forEach(c=>{ const gen=SHIM_KIND[c.dataset.t]||SHIM_KIND.text; c.textContent=gen(+c.dataset.n||4); });
+}
+/* shimmer -> real values: the cells that CHANGED dissolve in rather than
+   popping. Only fires when this region was actually showing a skeleton, so a
+   cached tier switch stays instant, and never against prefers-reduced-motion. */
+const SETTLE_TIMER=new WeakMap();
+function settle(el,key){
+  if(!el||!SHIM_PENDING[key]) return;
+  SHIM_PENDING[key]=false;
+  if(matchMedia("(prefers-reduced-motion:reduce)").matches) return;
+  el.classList.add("settle");
+  clearTimeout(SETTLE_TIMER.get(el));                  // a re-render must not cut its own fade short
+  SETTLE_TIMER.set(el,setTimeout(()=>el.classList.remove("settle"),900)); // outlasts fade + longest stagger
+}
+function startShim(){
+  shimRoll();                            // paint immediately, before the first interval
+  if(SHIM_TIMER||matchMedia("(prefers-reduced-motion:reduce)").matches) return;
+  SHIM_TIMER=setInterval(shimRoll,SHIM_MS);
+}
+
+/* The frontier's SHAPE is a client-side constant (ROLE_NAMES x ROLE_VARS), not
+   something the hub tells us -- so the grid is drawn on first paint and only the
+   fetched numbers shimmer. Skeleton rows are inert on purpose: no .frontierrow,
+   no tabindex, no handler, because there is no leaderboard to open yet. */
+function renderFrontierSkeleton(){
+  const grid=$("#rolegrid"); if(!grid) return;
+  const roleOrder=Object.keys(ROLE_NAMES).slice().sort((a,b)=>ROLE_VARS[b].length-ROLE_VARS[a].length);
+  grid.innerHTML=roleOrder.map((role,ri)=>{
+    const head=`<tr class="frhead"><td class="vn rn"><span class="ref" data-k="role-${role}">${ROLE_NAMES[role]}</span></td>`
+      +`<td class="vv hval">${shim("pct")}</td><td class="dcol">${shim("spct")}</td></tr>`;
+    const body=ROLE_VARS[role].map(v=>`<tr><td class="vn">${esc(v)}</td><td class="vv">${shim("pct")}</td><td class="dcol">${shim("spct")}</td></tr>`).join("");
+    return `<table class="fr" style="--d:${ri*18}ms"><colgroup><col class="c1"><col class="c2"><col class="c3"></colgroup>${head}${body}</table>`;
+  }).join("");
+  grid.setAttribute("aria-busy","true"); SHIM_PENDING.frontier=true;
+  if(window.__refs) window.__refs();
+  startShim();
+}
+
+/* Recognition tables: the caption and column shape are known before the fetch,
+   the rows are not -- so the header is real and FAME_PAGE_SIZE rows of cells
+   shimmer. Cells carry alignment/width classes only; .owner and .dpos would
+   underline and tint the placeholder glyphs as if they were data. */
+const FAME_SKEL={
+  keepers:{ el:"#recordholders", cls:"grid fametable",
+    cap:()=>`FRONTIER KEEPERS &middot; ${TIERS[keepersTier].caption}`,
+    head:()=>`<th>#</th><th class="l">hacker</th><th>frontiers</th><th class="l">roles represented</th><th>combined lift</th>`,
+    cells:[["","int",1],["l","text",9],["","int",1],["roles","text",14],["","pp"]] },
+  breakthroughs:{ el:"#breakthroughs", cls:"grid fametable famelog",
+    cap:()=>`GREATEST BREAKTHROUGHS &middot; ${TIERS[breakthroughsTier].caption}`,
+    head:()=>`<th class="l">${breakthroughsTier==="verified"?"verified":"registered"}</th><th class="l">hacker</th>`
+      +`<th class="l">identity</th><th>before</th><th>result</th><th>advance</th>`,
+    cells:[["l","date"],["l","text",9],["l","text",13],["","pct"],["","pct"],["","pp"]] },
+};
+function showFameSkeleton(kind){
+  const s=FAME_SKEL[kind], host=$(s.el); if(!host) return;
+  const cells=s.cells.map(([cls,k,n])=>`<td class="${cls}">${shim(k,n)}</td>`).join("");
+  const rows=Array.from({length:FAME_PAGE_SIZE},(_,i)=>`<tr style="--d:${i*35}ms">${cells}</tr>`).join("");
+  host.innerHTML=`<div class="tablewrap"><table class="${s.cls}"><caption>${s.cap()}</caption>`
+    +`<thead><tr>${s.head()}</tr></thead><tbody>${rows}</tbody></table></div>`;
+  host.setAttribute("aria-busy","true"); SHIM_PENDING[kind]=true;
+  startShim();
+}
+
 /* ===================== frontier heatmap ===================== */
 function renderFrontier(){
   const grid=$("#rolegrid"), note=$("#gridnote");
+  grid.removeAttribute("aria-busy");     // set by renderFrontierSkeleton; real values now
   const BASE=BASELINE_BY_TIER[curTier]||{per_identity:{},overall:null};
   const UNI=UNIVERSE_BY_TIER[curTier]||{};
   const per=BASE.per_identity||{};
@@ -1307,7 +1425,7 @@ function renderFrontier(){
 
   let prog=0,floor=0,total=0,sum=0;
   const roleOrder=Object.keys(ROLE_NAMES).slice().sort((a,b)=>ROLE_VARS[b].length-ROLE_VARS[a].length); // most identities first
-  grid.innerHTML=roleOrder.map(role=>{
+  grid.innerHTML=roleOrder.map((role,ri)=>{
     const ids=ROLE_VARS[role].map(v=>({v,id:role+"-"+v,d:datum(role+"-"+v)}));
     let liftSum=0,liftN=0,shownSum=0,shownN=0,roleProg=0;   // liftN counts only cells whose lift is DEFINED; roleProg = this role's program-led cells
     ids.forEach(({d})=>{ total++;
@@ -1329,7 +1447,7 @@ function renderFrontier(){
       const dtd=d.state==='prog'?dSigned(d.delta):(d.state==='floor'?aaTd:noTd);
       return `<tr class="frontierrow" data-identity="${esc(id)}" tabindex="0" role="button" aria-label="Open leaderboard for ${esc(id)}" title="${esc(rowTitle(id,d))}"><td class="vn">${esc(v)}</td>${valTd(d)}${dtd}</tr>`;
     }).join("");
-    return `<table class="fr"><colgroup><col class="c1"><col class="c2"><col class="c3"></colgroup>${head}${body}</table>`;
+    return `<table class="fr" style="--d:${ri*18}ms"><colgroup><col class="c1"><col class="c2"><col class="c3"></colgroup>${head}${body}</table>`;
   }).join("");
 
   const overall=prog?pct(sum/prog):"-";
@@ -1347,6 +1465,7 @@ function renderFrontier(){
     tr.addEventListener("click",open);
     tr.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } });
   });
+  settle(grid,"frontier");
   if(window.__refs) window.__refs();
 }
 (function(){ const r=$("#ramp"); for(let i=0;i<22;i++){ const s=document.createElement("i"); s.style.background=tint(i/21); r.appendChild(s);} })();
@@ -1354,6 +1473,7 @@ function renderFrontier(){
 /* ===================== recognition ===================== */
 function renderRecognition(){
   const holders=$("#recordholders"), breakthroughs=$("#breakthroughs");
+  [holders,breakthroughs].forEach(el=>el&&el.removeAttribute("aria-busy"));  // set by showFameSkeleton
   const kFame=FAME_BY_TIER[keepersTier]||{keepers:[]};
   const bFame=FAME_BY_TIER[breakthroughsTier]||{breakthroughs:[]};
   /* "newest first" means something different per tier: public breakthroughs
@@ -1371,7 +1491,7 @@ function renderRecognition(){
     const visible=people.slice(0,FAME_LIMITS.keepers);
     holders.innerHTML=people.length?`<div class="tablewrap"><table class="grid fametable"><caption>FRONTIER KEEPERS &middot; ${TIERS[keepersTier].caption}</caption>
       <thead><tr><th>#</th><th class="l">hacker</th><th>frontiers</th><th class="l">roles represented</th><th>combined lift</th></tr></thead>
-      <tbody>${visible.map((p,i)=>`<tr data-owner="${esc(p.owner)}" tabindex="0" role="button" aria-label="Open contributions by @${esc(p.owner)}">
+      <tbody>${visible.map((p,i)=>`<tr style="--d:${i*35}ms" data-owner="${esc(p.owner)}" tabindex="0" role="button" aria-label="Open contributions by @${esc(p.owner)}">
         <td class="rk ${i<3?'top':''}">${i+1}</td><td class="l owner">@${esc(p.owner)}</td><td>${p.records}</td>
         <td class="roles">${p.roles.map(r=>esc(ROLE_NAMES[r]||r)).join(', ')}</td><td class="dpos">+${(p.total_lift*100).toFixed(1)} pp</td></tr>`).join("")}</tbody></table></div>
         ${visible.length<people.length?`<div class="more" data-fame-more="keepers" role="button" tabindex="0">[ --More-- ]</div>`:""}`
@@ -1381,6 +1501,7 @@ function renderRecognition(){
       row.addEventListener("click",open);
       row.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } });
     });
+    settle(holders,"keepers");
     const more=holders.querySelector('[data-fame-more="keepers"]');
     if(more){ const expand=()=>{ FAME_LIMITS.keepers+=FAME_PAGE_SIZE; renderRecognition(); };
       more.addEventListener("click",expand);
@@ -1391,7 +1512,7 @@ function renderRecognition(){
     const visible=people.slice(0,FAME_LIMITS.breakthroughs);
     breakthroughs.innerHTML=people.length?`<div class="tablewrap"><table class="grid fametable famelog"><caption>GREATEST BREAKTHROUGHS &middot; ${TIERS[breakthroughsTier].caption}</caption>
       <thead><tr><th class="l">${breakthroughsTier==="verified"?"verified":"registered"}</th><th class="l">hacker</th><th class="l">identity</th><th>before</th><th>result</th><th>advance</th></tr></thead>
-      <tbody>${visible.map((p,i)=>`<tr data-breakthrough="${i}" tabindex="0" role="button" aria-label="Open breakthrough submission by @${esc(p.owner)}">
+      <tbody>${visible.map((p,i)=>`<tr style="--d:${i*35}ms" data-breakthrough="${i}" tabindex="0" role="button" aria-label="Open breakthrough submission by @${esc(p.owner)}">
         <td class="l">${esc(fmtDate(p.at))}</td><td class="l owner">@${esc(p.owner)}</td><td class="l">${esc(p.identity)}</td>
         <td>${(p.previous*100).toFixed(1)}%</td><td>${(p.score*100).toFixed(1)}%</td><td class="dpos">+${(p.gain*100).toFixed(1)} pp</td></tr>`).join("")}</tbody></table></div>
         ${visible.length<people.length?`<div class="more" data-fame-more="breakthroughs" role="button" tabindex="0">[ --More-- ]</div>`:""}`
@@ -1401,6 +1522,7 @@ function renderRecognition(){
       row.addEventListener("click",open);
       row.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } });
     });
+    settle(breakthroughs,"breakthroughs");
     const more=breakthroughs.querySelector('[data-fame-more="breakthroughs"]');
     if(more){ const expand=()=>{ FAME_LIMITS.breakthroughs+=FAME_PAGE_SIZE; renderRecognition(); };
       more.addEventListener("click",expand);
@@ -1621,7 +1743,10 @@ async function boot(){
                renderMarquee(marqueeStatsLine(s)); setUpdated(s.last_registered_at); })
     .catch(()=>{ STATS=null; odo($("#odoProg"),0,5); odo($("#odoPlay"),0,5); });
   const objP  = jget("/objectives").then(o=>{ OBJ_EP = Object.fromEntries(o.map(x=>[x.name, x.episodes])); }).catch(()=>{ OBJ_EP = {}; });
-  await Promise.all([statsP,objP,loadRecognition("verified")]);
+  // the fame tables only need /recognition -- drop their shimmer as soon as it
+  // lands rather than holding them behind the frontier's two further fetches
+  const recP  = loadRecognition("verified").then(()=>renderRecognition());
+  await Promise.all([statsP,objP,recP]);
   await Promise.all([loadUniverse(curTier), loadBaseline(curTier)]);
   HONOR_UNIVERSE = await loadUniverse("self-reported");
   tierHelp($("#tierhelp-frontier"), curTier);
@@ -1629,7 +1754,14 @@ async function boot(){
   tierHelp($("#tierhelp-breakthroughs"), breakthroughsTier);
   renderFrontier(); renderRecognition();
 }
-boot();
+/* Draw the placeholders synchronously, before boot()'s first await, so the
+   grid and both fame tables are in the FIRST paint rather than appearing
+   whenever the slowest fetch returns. boot() is internally guarded per fetch,
+   but a throw anywhere else would otherwise leave the page shimmering forever
+   -- claiming "still loading" when nothing is -- so it falls back to the same
+   honest empty states a failed fetch produces. */
+renderFrontierSkeleton(); showFameSkeleton("keepers"); showFameSkeleton("breakthroughs");
+boot().catch(()=>{ renderFrontier(); renderRecognition(); });
 /* ===== The Nethack Dictionary: audio-reactive dungeon wall around the .page frame ===== */
 (function(){
   const page=document.querySelector(".page"), cv=document.getElementById("dictviz"), bar=document.getElementById("dictbar");
