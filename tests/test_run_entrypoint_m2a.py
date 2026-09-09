@@ -126,9 +126,9 @@ def test_run_batch_caps_parallelism_at_batch_size():
     captured = {}
 
     class SpyExec(cf.ThreadPoolExecutor):
-        def __init__(self, max_workers):
+        def __init__(self, max_workers, **kwargs):
             captured["P"] = max_workers
-            super().__init__(max_workers=max_workers)
+            super().__init__(max_workers=max_workers, **kwargs)
 
     run_batch("/sol", [[0, "x"]], secret="s", evaluation_id="e", max_steps=1,
               no_progress_timeout=1, action_timeout=1.0, max_parallel_evals=8,
