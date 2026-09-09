@@ -616,11 +616,11 @@ async function pass5() {
   dom.window.close();
 }
 
-// ---- pass 6: the scratch-card easter egg ---------------------------------
-// The foil itself is canvas work jsdom cannot render -- its look is verified in
-// a real browser. What is checked here is the part that can go wrong silently:
-// the extended-command prompt's state machine, and the guard that keeps `#`
-// from firing while someone is typing into a form field.
+// ---- pass 6: the scratch card --------------------------------------------
+// The chart sits UNDER the opening block; arming clips that block so dragging
+// scrapes the page's own text off it. jsdom has no layout or pointer, so what
+// is checked here is the state machine and the clip bookkeeping -- how it looks
+// is verified by driving Chromium and WebKit for real.
 async function pass6() {
   console.log("\n== pass 6: the #agi scratch card ==");
   const errors = [];
@@ -631,42 +631,63 @@ async function pass6() {
   const key = (k, target) => (target || document).dispatchEvent(
     new window.KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
   const type = (s, t) => [...s].forEach((c) => key(c, t));
+  const click = (el) => el.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
 
-  ok(q("#scratch") && q("#scratch").hidden, "at rest: the card is hidden");
-  ok(q("#xcmd") && q("#xcmd").hidden, "at rest: the prompt is hidden");
+  const about = q("#about"), chart = q("#agichart"), btn = q("#agiBtn");
+  ok(about && chart && btn, "the block, the chart and the button are all on the page");
+  ok(chart.previousElementSibling !== about && !about.contains(chart),
+     "the chart is OUTSIDE the block it hides under -- inside, the clip would erase it too");
+  ok(!about.classList.contains("scratching"), "at rest: the block is not clipped");
+  ok(!chart.classList.contains("on"), "at rest: the chart is not shown");
+  ok(btn.textContent.trim() === "is it AGI?" && btn.getAttribute("aria-pressed") === "false",
+     "at rest: the button offers the question");
 
-  // a verb the page does not have gets NetHack's refusal, and arms nothing
+  // the button arms it
+  click(btn);
+  ok(about.classList.contains("scratching"), "the button clips the block");
+  ok(chart.classList.contains("on"), "...and lays the chart underneath");
+  ok(btn.textContent.trim() === "put it back" && btn.getAttribute("aria-pressed") === "true",
+     "...and becomes the way back out");
+  ok(q("#about .lead"), "the real text is still in the document, not replaced");
+
+  // scraping punches holes into the clip path and they persist
+  const before = q("#agiclippath").getAttribute("d") || "";
+  for (let i = 0; i < 30; i++) window.__egg.dig(40 + i * 8, 60);
+  await sleep(60);
+  const after = q("#agiclippath").getAttribute("d");
+  ok(window.__egg.holes() >= 30, `scraping records the holes (${window.__egg.holes()})`);
+  ok(after.length > before.length + 500, "the clip path grows with them");
+  ok(/^M0 0H/.test(after), "the path still opens with the block's own box, so the rest stays visible");
+  await sleep(400);
+  ok(q("#agiclippath").getAttribute("d") === after, "the scratches do not heal");
+
+  // the button is a toggle, and clears what was scraped
+  click(btn);
+  ok(!about.classList.contains("scratching") && !chart.classList.contains("on"),
+     "the button puts the whole page back");
+  ok(window.__egg.holes() === 0, "...and drops the scratches");
+  ok(btn.textContent.trim() === "is it AGI?", "...and offers the question again");
+
+  // the extended-command prompt is the other way in
+  ok(q("#xcmd").hidden, "at rest: the prompt is hidden");
   key("#"); ok(!q("#xcmd").hidden, "# opens the extended-command prompt");
   type("pray"); key("Enter");
   ok(/^#pray: unknown extended command\.$/.test(q("#xcmd .xc-msg").textContent),
      "#pray is refused in NetHack's own words");
-  ok(q("#scratch").hidden, "a refused command arms nothing");
+  ok(!about.classList.contains("scratching"), "a refused command arms nothing");
   await sleep(1800);
   ok(q("#xcmd").hidden, "the prompt closes itself after the refusal");
 
-  // `#` must not hijack a keystroke meant for a form field
   const probe = document.createElement("input");
-  document.body.appendChild(probe);
-  probe.focus();
+  document.body.appendChild(probe); probe.focus();
   key("#", probe);
   ok(q("#xcmd").hidden, "# typed into a form field is ignored");
   probe.remove();
 
-  // the one command it answers to
   key("#"); type("agi"); key("Enter");
-  ok(!q("#scratch").hidden, "#agi arms the scratch card");
-  ok(q("#xcmd").hidden, "...and closes the prompt behind it");
-  ok(q("#scratch .sc-ink").getAttribute("role") === "img" &&
-     /is it AGI/i.test(q("#scratch .sc-ink").getAttribute("aria-label")),
-     "the chart carries a described alternative for screen readers");
-
-  // and the two ways back out
+  ok(about.classList.contains("scratching"), "#agi arms the card too");
   key("Escape");
-  ok(q("#scratch").hidden, "escape puts the page back");
-  ok(q(".about .lead"), "the opening block is still in the document");
-  key("#"); type("agi"); key("Enter");
-  q("#scratch .sc-put").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
-  ok(q("#scratch").hidden, "the ticket's own [ put it back ] restores the page");
+  ok(!about.classList.contains("scratching"), "escape puts the page back");
 
   ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
   dom.window.close();

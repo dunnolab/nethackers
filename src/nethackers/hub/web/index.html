@@ -504,70 +504,57 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 .orc-revote{  font-size:.78rem; margin:15px 0 0; }
 .orc-revote a{ cursor:pointer; }
 
-/* ==== THE SCRATCH CARD (easter egg) ======================================
-   NetHack keeps its rarer verbs behind `#`. So does this page: `#agi` lays a
-   lottery-ticket foil over the opening block, and you scrape it off with the
-   mouse to find a flow chart underneath.
+/* ==== THE SCRATCH CARD ====================================================
+   A flow chart is hidden UNDER the opening block. The button in the heading
+   turns that block into a scratch surface: what you scrape off is the page's
+   own text, and the drawing shows through the holes.
 
-   The chart is the one raster on the page, and it is kept as close to a glyph
-   as a photograph can get: 1-bit, ink opaque and paper transparent, used as a
-   mask so the strokes are painted in this page's own indigo. What ships is the
-   shape of the handwriting, not a picture of it.
+   The holes are punched with an SVG clip-path (rect + circle subpaths, even-odd
+   fill rule) rather than a canvas brush. A canvas mask renders correctly in
+   Chrome but blanks the whole element in WebKit; clip-path is identical in
+   both. The cost is hard-edged holes, so the radii are jittered to keep the
+   tear ragged rather than machined.
+
+   The chart itself is the one raster on a page that otherwise draws every mark
+   it shows, and is kept as close to a glyph as a photograph can get: 1-bit,
+   ink opaque and paper transparent, used as a mask so the strokes take the
+   page's own indigo. What ships is the shape of the handwriting.
    ========================================================================= */
-.about{ position:relative; }
+.main{ position:relative; }
 
-#scratch{ position:absolute; top:0; left:0; width:100%; z-index:5;
-  overflow:hidden; border:2px solid;
-  border-color:var(--silver-hi) var(--silver-lo) var(--silver-lo) var(--silver-hi);
-  box-shadow:0 3px 14px rgba(0,0,0,.24); }
-/* the scratchable face carries the chart's proportions; the ticket's header
-   band sits above it, so nothing covers the top of the drawing */
-#scratch .sc-face{ position:relative; width:100%; aspect-ratio:1400/1644; }
-#scratch[hidden]{ display:none; }
+/* the block being scratched sits above the chart and paints its own paper --
+   without an opaque background the drawing would show through the text too */
+.about{ position:relative; z-index:1; }
+.about.scratching{ background:var(--paper); -webkit-user-select:none; user-select:none;
+  clip-path:url(#agiclip); -webkit-clip-path:url(#agiclip); }
+.about.scratching .agiscratch{
+  cursor:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28"><circle cx="14" cy="14" r="10" fill="%23e9c15a" stroke="%236a6a55" stroke-width="2"/><text x="14" y="19" text-anchor="middle" font-family="monospace" font-size="14" font-weight="bold" fill="%236a6a55">$</text></svg>') 14 14, crosshair; }
 
-/* the notebook page, revealed --------------------------------------------- */
-#scratch .sc-paper{ position:absolute; inset:0; background:#fbfaf3; }
-#scratch .sc-ink{ position:absolute; inset:0; opacity:.92; background:var(--indigo);
+/* the chart, underneath: a sibling of .about, so the clip never touches it */
+#agichart{ position:absolute; z-index:0; display:none; background:#fbfaf3;
+  border:1px solid var(--rule-soft); }
+#agichart.on{ display:block; }
+#agichart .agi-ink{ position:absolute; inset:0; opacity:.92; background:var(--indigo);
   -webkit-mask-image:var(--agi);         mask-image:var(--agi);
   -webkit-mask-size:contain;             mask-size:contain;
   -webkit-mask-repeat:no-repeat;         mask-repeat:no-repeat;
   -webkit-mask-position:center;          mask-position:center; }
-/* no mask support: show the ink itself rather than an indigo slab */
 @supports not ((-webkit-mask-image:url("")) or (mask-image:url(""))){
-  #scratch .sc-ink{ background:none; background-image:var(--agi); background-size:contain;
+  #agichart .agi-ink{ background:none; background-image:var(--agi); background-size:contain;
     background-repeat:no-repeat; background-position:center; }
 }
 
-/* the foil ---------------------------------------------------------------- */
-#scratch canvas{ position:absolute; inset:0; display:block; width:100%; height:100%;
-  touch-action:none; -webkit-user-select:none; user-select:none;
-  cursor:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28"><circle cx="14" cy="14" r="10" fill="%23e9c15a" stroke="%236a6a55" stroke-width="2"/><text x="14" y="19" text-anchor="middle" font-family="monospace" font-size="14" font-weight="bold" fill="%236a6a55">$</text></svg>') 14 14, crosshair; }
+/* the region of the block that is actually scratchable: the chart's footprint.
+   Holes anywhere else would only expose the page's own white. */
+.agiscratch{ position:absolute; left:0; top:0; display:none; z-index:2; }
+.about.scratching .agiscratch{ display:block; }
 
-/* the ticket's header band. At the top, not the foot: arming scrolls the card
-   to the top of the viewport, so a footer would sit below the fold (and behind
-   the fixed music bar) with "put it back" out of reach. */
-#scratch .sc-cap{ display:flex;
-  gap:10px; align-items:center; justify-content:space-between; flex-wrap:wrap;
-  background:var(--screen); color:var(--screen-dim); font-size:.72rem;
-  letter-spacing:.02em; padding:5px 9px; }
-#scratch .sc-cap b{ color:var(--gold); font-weight:700; }
-#scratch .sc-put{ background:none; border:0; padding:0; font:inherit; color:var(--screen-ink);
-  text-decoration:underline; text-underline-offset:2px; cursor:pointer; white-space:nowrap; }
-#scratch .sc-put:hover{ color:var(--red-2); background:none; }
-#scratch .sc-put:focus-visible{ outline:2px dotted var(--gold); outline-offset:2px; }
-
-/* ==== THE EXTENDED-COMMAND PROMPT ======================================== */
-#xcmd{ position:fixed; left:0; right:0; bottom:0; z-index:60; padding:7px 12px;
-  background:var(--screen); color:var(--screen-ink); font-size:.86rem;
-  border-top:1px solid #30304a; }
-#xcmd[hidden]{ display:none; }
-#xcmd .xc-buf{ color:var(--gold); }
-#xcmd .xc-cur{ display:inline-block; width:.56em; height:1em; vertical-align:-.14em;
-  background:var(--gold); animation:xcblink 1.06s step-end infinite; }
-@keyframes xcblink{ 0%,49%{ opacity:1; } 50%,100%{ opacity:0; } }
-#xcmd .xc-msg{ color:var(--scr-red); }
-#xcmd .xc-hint{ color:var(--screen-dim); }
-@media (prefers-reduced-motion:reduce){ #xcmd .xc-cur{ animation:none; } }
+/* the button, on the heading's own line ------------------------------------ */
+#about h2.sec{ display:flex; align-items:baseline; justify-content:space-between; gap:14px; }
+#agiBtn{ position:relative; z-index:3; font-family:"Courier New","Liberation Mono","Nimbus Mono PS",Courier,monospace;
+  font-size:.66rem; letter-spacing:.03em; white-space:nowrap; align-self:center; }
+#agiBtn[aria-pressed="true"]{ color:var(--red); }
+@media (max-width:520px){ #about h2.sec{ flex-wrap:wrap; gap:6px; } }
 
 </style>
 
@@ -635,9 +622,15 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
     <!-- ---------- MAIN ---------- -->
     <main class="main">
 
+
+        <!-- the flow chart, hidden under the block above; revealed by scratching
+             the real text off it (see the script at the foot of the page) -->
+        <div id="agichart" aria-hidden="true"><div class="agi-ink"></div></div>
+
       <!-- ABOUT -->
       <section id="about" class="about">
-        <h2 class="sec"><span class="glyph">@</span> What it is?</h2>
+        <h2 class="sec"><span><span class="glyph">@</span> What it is?</span>
+          <button type="button" id="agiBtn" class="bevel" aria-pressed="false">is it AGI?</button></h2>
         <p class="lead"><b>NetHackers is an open effort to build the first program that can
           reliably win NetHack&nbsp;3.6.6.</b> Write the bot by hand, evolve it with coding agents, improve the thing
           that improves it, or recurse until something interesting happens. Whatever path you take, the evaluation
@@ -696,21 +689,6 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           best <span class="ref" data-k="elite"><b>elites</b></span>; anyone can pull one, improve it, and register the result &mdash; so <b>one
           contributor's improvement becomes everyone's parent.</b> The hub never runs your search and assigns
           no work; how you make bots is entirely up to you.</p>
-
-        <!-- the scratch card (hidden until the #agi extended command; see the
-             script at the foot of the page). Kept inside .about so it can be
-             pinned over the opening block. -->
-        <div id="scratch" hidden>
-          <div class="sc-cap">
-            <span><b>NETHACKERS INSTANT WIN</b> &middot; scratch it off to see the answer</span>
-            <button type="button" class="sc-put">[ put it back ]</button>
-          </div>
-          <div class="sc-face">
-            <div class="sc-paper"></div>
-            <div class="sc-ink" role="img" aria-label="A flow chart, drawn by hand on ruled paper. Titled: is it AGI? Start. Does it solve NetHack? If yes, it may be AGI. If no, it's not AGI."></div>
-            <canvas aria-hidden="true"></canvas>
-          </div>
-        </div>
 
       </section>
 
@@ -928,9 +906,10 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           them. So the hub hands out no work at all: you search on your own machine, and we keep the link.</p>
 
         <div class="subh">Fine. Is it AGI?</div>
-        <p>We drew a flow chart to settle it, and then we did not print it here. Ask the dungeon for it
-          by name, the way you would ask NetHack for anything else it keeps behind
-          <span class="mono">#</span>. The name is the question.</p>
+        <p>We drew a flow chart to settle it. It is not printed here, but it is not far away either &mdash;
+          there is something under the top of this page, and the button beside that first heading will
+          let you scrape the page off it. <span class="mono">#agi</span> at the extended-command prompt
+          does the same thing, for anyone who would rather ask the dungeon.</p>
 
       </section>
 
@@ -959,7 +938,13 @@ __)/\_//(\/(/\)/\//\/\|_)__</pre>
 </div>
 
 
-<!-- NetHack's extended-command prompt, for the one command this page answers to -->
+<!-- the clip that the scratching punches holes in, and NetHack's extended-command
+     prompt, for the one command this page answers to -->
+<svg width="0" height="0" aria-hidden="true" style="position:absolute" focusable="false">
+  <defs><clipPath id="agiclip" clipPathUnits="userSpaceOnUse">
+    <path id="agiclippath" clip-rule="evenodd" d=""></path>
+  </clipPath></defs>
+</svg>
 <div id="xcmd" class="mono" hidden role="status" aria-live="polite">
   <span class="xc-p">#</span><span class="xc-buf"></span><span class="xc-cur"></span>
   <span class="xc-msg"></span>
@@ -2283,147 +2268,138 @@ boot().catch(()=>{ renderFrontier(); renderRecognition(); });
 
 <!-- ===================== the scratch card ============================= -->
 <script>
-/* An easter egg, in two halves.
+/* A flow chart hidden under the opening block.
 
-   The prompt: `#` opens NetHack's extended-command line. It answers to exactly
-   one command. Everything else gets the refusal NetHack would give.
+   Arming (the button in the heading, or `#agi` at NetHack's extended-command
+   prompt) lays the chart behind the block, paints the block's own paper opaque,
+   and clips it. Dragging punches holes in that clip, so what comes away is the
+   page's real text and the drawing shows through underneath.
 
-   The card: a silver foil painted onto a <canvas> over the opening block. The
-   brush erases with destination-out, so what you scrape stays scraped -- the
-   foil never heals. "put it back" (or esc) removes the overlay entirely and
-   leaves the page exactly as it was. */
+   Holes, not brush strokes, because the clip-path is the only technique that
+   behaves the same in Chrome and WebKit -- a canvas/SVG mask over live DOM
+   renders in Chrome and blanks the element outright in WebKit. What you scrape
+   stays scraped; the button (or esc) puts the whole page back. */
 (function(){
   "use strict";
-  const sc = document.getElementById("scratch");
-  const bar = document.getElementById("xcmd");
-  if(!sc || !bar) return;                       // page served without the egg
-
-  const about  = sc.parentElement;
-  const face   = sc.querySelector(".sc-face");
-  const canvas = sc.querySelector("canvas");
-  // No 2d context (very old browser, or a headless DOM): the prompt still works
-  // and #agi still reveals the chart -- there is simply no foil to scrape off.
-  let ctx = null;
-  try{ ctx = canvas.getContext ? canvas.getContext("2d") : null; }catch(_){}
+  const about = document.getElementById("about");
+  const chart = document.getElementById("agichart");
+  const btn   = document.getElementById("agiBtn");
+  const bar   = document.getElementById("xcmd");
+  const clip  = document.getElementById("agiclippath");
+  if(!about || !chart || !btn || !bar || !clip) return;   // page served without the egg
 
   const calm = window.matchMedia && window.matchMedia("(prefers-reduced-motion:reduce)").matches;
-  let armed = false;
+  const CHART_RATIO = 1644/1400;            // the drawing's own proportions
+  let armed = false, holes = [], lx = 0, ly = 0, scraping = false, raf = 0;
 
-  /* ---- the foil ---------------------------------------------------------
-     Brushed silver, a diagonal hatch, and the ticket's own legend repeated
-     across it -- so the legend is one of the things you scrape away. */
-  function paintFoil(w, h){
-    if(!ctx) return;
-    ctx.globalCompositeOperation = "source-over";
-    const g = ctx.createLinearGradient(0, 0, w, h);
-    g.addColorStop(0,"#dcdcd6"); g.addColorStop(.30,"#bcbcb6"); g.addColorStop(.50,"#eeeee9");
-    g.addColorStop(.70,"#b9b9b3"); g.addColorStop(1,"#d2d2cb");
-    ctx.fillStyle = g; ctx.fillRect(0, 0, w, h);
+  // the scratchable patch: the chart's footprint at the top of the block
+  const pad = document.createElement("div");
+  pad.className = "agiscratch";
+  about.appendChild(pad);
 
-    ctx.lineWidth = 1;
-    for(let i = 0; i < 2; i++){
-      ctx.strokeStyle = i ? "rgba(0,0,0,.055)" : "rgba(255,255,255,.42)";
-      ctx.beginPath();
-      for(let x = -h; x < w; x += 7){ ctx.moveTo(x + i*3, 0); ctx.lineTo(x + h + i*3, h); }
-      ctx.stroke();
+  /* ---- geometry ---------------------------------------------------------
+     The chart is a sibling of .about (anything inside it would be clipped
+     away with the text), so its box is measured from the block each time. */
+  function place(){
+    const w = about.clientWidth, h = Math.round(w*CHART_RATIO);
+    // start at the top of the body text, not the top of the block: the heading
+    // carries the button, and a scratch pad over it would swallow the clicks
+    const lead = about.querySelector(".lead");
+    const off = lead ? lead.offsetTop : 0;
+    chart.style.left = about.offsetLeft + "px";
+    chart.style.top = (about.offsetTop + off) + "px";
+    chart.style.width = w + "px";
+    chart.style.height = h + "px";
+    pad.style.top = off + "px";
+    pad.style.width = w + "px";
+    pad.style.height = h + "px";
+    return [w, h];
+  }
+
+  /* ---- the clip ---------------------------------------------------------
+     One path: the block's whole box, then a circle subpath per scrape. With
+     the even-odd rule each circle reads as a hole rather than an island. */
+  function repaint(){
+    raf = 0;
+    let d = "M0 0H" + about.offsetWidth + "V" + about.offsetHeight + "H0Z";
+    for(const h of holes){
+      const x = h[0], y = h[1], r = h[2];
+      d += "M" + (x+r) + " " + y + "a" + r + " " + r + " 0 1 0 " + (-2*r) + " 0"
+         + "a" + r + " " + r + " 0 1 0 " + (2*r) + " 0Z";
     }
-
-    ctx.save();
-    ctx.translate(w/2, h/2); ctx.rotate(-Math.PI/9);
-    ctx.font = "700 " + Math.max(11, Math.round(w*.042)) + 'px "Courier New",monospace';
-    ctx.textAlign = "center"; ctx.fillStyle = "rgba(64,64,76,.26)";
-    const step = Math.max(26, Math.round(w*.105));
-    for(let i = -7; i <= 7; i++) ctx.fillText("IS IT AGI?  ·  SCRATCH HERE", 0, i*step);
-    ctx.restore();
+    clip.setAttribute("d", d);
   }
+  const schedule = () => { if(!raf) raf = requestAnimationFrame(repaint); };
 
-  /* ---- sizing -----------------------------------------------------------
-     Backing store follows devicePixelRatio; drawing stays in CSS pixels. On a
-     resize the foil is rescaled rather than repainted, so scratches survive. */
-  function fit(keep){
-    if(!ctx) return;
-    const r = face.getBoundingClientRect();
-    const w = Math.max(1, Math.round(r.width)), h = Math.max(1, Math.round(r.height));
-    const dpr = Math.min(window.devicePixelRatio || 1, 2);
-
-    let old = null;
-    if(keep && canvas.width && canvas.height){
-      old = document.createElement("canvas");
-      old.width = canvas.width; old.height = canvas.height;
-      old.getContext("2d").drawImage(canvas, 0, 0);
+  function dig(x, y){
+    holes.push([Math.round(x), Math.round(y), 15 + Math.round(Math.random()*8)]);
+    // a satellite now and then, so the edge of the tear frays
+    if(Math.random() < .45){
+      const a = Math.random()*Math.PI*2, d = 16 + Math.random()*10;
+      holes.push([Math.round(x + Math.cos(a)*d), Math.round(y + Math.sin(a)*d),
+                  3 + Math.round(Math.random()*5)]);
     }
-    canvas.width = Math.round(w*dpr); canvas.height = Math.round(h*dpr);
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    if(old) ctx.drawImage(old, 0, 0, w, h); else paintFoil(w, h);
+    schedule();
   }
 
-  /* ---- scraping ---------------------------------------------------------- */
-  const R = 21;
-  let scraping = false, px = 0, py = 0;
-
-  function at(e){
-    const r = canvas.getBoundingClientRect();
-    return [e.clientX - r.left, e.clientY - r.top];
-  }
-  function scrape(x, y, from){
-    if(!ctx) return;
-    ctx.globalCompositeOperation = "destination-out";
-    // destination-out erases by SOURCE ALPHA, so both styles must be fully
-    // opaque -- inheriting the foil's translucent hatch colour here would
-    // rub the silver down a few percent per pass instead of removing it.
-    ctx.strokeStyle = "#000"; ctx.fillStyle = "#000";
-    ctx.lineCap = "round"; ctx.lineJoin = "round"; ctx.lineWidth = R*2;
-    ctx.beginPath();
-    if(from){ ctx.moveTo(px, py); ctx.lineTo(x, y); } else { ctx.moveTo(x, y); ctx.lineTo(x+.01, y); }
-    ctx.stroke();
-    // flakes off the edge of the tear, so it frays instead of ending in a clean stripe
-    for(let i = 0; i < 2; i++){
-      const a = Math.random()*Math.PI*2, d = R*(.9 + Math.random()*.45);
-      ctx.beginPath();
-      ctx.arc(x + Math.cos(a)*d, y + Math.sin(a)*d, 1.5 + Math.random()*3.5, 0, Math.PI*2);
-      ctx.fill();
-    }
-    px = x; py = y;
+  /* Samples arrive as far apart as the pointer moves, so the gaps are filled in
+     -- otherwise a quick drag leaves a dotted line instead of a channel. */
+  function drag(x, y){
+    const dx = x - lx, dy = y - ly, dist = Math.sqrt(dx*dx + dy*dy);
+    if(dist < 6) return;
+    const steps = Math.min(40, Math.ceil(dist/6));
+    for(let i = 1; i <= steps; i++) dig(lx + dx*i/steps, ly + dy*i/steps);
+    lx = x; ly = y;
   }
 
-  canvas.addEventListener("pointerdown", e => {
-    if(e.button !== 0 && e.pointerType === "mouse") return;
+  const at = e => { const r = pad.getBoundingClientRect();
+                    return [e.clientX - r.left, e.clientY - r.top]; };
+
+  pad.addEventListener("pointerdown", e => {
+    if(!armed || (e.button !== 0 && e.pointerType === "mouse")) return;
     scraping = true;
-    try{ canvas.setPointerCapture(e.pointerId); }catch(_){}
-    const p = at(e); scrape(p[0], p[1], false);
+    try{ pad.setPointerCapture(e.pointerId); }catch(_){}
+    const p = at(e); lx = p[0]; ly = p[1]; dig(lx, ly);
     e.preventDefault();
   });
-  canvas.addEventListener("pointermove", e => {
+  pad.addEventListener("pointermove", e => {
     if(!scraping) return;
-    const p = at(e); scrape(p[0], p[1], true);
-    e.preventDefault();
+    const p = at(e); drag(p[0], p[1]); e.preventDefault();
   });
   const stop = () => { scraping = false; };
-  canvas.addEventListener("pointerup", stop);
-  canvas.addEventListener("pointercancel", stop);
-  canvas.addEventListener("lostpointercapture", stop);
+  pad.addEventListener("pointerup", stop);
+  pad.addEventListener("pointercancel", stop);
+  pad.addEventListener("lostpointercapture", stop);
 
   /* ---- arm / put back ---------------------------------------------------- */
   function arm(){
     if(armed) return;
-    armed = true; sc.hidden = false;
-    fit(false);
+    armed = true;
+    place(); repaint();
+    chart.classList.add("on");
+    about.classList.add("scratching");
+    btn.setAttribute("aria-pressed", "true");
+    btn.textContent = "put it back";
     about.scrollIntoView({ behavior: calm ? "auto" : "smooth", block: "start" });
-    sc.querySelector(".sc-put").focus({ preventScroll:true });
   }
   function putBack(){
     if(!armed) return;
-    armed = false; sc.hidden = true; scraping = false;
+    armed = false; scraping = false; holes = [];
+    chart.classList.remove("on");
+    about.classList.remove("scratching");
+    btn.setAttribute("aria-pressed", "false");
+    btn.textContent = "is it AGI?";
   }
-  sc.querySelector(".sc-put").addEventListener("click", putBack);
+  btn.addEventListener("click", () => (armed ? putBack() : arm()));
 
   let rt = 0;
   window.addEventListener("resize", () => {
     if(!armed) return;
-    clearTimeout(rt); rt = setTimeout(() => fit(true), 120);
+    clearTimeout(rt);
+    rt = setTimeout(() => { place(); repaint(); }, 120);
   });
 
-  /* ---- the extended-command prompt --------------------------------------- */
+  /* ---- NetHack's extended-command prompt --------------------------------- */
   const bufEl = bar.querySelector(".xc-buf");
   const msgEl = bar.querySelector(".xc-msg");
   const curEl = bar.querySelector(".xc-cur");
@@ -2445,8 +2421,7 @@ boot().catch(()=>{ renderFrontier(); renderRecognition(); });
     const cmd = buf.trim().toLowerCase();
     if(!cmd){ closePrompt(); return; }
     if(cmd === "agi"){ closePrompt(); arm(); return; }
-    // NetHack's own reply to a verb it doesn't have
-    buf = ""; draw();
+    buf = ""; draw();                        // NetHack's reply to a verb it lacks
     curEl.hidden = true; hintEl.hidden = true;
     msgEl.textContent = "#" + cmd + ": unknown extended command.";
     clearTimeout(mt); mt = setTimeout(closePrompt, 1700);
@@ -2467,9 +2442,9 @@ boot().catch(()=>{ renderFrontier(); renderRecognition(); });
     }
   });
 
-  // exposed only so the headless wiring check can drive it without a real keyboard
-  window.__egg = { arm: arm, putBack: putBack, open: openPrompt, close: closePrompt,
-                   type: s => { buf += s; draw(); }, submit: submit,
+  // exposed so the headless wiring check can drive it without a pointer
+  window.__egg = { arm: arm, putBack: putBack, dig: dig,
+                   holes: () => holes.length,
                    state: () => ({ armed: armed, open: open, buf: buf }) };
 })();
 </script>
