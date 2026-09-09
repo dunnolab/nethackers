@@ -608,6 +608,66 @@ async function pass5() {
   ok(qa(".shim").length === 0, "returning to a CACHED tier does not flash a skeleton");
   ok(!q("#rolegrid").classList.contains("settle"), "...and does not animate values that were never shimmering");
 
+  // the last tier click leaves a render pending on a cached fetch; let it land
+  // before tearing the window down, so it is checked here rather than throwing
+  // into whatever pass runs next
+  await sleep(60);
+  ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
+  dom.window.close();
+}
+
+// ---- pass 6: the scratch-card easter egg ---------------------------------
+// The foil itself is canvas work jsdom cannot render -- its look is verified in
+// a real browser. What is checked here is the part that can go wrong silently:
+// the extended-command prompt's state machine, and the guard that keeps `#`
+// from firing while someone is typing into a form field.
+async function pass6() {
+  console.log("\n== pass 6: the #agi scratch card ==");
+  const errors = [];
+  const dom = makeDom(() => Promise.reject(new Error("offline")), errors);
+  const { document, window } = dom.window;
+  await sleep(120);
+  const q = (s) => document.querySelector(s);
+  const key = (k, target) => (target || document).dispatchEvent(
+    new window.KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+  const type = (s, t) => [...s].forEach((c) => key(c, t));
+
+  ok(q("#scratch") && q("#scratch").hidden, "at rest: the card is hidden");
+  ok(q("#xcmd") && q("#xcmd").hidden, "at rest: the prompt is hidden");
+
+  // a verb the page does not have gets NetHack's refusal, and arms nothing
+  key("#"); ok(!q("#xcmd").hidden, "# opens the extended-command prompt");
+  type("pray"); key("Enter");
+  ok(/^#pray: unknown extended command\.$/.test(q("#xcmd .xc-msg").textContent),
+     "#pray is refused in NetHack's own words");
+  ok(q("#scratch").hidden, "a refused command arms nothing");
+  await sleep(1800);
+  ok(q("#xcmd").hidden, "the prompt closes itself after the refusal");
+
+  // `#` must not hijack a keystroke meant for a form field
+  const probe = document.createElement("input");
+  document.body.appendChild(probe);
+  probe.focus();
+  key("#", probe);
+  ok(q("#xcmd").hidden, "# typed into a form field is ignored");
+  probe.remove();
+
+  // the one command it answers to
+  key("#"); type("agi"); key("Enter");
+  ok(!q("#scratch").hidden, "#agi arms the scratch card");
+  ok(q("#xcmd").hidden, "...and closes the prompt behind it");
+  ok(q("#scratch .sc-ink").getAttribute("role") === "img" &&
+     /is it AGI/i.test(q("#scratch .sc-ink").getAttribute("aria-label")),
+     "the chart carries a described alternative for screen readers");
+
+  // and the two ways back out
+  key("Escape");
+  ok(q("#scratch").hidden, "escape puts the page back");
+  ok(q(".about .lead"), "the opening block is still in the document");
+  key("#"); type("agi"); key("Enter");
+  q("#scratch .sc-put").dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+  ok(q("#scratch").hidden, "the ticket's own [ put it back ] restores the page");
+
   ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
   dom.window.close();
 }
@@ -617,6 +677,7 @@ await pass2();
 await pass3();
 await pass4();
 await pass5();
+await pass6();
 checkDictvizRandomWiring();
 console.log("\n" + (failures === 0 ? "ALL PASSED" : failures + " CHECK(S) FAILED"));
 process.exit(failures === 0 ? 0 : 1);
