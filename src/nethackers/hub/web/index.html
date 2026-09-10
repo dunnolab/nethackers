@@ -531,10 +531,10 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
   cursor:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28"><circle cx="14" cy="14" r="10" fill="%23e9c15a" stroke="%236a6a55" stroke-width="2"/><text x="14" y="19" text-anchor="middle" font-family="monospace" font-size="14" font-weight="bold" fill="%236a6a55">$</text></svg>') 14 14, crosshair; }
 
 /* the chart, underneath: a sibling of .about, so the clip never touches it */
-#agichart{ position:absolute; z-index:0; display:none; background:#fbfaf3;
+#agichart{ position:absolute; z-index:0; display:none; background:var(--agi-paper,#fbfaf3);
   border:1px solid var(--rule-soft); }
 #agichart.on{ display:block; }
-#agichart .agi-ink{ position:absolute; inset:0; opacity:.92; background:var(--indigo);
+#agichart .agi-ink{ position:absolute; inset:0; opacity:var(--agi-ink-o,.92); background:var(--indigo);
   -webkit-mask-image:var(--agi);         mask-image:var(--agi);
   -webkit-mask-size:contain;             mask-size:contain;
   -webkit-mask-repeat:no-repeat;         mask-repeat:no-repeat;
@@ -555,6 +555,36 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
   font-size:.66rem; letter-spacing:.03em; white-space:nowrap; align-self:center; }
 #agiBtn[aria-pressed="true"]{ color:var(--red); }
 @media (max-width:520px){ #about h2.sec{ flex-wrap:wrap; gap:6px; } }
+
+/* ==== the tuning panel (?tune=1 only, never built otherwise) ============== */
+/* bottom-right, above the music bar: pinned top-right it sat straight on top
+   of the button that arms the card */
+#agitune{ position:fixed; right:12px; bottom:46px; z-index:200; width:274px;
+  background:var(--screen); color:var(--screen-ink); padding:8px 10px 10px;
+  font-family:"Courier New","Liberation Mono",Courier,monospace; font-size:.7rem;
+  border:2px solid; border-color:var(--silver-hi) var(--silver-lo) var(--silver-lo) var(--silver-hi);
+  box-shadow:0 4px 16px rgba(0,0,0,.4); }
+#agitune h5{ margin:0; font-size:.7rem; letter-spacing:.06em; color:var(--gold);
+  text-transform:uppercase; font-weight:700; display:flex; justify-content:space-between;
+  align-items:center; gap:8px; }
+#agitune h5 button{ flex:none; font:inherit; color:var(--gold); background:none; border:0;
+  padding:0 2px; cursor:pointer; }
+#agitune .agit-body{ margin-top:6px; }
+#agitune.folded .agit-body{ display:none; }
+#agitune label{ display:grid; grid-template-columns:1fr 88px 32px; align-items:center;
+  gap:6px; margin:0 0 3px; color:var(--screen-dim); white-space:nowrap; }
+#agitune input[type=range]{ width:88px; accent-color:var(--gold); }
+#agitune input[type=color]{ width:88px; height:16px; padding:0; border:1px solid var(--silver-lo);
+  background:none; }
+#agitune b{ color:var(--gold); text-align:right; font-weight:400; font-variant-numeric:tabular-nums; }
+#agitune .agit-row{ display:flex; gap:5px; margin-top:8px; }
+#agitune button{ flex:1; font:inherit; font-size:.66rem; padding:3px 0; cursor:pointer;
+  background:var(--silver); color:#111; border:2px solid;
+  border-color:var(--silver-hi) var(--silver-lo) var(--silver-lo) var(--silver-hi); }
+#agitune button:active{ border-color:var(--silver-lo) var(--silver-hi) var(--silver-hi) var(--silver-lo); }
+#agitune pre{ margin:7px 0 0; padding:5px; background:#000; color:var(--green);
+  font-size:.62rem; white-space:pre-wrap; word-break:break-all; max-height:74px; overflow:auto; }
+#agitune .agit-note{ color:var(--screen-dim); margin-top:6px; font-size:.62rem; line-height:1.35; }
 
 </style>
 
@@ -2278,7 +2308,10 @@ boot().catch(()=>{ renderFrontier(); renderRecognition(); });
    Holes, not brush strokes, because the clip-path is the only technique that
    behaves the same in Chrome and WebKit -- a canvas/SVG mask over live DOM
    renders in Chrome and blanks the element outright in WebKit. What you scrape
-   stays scraped; the button (or esc) puts the whole page back. */
+   stays scraped; the button (or esc) puts the whole page back.
+
+   Add ?tune=1 to the URL for a panel that dials the feel of the scratching in
+   the browser. It is never built without that flag. */
 (function(){
   "use strict";
   const about = document.getElementById("about");
@@ -2290,22 +2323,40 @@ boot().catch(()=>{ renderFrontier(); renderRecognition(); });
 
   const calm = window.matchMedia && window.matchMedia("(prefers-reduced-motion:reduce)").matches;
   const CHART_RATIO = 1644/1400;            // the drawing's own proportions
+
+  /* ---- the shipped feel, and the knobs that shape it -------------------- */
+  const DEFAULTS = {
+    r: 15,        // brush radius, before jitter
+    rj: 8,        // how much bigger a given hole may come out
+    step: 6,      // distance between samples along a drag
+    sat: 0.45,    // chance of throwing a flake off the edge of the tear
+    satd: 16,     // how far out a flake lands
+    satdj: 10,    // ...plus up to this much more
+    satr: 5,      // a flake's largest radius
+    ink: 0.92,    // the drawing's opacity
+    paper: "#fbfaf3",
+  };
+  const TUNE = Object.assign({}, DEFAULTS);
+
   let armed = false, holes = [], lx = 0, ly = 0, scraping = false, raf = 0;
 
-  // the scratchable patch: the chart's footprint at the top of the block
+  // the scratchable patch: the chart's footprint, under the block's body text
   const pad = document.createElement("div");
   pad.className = "agiscratch";
   about.appendChild(pad);
 
   /* ---- geometry ---------------------------------------------------------
      The chart is a sibling of .about (anything inside it would be clipped
-     away with the text), so its box is measured from the block each time. */
-  function place(){
-    const w = about.clientWidth, h = Math.round(w*CHART_RATIO);
-    // start at the top of the body text, not the top of the block: the heading
-    // carries the button, and a scratch pad over it would swallow the clicks
+     away with the text), so its box is measured from the block each time.
+     Both it and the pad start at the top of the body text rather than the top
+     of the block: the heading carries the button, and a pad over it would
+     swallow the clicks that put the page back. */
+  function chartTop(){
     const lead = about.querySelector(".lead");
-    const off = lead ? lead.offsetTop : 0;
+    return lead ? lead.offsetTop : 0;
+  }
+  function place(){
+    const w = about.clientWidth, h = Math.round(w*CHART_RATIO), off = chartTop();
     chart.style.left = about.offsetLeft + "px";
     chart.style.top = (about.offsetTop + off) + "px";
     chart.style.width = w + "px";
@@ -2313,17 +2364,19 @@ boot().catch(()=>{ renderFrontier(); renderRecognition(); });
     pad.style.top = off + "px";
     pad.style.width = w + "px";
     pad.style.height = h + "px";
-    return [w, h];
   }
 
   /* ---- the clip ---------------------------------------------------------
      One path: the block's whole box, then a circle subpath per scrape. With
-     the even-odd rule each circle reads as a hole rather than an island. */
+     the even-odd rule each circle reads as a hole rather than an island.
+     Every coordinate here is in the BLOCK's space, which is what clip-path's
+     userSpaceOnUse resolves against -- measuring against the pad instead put
+     every hole one heading too high, and tore into the button. */
   function repaint(){
     raf = 0;
     let d = "M0 0H" + about.offsetWidth + "V" + about.offsetHeight + "H0Z";
-    for(const h of holes){
-      const x = h[0], y = h[1], r = h[2];
+    for(const hole of holes){
+      const x = hole[0], y = hole[1], r = hole[2];
       d += "M" + (x+r) + " " + y + "a" + r + " " + r + " 0 1 0 " + (-2*r) + " 0"
          + "a" + r + " " + r + " 0 1 0 " + (2*r) + " 0Z";
     }
@@ -2332,12 +2385,12 @@ boot().catch(()=>{ renderFrontier(); renderRecognition(); });
   const schedule = () => { if(!raf) raf = requestAnimationFrame(repaint); };
 
   function dig(x, y){
-    holes.push([Math.round(x), Math.round(y), 15 + Math.round(Math.random()*8)]);
-    // a satellite now and then, so the edge of the tear frays
-    if(Math.random() < .45){
-      const a = Math.random()*Math.PI*2, d = 16 + Math.random()*10;
+    holes.push([Math.round(x), Math.round(y), Math.round(TUNE.r + Math.random()*TUNE.rj)]);
+    // a flake off the edge now and then, so the tear frays instead of machining
+    if(TUNE.satr > 0 && Math.random() < TUNE.sat){
+      const a = Math.random()*Math.PI*2, d = TUNE.satd + Math.random()*TUNE.satdj;
       holes.push([Math.round(x + Math.cos(a)*d), Math.round(y + Math.sin(a)*d),
-                  3 + Math.round(Math.random()*5)]);
+                  1 + Math.round(Math.random()*TUNE.satr)]);
     }
     schedule();
   }
@@ -2346,13 +2399,14 @@ boot().catch(()=>{ renderFrontier(); renderRecognition(); });
      -- otherwise a quick drag leaves a dotted line instead of a channel. */
   function drag(x, y){
     const dx = x - lx, dy = y - ly, dist = Math.sqrt(dx*dx + dy*dy);
-    if(dist < 6) return;
-    const steps = Math.min(40, Math.ceil(dist/6));
+    if(dist < TUNE.step) return;
+    const steps = Math.min(60, Math.ceil(dist/TUNE.step));
     for(let i = 1; i <= steps; i++) dig(lx + dx*i/steps, ly + dy*i/steps);
     lx = x; ly = y;
   }
 
-  const at = e => { const r = pad.getBoundingClientRect();
+  // pointer -> the block's coordinate space, the one the clip is written in
+  const at = e => { const r = about.getBoundingClientRect();
                     return [e.clientX - r.left, e.clientY - r.top]; };
 
   pad.addEventListener("pointerdown", e => {
@@ -2442,9 +2496,104 @@ boot().catch(()=>{ renderFrontier(); renderRecognition(); });
     }
   });
 
+  /* ---- the tuning panel --------------------------------------------------
+     Guessing at "feel" from the outside wastes rounds; this hands the dials
+     over. Only built for ?tune=1, so visitors never see it. */
+  function applyLooks(){
+    chart.style.setProperty("--agi-ink-o", TUNE.ink);
+    chart.style.setProperty("--agi-paper", TUNE.paper);
+  }
+  function buildTuner(){
+    const FIELDS = [
+      ["r",     "brush radius",  4,  48, 1],
+      ["rj",    "radius jitter", 0,  24, 1],
+      ["step",  "sample gap",    2,  24, 1],
+      ["sat",   "flake chance",  0,   1, .05],
+      ["satd",  "flake reach",   0,  40, 1],
+      ["satdj", "flake spread",  0,  30, 1],
+      ["satr",  "flake size",    0,  14, 1],
+      ["ink",   "ink opacity",  .2,   1, .02],
+    ];
+    const el = document.createElement("div");
+    el.id = "agitune";
+    const head = document.createElement("h5");
+    head.innerHTML = "<span>scratch tuning</span>";
+    const fold = document.createElement("button");
+    fold.type = "button"; fold.textContent = "[-]";
+    fold.addEventListener("click", () => {
+      const shut = el.classList.toggle("folded");
+      fold.textContent = shut ? "[+]" : "[-]";
+    });
+    head.appendChild(fold);
+    el.appendChild(head);
+    const body = document.createElement("div");
+    body.className = "agit-body";
+    el.appendChild(body);
+    const sync = [];
+
+    for(const f of FIELDS){
+      const k = f[0];
+      const row = document.createElement("label");
+      row.innerHTML = '<span>' + f[1] + '</span>'
+        + '<input type="range" min="' + f[2] + '" max="' + f[3] + '" step="' + f[4] + '">'
+        + '<b></b>';
+      const inp = row.querySelector("input"), out = row.querySelector("b");
+      const show = () => { inp.value = TUNE[k]; out.textContent = TUNE[k]; };
+      inp.addEventListener("input", () => {
+        TUNE[k] = parseFloat(inp.value); out.textContent = inp.value; applyLooks();
+      });
+      sync.push(show); show();
+      body.appendChild(row);
+    }
+
+    const prow = document.createElement("label");
+    prow.innerHTML = '<span>paper</span><input type="color"><b></b>';
+    const pin = prow.querySelector("input");
+    const psync = () => { pin.value = TUNE.paper; };
+    pin.addEventListener("input", () => { TUNE.paper = pin.value; applyLooks(); });
+    sync.push(psync); psync();
+    body.appendChild(prow);
+
+    const out = document.createElement("pre");
+    out.hidden = true;
+    const row = document.createElement("div");
+    row.className = "agit-row";
+
+    const mk = (label, fn) => {
+      const b = document.createElement("button");
+      b.type = "button"; b.textContent = label;
+      b.addEventListener("click", fn);
+      row.appendChild(b);
+      return b;
+    };
+    mk("wipe", () => { holes = []; repaint(); });
+    mk("reset", () => {
+      Object.assign(TUNE, DEFAULTS);
+      sync.forEach(f => f()); applyLooks(); holes = []; repaint();
+    });
+    mk("copy", () => {
+      const text = Object.keys(DEFAULTS)
+        .map(k => k + ": " + (typeof TUNE[k] === "number" ? TUNE[k] : '"' + TUNE[k] + '"'))
+        .join(", ");
+      out.hidden = false; out.textContent = text;
+      if(navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
+    });
+
+    body.appendChild(row);
+    body.appendChild(out);
+    const note = document.createElement("div");
+    note.className = "agit-note";
+    note.textContent = "arm the card, scratch, adjust, wipe, scratch again. copy hands me the numbers.";
+    body.appendChild(note);
+    document.body.appendChild(el);
+  }
+
+  if(/[?&]tune=1\b/.test(location.search)){ applyLooks(); buildTuner(); }
+
   // exposed so the headless wiring check can drive it without a pointer
-  window.__egg = { arm: arm, putBack: putBack, dig: dig,
+  window.__egg = { arm: arm, putBack: putBack, dig: dig, tune: TUNE,
                    holes: () => holes.length,
+                   _holes: () => holes, _ys: () => holes.map(h => h[1]),
                    state: () => ({ armed: armed, open: open, buf: buf }) };
 })();
 </script>

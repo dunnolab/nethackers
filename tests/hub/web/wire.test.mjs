@@ -689,6 +689,19 @@ async function pass6() {
   key("Escape");
   ok(!about.classList.contains("scratching"), "escape puts the page back");
 
+  // the tuning panel is a dev tool: it must never appear for a plain visitor
+  ok(!q("#agitune"), "no ?tune=1 -> the tuning panel is not built at all");
+  // ...and the knobs it drives are real, not decorative
+  const t = window.__egg.tune;
+  ok(t && typeof t.r === "number" && typeof t.step === "number",
+     "the scratch parameters are exposed as live values");
+  window.__egg.arm();
+  t.r = 40; t.rj = 0; t.sat = 0;                 // fat brush, no jitter, no flakes
+  window.__egg.dig(100, 100);
+  const radii = window.__egg._holes().map((h) => h[2]);
+  ok(radii.length === 1 && radii[0] === 40, `the brush radius knob is honoured (${radii[0]})`);
+  window.__egg.putBack();
+
   ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
   dom.window.close();
 }
