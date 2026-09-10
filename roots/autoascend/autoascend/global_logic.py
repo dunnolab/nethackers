@@ -47,11 +47,16 @@ class ItemPriority(ItemPriorityBase):
 
             how_many_already_total = ret_inv.get(item, 0) + ret_bag.get(item, 0)
             how_many_already = ret.get(item, 0)
-            max_to_add = int(remaining_weight // item.unit_weight(with_content=False))
+            unit_weight = item.unit_weight(with_content=False)
+            max_to_add = item.count - how_many_already_total
+            # Some items weigh zero. Bound by the available stack before
+            # converting to int, also allowing an unlimited weight budget.
+            if unit_weight > 0:
+                max_to_add = int(min(max_to_add, remaining_weight // unit_weight))
             if count is not None:
                 max_to_add = min(max_to_add, count)
             ret[item] = min(item.count, how_many_already_total + max_to_add) - (how_many_already_total - how_many_already)
-            remaining_weight -= item.unit_weight(with_content=False) * (ret[item] - how_many_already)
+            remaining_weight -= unit_weight * (ret[item] - how_many_already)
 
         for item in items:
             if item.is_container() and item.status in [Item.UNCURSED, Item.BLESSED] and item.objs[0].desc == 'bag':

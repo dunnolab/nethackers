@@ -60,6 +60,12 @@ class InventoryItems:
         self._clear()
 
     def update(self, force=False):
+        # Container inspection can step the game. Do not run strategy callbacks
+        # against the inventory while it is only partially rebuilt.
+        with self.agent.atom_operation():
+            self._update(force)
+
+    def _update(self, force=False):
         if force:
             self._recheck_containers = True
 

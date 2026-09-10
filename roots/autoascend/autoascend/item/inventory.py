@@ -473,7 +473,14 @@ class Inventory:
                 else:
                     self.agent.step(A.Command.PICKUP)  # FIXME: parse LOOK output, add this fragment to pickup method
                     if 'Pick up what?' not in self.agent.popup:
-                        if 'You cannot reach the bottom of the pit.' in self.agent.message or \
+                        if re.search('You have [a-z ]+ lifting ', self.agent.message) and \
+                                'Continue? [ynq] (q)' in self.agent.message:
+                            # PICKUP was only used to inspect the floor. Cancel
+                            # a direct pickup instead of treating it as a menu.
+                            self.agent.type_text('n')
+                            items = []
+                            letters = []
+                        elif 'You cannot reach the bottom of the pit.' in self.agent.message or \
                                 'You cannot reach the bottom of the abyss.' in self.agent.message or \
                                 'You cannot reach the floor.' in self.agent.message or \
                                 'There is nothing here to pick up.' in self.agent.message or \
