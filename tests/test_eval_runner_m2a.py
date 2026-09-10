@@ -18,6 +18,7 @@ from pathlib import Path
 import pytest
 
 from nethackers.contracts.models import ObjectiveSpec
+from nethackers.eval import runner as eval_runner
 from nethackers.eval.runner import eval_batch
 
 _SPEC = ObjectiveSpec(
@@ -152,6 +153,36 @@ def test_eval_output_mount_uses_home_backed_managed_tmp(tmp_path, monkeypatch):
     assert host_out.parent == tmp_path / ".nethackers" / "tmp"
     assert host_out.name.startswith("arena-")
     assert not host_out.exists()  # TemporaryDirectory still cleans each run.
+
+
+def test_eval_output_mount_falls_back_when_home_child_is_unwritable(tmp_path, monkeypatch):
+    sol = tmp_path / "sol"
+    sol.mkdir()
+    (sol / "bot.py").write_text("x")
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(Path, "home", lambda: home)
+    real_temporary_directory = eval_runner.tempfile.TemporaryDirectory
+    attempted: list[Path] = []
+
+    def temporary_directory(*, prefix, dir):
+        attempted.append(Path(dir))
+        if len(attempted) == 1:
+            raise OSError("home exists but cannot create a child")
+        return real_temporary_directory(prefix=prefix, dir=dir)
+
+    monkeypatch.setattr(eval_runner.tempfile, "TemporaryDirectory", temporary_directory)
+    calls = []
+    eval_batch(
+        sol,
+        _SPEC,
+        "img:dev",
+        now="2026-08-09T00:00:00Z",
+        runner=_make_fake_docker_run(calls),
+        image_digest_resolver=lambda img: "img@sha256:deadbeef",
+    )
+
+    assert attempted == [home / ".nethackers" / "tmp", sol.parent / ".nethackers-tmp"]
 
 
 def test_eval_batch_absolutizes_relative_solution_mount(tmp_path, monkeypatch):
