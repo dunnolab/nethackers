@@ -608,6 +608,80 @@ async function pass5() {
   ok(qa(".shim").length === 0, "returning to a CACHED tier does not flash a skeleton");
   ok(!q("#rolegrid").classList.contains("settle"), "...and does not animate values that were never shimmering");
 
+  // the last tier click leaves a render pending on a cached fetch; let it land
+  // before tearing the window down, so it is checked here rather than throwing
+  // into whatever pass runs next
+  await sleep(60);
+  ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
+  dom.window.close();
+}
+
+// ---- pass 6: the scratch card --------------------------------------------
+// The chart is painted onto a canvas over the opening block's body text, so a
+// drag covers the page's own words with the drawing. jsdom has no 2d context
+// and no pointer, so what is checked here is the state machine and the guards;
+// the compositing itself is verified by driving Chromium and WebKit.
+async function pass6() {
+  console.log("\n== pass 6: the scratch card ==");
+  const errors = [];
+  const dom = makeDom(() => Promise.reject(new Error("offline")), errors);
+  const { document, window } = dom.window;
+  await sleep(120);
+  const q = (s) => document.querySelector(s);
+  const key = (k, target) => (target || document).dispatchEvent(
+    new window.KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+  const type = (s, t) => [...s].forEach((c) => key(c, t));
+  const click = (el) => el.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+
+  const about = q("#about"), chart = q("#agichart"), btn = q("#agiBtn");
+  ok(about && chart && btn, "the block, the chart and the button are all on the page");
+  ok(chart.tagName === "CANVAS", "the chart is a canvas -- overlapping strokes have to union");
+  ok(about.contains(chart), "the chart is positioned against the block it covers");
+  ok(chart.getAttribute("role") === "img" && /is it AGI/i.test(chart.getAttribute("aria-label")),
+     "the drawing carries a described alternative for screen readers");
+  ok(!chart.classList.contains("on") && !about.classList.contains("scratching"),
+     "at rest: nothing is armed");
+  ok(btn.textContent.trim() === "solving = AGI?" && btn.getAttribute("aria-pressed") === "false",
+     "at rest: the button asks the question");
+
+  click(btn);
+  ok(chart.classList.contains("on") && about.classList.contains("scratching"), "the button arms it");
+  ok(btn.textContent.trim() === "put it back" && btn.getAttribute("aria-pressed") === "true",
+     "...and becomes the way back out");
+  ok(q("#about .lead"), "the real text is untouched in the document -- it is covered, not removed");
+
+  click(btn);
+  ok(!chart.classList.contains("on") && !about.classList.contains("scratching"),
+     "the button is a toggle and puts the page back");
+  ok(btn.textContent.trim() === "solving = AGI?", "...and asks the question again");
+
+  // the extended-command prompt is the other way in
+  ok(q("#xcmd").hidden, "at rest: the prompt is hidden");
+  key("#"); ok(!q("#xcmd").hidden, "# opens the extended-command prompt");
+  type("pray"); key("Enter");
+  ok(/^#pray: unknown extended command\.$/.test(q("#xcmd .xc-msg").textContent),
+     "#pray is refused in NetHack's own words");
+  ok(!about.classList.contains("scratching"), "a refused command arms nothing");
+  await sleep(1800);
+  ok(q("#xcmd").hidden, "the prompt closes itself after the refusal");
+
+  const probe = document.createElement("input");
+  document.body.appendChild(probe); probe.focus();
+  key("#", probe);
+  ok(q("#xcmd").hidden, "# typed into a form field is ignored");
+  probe.remove();
+
+  key("#"); type("agi"); key("Enter");
+  ok(about.classList.contains("scratching"), "#agi arms the card too");
+  key("Escape");
+  ok(!about.classList.contains("scratching"), "escape puts the page back");
+
+  // the tuning panel is a dev tool: it must never appear for a plain visitor
+  ok(!q("#agitune"), "no ?tune=1 -> the tuning panel is not built at all");
+  const t = window.__egg.tune;
+  ok(t && typeof t.r === "number" && typeof t.soft === "number" && typeof t.paper === "string",
+     "the scratch parameters are exposed as live values");
+
   ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
   dom.window.close();
 }
@@ -617,6 +691,7 @@ await pass2();
 await pass3();
 await pass4();
 await pass5();
+await pass6();
 checkDictvizRandomWiring();
 console.log("\n" + (failures === 0 ? "ALL PASSED" : failures + " CHECK(S) FAILED"));
 process.exit(failures === 0 ? 0 : 1);
