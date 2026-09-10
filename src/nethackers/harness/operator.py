@@ -3,8 +3,9 @@
 Streams the agent's output, meters token usage faithfully (see
 ``harness.metering``), and reaps the process at EOF. No token budget, no
 timeout: the agent runs to completion and is stopped manually (hard kill via
-its own process group). Two backends: Claude Code (``claude -p``) and Codex
-(``codex exec``), invoked headless in the worktree.
+its own process group). Backends are Claude Code (``claude -p``), Codex
+(``codex exec``), and OpenCode 2 (``opencode2 run``), invoked headless in the
+worktree.
 """
 from __future__ import annotations
 
@@ -129,6 +130,28 @@ def _claude_cmd(cli: str, brief: str, model: str | None, effort: str | None) -> 
         cmd += ["--model", model]     # pin the model (else Claude Code's default)
     if effort:
         cmd += ["--effort", effort]   # reasoning effort: low|medium|high|xhigh|max
+    return cmd
+
+
+def _opencode2_cmd(cli: str, brief: str, model: str | None, effort: str | None) -> list[str]:
+    """Build a fresh, non-interactive OpenCode 2 run.
+
+    The mutator container supplies the isolation boundary, so ``--auto`` lets
+    OpenCode 2 use its tools without stopping for approval. Its data directory is
+    otherwise ephemeral (only ``auth.json`` is bind-mounted), which prevents
+    sessions from carrying memory between iterations. OpenCode calls its
+    provider-specific reasoning setting a model ``variant``.
+    """
+    # `--thinking` is required even in JSON mode: without it OpenCode consumes
+    # provider reasoning blocks but omits them from the event stream, leaving
+    # the mutation log with tool calls only.  The formatter already renders
+    # emitted `reasoning` events, so opt in explicitly for parity with the
+    # reasoning traces shown by the Codex and Claude backends.
+    cmd = [cli, "run", brief, "--standalone", "--format", "json", "--thinking", "--auto"]
+    if model:
+        # V2 encodes its model variant in the model reference itself.
+        selected = f"{model.split('#', 1)[0]}#{effort}" if effort else model
+        cmd += ["--model", selected]
     return cmd
 
 

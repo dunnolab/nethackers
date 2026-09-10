@@ -547,7 +547,7 @@ wheels = [
 
 [[package]]
 name = "nethackers"
-version = "0.17.0"
+version = "0.23.3"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },

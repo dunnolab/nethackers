@@ -149,8 +149,17 @@ down the table.
 |---|---|
 | Browse the hub (TUI, boards, frontier) | nothing else |
 | `eval` — score a bot | Docker or Podman |
-| `evolve` — run the loop | Docker or Podman, a coding agent CLI (`claude` or `codex`) logged in on the host, and `nethackers login` |
+| `evolve` — run the loop | Docker or Podman, a coding agent CLI (`claude`, `codex`, or `opencode2`) logged in on the host, and `nethackers login` |
 | `submit` — publish a solution | Docker or Podman (it evaluates before pushing), `nethackers login`, and [`gh`](https://cli.github.com/) authenticated as the **same** GitHub account |
+
+For OpenCode 2, install the beta CLI with
+`npm install -g @opencode-ai/cli@beta`. You can either run
+`opencode2 auth login` or define a custom provider/model in the host's
+`~/.config/opencode/opencode.json`. The sandbox mounts that config read-only
+and forwards environment variables it references as `{env:NAME}` or lists in
+a provider's `env` field.
+Project `opencode.json(c)` files are also loaded, and their available models
+are populated automatically in the Evolve model picker.
 
 Note that `doctor`'s `publish` capability checks the hub, your login, and `gh` —
 but not the container runtime, so it can report `publish` ready on a machine where

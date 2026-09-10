@@ -136,6 +136,21 @@ def test_default_entrypoint_drops_root_to_agent() -> None:
     assert "1000" in r.stdout
 
 
+def test_opencode_xdg_dirs_are_writable_after_uid_remap() -> None:
+    # The entrypoint remaps agent to the workspace owner's uid/gid. Directory
+    # ownership baked as 1000:1000 must follow that remap without recursively
+    # touching any bind-mounted config/auth files.
+    r = _run([
+        "-e", "PUID=12345", "-e", "PGID=12345", IMAGE, "sh", "-c",
+        "mkdir -p ~/.local/state/opencode ~/.local/share/opencode "
+        "~/.cache/opencode ~/.config/opencode && "
+        "touch ~/.local/state/opencode/write-test "
+        "~/.local/share/opencode/write-test ~/.cache/opencode/write-test && echo WRITABLE",
+    ])
+    assert r.returncode == 0, r.stderr
+    assert "WRITABLE" in r.stdout
+
+
 def test_no_host_secrets_reachable() -> None:
     # No --entrypoint override here either, deliberately: the real runtime
     # identity is `agent` (home /home/agent -- confirmed by the previous
@@ -149,7 +164,7 @@ def test_no_host_secrets_reachable() -> None:
 
 
 def test_harness_clis_present() -> None:
-    for cli in ("claude", "codex"):
+    for cli in ("claude", "codex", "opencode2"):
         r = _run(["--entrypoint", cli, IMAGE, "--version"])
         assert r.returncode == 0
 

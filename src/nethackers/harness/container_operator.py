@@ -7,8 +7,8 @@ runaway-process defense the host operator (``harness/operator.py``) lacks;
 can't just push into swap and reach ~2x the intended cap (Docker's default
 otherwise allows exactly that). An in-container wall-clock ``timeout``
 backstops a wedged harness. The in-cage harness command reuses the existing
-host argv builders (``_claude_cmd`` / ``_codex_cmd``) so the two harnesses
-stay a single source of truth, with each harness's own confirmation-prompt
+host argv builders so all three harnesses stay a single source of truth, with
+each harness's own confirmation-prompt
 escape hatch swapped for the equivalent that's safe to use *because* the
 container is already the sandbox: codex's
 ``--approve-for-me`` (host-side "don't ask me") is replaced with
@@ -29,7 +29,13 @@ from pathlib import Path
 
 from nethackers.containers import label_args
 from nethackers.harness.auth_inject import auth_docker_args
-from nethackers.harness.operator import OperatorResult, _claude_cmd, _codex_cmd, run_operator
+from nethackers.harness.operator import (
+    OperatorResult,
+    _claude_cmd,
+    _codex_cmd,
+    _opencode2_cmd,
+    run_operator,
+)
 
 
 @dataclass(frozen=True)
@@ -114,6 +120,8 @@ def _in_cage_cmd(
             "--dangerously-bypass-approvals-and-sandbox" if tok == "--approve-for-me" else tok
             for tok in cmd
         ]
+    if harness == "opencode2":
+        return _opencode2_cmd(cli or "opencode2", brief, model, effort)
     raise ValueError(f"unknown harness: {harness!r}")
 
 
@@ -199,13 +207,13 @@ class ContainerOperator:
         name = _mutator_container_name(
             self._run_id, worktree.name, worktree.parent.name
         )
-        # Preflight BEFORE shelling out to docker at all: a not-logged-in
-        # host would otherwise have docker silently bind-mount an empty dir
-        # (auth_docker_args is pure string formatting by default) and the
-        # in-container harness would fail confusingly, deep inside the run.
+        # Resolve auth/config BEFORE shelling out to docker: login-only
+        # backends fail early instead of mounting an empty path, while
+        # OpenCode 2 may proceed with global/project config and no auth.json.
         # AuthUnavailable propagates to the caller (the CLI catches it).
         auth = auth_docker_args(
-            self.harness, system=self.system, home=self.home, _require_exists=True,
+            self.harness, system=self.system, home=self.home, project=worktree,
+            _require_exists=True,
         )
         argv = build_docker_argv(
             harness=self.harness, image=self.image, name=name, worktree=worktree,

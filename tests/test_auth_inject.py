@@ -11,6 +11,62 @@ def test_codex_mounts_the_one_canonical_dir():
     assert args == ["-v", "/h/.codex:/home/agent/.codex"]
 
 
+def test_opencode2_mounts_global_config_ro_and_optional_auth_rw(tmp_path):
+    config = tmp_path / ".config" / "opencode" / "opencode.json"
+    config.parent.mkdir(parents=True)
+    config.write_text("{}")
+    auth = tmp_path / ".local" / "share" / "opencode" / "auth.json"
+    auth.parent.mkdir(parents=True)
+    auth.write_text("{}")
+
+    args = auth_docker_args("opencode2", system="Linux", home=tmp_path)
+    assert args == [
+        "-v",
+        f"{config}:/home/agent/.config/opencode/opencode.json:ro",
+        "-v",
+        f"{auth}:/home/agent/.local/share/opencode/auth.json",
+    ]
+    assert not args[-1].endswith(":ro")
+
+
+def test_opencode2_config_does_not_require_auth_login(tmp_path):
+    config = tmp_path / ".config" / "opencode" / "opencode.jsonc"
+    config.parent.mkdir(parents=True)
+    config.write_text("{}")
+    assert auth_docker_args(
+        "opencode2", system="Linux", home=tmp_path, _require_exists=True,
+    ) == ["-v", f"{config}:/home/agent/.config/opencode/opencode.jsonc:ro"]
+
+
+def test_opencode2_forwards_only_env_vars_referenced_by_global_or_project_config(tmp_path):
+    global_config = tmp_path / ".config" / "opencode" / "opencode.json"
+    global_config.parent.mkdir(parents=True)
+    global_config.write_text('{"apiKey": "{env:CUSTOM_API_KEY}"}')
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "opencode.json").write_text(
+        '{"baseURL": "{env:CUSTOM_BASE_URL}", "env": ["CUSTOM_PROVIDER_TOKEN"]}'
+    )
+
+    args = auth_docker_args(
+        "opencode2", system="Linux", home=tmp_path, project=project,
+        environ={"CUSTOM_API_KEY": "secret", "CUSTOM_BASE_URL": "https://example.test",
+                 "CUSTOM_PROVIDER_TOKEN": "token",
+                 "UNRELATED_SECRET": "do-not-forward"},
+    )
+    assert args[2:4] == ["-e", "CUSTOM_API_KEY"]
+    assert args[4:6] == ["-e", "CUSTOM_BASE_URL"]
+    assert args[6:8] == ["-e", "CUSTOM_PROVIDER_TOKEN"]
+    assert "UNRELATED_SECRET" not in args
+    assert "secret" not in args
+
+
+def test_opencode2_without_config_or_auth_needs_no_mount(tmp_path):
+    assert auth_docker_args(
+        "opencode2", system="Linux", home=tmp_path, _require_exists=True,
+    ) == []
+
+
 def test_claude_linux_mounts_credentials_json_ro():
     args = auth_docker_args("claude", system="Linux", home=Path("/h"))
     assert "-v" in args

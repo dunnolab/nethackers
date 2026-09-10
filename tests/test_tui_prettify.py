@@ -107,6 +107,81 @@ def test_codex_never_crashes_on_bad_shapes():
                     "item": {"type": "agent_message", "text": "   "}})) == []
 
 
+def test_opencode2_text_tool_output_and_final_finish_events():
+    text = json.dumps({"type": "text", "part": {"type": "text", "text": "Done."}})
+    tool = json.dumps({
+        "type": "tool_use",
+        "part": {"tool": "shell", "state": {
+            "status": "completed",
+            "input": {"command": "pytest -q"},
+            "output": "collecting ...\n3 passed in 0.12s",
+        }},
+    })
+    finish = json.dumps({
+        "type": "step_finish",
+        "part": {"reason": "stop", "tokens": {"output": 180, "reasoning": 29}},
+    })
+    assert prettify("opencode2", text) == [("assistant", "Done.")]
+    assert prettify("opencode2", tool) == [
+        ("tool", "shell pytest -q"),
+        ("meta", "↳ collecting ...\n3 passed in 0.12s"),
+    ]
+    assert prettify("opencode2", finish) == [("result", "done · stop · 209 tok")]
+
+
+def test_opencode2_tool_call_step_finish_is_not_a_fake_done_line():
+    line = json.dumps({
+        "type": "step_finish",
+        "part": {"reason": "tool-calls", "tokens": {"output": 38, "reasoning": 0}},
+    })
+    assert prettify("opencode2", line) == []
+
+
+def test_opencode2_tool_error_and_search_arguments_are_visible():
+    line = json.dumps({
+        "type": "tool_use",
+        "part": {"tool": "grep", "state": {
+            "status": "error",
+            "input": {"pattern": "TODO", "path": "/workspace/src"},
+            "error": "permission denied",
+        }},
+    })
+    assert prettify("opencode2", line) == [
+        ("tool", "grep TODO in /workspace/src"),
+        ("meta", "error: permission denied"),
+    ]
+
+
+def test_opencode2_emitted_reasoning_and_provider_errors_are_visible():
+    reasoning = json.dumps({
+        "type": "reasoning",
+        "part": {"type": "reasoning", "text": "Checking the failing test."},
+    })
+    error = json.dumps({
+        "type": "error",
+        "error": {"name": "ProviderError", "message": "model unavailable"},
+    })
+    assert prettify("opencode2", reasoning) == [
+        ("meta", "thinking: Checking the failing test."),
+    ]
+    assert prettify("opencode2", error) == [("result", "error: model unavailable")]
+
+
+def test_opencode2_tool_output_is_bounded():
+    output = "\n".join(f"line {number}" for number in range(20))
+    line = json.dumps({
+        "type": "tool_use",
+        "part": {"tool": "read", "state": {
+            "input": {"filePath": "/workspace/a.py"}, "output": output,
+        }},
+    })
+    shown = prettify("opencode2", line)
+    assert shown[0] == ("tool", "read /workspace/a.py")
+    assert "line 0" in shown[1][1]
+    assert "line 19" not in shown[1][1]
+    assert "14 more lines" in shown[1][1]
+
+
 def test_long_commands_are_not_truncated():
     # regression: commands used to be clipped at 80 chars with a "…"; the agent
     # log must show the full command (RichLog wraps) so nothing is hidden.
@@ -122,7 +197,7 @@ def test_brief_event_heads_the_log_backend_agnostic():
     # the loop emits a synthetic brief event; it renders as a "brief" line for
     # either backend, with a header so a reader sees the iteration's instruction.
     line = json.dumps({"type": "nethackers_brief", "text": "Improve progression as val-wiz."})
-    for backend in ("codex", "claude"):
+    for backend in ("codex", "claude", "opencode2"):
         out = prettify(backend, line)
         assert len(out) == 1
         kind, text = out[0]

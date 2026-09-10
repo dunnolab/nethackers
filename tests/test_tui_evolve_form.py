@@ -267,14 +267,15 @@ async def test_operator_version_line_shows_not_found_when_missing(monkeypatch):
 
 async def test_effort_options_follow_selected_model(monkeypatch):
     # The Reasoning-effort picker is driven by the selected model's discovered
-    # efforts (not a hardcoded list); a model with no reasoning falls back to
-    # the shared static EFFORTS.
+    # efforts (not a hardcoded list). Unknown metadata falls back to the shared
+    # list, while a catalog-confirmed empty set must remain default-only.
     monkeypatch.setattr(
         ef, "probe_operator",
         lambda backend, **k: (
             CliInfo(backend, True, f"{backend} x", True),
             [ModelInfo("m-rich", "Rich", ("low", "high", "ultra"), False),
-             ModelInfo("m-bare", "Bare", (), False)]
+             ModelInfo("m-bare", "Bare", (), False),
+             ModelInfo("m-no-variants", "No variants", (), False, True)]
             if backend == "claude" else None,
         ),
     )
@@ -288,6 +289,8 @@ async def test_effort_options_follow_selected_model(monkeypatch):
             ("Harness default", ""), ("low", "low"), ("high", "high"), ("ultra", "ultra")]
         assert form._effort_options("m-bare") == [
             ("Harness default", ""), *((e, e) for e in ef.EFFORTS)]   # fallback
+        assert form._effort_options("m-no-variants") == [
+            ("Harness default", "")]
         form.query_one("#f_model", Select).value = "m-rich"
         await pilot.pause()
         eff = form.query_one("#f_effort", Select)

@@ -128,6 +128,28 @@ def _default_image_digest(image: str, *, runtime: str | None = None) -> str:
 DEFAULT_MAX_PARALLEL_EVALS = 8
 
 
+def _eval_temp_dir(solution_path: Path) -> tempfile.TemporaryDirectory:
+    """Create a Docker Desktop-shareable temporary arena output directory.
+
+    Docker Desktop does not necessarily share the host's system ``/tmp``.
+    The user's home directory is shared by default, so keep disposable arena
+    output beneath nethackers' own home-backed data directory instead. Both
+    creating the root *and* creating a child can fail in a sandbox/read-only
+    home, so the fallback covers the complete allocation rather than only the
+    root ``mkdir``.
+    """
+    preferred = Path.home() / ".nethackers" / "tmp"
+    try:
+        preferred.mkdir(parents=True, exist_ok=True)
+        return tempfile.TemporaryDirectory(prefix="arena-", dir=preferred)
+    except OSError:
+        # The solution's parent is necessarily already usable as a Docker bind
+        # source, so a sibling temp root retains that property.
+        fallback = solution_path.parent / ".nethackers-tmp"
+        fallback.mkdir(parents=True, exist_ok=True)
+        return tempfile.TemporaryDirectory(prefix="arena-", dir=fallback)
+
+
 def eval_batch(
     solution_path: str | Path,
     spec: ObjectiveSpec,
@@ -185,7 +207,7 @@ def eval_batch(
     resolve_digest = image_digest_resolver or (
         lambda img: _default_image_digest(img, runtime=runtime)
     )
-    with tempfile.TemporaryDirectory() as td:
+    with _eval_temp_dir(solution_path) as td:
         out = Path(td) / "results.json"
         cmd = [
             runtime, "run", "--rm", "--network", "none",

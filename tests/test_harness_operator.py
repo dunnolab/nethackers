@@ -11,6 +11,7 @@ from nethackers.harness.metering import TokenUsage
 from nethackers.harness.operator import (
     _claude_cmd,
     _codex_cmd,
+    _opencode2_cmd,
     run_operator,
 )
 
@@ -148,6 +149,22 @@ def test_codex_cmd_pins_model_and_effort_when_set():
     assert cmd[cmd.index("-m") + 1] == "gpt-5.6-sol"
     # effort is a `-c` config override (still applies under --ignore-user-config)
     assert "-c" in cmd and "model_reasoning_effort=max" in cmd
+
+
+def test_opencode2_cmd_is_headless_auto_approved_and_pinned():
+    cmd = _opencode2_cmd("opencode2", "BRIEF", "openai/gpt-5", "high")
+    assert cmd[:3] == ["opencode2", "run", "BRIEF"]
+    assert cmd[cmd.index("--format") + 1] == "json"
+    assert "--thinking" in cmd
+    assert "--auto" in cmd
+    assert "--standalone" in cmd
+    assert cmd[cmd.index("--model") + 1] == "openai/gpt-5#high"
+
+
+def test_opencode2_cmd_leaves_model_and_variant_unpinned_by_default():
+    cmd = _opencode2_cmd("opencode2", "BRIEF", None, None)
+    assert "--model" not in cmd
+    assert "--thinking" in cmd
 
 
 def _claude_project_slug(cwd: Path) -> str:

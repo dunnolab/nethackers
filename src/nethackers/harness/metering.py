@@ -1,7 +1,9 @@
-"""Faithful, cache-inclusive token metering shared by both operators. The
-``result`` stream line (same schema for claude + codex) is the authoritative
-cumulative total; claude also streams per-turn ``assistant`` increments. Never
-raises on a stream line -- a malformed / unknown shape yields ``None``."""
+"""Faithful, cache-inclusive token metering shared by all operators.
+
+Claude and Codex report authoritative cumulative totals; OpenCode 2 reports
+per-step increments. Never raises on a stream line -- a malformed / unknown
+shape yields ``None``.
+"""
 from __future__ import annotations
 
 import json
@@ -61,9 +63,25 @@ def _usage_from_codex_dict(usage: dict) -> TokenUsage:
     return TokenUsage(g("input_tokens") - cached, g("output_tokens"), 0, cached)
 
 
+def _usage_from_opencode2_dict(tokens: dict) -> TokenUsage:
+    """Translate OpenCode 2's ``step_finish.part.tokens`` shape."""
+    def g(source: dict, key: str) -> int:
+        value = source.get(key)
+        return int(value) if isinstance(value, (int, float)) else 0
+
+    cache = tokens.get("cache")
+    cache_dict = cache if isinstance(cache, dict) else {}
+    return TokenUsage(
+        g(tokens, "input"),
+        g(tokens, "output") + g(tokens, "reasoning"),
+        g(cache_dict, "write"),
+        g(cache_dict, "read"),
+    )
+
+
 def classify(backend: str, line: str) -> tuple[str, TokenUsage] | None:
     """``("total", usage)`` for a ``result`` line (authoritative cumulative,
-    both backends), ``("inc", usage)`` for a claude ``assistant`` turn, else
+    cumulative backends), ``("inc", usage)`` for a streamed increment, else
     ``None``. Never raises."""
     try:
         obj = json.loads(line)
@@ -88,13 +106,20 @@ def classify(backend: str, line: str) -> tuple[str, TokenUsage] | None:
     if (backend == "codex" and obj.get("type") == "turn.completed"
             and isinstance(obj.get("usage"), dict)):
         return "total", _usage_from_codex_dict(obj["usage"])
+    # A session can have several tool/LLM steps. Each step_finish is an
+    # increment, not a session cumulative, so Meter sums all of them.
+    if backend == "opencode2" and obj.get("type") == "step_finish":
+        part = obj.get("part")
+        if isinstance(part, dict) and isinstance(part.get("tokens"), dict):
+            return "inc", _usage_from_opencode2_dict(part["tokens"])
     return None
 
 
 class Meter:
-    """Accumulates claude increments; a ``result`` total REPLACES the running
-    sum with the authoritative cumulative. codex stays zero until its
-    ``result``. Faithful: every read sums all four token components."""
+    """Accumulate streamed increments; an authoritative total replaces the sum.
+
+    Faithful: every read sums all four token components.
+    """
 
     def __init__(self, backend: str) -> None:
         self._backend = backend

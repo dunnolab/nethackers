@@ -131,6 +131,29 @@ def test_eval_batch_wraps_container_results_into_evidence(tmp_path):
     assert "--seeds" not in cmd
 
 
+def test_eval_output_mount_uses_home_backed_managed_tmp(tmp_path, monkeypatch):
+    sol = tmp_path / "sol"
+    sol.mkdir()
+    (sol / "bot.py").write_text("x")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    calls = []
+
+    eval_batch(
+        sol,
+        _SPEC,
+        "img:dev",
+        now="2026-08-09T00:00:00Z",
+        runner=_make_fake_docker_run(calls),
+        image_digest_resolver=lambda img: "img@sha256:deadbeef",
+    )
+
+    out_mount = next(v for v in calls[0] if v.endswith(":/out"))
+    host_out = Path(out_mount.removesuffix(":/out"))
+    assert host_out.parent == tmp_path / ".nethackers" / "tmp"
+    assert host_out.name.startswith("arena-")
+    assert not host_out.exists()  # TemporaryDirectory still cleans each run.
+
+
 def test_eval_batch_absolutizes_relative_solution_mount(tmp_path, monkeypatch):
     """Docker rejects a relative bind-mount source (it reads ``roots/autoascend``
     as an invalid named volume). eval_batch must absolutize the solution path

@@ -10,6 +10,13 @@ tokens are single-use/rotating, so sharing one canonical file is what keeps
 the serial mutator loop's refreshes from ever colliding with a stale copy
 (see ``docs/superpowers/research/2026-08-20-account-auth-in-sandbox.md``).
 
+**OpenCode 2** mounts the host's global ``opencode.json`` / ``opencode.jsonc``
+read-only and its canonical ``~/.local/share/opencode/auth.json`` only when
+that optional credential file exists. Environment variables explicitly named
+by an OpenCode config as ``{env:NAME}`` are forwarded by name (never copied
+into argv). Project configs already enter through the workspace mount. The
+container still keeps its sessions and database ephemeral.
+
 **Claude Code** stores its credential differently per host OS:
 
 - Linux: a plain ``~/.claude/.credentials.json`` file -- mount it read-only
@@ -21,16 +28,19 @@ the serial mutator loop's refreshes from ever colliding with a stale copy
   container-only -- setting it in the host's own Mac shell can silently
   delete the Keychain entry on exit (claude-code#37512).
 
-Only the credential itself ever crosses the host/container boundary, never
-the harness's memory/session/history, so this doesn't reopen the
-hermeticity gap the operator's flags (``harness/operator.py``) already
-close.
+Only credentials and explicitly selected OpenCode configuration cross the
+host/container boundary; session databases and history remain outside the
+sandbox.
 """
 
 from __future__ import annotations
 
+import contextlib
 import json
+import os
+import re
 import subprocess
+from collections.abc import Mapping
 from pathlib import Path
 
 _CLAUDE_LOGIN_HINT = "run `claude` on this host to log in, then retry"
@@ -55,6 +65,8 @@ def auth_docker_args(
     system: str,
     run=subprocess.run,
     home: Path,
+    project: Path | None = None,
+    environ: Mapping[str, str] | None = None,
     _require_exists: bool = False,
 ) -> list[str]:
     """Build the ``-v``/``-e`` args that inject ``harness``'s existing host
@@ -63,11 +75,11 @@ def auth_docker_args(
 
     ``run`` is the ``subprocess.run``-shaped callable used for the macOS
     Keychain read (injectable for tests). ``_require_exists`` is off by
-    default: the codex/claude-Linux branches are otherwise pure string
-    formatting, which is what lets their tests pass a fake, non-existent
-    ``home`` without touching the real filesystem; a caller that opts in
-    gets an early, friendly ``AuthUnavailable`` instead of silently mounting
-    a path Docker would otherwise just create empty.
+    default for the login-only backends; a caller that opts in gets an early,
+    friendly ``AuthUnavailable`` instead of silently mounting a path Docker
+    would otherwise create empty. OpenCode 2 always discovers its optional
+    config and auth files, because either one (or a project config) may be
+    sufficient.
     """
     if harness == "codex":
         if _require_exists and not (home / ".codex").exists():
@@ -85,7 +97,59 @@ def auth_docker_args(
             "-e", "CLAUDE_CONFIG_DIR=/home/agent/.claude",
         ]
 
+    if harness == "opencode2":
+        return _opencode2_docker_args(home, project=project, environ=environ)
+
     raise ValueError(f"unknown harness: {harness!r}")
+
+
+_OPENCODE_ENV = re.compile(r"\{env:([A-Za-z_][A-Za-z0-9_]*)\}")
+_OPENCODE_ENV_ARRAY = re.compile(r'"env"\s*:\s*\[([^\]]*)\]')
+_OPENCODE_ENV_NAME = re.compile(r'"([A-Za-z_][A-Za-z0-9_]*)"')
+
+
+def _opencode2_docker_args(
+    home: Path, *, project: Path | None, environ: Mapping[str, str] | None,
+) -> list[str]:
+    """Mount OpenCode 2 configuration and its optional credential store.
+
+    Only config-declared environment variables are forwarded. Docker's
+    ``-e NAME`` form copies the value from this process without exposing the
+    secret in the command line.
+    """
+    args: list[str] = []
+    config_dir = home / ".config" / "opencode"
+    global_configs = [config_dir / "opencode.json", config_dir / "opencode.jsonc"]
+    config_files: list[Path] = []
+    for config in global_configs:
+        if config.is_file():
+            args += ["-v", f"{config}:/home/agent/.config/opencode/{config.name}:ro"]
+            config_files.append(config)
+
+    if project is not None:
+        config_files += [
+            project / "opencode.json",
+            project / "opencode.jsonc",
+            project / ".opencode" / "opencode.json",
+            project / ".opencode" / "opencode.jsonc",
+        ]
+
+    source_env = os.environ if environ is None else environ
+    referenced: set[str] = set()
+    for config in config_files:
+        with contextlib.suppress(OSError, UnicodeError):
+            text = config.read_text()
+            referenced.update(_OPENCODE_ENV.findall(text))
+            for array in _OPENCODE_ENV_ARRAY.findall(text):
+                referenced.update(_OPENCODE_ENV_NAME.findall(array))
+    for name in sorted(referenced):
+        if name in source_env:
+            args += ["-e", name]
+
+    auth = home / ".local" / "share" / "opencode" / "auth.json"
+    if auth.is_file():
+        args += ["-v", f"{auth}:/home/agent/.local/share/opencode/auth.json"]
+    return args
 
 
 def _claude_macos_env(run) -> list[str]:

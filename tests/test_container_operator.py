@@ -51,6 +51,15 @@ def test_claude_in_cage_skips_permissions():
     assert "-p" in a
 
 
+def test_opencode2_in_cage_runs_json_and_auto_approves():
+    a = _argv("opencode2")
+    assert a[a.index("--format") + 1] == "json"
+    assert "--thinking" in a
+    assert "--auto" in a
+    assert "--standalone" in a
+    assert a[a.index("--model") + 1] == "gpt-x#high"
+
+
 def test_unknown_harness_raises():
     with pytest.raises(ValueError, match="unknown harness"):
         _argv("pi")
@@ -86,6 +95,30 @@ def test_run_delegates_and_builds_docker_argv(monkeypatch, tmp_path):
     assert seen["cmd"][:3] == ["docker", "run", "--rm"]
     assert "BRIEF-TEXT" in seen["cmd"]        # real brief threaded into the inner cmd
     assert res.backend == "codex"
+
+
+def test_run_opencode2_uses_project_config_without_auth(monkeypatch, tmp_path):
+    seen = {}
+    wt = tmp_path / "work" / "iter-3"
+    wt.mkdir(parents=True)
+    (wt / "opencode.json").write_text(
+        '{"provider": {"custom": {"apiKey": "{env:CUSTOM_MODEL_KEY}"}}}'
+    )
+    monkeypatch.setenv("CUSTOM_MODEL_KEY", "secret")
+    op = ContainerOperator(
+        harness="opencode2", image="img:test", system="Linux", home=tmp_path,
+        model="custom/my-model",
+    )
+    op._popen = lambda cmd, **kw: seen.setdefault("cmd", cmd) and FakePopen(cmd, **kw)
+
+    res = op.run(wt, "BRIEF-TEXT")
+
+    assert res.backend == "opencode2"
+    assert seen["cmd"][
+        seen["cmd"].index("-e"):seen["cmd"].index("-e") + 2
+    ] == ["-e", "CUSTOM_MODEL_KEY"]
+    assert "secret" not in seen["cmd"]
+    assert seen["cmd"][seen["cmd"].index("--model") + 1] == "custom/my-model"
 
 
 def test_stop_docker_kills_named_container(tmp_path):

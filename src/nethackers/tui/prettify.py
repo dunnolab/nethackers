@@ -113,6 +113,112 @@ def _codex(obj: dict) -> list[PrettyLine]:
     return []
 
 
+def _opencode2(obj: dict) -> list[PrettyLine]:
+    """Render OpenCode 2's `run --format json` event stream."""
+    kind = obj.get("type")
+
+    # Provider/configuration failures are top-level events rather than parts.
+    if kind == "error":
+        error = obj.get("error")
+        message = (error.get("message") or error.get("name")
+                   if isinstance(error, dict) else error)
+        if isinstance(message, str) and message.strip():
+            return [("result", f"error: {message.strip()}")]
+        return [("result", "error")]
+
+    part = obj.get("part")
+    if not isinstance(part, dict):
+        return []
+
+    # Some providers expose reasoning text and some do not. Render only the
+    # reasoning OpenCode actually streams; never infer or manufacture it.
+    part_kind = part.get("type")
+    if kind in {"reasoning", "reasoning_delta"} or part_kind in {
+        "reasoning", "reasoning-delta",
+    }:
+        reasoning = part.get("text") or part.get("reasoning")
+        if isinstance(reasoning, str) and reasoning.strip():
+            return [("meta", f"thinking: {reasoning.strip()}")]
+    if kind == "text":
+        text = part.get("text")
+        if isinstance(text, str) and text.strip():
+            return [("assistant", text.strip())]
+    if kind == "tool_use":
+        tool = str(part.get("tool") or "tool")
+        state = part.get("state")
+        state_dict = state if isinstance(state, dict) else {}
+        input_obj = state_dict.get("input")
+        inp = input_obj if isinstance(input_obj, dict) else {}
+        path = inp.get("filePath") or inp.get("path")
+        pattern = inp.get("pattern")
+        command = inp.get("command")
+        if isinstance(command, str):
+            arg = command
+        elif isinstance(pattern, str) and isinstance(path, str):
+            arg = f"{pattern} in {path}"
+        elif isinstance(path, str):
+            arg = path
+        elif isinstance(pattern, str):
+            arg = pattern
+        else:
+            arg = ""
+
+        out: list[PrettyLine] = [("tool", f"{tool} {arg}".strip())]
+        error = state_dict.get("error")
+        if isinstance(error, str) and error.strip():
+            detail = _opencode2_output(error, tail=True)
+            if detail:
+                out.append(("meta", f"error: {detail}"))
+            return out
+
+        output = state_dict.get("output")
+        if isinstance(output, str) and output.strip():
+            # Test/build summaries tend to be at the end of shell output;
+            # file/search previews are more useful from the beginning.
+            detail = _opencode2_output(output, tail=tool in {"bash", "shell"})
+            if detail:
+                out.append(("meta", f"↳ {detail}"))
+        return out
+    if kind == "step_finish":
+        reason = part.get("reason")
+        # OpenCode finishes a step before every tool call. It is an internal
+        # turn boundary, not completion of the mutation or iteration.
+        if reason == "tool-calls":
+            return []
+        tokens = part.get("tokens")
+        tok = 0
+        if isinstance(tokens, dict):
+            output = tokens.get("output", 0)
+            reasoning = tokens.get("reasoning", 0)
+            tok = sum(v for v in (output, reasoning) if isinstance(v, (int, float)))
+        parts = ["done"]
+        if isinstance(reason, str) and reason:
+            parts.append(reason)
+        if tok:
+            parts.append(f"{int(tok):,} tok")
+        return [("result", " · ".join(parts))]
+    return []
+
+
+def _opencode2_output(text: str, *, tail: bool, max_lines: int = 6,
+                      max_chars: int = 900) -> str:
+    """Keep tool feedback useful without dumping whole files into the log."""
+    lines = [line.rstrip() for line in text.strip().splitlines()]
+    omitted = max(0, len(lines) - max_lines)
+    if tail:
+        shown = lines[-max_lines:]
+        if omitted:
+            shown.insert(0, f"… ({omitted} earlier lines)")
+    else:
+        shown = lines[:max_lines]
+        if omitted:
+            shown.append(f"… ({omitted} more lines)")
+    compact = "\n".join(shown)
+    if len(compact) > max_chars:
+        compact = compact[:max_chars - 1].rstrip() + "…"
+    return compact
+
+
 def _brief(obj: dict) -> list[PrettyLine]:
     """The mutation brief the loop fed this iteration -- emitted once, up front,
     as a synthetic ``{"type": "nethackers_brief", "text": ...}`` event so it
@@ -135,6 +241,8 @@ def prettify(backend: str, line: str) -> list[PrettyLine]:
             return _claude(obj)
         if backend == "codex":
             return _codex(obj)
+        if backend == "opencode2":
+            return _opencode2(obj)
     except Exception:
         return []
     return []
