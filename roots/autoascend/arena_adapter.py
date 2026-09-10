@@ -146,7 +146,7 @@ class AutoAscendDriver:
         except autoascend_agent.AgentFinished:
             pass
         except BaseException:
-            error = traceback.format_exc(limit=20)[-8_000:]
+            error = traceback.format_exc(limit=-20)[-8_000:]
             # A previous episode's daemon may finish after reset(). Its error
             # belongs to its own adapter, not the newly started episode.
             if self._env is env:

@@ -131,6 +131,35 @@ def test_healthy_wait_timeout_keeps_escape_fallback(adapter):
         driver.close()
 
 
+def test_deep_worker_traceback_keeps_the_failure_origin(adapter, monkeypatch):
+    def leaf():
+        raise ValueError("deep failure")
+
+    def recurse(depth):
+        if depth:
+            recurse(depth - 1)
+        else:
+            leaf()
+
+    class Agent:
+        def __init__(self, env, **kwargs):
+            pass
+
+        def main(self):
+            recurse(30)
+
+    monkeypatch.setattr(adapter.autoascend_agent, "Agent", Agent, raising=False)
+    driver = adapter.AutoAscendDriver()
+    try:
+        driver.reset({})
+        driver._thread.join(timeout=2)
+        assert not driver._thread.is_alive()
+        assert "in leaf" in driver.thread_error
+        assert len(driver.thread_error) <= 8000
+    finally:
+        driver.close()
+
+
 def test_reporting_failure_does_not_block_on_a_queued_action(adapter):
     env = adapter.ArenaEnvAdapter()
     env._actions.put_nowait(46)
