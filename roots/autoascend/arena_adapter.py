@@ -53,7 +53,15 @@ class ArenaEnvAdapter:
 
     def next_action_index(self, timeout: float) -> int:
         action = self._actions.get(timeout=timeout)
+        if isinstance(action, RuntimeError):
+            raise action
         return _action_index(action)
+
+    def report_error(self, error: str) -> None:
+        # Wake an act() already waiting for the dead worker's next action.
+        # If an action is queued, the driver's stored error handles the next act().
+        with contextlib.suppress(queue.Full):
+            self._actions.put_nowait(RuntimeError(f"AutoAscend worker failed:\n{error}"))
 
     def provide_observation(self, observation: Mapping[str, Any]) -> bool:
         if self._closed.is_set():
@@ -101,14 +109,17 @@ class AutoAscendDriver:
         self._sent_first_action = False
         self._env = ArenaEnvAdapter()
         self._agent = autoascend_agent.Agent(self._env, panic_on_errors=False)
-        self._thread = threading.Thread(target=self._run_agent, name="autoascend", daemon=True)
+        self._thread = threading.Thread(
+            target=self._run_agent, args=(self._agent, self._env),
+            name="autoascend", daemon=True,
+        )
         self._thread.start()
 
     def act(self, observation: Mapping[str, Any]) -> int:
         if self._env is None:
             return self._fallback_action
         if self._thread_error is not None:
-            return self._fallback_action
+            raise RuntimeError(f"AutoAscend worker failed:\n{self._thread_error}")
         if self._sent_first_action and not self._env.provide_observation(observation):
             return self._fallback_action
         try:
@@ -129,11 +140,15 @@ class AutoAscendDriver:
     def thread_error(self) -> str | None:
         return self._thread_error
 
-    def _run_agent(self) -> None:
+    def _run_agent(self, agent: autoascend_agent.Agent, env: ArenaEnvAdapter) -> None:
         try:
-            assert self._agent is not None
-            self._agent.main()
+            agent.main()
         except autoascend_agent.AgentFinished:
             pass
         except BaseException:
-            self._thread_error = traceback.format_exc(limit=20)[-8_000:]
+            error = traceback.format_exc(limit=20)[-8_000:]
+            # A previous episode's daemon may finish after reset(). Its error
+            # belongs to its own adapter, not the newly started episode.
+            if self._env is env:
+                self._thread_error = error
+            env.report_error(error)
