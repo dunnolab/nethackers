@@ -47,7 +47,7 @@
   --scr-red:#ff6b6b;
   --tint:47 54 119;      /* indigo, for the heatmap ramp */
   /* the scratch card's flow chart: 1-bit, ink opaque / paper transparent,
-     used as a mask so the strokes take --indigo. 21.8 KB. */
+     tinted to --indigo when painted onto the card. 21.8 KB. */
   --agi:url("data:image/png;base64,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");
   color-scheme: light;
 }
@@ -505,49 +505,30 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 .orc-revote a{ cursor:pointer; }
 
 /* ==== THE SCRATCH CARD ====================================================
-   A flow chart is hidden UNDER the opening block. The button in the heading
-   turns that block into a scratch surface: what you scrape off is the page's
-   own text, and the drawing shows through the holes.
+   A flow chart hidden under the opening block. The button in the heading turns
+   that block into a scratch surface: drag across it and the page's own text
+   comes away, with the drawing underneath.
 
-   The holes are punched with an SVG clip-path (rect + circle subpaths, even-odd
-   fill rule) rather than a canvas brush. A canvas mask renders correctly in
-   Chrome but blanks the whole element in WebKit; clip-path is identical in
-   both. The cost is hard-edged holes, so the radii are jittered to keep the
-   tear ragged rather than machined.
+   Drawn on a canvas, composited. Two earlier mechanisms did not survive:
+   masking the live DOM renders in Chrome but blanks the element outright in
+   WebKit, and an SVG clip-path (which does work in both) cancels every
+   overlapping hole back to solid under its even-odd rule, so a real drag came
+   out as lace. Painting the chart through an accumulated brush mask unions
+   properly, takes a soft edge, and behaves the same everywhere.
 
-   The chart itself is the one raster on a page that otherwise draws every mark
-   it shows, and is kept as close to a glyph as a photograph can get: 1-bit,
-   ink opaque and paper transparent, used as a mask so the strokes take the
-   page's own indigo. What ships is the shape of the handwriting.
+   The chart is the one raster on a page that otherwise draws every mark it
+   shows, and is kept as close to a glyph as a photograph can get: 1-bit, ink
+   opaque and paper transparent, tinted at paint time to the page's own indigo.
+   What ships is the shape of the handwriting.
    ========================================================================= */
-.main{ position:relative; }
+.about{ position:relative; }
+.about.scratching{ -webkit-user-select:none; user-select:none; }
 
-/* the block being scratched sits above the chart and paints its own paper --
-   without an opaque background the drawing would show through the text too */
-.about{ position:relative; z-index:1; }
-.about.scratching{ background:var(--paper); -webkit-user-select:none; user-select:none;
-  clip-path:url(#agiclip); -webkit-clip-path:url(#agiclip); }
-.about.scratching .agiscratch{
-  cursor:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28"><circle cx="14" cy="14" r="10" fill="%23e9c15a" stroke="%236a6a55" stroke-width="2"/><text x="14" y="19" text-anchor="middle" font-family="monospace" font-size="14" font-weight="bold" fill="%236a6a55">$</text></svg>') 14 14, crosshair; }
-
-/* the chart, underneath: a sibling of .about, so the clip never touches it */
-#agichart{ position:absolute; z-index:0; display:none; background:var(--agi-paper,#fbfaf3);
-  border:1px solid var(--rule-soft); }
+/* the chart sits over the block's body text and is transparent until scraped */
+#agichart{ position:absolute; left:0; z-index:2; display:none; touch-action:none; }
 #agichart.on{ display:block; }
-#agichart .agi-ink{ position:absolute; inset:0; opacity:var(--agi-ink-o,.92); background:var(--indigo);
-  -webkit-mask-image:var(--agi);         mask-image:var(--agi);
-  -webkit-mask-size:contain;             mask-size:contain;
-  -webkit-mask-repeat:no-repeat;         mask-repeat:no-repeat;
-  -webkit-mask-position:center;          mask-position:center; }
-@supports not ((-webkit-mask-image:url("")) or (mask-image:url(""))){
-  #agichart .agi-ink{ background:none; background-image:var(--agi); background-size:contain;
-    background-repeat:no-repeat; background-position:center; }
-}
-
-/* the region of the block that is actually scratchable: the chart's footprint.
-   Holes anywhere else would only expose the page's own white. */
-.agiscratch{ position:absolute; left:0; top:0; display:none; z-index:2; }
-.about.scratching .agiscratch{ display:block; }
+.about.scratching #agichart{
+  cursor:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28"><circle cx="14" cy="14" r="10" fill="%23e9c15a" stroke="%236a6a55" stroke-width="2"/><text x="14" y="19" text-anchor="middle" font-family="monospace" font-size="14" font-weight="bold" fill="%236a6a55">$</text></svg>') 14 14, crosshair; }
 
 /* the button, on the heading's own line ------------------------------------ */
 #about h2.sec{ display:flex; align-items:baseline; justify-content:space-between; gap:14px; }
@@ -652,15 +633,17 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
     <!-- ---------- MAIN ---------- -->
     <main class="main">
 
-
-        <!-- the flow chart, hidden under the block above; revealed by scratching
-             the real text off it (see the script at the foot of the page) -->
-        <div id="agichart" aria-hidden="true"><div class="agi-ink"></div></div>
-
       <!-- ABOUT -->
       <section id="about" class="about">
         <h2 class="sec"><span><span class="glyph">@</span> What it is?</span>
-          <button type="button" id="agiBtn" class="bevel" aria-pressed="false">is it AGI?</button></h2>
+          <button type="button" id="agiBtn" class="bevel" aria-pressed="false">solving = AGI?</button></h2>
+        <!-- the flow chart, revealed by scratching the block's own text away.
+             A canvas rather than an image: overlapping brush strokes have to
+             UNION, and the clip-path this replaced cancelled every overlap
+             back to solid under its even-odd rule. See the foot of the page. -->
+        <canvas id="agichart" role="img"
+          aria-label="A flow chart, drawn by hand on ruled paper. Titled: is it AGI? Start. Does it solve NetHack? If yes, it may be AGI. If no, it's not AGI."></canvas>
+
         <p class="lead"><b>NetHackers is an open effort to build the first program that can
           reliably win NetHack&nbsp;3.6.6.</b> Write the bot by hand, evolve it with coding agents, improve the thing
           that improves it, or recurse until something interesting happens. Whatever path you take, the evaluation
@@ -935,7 +918,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           roughly a thousand episodes, hours on one box. What is scarce is good programs, and the agent tokens to find
           them. So the hub hands out no work at all: you search on your own machine, and we keep the link.</p>
 
-        <div class="subh">Fine. Is it AGI?</div>
+        <div class="subh">Fine. Does solving it mean AGI?</div>
         <p>We drew a flow chart to settle it. It is not printed here, but it is not far away either &mdash;
           there is something under the top of this page, and the button beside that first heading will
           let you scrape the page off it. <span class="mono">#agi</span> at the extended-command prompt
@@ -968,13 +951,7 @@ __)/\_//(\/(/\)/\//\/\|_)__</pre>
 </div>
 
 
-<!-- the clip that the scratching punches holes in, and NetHack's extended-command
-     prompt, for the one command this page answers to -->
-<svg width="0" height="0" aria-hidden="true" style="position:absolute" focusable="false">
-  <defs><clipPath id="agiclip" clipPathUnits="userSpaceOnUse">
-    <path id="agiclippath" clip-rule="evenodd" d=""></path>
-  </clipPath></defs>
-</svg>
+<!-- NetHack's extended-command prompt, for the one command this page answers to -->
 <div id="xcmd" class="mono" hidden role="status" aria-live="polite">
   <span class="xc-p">#</span><span class="xc-buf"></span><span class="xc-cur"></span>
   <span class="xc-msg"></span>
@@ -2301,102 +2278,160 @@ boot().catch(()=>{ renderFrontier(); renderRecognition(); });
 /* A flow chart hidden under the opening block.
 
    Arming (the button in the heading, or `#agi` at NetHack's extended-command
-   prompt) lays the chart behind the block, paints the block's own paper opaque,
-   and clips it. Dragging punches holes in that clip, so what comes away is the
-   page's real text and the drawing shows through underneath.
+   prompt) lays a transparent canvas over the block's body text. Dragging
+   paints the chart into that canvas along the brush path, and the chart's own
+   paper is opaque -- so what the drag does, on screen, is take the page's text
+   away and leave the drawing in its place.
 
-   Holes, not brush strokes, because the clip-path is the only technique that
-   behaves the same in Chrome and WebKit -- a canvas/SVG mask over live DOM
-   renders in Chrome and blanks the element outright in WebKit. What you scrape
-   stays scraped; the button (or esc) puts the whole page back.
+   Two earlier mechanisms failed and are worth not repeating. Masking the live
+   DOM renders in Chrome and blanks the element outright in WebKit. An SVG
+   clip-path works in both, but its even-odd rule cancels every overlapping
+   hole back to solid, and a real drag overlaps constantly -- the tear came out
+   as lace, with intact text in every lens where two strokes crossed.
+   Compositing on a canvas unions strokes properly and takes a soft edge.
 
-   Add ?tune=1 to the URL for a panel that dials the feel of the scratching in
-   the browser. It is never built without that flag. */
+   What you scrape stays scraped; the button (or esc) puts the page back.
+   Add ?tune=1 for a panel that dials the feel. It is never built otherwise. */
 (function(){
   "use strict";
   const about = document.getElementById("about");
-  const chart = document.getElementById("agichart");
+  const cv    = document.getElementById("agichart");
   const btn   = document.getElementById("agiBtn");
   const bar   = document.getElementById("xcmd");
-  const clip  = document.getElementById("agiclippath");
-  if(!about || !chart || !btn || !bar || !clip) return;   // page served without the egg
+  if(!about || !cv || !btn || !bar) return;          // page served without the egg
+
+  let ctx = null;
+  try{ ctx = cv.getContext ? cv.getContext("2d") : null; }catch(_){}
 
   const calm = window.matchMedia && window.matchMedia("(prefers-reduced-motion:reduce)").matches;
   const CHART_RATIO = 1644/1400;            // the drawing's own proportions
+  const INDIGO = "#2f3677";
 
   /* ---- the shipped feel, and the knobs that shape it -------------------- */
   const DEFAULTS = {
-    r: 15,        // brush radius, before jitter
-    rj: 8,        // how much bigger a given hole may come out
-    step: 6,      // distance between samples along a drag
-    sat: 0.45,    // chance of throwing a flake off the edge of the tear
-    satd: 16,     // how far out a flake lands
-    satdj: 10,    // ...plus up to this much more
-    satr: 5,      // a flake's largest radius
-    ink: 0.92,    // the drawing's opacity
-    paper: "#fbfaf3",
+    r: 34,        // brush radius
+    rj: 12,       // how much bigger a given stamp may come out
+    soft: 0.28,   // how much of the radius fades out at the edge
+    step: 5,      // distance between stamps along a drag
+    sat: 0.55,    // chance of throwing a flake off the edge of the tear
+    satd: 30,     // how far out a flake lands
+    satdj: 14,    // ...plus up to this much more
+    satr: 9,      // a flake's largest radius
+    ink: 1,       // the drawing's opacity
+    paper: "#ead9b6",
   };
   const TUNE = Object.assign({}, DEFAULTS);
 
-  let armed = false, holes = [], lx = 0, ly = 0, scraping = false, raf = 0;
+  let armed = false, scraping = false, lx = 0, ly = 0, raf = 0, strokes = 0;
+  let W = 0, H = 0, DPR = 1;
 
-  // the scratchable patch: the chart's footprint, under the block's body text
-  const pad = document.createElement("div");
-  pad.className = "agiscratch";
-  about.appendChild(pad);
+  // where the brush has been (alpha only), and the finished drawing to show
+  const reveal = document.createElement("canvas");
+  const rctx = reveal.getContext ? reveal.getContext("2d") : null;
+  const sheet = document.createElement("canvas");
+  const sctx = sheet.getContext ? sheet.getContext("2d") : null;
+
+  /* ---- the drawing ------------------------------------------------------
+     The asset is 1-bit with the paper transparent, so it is tinted here to
+     --indigo rather than shipped in colour, and laid on a painted sheet. */
+  let ink = null, inkReady = false;
+  (function loadInk(){
+    const raw = getComputedStyle(document.documentElement).getPropertyValue("--agi").trim();
+    const m = raw.match(/url\(\s*["']?([^"')]+)["']?\s*\)/);
+    if(!m) return;
+    ink = new Image();
+    ink.onload = () => { inkReady = true; if(armed){ paintSheet(); render(); } };
+    ink.src = m[1];
+  })();
+
+  function paintSheet(){
+    if(!sctx || !W) return;
+    sheet.width = Math.round(W*DPR); sheet.height = Math.round(H*DPR);
+    sctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    sctx.globalAlpha = 1;
+    sctx.fillStyle = TUNE.paper;
+    sctx.fillRect(0, 0, W, H);
+    if(!inkReady) return;
+    // "contain" the drawing, then flood it with indigo through its own alpha
+    const s = Math.min(W/ink.naturalWidth, H/ink.naturalHeight);
+    const dw = ink.naturalWidth*s, dh = ink.naturalHeight*s;
+    const tmp = document.createElement("canvas");
+    tmp.width = sheet.width; tmp.height = sheet.height;
+    const tctx = tmp.getContext("2d");
+    tctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    tctx.drawImage(ink, (W-dw)/2, (H-dh)/2, dw, dh);
+    tctx.globalCompositeOperation = "source-in";
+    tctx.fillStyle = INDIGO;
+    tctx.fillRect(0, 0, W, H);
+    sctx.globalAlpha = TUNE.ink;
+    sctx.setTransform(1, 0, 0, 1, 0, 0);
+    sctx.drawImage(tmp, 0, 0);
+    sctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    sctx.globalAlpha = 1;
+  }
+
+  /* The chart, shown only where the brush has been. Two draws: the sheet,
+     then the brush mask through destination-in. */
+  function render(){
+    raf = 0;
+    if(!ctx) return;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.clearRect(0, 0, cv.width, cv.height);
+    if(!strokes) return;                     // nothing scraped: stay invisible
+    ctx.drawImage(sheet, 0, 0);
+    ctx.globalCompositeOperation = "destination-in";
+    ctx.drawImage(reveal, 0, 0);
+    ctx.globalCompositeOperation = "source-over";
+  }
+  const schedule = () => { if(!raf) raf = requestAnimationFrame(render); };
 
   /* ---- geometry ---------------------------------------------------------
-     The chart is a sibling of .about (anything inside it would be clipped
-     away with the text), so its box is measured from the block each time.
-     Both it and the pad start at the top of the body text rather than the top
-     of the block: the heading carries the button, and a pad over it would
+     The chart starts at the top of the body text, not the top of the block:
+     the heading carries the button, and a scratch surface over it would
      swallow the clicks that put the page back. */
-  function chartTop(){
-    const lead = about.querySelector(".lead");
-    return lead ? lead.offsetTop : 0;
-  }
   function place(){
-    const w = about.clientWidth, h = Math.round(w*CHART_RATIO), off = chartTop();
-    chart.style.left = about.offsetLeft + "px";
-    chart.style.top = (about.offsetTop + off) + "px";
-    chart.style.width = w + "px";
-    chart.style.height = h + "px";
-    pad.style.top = off + "px";
-    pad.style.width = w + "px";
-    pad.style.height = h + "px";
+    if(!ctx) return;
+    const lead = about.querySelector(".lead");
+    W = about.clientWidth; H = Math.round(W*CHART_RATIO);
+    DPR = Math.min(window.devicePixelRatio || 1, 2);
+    cv.style.top = (lead ? lead.offsetTop : 0) + "px";
+    cv.style.width = W + "px";
+    cv.style.height = H + "px";
+    cv.width = Math.round(W*DPR); cv.height = Math.round(H*DPR);
+    reveal.width = cv.width; reveal.height = cv.height;
+    if(rctx) rctx.setTransform(DPR, 0, 0, DPR, 0, 0);
+    paintSheet();
   }
 
-  /* ---- the clip ---------------------------------------------------------
-     One path: the block's whole box, then a circle subpath per scrape. With
-     the even-odd rule each circle reads as a hole rather than an island.
-     Every coordinate here is in the BLOCK's space, which is what clip-path's
-     userSpaceOnUse resolves against -- measuring against the pad instead put
-     every hole one heading too high, and tore into the button. */
-  function repaint(){
-    raf = 0;
-    let d = "M0 0H" + about.offsetWidth + "V" + about.offsetHeight + "H0Z";
-    for(const hole of holes){
-      const x = hole[0], y = hole[1], r = hole[2];
-      d += "M" + (x+r) + " " + y + "a" + r + " " + r + " 0 1 0 " + (-2*r) + " 0"
-         + "a" + r + " " + r + " 0 1 0 " + (2*r) + " 0Z";
+  /* ---- the brush --------------------------------------------------------
+     Stamps accumulate into `reveal` with plain source-over, so crossing your
+     own stroke only ever adds. A soft rim keeps the tear from looking cut. */
+  function stamp(x, y, r){
+    if(!rctx) return;
+    if(TUNE.soft > 0){
+      const g = rctx.createRadialGradient(x, y, Math.max(0, r*(1-TUNE.soft)), x, y, r);
+      g.addColorStop(0, "rgba(0,0,0,1)");
+      g.addColorStop(1, "rgba(0,0,0,0)");
+      rctx.fillStyle = g;
+    } else {
+      rctx.fillStyle = "#000";
     }
-    clip.setAttribute("d", d);
+    rctx.beginPath(); rctx.arc(x, y, r, 0, Math.PI*2); rctx.fill();
+    strokes++;
   }
-  const schedule = () => { if(!raf) raf = requestAnimationFrame(repaint); };
 
   function dig(x, y){
-    holes.push([Math.round(x), Math.round(y), Math.round(TUNE.r + Math.random()*TUNE.rj)]);
+    stamp(x, y, TUNE.r + Math.random()*TUNE.rj);
     // a flake off the edge now and then, so the tear frays instead of machining
     if(TUNE.satr > 0 && Math.random() < TUNE.sat){
       const a = Math.random()*Math.PI*2, d = TUNE.satd + Math.random()*TUNE.satdj;
-      holes.push([Math.round(x + Math.cos(a)*d), Math.round(y + Math.sin(a)*d),
-                  1 + Math.round(Math.random()*TUNE.satr)]);
+      stamp(x + Math.cos(a)*d, y + Math.sin(a)*d, 1 + Math.random()*TUNE.satr);
     }
     schedule();
   }
 
-  /* Samples arrive as far apart as the pointer moves, so the gaps are filled in
-     -- otherwise a quick drag leaves a dotted line instead of a channel. */
+  /* Samples arrive as far apart as the pointer moves, so the gaps are filled
+     in -- otherwise a quick drag leaves a dotted line, not a channel. */
   function drag(x, y){
     const dx = x - lx, dy = y - ly, dist = Math.sqrt(dx*dx + dy*dy);
     if(dist < TUNE.step) return;
@@ -2405,44 +2440,50 @@ boot().catch(()=>{ renderFrontier(); renderRecognition(); });
     lx = x; ly = y;
   }
 
-  // pointer -> the block's coordinate space, the one the clip is written in
-  const at = e => { const r = about.getBoundingClientRect();
+  const at = e => { const r = cv.getBoundingClientRect();
                     return [e.clientX - r.left, e.clientY - r.top]; };
 
-  pad.addEventListener("pointerdown", e => {
+  cv.addEventListener("pointerdown", e => {
     if(!armed || (e.button !== 0 && e.pointerType === "mouse")) return;
     scraping = true;
-    try{ pad.setPointerCapture(e.pointerId); }catch(_){}
+    try{ cv.setPointerCapture(e.pointerId); }catch(_){}
     const p = at(e); lx = p[0]; ly = p[1]; dig(lx, ly);
     e.preventDefault();
   });
-  pad.addEventListener("pointermove", e => {
+  cv.addEventListener("pointermove", e => {
     if(!scraping) return;
     const p = at(e); drag(p[0], p[1]); e.preventDefault();
   });
   const stop = () => { scraping = false; };
-  pad.addEventListener("pointerup", stop);
-  pad.addEventListener("pointercancel", stop);
-  pad.addEventListener("lostpointercapture", stop);
+  cv.addEventListener("pointerup", stop);
+  cv.addEventListener("pointercancel", stop);
+  cv.addEventListener("lostpointercapture", stop);
 
   /* ---- arm / put back ---------------------------------------------------- */
+  function wipe(){
+    strokes = 0;
+    if(rctx){ rctx.setTransform(1,0,0,1,0,0); rctx.clearRect(0,0,reveal.width,reveal.height);
+              rctx.setTransform(DPR,0,0,DPR,0,0); }
+    render();
+  }
   function arm(){
     if(armed) return;
     armed = true;
-    place(); repaint();
-    chart.classList.add("on");
+    cv.classList.add("on");
     about.classList.add("scratching");
+    place(); wipe();
     btn.setAttribute("aria-pressed", "true");
     btn.textContent = "put it back";
     about.scrollIntoView({ behavior: calm ? "auto" : "smooth", block: "start" });
   }
   function putBack(){
     if(!armed) return;
-    armed = false; scraping = false; holes = [];
-    chart.classList.remove("on");
+    armed = false; scraping = false;
+    wipe();
+    cv.classList.remove("on");
     about.classList.remove("scratching");
     btn.setAttribute("aria-pressed", "false");
-    btn.textContent = "is it AGI?";
+    btn.textContent = "solving = AGI?";
   }
   btn.addEventListener("click", () => (armed ? putBack() : arm()));
 
@@ -2450,7 +2491,7 @@ boot().catch(()=>{ renderFrontier(); renderRecognition(); });
   window.addEventListener("resize", () => {
     if(!armed) return;
     clearTimeout(rt);
-    rt = setTimeout(() => { place(); repaint(); }, 120);
+    rt = setTimeout(() => { place(); wipe(); }, 120);   // a resize rescales nothing; start clean
   });
 
   /* ---- NetHack's extended-command prompt --------------------------------- */
@@ -2499,19 +2540,16 @@ boot().catch(()=>{ renderFrontier(); renderRecognition(); });
   /* ---- the tuning panel --------------------------------------------------
      Guessing at "feel" from the outside wastes rounds; this hands the dials
      over. Only built for ?tune=1, so visitors never see it. */
-  function applyLooks(){
-    chart.style.setProperty("--agi-ink-o", TUNE.ink);
-    chart.style.setProperty("--agi-paper", TUNE.paper);
-  }
   function buildTuner(){
     const FIELDS = [
-      ["r",     "brush radius",  4,  48, 1],
-      ["rj",    "radius jitter", 0,  24, 1],
+      ["r",     "brush radius",  4,  70, 1],
+      ["rj",    "radius jitter", 0,  30, 1],
+      ["soft",  "edge softness", 0,  .9, .02],
       ["step",  "sample gap",    2,  24, 1],
       ["sat",   "flake chance",  0,   1, .05],
-      ["satd",  "flake reach",   0,  40, 1],
+      ["satd",  "flake reach",   0,  50, 1],
       ["satdj", "flake spread",  0,  30, 1],
-      ["satr",  "flake size",    0,  14, 1],
+      ["satr",  "flake size",    0,  16, 1],
       ["ink",   "ink opacity",  .2,   1, .02],
     ];
     const el = document.createElement("div");
@@ -2521,8 +2559,7 @@ boot().catch(()=>{ renderFrontier(); renderRecognition(); });
     const fold = document.createElement("button");
     fold.type = "button"; fold.textContent = "[-]";
     fold.addEventListener("click", () => {
-      const shut = el.classList.toggle("folded");
-      fold.textContent = shut ? "[+]" : "[-]";
+      fold.textContent = el.classList.toggle("folded") ? "[+]" : "[-]";
     });
     head.appendChild(fold);
     el.appendChild(head);
@@ -2535,41 +2572,37 @@ boot().catch(()=>{ renderFrontier(); renderRecognition(); });
       const k = f[0];
       const row = document.createElement("label");
       row.innerHTML = '<span>' + f[1] + '</span>'
-        + '<input type="range" min="' + f[2] + '" max="' + f[3] + '" step="' + f[4] + '">'
-        + '<b></b>';
+        + '<input type="range" min="' + f[2] + '" max="' + f[3] + '" step="' + f[4] + '"><b></b>';
       const inp = row.querySelector("input"), out = row.querySelector("b");
-      const show = () => { inp.value = TUNE[k]; out.textContent = TUNE[k]; };
+      sync.push(() => { inp.value = TUNE[k]; out.textContent = TUNE[k]; });
       inp.addEventListener("input", () => {
-        TUNE[k] = parseFloat(inp.value); out.textContent = inp.value; applyLooks();
+        TUNE[k] = parseFloat(inp.value); out.textContent = inp.value;
+        if(k === "ink"){ paintSheet(); render(); }
       });
-      sync.push(show); show();
       body.appendChild(row);
     }
 
     const prow = document.createElement("label");
     prow.innerHTML = '<span>paper</span><input type="color"><b></b>';
     const pin = prow.querySelector("input");
-    const psync = () => { pin.value = TUNE.paper; };
-    pin.addEventListener("input", () => { TUNE.paper = pin.value; applyLooks(); });
-    sync.push(psync); psync();
+    sync.push(() => { pin.value = TUNE.paper; });
+    pin.addEventListener("input", () => { TUNE.paper = pin.value; paintSheet(); render(); });
     body.appendChild(prow);
 
     const out = document.createElement("pre");
     out.hidden = true;
     const row = document.createElement("div");
     row.className = "agit-row";
-
     const mk = (label, fn) => {
       const b = document.createElement("button");
       b.type = "button"; b.textContent = label;
       b.addEventListener("click", fn);
       row.appendChild(b);
-      return b;
     };
-    mk("wipe", () => { holes = []; repaint(); });
+    mk("wipe", wipe);
     mk("reset", () => {
       Object.assign(TUNE, DEFAULTS);
-      sync.forEach(f => f()); applyLooks(); holes = []; repaint();
+      sync.forEach(f => f()); paintSheet(); wipe();
     });
     mk("copy", () => {
       const text = Object.keys(DEFAULTS)
@@ -2578,22 +2611,21 @@ boot().catch(()=>{ renderFrontier(); renderRecognition(); });
       out.hidden = false; out.textContent = text;
       if(navigator.clipboard) navigator.clipboard.writeText(text).catch(() => {});
     });
-
     body.appendChild(row);
     body.appendChild(out);
     const note = document.createElement("div");
     note.className = "agit-note";
     note.textContent = "arm the card, scratch, adjust, wipe, scratch again. copy hands me the numbers.";
     body.appendChild(note);
+
+    sync.forEach(f => f());
     document.body.appendChild(el);
   }
-
-  if(/[?&]tune=1\b/.test(location.search)){ applyLooks(); buildTuner(); }
+  if(/[?&]tune=1\b/.test(location.search)) buildTuner();
 
   // exposed so the headless wiring check can drive it without a pointer
-  window.__egg = { arm: arm, putBack: putBack, dig: dig, tune: TUNE,
-                   holes: () => holes.length,
-                   _holes: () => holes, _ys: () => holes.map(h => h[1]),
+  window.__egg = { arm: arm, putBack: putBack, dig: dig, wipe: wipe, tune: TUNE,
+                   strokes: () => strokes,
                    state: () => ({ armed: armed, open: open, buf: buf }) };
 })();
 </script>

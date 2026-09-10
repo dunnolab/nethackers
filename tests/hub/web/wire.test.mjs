@@ -617,12 +617,12 @@ async function pass5() {
 }
 
 // ---- pass 6: the scratch card --------------------------------------------
-// The chart sits UNDER the opening block; arming clips that block so dragging
-// scrapes the page's own text off it. jsdom has no layout or pointer, so what
-// is checked here is the state machine and the clip bookkeeping -- how it looks
-// is verified by driving Chromium and WebKit for real.
+// The chart is painted onto a canvas over the opening block's body text, so a
+// drag covers the page's own words with the drawing. jsdom has no 2d context
+// and no pointer, so what is checked here is the state machine and the guards;
+// the compositing itself is verified by driving Chromium and WebKit.
 async function pass6() {
-  console.log("\n== pass 6: the #agi scratch card ==");
+  console.log("\n== pass 6: the scratch card ==");
   const errors = [];
   const dom = makeDom(() => Promise.reject(new Error("offline")), errors);
   const { document, window } = dom.window;
@@ -635,38 +635,25 @@ async function pass6() {
 
   const about = q("#about"), chart = q("#agichart"), btn = q("#agiBtn");
   ok(about && chart && btn, "the block, the chart and the button are all on the page");
-  ok(chart.previousElementSibling !== about && !about.contains(chart),
-     "the chart is OUTSIDE the block it hides under -- inside, the clip would erase it too");
-  ok(!about.classList.contains("scratching"), "at rest: the block is not clipped");
-  ok(!chart.classList.contains("on"), "at rest: the chart is not shown");
-  ok(btn.textContent.trim() === "is it AGI?" && btn.getAttribute("aria-pressed") === "false",
-     "at rest: the button offers the question");
+  ok(chart.tagName === "CANVAS", "the chart is a canvas -- overlapping strokes have to union");
+  ok(about.contains(chart), "the chart is positioned against the block it covers");
+  ok(chart.getAttribute("role") === "img" && /is it AGI/i.test(chart.getAttribute("aria-label")),
+     "the drawing carries a described alternative for screen readers");
+  ok(!chart.classList.contains("on") && !about.classList.contains("scratching"),
+     "at rest: nothing is armed");
+  ok(btn.textContent.trim() === "solving = AGI?" && btn.getAttribute("aria-pressed") === "false",
+     "at rest: the button asks the question");
 
-  // the button arms it
   click(btn);
-  ok(about.classList.contains("scratching"), "the button clips the block");
-  ok(chart.classList.contains("on"), "...and lays the chart underneath");
+  ok(chart.classList.contains("on") && about.classList.contains("scratching"), "the button arms it");
   ok(btn.textContent.trim() === "put it back" && btn.getAttribute("aria-pressed") === "true",
      "...and becomes the way back out");
-  ok(q("#about .lead"), "the real text is still in the document, not replaced");
+  ok(q("#about .lead"), "the real text is untouched in the document -- it is covered, not removed");
 
-  // scraping punches holes into the clip path and they persist
-  const before = q("#agiclippath").getAttribute("d") || "";
-  for (let i = 0; i < 30; i++) window.__egg.dig(40 + i * 8, 60);
-  await sleep(60);
-  const after = q("#agiclippath").getAttribute("d");
-  ok(window.__egg.holes() >= 30, `scraping records the holes (${window.__egg.holes()})`);
-  ok(after.length > before.length + 500, "the clip path grows with them");
-  ok(/^M0 0H/.test(after), "the path still opens with the block's own box, so the rest stays visible");
-  await sleep(400);
-  ok(q("#agiclippath").getAttribute("d") === after, "the scratches do not heal");
-
-  // the button is a toggle, and clears what was scraped
   click(btn);
-  ok(!about.classList.contains("scratching") && !chart.classList.contains("on"),
-     "the button puts the whole page back");
-  ok(window.__egg.holes() === 0, "...and drops the scratches");
-  ok(btn.textContent.trim() === "is it AGI?", "...and offers the question again");
+  ok(!chart.classList.contains("on") && !about.classList.contains("scratching"),
+     "the button is a toggle and puts the page back");
+  ok(btn.textContent.trim() === "solving = AGI?", "...and asks the question again");
 
   // the extended-command prompt is the other way in
   ok(q("#xcmd").hidden, "at rest: the prompt is hidden");
@@ -691,16 +678,9 @@ async function pass6() {
 
   // the tuning panel is a dev tool: it must never appear for a plain visitor
   ok(!q("#agitune"), "no ?tune=1 -> the tuning panel is not built at all");
-  // ...and the knobs it drives are real, not decorative
   const t = window.__egg.tune;
-  ok(t && typeof t.r === "number" && typeof t.step === "number",
+  ok(t && typeof t.r === "number" && typeof t.soft === "number" && typeof t.paper === "string",
      "the scratch parameters are exposed as live values");
-  window.__egg.arm();
-  t.r = 40; t.rj = 0; t.sat = 0;                 // fat brush, no jitter, no flakes
-  window.__egg.dig(100, 100);
-  const radii = window.__egg._holes().map((h) => h[2]);
-  ok(radii.length === 1 && radii[0] === 40, `the brush radius knob is honoured (${radii[0]})`);
-  window.__egg.putBack();
 
   ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
   dom.window.close();
