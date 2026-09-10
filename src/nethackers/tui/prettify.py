@@ -190,7 +190,10 @@ def _opencode2(obj: dict) -> list[PrettyLine]:
         if isinstance(tokens, dict):
             output = tokens.get("output", 0)
             reasoning = tokens.get("reasoning", 0)
-            tok = sum(v for v in (output, reasoning) if isinstance(v, (int, float)))
+            if isinstance(output, (int, float)):
+                tok += int(output)
+            if isinstance(reasoning, (int, float)):
+                tok += int(reasoning)
         parts = ["done"]
         if isinstance(reason, str) and reason:
             parts.append(reason)
