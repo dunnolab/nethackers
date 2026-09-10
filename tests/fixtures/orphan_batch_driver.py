@@ -12,7 +12,6 @@ episode long enough for the test to kill this process out from under it.
 """
 
 import os
-import sys
 import time
 
 from nethackers.arena.run import run_batch

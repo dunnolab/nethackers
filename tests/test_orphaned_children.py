@@ -20,6 +20,7 @@ Both tests kill the driver the way the kernel does -- SIGKILL, no atexit, no
 NLE: the episode body and the bot are fixtures.
 """
 
+import contextlib
 import os
 import signal
 import subprocess
@@ -53,10 +54,8 @@ def _wait_gone(pids, timeout=GRACE_SECONDS):
 
 def _reap(pids):
     for pid in pids:
-        try:
+        with contextlib.suppress(OSError):
             os.kill(pid, signal.SIGKILL)
-        except OSError:
-            pass
 
 
 def test_batch_workers_die_with_a_killed_driver():
