@@ -1,4 +1,5 @@
 import subprocess
+import time
 
 from nethackers import clipboard
 
@@ -66,3 +67,18 @@ def test_copy_treats_hung_tool_as_fall_through():
 
     assert clipboard.copy("hi", run=run) is True
     assert seen == ["pbcopy", "wl-copy"]
+
+
+def test_copy_does_not_wait_for_a_forking_helper(tmp_path, monkeypatch):
+    """xclip, xsel and wl-copy fork a selection-owning child that outlives the
+    copy and inherits the parent's stdout/stderr.  Capturing those pipes makes
+    ``subprocess.run`` wait on a process that will not exit, so a copy that
+    actually worked looks like a hang and is then reported as a failure."""
+    helper = tmp_path / "forking-helper"
+    helper.write_text("#!/bin/sh\ncat > /dev/null\n( sleep 5 ) &\nexit 0\n")
+    helper.chmod(0o755)
+    monkeypatch.setattr(clipboard, "_CANDIDATES", ((str(helper),),))
+
+    started = time.monotonic()
+    assert clipboard.copy("WDJB-MJHT") is True
+    assert time.monotonic() - started < clipboard._COPY_TIMEOUT

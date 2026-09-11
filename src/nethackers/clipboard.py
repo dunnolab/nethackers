@@ -13,10 +13,12 @@ from collections.abc import Callable, Sequence
 
 Run = Callable[..., object]
 
-# Clipboard helpers normally consume stdin and exit immediately (some fork a
-# small selection-owning process first).  A broken display server can instead
-# leave them waiting forever.  Login calls this helper before it can finish
-# presenting the device code, so keep the best-effort nicety strictly bounded.
+# xclip, xsel and wl-copy fork a small child that owns the selection and lives
+# on after the copy.  Capturing its output would make ``run`` wait for that
+# child to close the inherited pipes -- i.e. until the clipboard changes hands
+# -- so the helpers' output goes to /dev/null instead.  The timeout is the
+# backstop for a genuinely stuck tool: login calls this before it can present
+# the device code, so the best-effort nicety stays strictly bounded.
 _COPY_TIMEOUT = 1.0
 
 _CANDIDATES: tuple[Sequence[str], ...] = (
@@ -33,7 +35,8 @@ def copy(text: str, *, run: Run = subprocess.run) -> bool:
     for cmd in _CANDIDATES:
         try:
             run(
-                list(cmd), input=text, text=True, check=True, capture_output=True,
+                list(cmd), input=text, text=True, check=True,
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                 timeout=_COPY_TIMEOUT,
             )
             return True
