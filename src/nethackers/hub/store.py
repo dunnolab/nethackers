@@ -802,7 +802,17 @@ class Store:
     def iter_verified_atoms(self, **filters: Any) -> list[Atom]:
         """Return verified atoms matching every ``column=value`` filter
         (AND'ed). Filter keys include solution_digest, identity, seed, plus
-        secret_fingerprint, evaluator_image, verifier_token_fingerprint.
+        secret_fingerprint, arena_major, verifier_token_fingerprint --
+        ``arena_major`` being the one every production read scopes on, since
+        it is half of the epoch key.
+
+        ``evaluator_image`` is also accepted, but it is NOT a scope: it is the
+        exact digest that produced the row, kept as provenance once the major
+        took its place in the key (design D2/I1). Filtering on it asks "which
+        bytes produced this", not "what is this comparable with", and a major
+        can legitimately span several digests -- so a read that means to scope
+        a board wants ``arena_major``, and only a provenance question wants
+        this.
         """
         return self._iter_atom_rows(
             "verified_atoms", _ITER_VERIFIED_FILTER_KEYS, "iter_verified_atoms", filters,
