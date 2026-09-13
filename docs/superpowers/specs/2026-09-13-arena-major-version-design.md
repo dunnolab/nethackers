@@ -129,10 +129,19 @@ Each: **decision — why — rejected alternative — consequence.**
   PR #66 and accepting one last reset; also rejected: deciding after a two-digest replay.
   *Consequence:* the corpus survives; the equivalence claim rests on reading the diff rather than
   on measurement, which is recorded here as the risk it is (§8).
-- **D8. No CI workflow change.** A unit test asserting the pin is classified and current catches
-  exactly what a CI step would, runs on every developer machine rather than only on pull requests,
-  and adds no YAML. *Rejected:* extending the image-pins tripwire job. *Consequence:* the forcing
-  function is a test failure (§5.4).
+- **D8. The forcing function is a unit test, plus one guard step in the re-pin workflow.** The unit
+  test asserting the pin is classified and current catches what a CI step would and runs on every
+  developer machine rather than only on pull requests. It is not sufficient on its own, though:
+  `sandbox-images.yml` commits the re-pin **straight onto the ref it was dispatched from, with no
+  PR**. Dispatched from a feature branch the test failure rides that branch's PR, which is where
+  the judgment belongs; dispatched from `main` there is no PR at all — only a red `main` nobody is
+  watching, and `main` is not branch-protected, so it can still be tagged and released. That ships a
+  hub on an unclassified pin, where every worker submission 400s and verification silently stops.
+  So the re-pin workflow itself fails, immediately after committing the new pin, if
+  `major_for(ARENA_IMAGE)` is `None`. *Rejected:* extending the image-pins staleness tripwire job
+  (a different job, with its own rebuild semantics); also rejected: relying on the unit test alone
+  and accepting the `main` gap. *Consequence:* one small step of YAML, and the forcing function is
+  now real on both dispatch paths (§5.4).
 
 ## 5. Components
 
@@ -222,12 +231,23 @@ it resolved (`eval/runner.py:225`). The worker gains no new knowledge; the hub d
 
 ### 5.4 The forcing function
 
-A unit test asserts the pinned `ARENA_IMAGE` appears in the map and carries `ARENA_MAJOR`. A
-re-pin that nobody classified fails the suite immediately, on the branch that re-pinned, and the
-fix is to add a line with an explicit number — which is exactly the moment the judgment should
-happen.
+Two halves, because the re-pin can arrive two ways.
 
-This deliberately cannot force the judgment to be *correct*, only to be *made*. See §8.
+A unit test asserts the pinned `ARENA_IMAGE` appears in the map and carries `ARENA_MAJOR`. A
+re-pin that nobody classified fails the suite immediately, and the fix is to add a line with an
+explicit number — which is exactly the moment the judgment should happen. When
+`sandbox-images.yml` was dispatched from a feature branch, that failure lands on the PR carrying
+the re-pin commit, which is where it belongs.
+
+But that workflow commits the re-pin **directly onto whatever ref it was dispatched from**, with no
+PR (its own D11). From `main` the unit test therefore has nothing to block: it only turns `main`
+red, `main` is not branch-protected, and a red `main` can still be tagged and released. So the
+workflow carries a step of its own, straight after the re-pin commit, that fails when
+`major_for(ARENA_IMAGE)` returns `None` — naming the file to edit and the decision to make
+(does this rebuild move scores: join the current major, or start the next one?). The failure is on
+the run that created the unclassified pin, not on a later, unrelated one.
+
+Both halves deliberately force the judgment to be *made*, never to be *correct*. See §8.
 
 ### 5.5 What gets surfaced
 
