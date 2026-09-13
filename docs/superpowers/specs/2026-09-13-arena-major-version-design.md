@@ -215,12 +215,15 @@ This deliberately cannot force the judgment to be *correct*, only to be *made*. 
 
 ### 5.5 What gets surfaced
 
-- Verified board rows carry `arena_major`.
+- A verified `/board` or `/elites` response carries `arena_major` on its **envelope**, beside the
+  `scope` and `tier` it already carries. Not on each row: every row in one response shares the
+  scope by construction, so a per-row copy would be redundant. A self-reported response carries no
+  such key at all, since `envelope()` drops `None` values.
 - `GET /verify/overview` carries the current major and the digests classified under it.
 
-A board row does **not** carry a single digest. A program's ~1,000 verified episodes can
-legitimately span several digests within one major, so a scalar there would be a lie. The digests
-belonging to the major are reported once, at the overview level.
+Nothing carries a single digest per row. A program's ~1,000 verified episodes can legitimately
+span several digests within one major, so a scalar there would be a lie. The digests belonging to
+the major are reported once, at the overview level.
 
 ## 6. Rollout
 
