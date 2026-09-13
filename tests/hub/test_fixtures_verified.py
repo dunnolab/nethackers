@@ -37,7 +37,7 @@ def store(tmp_path):
 
 
 def _epoch():
-    return Epoch(secret_fingerprint(DEV_HIDDEN_SECRET), ARENA_IMAGE, DEV_HIDDEN_SEEDS)
+    return Epoch(secret_fingerprint(DEV_HIDDEN_SECRET), 1, DEV_HIDDEN_SEEDS)
 
 
 def test_fixtures_populate_the_verified_tier(store):

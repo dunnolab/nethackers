@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from typing import Any
 
-from nethackers.arena_version import ARENA_MAJOR
 from nethackers.hub.objectives import IDENTITIES
 from nethackers.hub.store import Store
 from nethackers.hub.views.baseline import per_identity_fold
@@ -22,34 +21,34 @@ def _aggregate(atoms, seeds) -> dict[str, Any]:
 
 
 def read_verified(
-    store: Store, *, secret_fingerprint: str, seeds, evaluator_image: str
+    store: Store, *, secret_fingerprint: str, seeds, arena_major: int
 ) -> dict[str, Any]:
     """Read verified-tier aggregates filtered to current secret fingerprint,
-    evaluator image, and seed set. Returns per-identity aggregates (progression
+    arena major, and seed set. Returns per-identity aggregates (progression
     mean, deepest milestone, episode count) and overall progression mean."""
     return _aggregate(
         store.iter_verified_atoms(
-            secret_fingerprint=secret_fingerprint, evaluator_image=evaluator_image
+            secret_fingerprint=secret_fingerprint, arena_major=arena_major
         ),
         seeds,
     )
 
 
 def read_verified_baseline(
-    store: Store, *, secret_fingerprint: str, seeds, evaluator_image: str
+    store: Store, *, secret_fingerprint: str, seeds, arena_major: int
 ) -> dict[str, Any]:
     """Read AutoAscend's hidden-seed floor, scoped to the same epoch as
     ``read_verified`` and returned in the same shape -- so a board can put a
     program's verified number next to the floor's without reshaping either,
     and can never compute a Delta across two different measurements (a rotated
-    secret, a re-pinned arena, or a retired seed all drop out here).
+    secret, a bumped arena major, or a retired seed all drop out here).
 
     Reads the isolated ``verified_baseline_atoms`` table, so the floor is
     structurally incapable of appearing in ``read_verified``'s participant
     aggregate and vice versa."""
     return _aggregate(
         store.iter_verified_baseline_atoms(
-            secret_fingerprint=secret_fingerprint, evaluator_image=evaluator_image
+            secret_fingerprint=secret_fingerprint, arena_major=arena_major
         ),
         seeds,
     )
@@ -60,7 +59,7 @@ def verification_status(
     solution_digest: str,
     *,
     secret_fingerprint: str,
-    evaluator_image: str,
+    arena_major: int,
     seeds,
 ) -> dict[str, Any]:
     """Report verification progress for a solution: state machine
@@ -73,7 +72,7 @@ def verification_status(
             for a in store.iter_verified_atoms(
                 solution_digest=solution_digest,
                 secret_fingerprint=secret_fingerprint,
-                evaluator_image=evaluator_image,
+                arena_major=arena_major,
             )
             if a.seed in seed_set
         ]
@@ -83,7 +82,7 @@ def verification_status(
     latest = store.latest_verified_attempt(
         solution_digest,
         secret_fingerprint=secret_fingerprint,
-        arena_major=ARENA_MAJOR,
+        arena_major=arena_major,
     )
     if latest is not None:
         return {

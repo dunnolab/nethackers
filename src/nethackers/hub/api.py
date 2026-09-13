@@ -46,6 +46,7 @@ from pydantic import BaseModel
 
 from nethackers._image_pins import ARENA_IMAGE
 from nethackers.arena.seeds import secret_fingerprint as _fp
+from nethackers.arena_version import ARENA_MAJOR
 from nethackers.contracts.models import Evidence, ObjectiveSpec
 from nethackers.hub.auth import AuthError, AuthProvider, GitHubAppAuth, LocalStubAuth
 from nethackers.hub.envelope import envelope
@@ -207,7 +208,7 @@ def create_app(
             return None
         return Epoch(
             secret_fingerprint=_fp(verifier.secret),
-            evaluator_image=ARENA_IMAGE,
+            arena_major=ARENA_MAJOR,
             seeds=verifier.seeds,
         )
 
@@ -569,9 +570,9 @@ def create_app(
         fingerprint, seeds = _fp(verifier.secret), verifier.seeds
         return {
             **read_verified(store, secret_fingerprint=fingerprint, seeds=seeds,
-                            evaluator_image=ARENA_IMAGE),
+                            arena_major=ARENA_MAJOR),
             "baseline": read_verified_baseline(store, secret_fingerprint=fingerprint,
-                                               seeds=seeds, evaluator_image=ARENA_IMAGE),
+                                               seeds=seeds, arena_major=ARENA_MAJOR),
         }
 
     return app

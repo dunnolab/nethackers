@@ -16,7 +16,7 @@ from nethackers.hub.views.source import (
 
 IMAGE = "ghcr.io/dunnolab/nethackers-arena@sha256:" + "a" * 64
 OTHER_IMAGE = "ghcr.io/dunnolab/nethackers-arena@sha256:" + "b" * 64
-EPOCH = Epoch(secret_fingerprint="fp-current", evaluator_image=IMAGE, seeds=(11, 22))
+EPOCH = Epoch(secret_fingerprint="fp-current", arena_major=1, seeds=(11, 22))
 
 
 def _atom(**over):
@@ -49,15 +49,15 @@ def test_verified_source_reads_the_verified_table_and_filters_the_epoch():
     assert src.atoms_table == "verified_atoms"
     sql, params = src.where()
     assert sql == (
-        "secret_fingerprint = ? AND evaluator_image = ? AND seed IN (?, ?)"
+        "secret_fingerprint = ? AND arena_major = ? AND seed IN (?, ?)"
     )
-    assert params == ("fp-current", IMAGE, 11, 22)
+    assert params == ("fp-current", 1, 11, 22)
 
 
 def test_where_prefixes_every_column_with_the_alias():
     sql, _ = source_for("verified", EPOCH).where("a")
     assert sql == (
-        "a.secret_fingerprint = ? AND a.evaluator_image = ? AND a.seed IN (?, ?)"
+        "a.secret_fingerprint = ? AND a.arena_major = ? AND a.seed IN (?, ?)"
     )
     assert source_for("self-reported", None).where("a")[0] == "a.tier = ?"
 
@@ -70,7 +70,7 @@ def test_verified_without_a_configured_epoch_raises():
 def test_an_empty_seed_list_yields_a_never_true_predicate():
     # "seed IN ()" is a sqlite syntax error; an epoch with no seeds must match
     # nothing rather than blow up mid-request.
-    src = source_for("verified", Epoch("fp", IMAGE, ()))
+    src = source_for("verified", Epoch("fp", 1, ()))
     assert src.where() == ("1 = 0", ())
 
 
@@ -81,7 +81,7 @@ def test_unknown_tier_falls_back_to_atoms_unchanged():
     assert src.where() == ("tier = ?", ("bogus",))
 
 
-def test_verified_iter_atoms_drops_wrong_fingerprint_image_and_retired_seed(store):
+def test_verified_iter_atoms_drops_wrong_fingerprint_major_and_retired_seed(store):
     store.insert_verified_atoms(
         [_atom(seed=11), _atom(seed=99)],
         secret_fingerprint="fp-current", verifier_token_fingerprint="tok",
@@ -95,12 +95,14 @@ def test_verified_iter_atoms_drops_wrong_fingerprint_image_and_retired_seed(stor
     store.insert_verified_atoms(
         [_atom(seed=22, evaluator_image=OTHER_IMAGE)],
         secret_fingerprint="fp-current", verifier_token_fingerprint="tok",
-        arena_major=1,
+        arena_major=2,
     )
     got = source_for("verified", EPOCH).iter_atoms(store)
     assert [a.seed for a in got] == [11], (
-        "seed 99 is retired, fp-rotated is a different epoch, OTHER_IMAGE is a "
-        "re-pinned arena -- all three must drop out"
+        "seed 99 is retired, fp-rotated is a different secret, and the "
+        "OTHER_IMAGE row is a bumped arena major (2, not EPOCH's 1) -- all "
+        "three must drop out. A same-major re-pinned image must NOT drop "
+        "out; that pooling case is covered in test_arena_major_source.py"
     )
 
 

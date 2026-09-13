@@ -56,7 +56,7 @@ def store(tmp_path):
 
 
 def _epoch():
-    return Epoch(secret_fingerprint(SECRET), ARENA_IMAGE, SEEDS)
+    return Epoch(secret_fingerprint(SECRET), 1, SEEDS)
 
 
 def test_verified_keepers_lift_is_measured_against_the_verified_floor(store):

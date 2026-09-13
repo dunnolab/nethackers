@@ -38,7 +38,7 @@ def store(tmp_path):
 
 def _epoch(store):
     from nethackers.arena.seeds import secret_fingerprint
-    return Epoch(secret_fingerprint(SECRET), ARENA_IMAGE, SEEDS)
+    return Epoch(secret_fingerprint(SECRET), 1, SEEDS)
 
 
 def test_verified_elites_rank_over_the_verified_table(store):
