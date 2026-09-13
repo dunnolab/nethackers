@@ -36,6 +36,7 @@ from __future__ import annotations
 import hashlib
 import math
 from dataclasses import dataclass, replace
+from typing import Any
 
 from nethackers.arena.seeds import secret_fingerprint as _fingerprint
 from nethackers.arena_version import major_for
@@ -235,9 +236,12 @@ def register_verified_baseline(
     )
 
 
-def record_attempt(store, *, reference, secret_fingerprint, evaluator_image,
-                   verifier_token_fingerprint, status, failure_kind, message,
-                   identities_done, now):
+def record_attempt(
+    store: Store, *, reference: SolutionReference, secret_fingerprint: str,
+    evaluator_image: str, verifier_token_fingerprint: str, status: str,
+    failure_kind: str | None, message: str | None, identities_done: int,
+    now: str,
+) -> None:
     """Record a program-level verification attempt (success or failure).
 
     The major is derived from the reported image rather than taken from the
@@ -334,7 +338,7 @@ def register_verified(
 _DETERMINISTIC = frozenset({"build_failed", "crashed", "hung"})
 
 
-def verify_candidates(store, *, secret_fingerprint, arena_major, seeds, limit):
+def verify_candidates(store, *, secret_fingerprint, arena_major: int, seeds, limit):
     """Programs still needing verified coverage under this secret epoch and
     arena major, least-covered first -- the verifier node's work queue
     (``GET /verify/candidates``, Tasks 10/11's polling loop).
@@ -350,7 +354,7 @@ def verify_candidates(store, *, secret_fingerprint, arena_major, seeds, limit):
     """
     seed_set = frozenset(seeds)
     total = len(IDENTITIES) * len(seeds)
-    out = []
+    out: list[dict[str, Any]] = []
     for sol in store.iter_solutions():
         digest = sol["digest"]
         latest = store.latest_verified_attempt(
