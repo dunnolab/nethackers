@@ -44,7 +44,6 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
-from nethackers._image_pins import ARENA_IMAGE
 from nethackers.arena.seeds import secret_fingerprint as _fp
 from nethackers.arena_version import ARENA_MAJOR
 from nethackers.contracts.models import Evidence, ObjectiveSpec
@@ -201,9 +200,12 @@ def create_app(
 
     def _epoch() -> Epoch | None:
         """The one verified epoch this hub can currently read, or None when no
-        verifier is configured. ``ARENA_IMAGE`` is the pinned arena the hub
-        accepts evidence from, so it is also the only image whose verified
-        atoms are comparable."""
+        verifier is configured. ``ARENA_MAJOR`` is this hub's current arena
+        major -- the comparability key every verified read is scoped to now,
+        not any single pinned image digest. A verified atom reads back through
+        this epoch as long as the digest it was written under classifies to
+        this major in ``arena_version``; which exact digest that was is
+        provenance, not part of the scope."""
         if verifier is None:
             return None
         return Epoch(
@@ -469,7 +471,7 @@ def create_app(
                 secret_fingerprint=body.secret_fingerprint,
                 verifier_token_fingerprint=tok_fp,
                 now=datetime.now(UTC).isoformat(),
-                expected_image=ARENA_IMAGE,
+                current_major=ARENA_MAJOR,
                 hub_secret=verifier.secret,
                 seeds=verifier.seeds,
             )
@@ -504,7 +506,7 @@ def create_app(
                 evidence=Evidence.from_dict(body.evidence),
                 secret_fingerprint=body.secret_fingerprint,
                 verifier_token_fingerprint=tok_fp,
-                expected_image=ARENA_IMAGE,
+                current_major=ARENA_MAJOR,
                 hub_secret=verifier.secret,
                 seeds=verifier.seeds,
             )
@@ -526,14 +528,17 @@ def create_app(
             tok_fp = resolve_verifier(token, verifier)
         except VerifierAuthError as e:
             raise HTTPException(status_code=401, detail=str(e)) from e
-        record_attempt(
-            store, reference=SolutionReference(**body.reference),
-            secret_fingerprint=body.secret_fingerprint,
-            evaluator_image=body.evaluator_image,
-            verifier_token_fingerprint=tok_fp, status=body.status,
-            failure_kind=body.failure_kind,
-            message=body.message, identities_done=body.identities_done,
-            now=datetime.now(UTC).isoformat())
+        try:
+            record_attempt(
+                store, reference=SolutionReference(**body.reference),
+                secret_fingerprint=body.secret_fingerprint,
+                evaluator_image=body.evaluator_image,
+                verifier_token_fingerprint=tok_fp, status=body.status,
+                failure_kind=body.failure_kind,
+                message=body.message, identities_done=body.identities_done,
+                now=datetime.now(UTC).isoformat())
+        except VerifyError as e:
+            raise HTTPException(status_code=400, detail=f"{type(e).__name__}: {e}") from e
         return {"ok": True}
 
     @app.get("/verify/candidates")
@@ -549,7 +554,7 @@ def create_app(
             raise HTTPException(status_code=401, detail=str(e)) from e
         rows = verify_candidates(
             store, secret_fingerprint=_fp(verifier.secret),
-            evaluator_image=ARENA_IMAGE, seeds=verifier.seeds, limit=limit,
+            arena_major=ARENA_MAJOR, seeds=verifier.seeds, limit=limit,
         )
         return envelope(rows)
 
