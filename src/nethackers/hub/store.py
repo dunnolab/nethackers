@@ -32,6 +32,7 @@ already-migrated DB.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 from pathlib import Path
@@ -41,9 +42,84 @@ from nethackers.arena_version import major_for
 from nethackers.contracts.models import Atom
 from nethackers.hub.ids import program_id
 
+logger = logging.getLogger(__name__)
+
+# The three verified tables' DDL, pulled out of _SCHEMA below and named so
+# _migrate_add_arena_major can recreate exactly ONE renamed-away table at a
+# time via a plain conn.execute() (see that function). conn.executescript()
+# -- used for _SCHEMA as a whole everywhere else -- always issues an
+# implicit COMMIT before it runs, which would silently end the migration's
+# own explicit transaction and reopen the very stranded-``_old``-table
+# failure mode that transaction exists to prevent.
+_VERIFIED_ATOMS_DDL = """
+CREATE TABLE IF NOT EXISTS verified_atoms (
+    solution_digest TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    tier TEXT NOT NULL,
+    identity TEXT NOT NULL,
+    seed INTEGER NOT NULL,
+    progression REAL NOT NULL,
+    milestone TEXT,
+    ascended INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    turns INTEGER NOT NULL,
+    steps INTEGER NOT NULL,
+    evaluator_image TEXT NOT NULL,
+    secret_fingerprint TEXT NOT NULL,
+    verifier_token_fingerprint TEXT NOT NULL,
+    arena_major INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(solution_digest, identity, seed, secret_fingerprint, arena_major)
+);
+"""
+_VERIFIED_BASELINE_ATOMS_DDL = """
+CREATE TABLE IF NOT EXISTS verified_baseline_atoms (
+    solution_digest TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    tier TEXT NOT NULL,
+    identity TEXT NOT NULL,
+    seed INTEGER NOT NULL,
+    progression REAL NOT NULL,
+    milestone TEXT,
+    ascended INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    turns INTEGER NOT NULL,
+    steps INTEGER NOT NULL,
+    evaluator_image TEXT NOT NULL,
+    secret_fingerprint TEXT NOT NULL,
+    verifier_token_fingerprint TEXT NOT NULL,
+    arena_major INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(identity, seed, secret_fingerprint, arena_major)
+);
+"""
+_VERIFIED_ATTEMPTS_DDL = """
+CREATE TABLE IF NOT EXISTS verified_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    solution_digest TEXT NOT NULL,
+    secret_fingerprint TEXT NOT NULL,
+    evaluator_image TEXT NOT NULL,
+    arena_major INTEGER NOT NULL,
+    verifier_token_fingerprint TEXT NOT NULL,
+    status TEXT NOT NULL,
+    failure_kind TEXT,
+    message TEXT,
+    identities_done INTEGER NOT NULL,
+    at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
+# Keyed by table name so _migrate_add_arena_major can look up exactly the
+# one CREATE TABLE statement it needs after renaming that table away.
+_VERIFIED_TABLE_DDL: dict[str, str] = {
+    "verified_atoms": _VERIFIED_ATOMS_DDL,
+    "verified_baseline_atoms": _VERIFIED_BASELINE_ATOMS_DDL,
+    "verified_attempts": _VERIFIED_ATTEMPTS_DDL,
+}
+
 # The whole DDL (task-5-context.md), verbatim. CREATE TABLE IF NOT EXISTS
 # throughout makes init_schema() idempotent.
-_SCHEMA = """
+_SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS solutions (
     digest TEXT PRIMARY KEY,
     repo TEXT, commit_sha TEXT, owner TEXT, root TEXT, entrypoint TEXT,
@@ -74,57 +150,7 @@ CREATE TABLE IF NOT EXISTS baseline_atoms (
     evaluator_image TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE TABLE IF NOT EXISTS verified_atoms (
-    solution_digest TEXT NOT NULL,
-    owner TEXT NOT NULL,
-    tier TEXT NOT NULL,
-    identity TEXT NOT NULL,
-    seed INTEGER NOT NULL,
-    progression REAL NOT NULL,
-    milestone TEXT,
-    ascended INTEGER NOT NULL,
-    status TEXT NOT NULL,
-    turns INTEGER NOT NULL,
-    steps INTEGER NOT NULL,
-    evaluator_image TEXT NOT NULL,
-    secret_fingerprint TEXT NOT NULL,
-    verifier_token_fingerprint TEXT NOT NULL,
-    arena_major INTEGER NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(solution_digest, identity, seed, secret_fingerprint, arena_major)
-);
-CREATE TABLE IF NOT EXISTS verified_baseline_atoms (
-    solution_digest TEXT NOT NULL,
-    owner TEXT NOT NULL,
-    tier TEXT NOT NULL,
-    identity TEXT NOT NULL,
-    seed INTEGER NOT NULL,
-    progression REAL NOT NULL,
-    milestone TEXT,
-    ascended INTEGER NOT NULL,
-    status TEXT NOT NULL,
-    turns INTEGER NOT NULL,
-    steps INTEGER NOT NULL,
-    evaluator_image TEXT NOT NULL,
-    secret_fingerprint TEXT NOT NULL,
-    verifier_token_fingerprint TEXT NOT NULL,
-    arena_major INTEGER NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(identity, seed, secret_fingerprint, arena_major)
-);
-CREATE TABLE IF NOT EXISTS verified_attempts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    solution_digest TEXT NOT NULL,
-    secret_fingerprint TEXT NOT NULL,
-    evaluator_image TEXT NOT NULL,
-    arena_major INTEGER NOT NULL,
-    verifier_token_fingerprint TEXT NOT NULL,
-    status TEXT NOT NULL,
-    failure_kind TEXT,
-    message TEXT,
-    identities_done INTEGER NOT NULL,
-    at TEXT NOT NULL DEFAULT (datetime('now'))
-);
+{_VERIFIED_ATOMS_DDL}{_VERIFIED_BASELINE_ATOMS_DDL}{_VERIFIED_ATTEMPTS_DDL}
 CREATE TABLE IF NOT EXISTS lineage (
     child_digest TEXT NOT NULL REFERENCES solutions(digest),
     parent_digest TEXT NOT NULL,         -- may be an external/base solution: NO FK
@@ -274,19 +300,48 @@ def _migrate_add_program_id(conn: sqlite3.Connection) -> None:
 def _migrate_add_arena_major(conn: sqlite3.Connection) -> int:
     """Re-key the three verified tables from ``evaluator_image`` onto
     ``arena_major``, backfilling the major from each row's own digest.
-    Returns the number of rows dropped as duplicates. No-op (returns 0) on a
-    fresh or already-migrated DB.
+    Returns the number of rows dropped as duplicates (the caller, currently
+    only ``init_schema``, is expected to surface a non-zero count -- see its
+    call site). No-op (returns 0) on a fresh or already-migrated DB.
 
     Rename-and-copy rather than ``ALTER TABLE ADD COLUMN``: sqlite cannot add
     a NOT NULL column without a default to a non-empty table, and cannot alter
     a UNIQUE constraint at all. Same shape as
-    ``_migrate_drop_objective_digest``.
+    ``_migrate_drop_objective_digest``, but each table's rename, recreate,
+    backfill and drop run inside ONE EXPLICIT transaction
+    (``BEGIN IMMEDIATE`` ... ``with conn:``'s implicit commit/rollback),
+    rather than relying on ``with conn:`` alone: sqlite3's default implicit
+    transaction handling never opens a transaction for a bare DDL statement
+    (``ALTER TABLE`` / ``CREATE TABLE`` / ``DROP TABLE``), and
+    ``executescript()`` -- used everywhere else in this module for ``_SCHEMA``
+    as a whole -- unconditionally COMMITs any open transaction before it runs.
+    Combined, those two facts meant the old version's rename and its empty
+    recreated table were ALREADY DURABLE before the insert loop even started,
+    so a failure partway through the loop (disk full, ``database is locked``,
+    a killed process) rolled back only the inserts, leaving the original data
+    stranded in ``{table}_old`` behind a NEW, EMPTY ``{table}`` that already
+    has the ``arena_major`` column -- which the guard below reads as
+    "already migrated" and will happily skip forever. Explicitly opening the
+    transaction before the rename (and recreating with a single
+    ``conn.execute(_VERIFIED_TABLE_DDL[table])`` rather than
+    ``executescript``, so nothing commits early) makes the whole per-table
+    sequence atomic: any raise anywhere in it leaves that table exactly as it
+    was found, under its original name, with nothing renamed or dropped.
+
+    Belt-and-suspenders on top of that atomicity: if a ``{table}_old`` is
+    ever found lying around at the top of an iteration, this refuses to
+    proceed rather than silently trusting the shape guard. The explicit
+    transaction above should make this unreachable through this function's
+    own mid-run failures going forward, but a table by this name could still
+    exist from a run of the pre-fix version against a real database, or from
+    an operator's own out-of-band intervention -- and treating either as
+    "nothing to do" would abandon whatever real evaluation data is sitting
+    in it rather than surface the question to a human.
 
     Rows are carried over in ``rowid`` order through ``INSERT OR IGNORE``, so
     when pooling two digests into one major collides a cell, the EARLIEST row
     wins -- arbitrary but deterministic, and harmless given the two digests are
-    declared to score alike (design D7). The count of losers is returned rather
-    than logged so it is assertable in a test.
+    declared to score alike (design D7).
 
     An unclassified digest raises instead of guessing a major: storing a row
     under a guessed major would silently place it on a board it was never
@@ -294,6 +349,19 @@ def _migrate_add_arena_major(conn: sqlite3.Connection) -> int:
     """
     dropped = 0
     for table in ("verified_atoms", "verified_baseline_atoms", "verified_attempts"):
+        old_name = f"{table}_old"
+        stranded = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+            (old_name,),
+        ).fetchone()
+        if stranded:
+            raise RuntimeError(
+                f"{old_name} already exists -- a previous arena_major "
+                f"migration attempt on {table} did not finish cleanly. "
+                f"Refusing to guess whether {table} already holds every row "
+                f"from it; inspect {old_name} by hand before retrying."
+            )
+
         cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
         if not cols or "arena_major" in cols:
             continue   # fresh or already-migrated -> nothing to do
@@ -317,8 +385,9 @@ def _migrate_add_arena_major(conn: sqlite3.Connection) -> int:
         insert_cols = ", ".join([*carried, "arena_major"])
         placeholders = ", ".join("?" for _ in range(len(carried) + 1))
         with conn:
-            conn.execute(f"ALTER TABLE {table} RENAME TO {table}_old")
-            conn.executescript(_SCHEMA)   # recreates the new shape (IF NOT EXISTS)
+            conn.execute("BEGIN IMMEDIATE")
+            conn.execute(f"ALTER TABLE {table} RENAME TO {old_name}")
+            conn.execute(_VERIFIED_TABLE_DDL[table])   # this table only, not executescript
             for row, major in zip(rows, majors, strict=True):
                 cur = conn.execute(
                     f"INSERT OR IGNORE INTO {table} ({insert_cols}) "
@@ -326,7 +395,7 @@ def _migrate_add_arena_major(conn: sqlite3.Connection) -> int:
                     (*row, major),
                 )
                 dropped += 1 - cur.rowcount
-            conn.execute(f"DROP TABLE {table}_old")
+            conn.execute(f"DROP TABLE {old_name}")
     return dropped
 
 
@@ -395,14 +464,23 @@ class Store:
         existing DB just sheds it; also a no-op once already dropped).
         Finally re-key the three verified tables from ``evaluator_image``
         onto ``arena_major``, backfilling each row's major from its own
-        digest (again a no-op on a fresh or already-migrated DB)."""
+        digest (again a no-op on a fresh or already-migrated DB). That last
+        migration can pool rows that collide once re-keyed, dropping the
+        later duplicate (see ``_migrate_add_arena_major``) -- a non-zero
+        count is logged at WARNING rather than silently discarded, since
+        this runs once, unattended, over irreplaceable evaluation data."""
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
         _migrate_drop_objective_digest(self._conn)
         _migrate_drop_objectives_table(self._conn)
         _migrate_add_program_id(self._conn)
         _migrate_drop_elite_pool(self._conn)
-        _migrate_add_arena_major(self._conn)
+        dropped = _migrate_add_arena_major(self._conn)
+        if dropped:
+            logger.warning(
+                "arena_major migration pooled %d verified row(s) as "
+                "duplicates once re-keyed off evaluator_image", dropped,
+            )
 
     def upsert_solution(
         self,
