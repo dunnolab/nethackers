@@ -34,6 +34,7 @@ bookkeeping, batching) on top of this write path.
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 from dataclasses import dataclass, replace
 from typing import Any
@@ -46,6 +47,8 @@ from nethackers.hub.ids import AUTOASCEND_ID, program_id as _program_id
 from nethackers.hub.objectives import IDENTITIES
 from nethackers.hub.store import Store
 from nethackers.hub.validate import SolutionReference
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -246,12 +249,46 @@ def record_attempt(
 
     The major is derived from the reported image rather than taken from the
     caller, so an attempt row lands in the same scope the evidence would have.
-    An unclassified image raises: a row stored under a guessed major would make
+    An UNCLASSIFIED image raises: a row stored under a guessed major would make
     ``verify_candidates`` skip a program on the strength of a failure that
     never happened in this scope (design invariant I2).
+
+    A WRONG-MAJOR image -- classified, but not at the hub's current major --
+    is deliberately NOT rejected here, even though ``_check_hidden_evidence``
+    rejects the evidence for that same submission. The asymmetry is the point,
+    because the two rows do different jobs:
+
+    - Evidence is scored data. Admitting it at the wrong major would put
+      incomparable episodes on the live board, so it must fail loudly and the
+      node operator must see the 400 and upgrade.
+    - An attempt is an audit record of what actually happened on whichever node
+      ran it. Storing it at the major it genuinely ran under is the truthful
+      thing to do, and it is also self-limiting: ``verify_candidates`` reads
+      the hub's own major, so an attempt filed at an older one can never
+      suppress a candidate on the live board. It is inert rather than wrong.
+
+    So a wrong-major attempt is a write into a scope nothing currently reads --
+    which is exactly what an audit trail for a stale node should be. An
+    unclassified image has no truthful scope to be filed under at all, which is
+    why that one is the rejection.
+
+    The rejection is logged before it is raised. The only production caller is
+    ``POST /verify/attempts``, whose 400 the worker daemon swallows in its
+    per-candidate ``except Exception: continue`` -- so without this line the
+    operator loses both the attempt row they used to get AND any trace that a
+    submission was refused.
     """
     arena_major = major_for(evaluator_image)
     if arena_major is None:
+        logger.warning(
+            "refusing a verification attempt for %s@%s: evaluator_image %r is "
+            "not classified in ARENA_MAJOR_BY_DIGEST, so it has no arena major "
+            "to file the attempt under. The reported attempt was %s (%s). "
+            "Classify the digest in src/nethackers/arena_version.py or point "
+            "the node at a classified arena image.",
+            reference.repo, reference.commit, evaluator_image, status,
+            failure_kind or "no failure_kind",
+        )
         raise ParityMismatch(
             f"evaluator_image {evaluator_image!r} is not a classified arena image"
         )
