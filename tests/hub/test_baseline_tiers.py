@@ -34,6 +34,7 @@ def store(tmp_path):
     s.insert_verified_baseline_atoms(                  # hidden-seed floor
         [_aa(11, 0.1), _aa(22, 0.3)],
         secret_fingerprint=secret_fingerprint(SECRET), verifier_token_fingerprint="tok",
+        arena_major=1,
     )
     return s
 

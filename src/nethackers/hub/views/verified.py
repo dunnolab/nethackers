@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from nethackers.arena_version import ARENA_MAJOR
 from nethackers.hub.objectives import IDENTITIES
 from nethackers.hub.store import Store
 from nethackers.hub.views.baseline import per_identity_fold
@@ -82,7 +83,7 @@ def verification_status(
     latest = store.latest_verified_attempt(
         solution_digest,
         secret_fingerprint=secret_fingerprint,
-        evaluator_image=evaluator_image,
+        arena_major=ARENA_MAJOR,
     )
     if latest is not None:
         return {

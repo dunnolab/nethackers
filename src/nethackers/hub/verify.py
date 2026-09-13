@@ -38,6 +38,7 @@ import math
 from dataclasses import dataclass, replace
 
 from nethackers.arena.seeds import secret_fingerprint as _fingerprint
+from nethackers.arena_version import ARENA_MAJOR
 from nethackers.contracts.models import Evidence
 from nethackers.hub.atoms import evidence_to_atoms
 from nethackers.hub.ids import AUTOASCEND_ID, program_id as _program_id
@@ -199,6 +200,7 @@ def register_verified_baseline(
     inserted = store.insert_verified_baseline_atoms(
         atoms, secret_fingerprint=secret_fingerprint,
         verifier_token_fingerprint=verifier_token_fingerprint,
+        arena_major=ARENA_MAJOR,
     )
 
     seed_set = frozenset(seeds)
@@ -222,6 +224,7 @@ def record_attempt(store, *, reference, secret_fingerprint, evaluator_image,
         solution_digest=f"{reference.repo}@{reference.commit}",
         secret_fingerprint=secret_fingerprint,
         evaluator_image=evaluator_image,
+        arena_major=ARENA_MAJOR,
         verifier_token_fingerprint=verifier_token_fingerprint,
         status=status, failure_kind=failure_kind, message=message,
         identities_done=identities_done, at=now)
@@ -274,6 +277,7 @@ def register_verified(
     inserted = store.insert_verified_atoms(
         atoms, secret_fingerprint=secret_fingerprint,
         verifier_token_fingerprint=verifier_token_fingerprint,
+        arena_major=ARENA_MAJOR,
     )
 
     covered = [
@@ -319,7 +323,7 @@ def verify_candidates(store, *, secret_fingerprint, evaluator_image, seeds, limi
     for sol in store.iter_solutions():
         digest = sol["digest"]
         latest = store.latest_verified_attempt(
-            digest, secret_fingerprint=secret_fingerprint, evaluator_image=evaluator_image
+            digest, secret_fingerprint=secret_fingerprint, arena_major=ARENA_MAJOR
         )
         if latest and latest["status"] == "failed" and latest["failure_kind"] in _DETERMINISTIC:
             continue

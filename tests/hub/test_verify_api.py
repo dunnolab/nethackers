@@ -110,7 +110,7 @@ def test_post_verify_attempt_records_failure(tmp_path):
     r = client.post("/verify/attempts", json=body, headers={"Authorization": f"Bearer {VTOKEN}"})
     assert r.status_code == 200
     latest = store.latest_verified_attempt(f"{REPO}@{SHA}",
-                secret_fingerprint=secret_fingerprint(CFG.secret), evaluator_image=ARENA_IMAGE)
+                secret_fingerprint=secret_fingerprint(CFG.secret), arena_major=1)
     assert latest["status"] == "failed" and latest["failure_kind"] == "build_failed"
 
 
@@ -124,6 +124,7 @@ def test_candidates_excludes_fully_covered_and_failed(tmp_path):
                           owner="b", root=".", entrypoint="bot.py", registered_at="t")
     store.insert_verified_attempt(solution_digest="github.com/b/x@" + "b" * 40,
         secret_fingerprint=secret_fingerprint(CFG.secret), evaluator_image=ARENA_IMAGE,
+        arena_major=1,
         verifier_token_fingerprint="t", status="failed", failure_kind="build_failed",
         message="x", identities_done=0, at="t")
     r = client.get("/verify/candidates?limit=8", headers={"Authorization": f"Bearer {VTOKEN}"})

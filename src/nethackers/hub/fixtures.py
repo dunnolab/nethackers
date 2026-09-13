@@ -81,6 +81,7 @@ from dataclasses import replace
 from nethackers._image_pins import ARENA_IMAGE
 from nethackers.arena.progress import ACHIEVEMENTS
 from nethackers.arena.seeds import secret_fingerprint
+from nethackers.arena_version import ARENA_MAJOR
 from nethackers.contracts.models import Atom, ResultStatus
 from nethackers.hub.store import Store
 from nethackers.hub.views.attainment import update_attainment
@@ -264,6 +265,7 @@ def load_fixtures(store: Store, *, now: str = "2026-01-01T00:00:00Z") -> None:
     store.insert_verified_atoms(
         verified, secret_fingerprint=fingerprint,
         verifier_token_fingerprint="offline-verifier",
+        arena_major=ARENA_MAJOR,
     )
     floor = [
         replace(
@@ -283,6 +285,7 @@ def load_fixtures(store: Store, *, now: str = "2026-01-01T00:00:00Z") -> None:
     store.insert_verified_baseline_atoms(
         floor, secret_fingerprint=fingerprint,
         verifier_token_fingerprint="offline-verifier",
+        arena_major=ARENA_MAJOR,
     )
 
 

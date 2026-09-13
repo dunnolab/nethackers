@@ -85,14 +85,17 @@ def test_verified_iter_atoms_drops_wrong_fingerprint_image_and_retired_seed(stor
     store.insert_verified_atoms(
         [_atom(seed=11), _atom(seed=99)],
         secret_fingerprint="fp-current", verifier_token_fingerprint="tok",
+        arena_major=1,
     )
     store.insert_verified_atoms(
         [_atom(seed=22)],
         secret_fingerprint="fp-rotated", verifier_token_fingerprint="tok",
+        arena_major=1,
     )
     store.insert_verified_atoms(
         [_atom(seed=22, evaluator_image=OTHER_IMAGE)],
         secret_fingerprint="fp-current", verifier_token_fingerprint="tok",
+        arena_major=1,
     )
     got = source_for("verified", EPOCH).iter_atoms(store)
     assert [a.seed for a in got] == [11], (
@@ -105,6 +108,7 @@ def test_verified_source_reads_the_verified_baseline_table(store):
     store.insert_verified_baseline_atoms(
         [_atom(owner="autoascend", tier="baseline", seed=11)],
         secret_fingerprint="fp-current", verifier_token_fingerprint="tok",
+        arena_major=1,
     )
     store.insert_baseline_atoms([_atom(owner="autoascend", tier="baseline", seed=11)])
 

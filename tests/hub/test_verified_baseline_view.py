@@ -30,7 +30,8 @@ def _atom(seed, identity="val-dwa-law-fem", prog=0.4, image=IMG, milestone="Dlvl
 
 def _insert(store, atoms, *, fp=FP):
     store.insert_verified_baseline_atoms(
-        atoms, secret_fingerprint=fp, verifier_token_fingerprint=TOKFP
+        atoms, secret_fingerprint=fp, verifier_token_fingerprint=TOKFP,
+        arena_major=1,
     )
 
 

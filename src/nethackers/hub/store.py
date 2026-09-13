@@ -37,6 +37,7 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from nethackers.arena_version import major_for
 from nethackers.contracts.models import Atom
 from nethackers.hub.ids import program_id
 
@@ -88,8 +89,9 @@ CREATE TABLE IF NOT EXISTS verified_atoms (
     evaluator_image TEXT NOT NULL,
     secret_fingerprint TEXT NOT NULL,
     verifier_token_fingerprint TEXT NOT NULL,
+    arena_major INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(solution_digest, identity, seed, secret_fingerprint, evaluator_image)
+    UNIQUE(solution_digest, identity, seed, secret_fingerprint, arena_major)
 );
 CREATE TABLE IF NOT EXISTS verified_baseline_atoms (
     solution_digest TEXT NOT NULL,
@@ -106,14 +108,16 @@ CREATE TABLE IF NOT EXISTS verified_baseline_atoms (
     evaluator_image TEXT NOT NULL,
     secret_fingerprint TEXT NOT NULL,
     verifier_token_fingerprint TEXT NOT NULL,
+    arena_major INTEGER NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(identity, seed, secret_fingerprint, evaluator_image)
+    UNIQUE(identity, seed, secret_fingerprint, arena_major)
 );
 CREATE TABLE IF NOT EXISTS verified_attempts (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     solution_digest TEXT NOT NULL,
     secret_fingerprint TEXT NOT NULL,
     evaluator_image TEXT NOT NULL,
+    arena_major INTEGER NOT NULL,
     verifier_token_fingerprint TEXT NOT NULL,
     status TEXT NOT NULL,
     failure_kind TEXT,
@@ -178,14 +182,16 @@ _ITER_ATOMS_FILTER_KEYS: frozenset[str] = frozenset(
     }
 )
 
-_VERIFIED_EXTRA_COLUMNS = ("secret_fingerprint", "verifier_token_fingerprint")
+_VERIFIED_EXTRA_COLUMNS = (
+    "secret_fingerprint", "verifier_token_fingerprint", "arena_major")
 _ITER_VERIFIED_FILTER_KEYS = _ITER_ATOMS_FILTER_KEYS | {
     "secret_fingerprint", "evaluator_image", "verifier_token_fingerprint",
+    "arena_major",
 }
 
 _ATTEMPT_COLUMNS = ("solution_digest", "secret_fingerprint", "evaluator_image",
-                    "verifier_token_fingerprint", "status", "failure_kind", "message",
-                    "identities_done", "at")
+                    "arena_major", "verifier_token_fingerprint", "status",
+                    "failure_kind", "message", "identities_done", "at")
 
 
 def _migrate_drop_objective_digest(conn: sqlite3.Connection) -> None:
@@ -265,6 +271,65 @@ def _migrate_add_program_id(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+def _migrate_add_arena_major(conn: sqlite3.Connection) -> int:
+    """Re-key the three verified tables from ``evaluator_image`` onto
+    ``arena_major``, backfilling the major from each row's own digest.
+    Returns the number of rows dropped as duplicates. No-op (returns 0) on a
+    fresh or already-migrated DB.
+
+    Rename-and-copy rather than ``ALTER TABLE ADD COLUMN``: sqlite cannot add
+    a NOT NULL column without a default to a non-empty table, and cannot alter
+    a UNIQUE constraint at all. Same shape as
+    ``_migrate_drop_objective_digest``.
+
+    Rows are carried over in ``rowid`` order through ``INSERT OR IGNORE``, so
+    when pooling two digests into one major collides a cell, the EARLIEST row
+    wins -- arbitrary but deterministic, and harmless given the two digests are
+    declared to score alike (design D7). The count of losers is returned rather
+    than logged so it is assertable in a test.
+
+    An unclassified digest raises instead of guessing a major: storing a row
+    under a guessed major would silently place it on a board it was never
+    measured for (design invariant I2).
+    """
+    dropped = 0
+    for table in ("verified_atoms", "verified_baseline_atoms", "verified_attempts"):
+        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+        if not cols or "arena_major" in cols:
+            continue   # fresh or already-migrated -> nothing to do
+        carried = [c for c in cols if c != "id"]
+        col_list = ", ".join(carried)
+        rows = conn.execute(
+            f"SELECT {col_list} FROM {table} ORDER BY rowid").fetchall()
+
+        image_at = carried.index("evaluator_image")
+        majors = []
+        for row in rows:
+            major = major_for(row[image_at])
+            if major is None:
+                raise ValueError(
+                    f"{table} holds an unclassified evaluator_image "
+                    f"{row[image_at]!r}; add it to ARENA_MAJOR_BY_DIGEST "
+                    f"before migrating"
+                )
+            majors.append(major)
+
+        insert_cols = ", ".join([*carried, "arena_major"])
+        placeholders = ", ".join("?" for _ in range(len(carried) + 1))
+        with conn:
+            conn.execute(f"ALTER TABLE {table} RENAME TO {table}_old")
+            conn.executescript(_SCHEMA)   # recreates the new shape (IF NOT EXISTS)
+            for row, major in zip(rows, majors, strict=True):
+                cur = conn.execute(
+                    f"INSERT OR IGNORE INTO {table} ({insert_cols}) "
+                    f"VALUES ({placeholders})",
+                    (*row, major),
+                )
+                dropped += 1 - cur.rowcount
+            conn.execute(f"DROP TABLE {table}_old")
+    return dropped
+
+
 class Store:
     """A sqlite3 data layer over the hub's schema, with ONE CONNECTION PER
     THREAD.
@@ -327,13 +392,17 @@ class Store:
         ``objective_digest`` column) to the identity-keyed shape -- a no-op
         on a fresh or already-migrated DB (Task A4) -- and drop the legacy
         ``elite_pool`` table (Part 2: ``/elites`` is now a live query, so an
-        existing DB just sheds it; also a no-op once already dropped)."""
+        existing DB just sheds it; also a no-op once already dropped).
+        Finally re-key the three verified tables from ``evaluator_image``
+        onto ``arena_major``, backfilling each row's major from its own
+        digest (again a no-op on a fresh or already-migrated DB)."""
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
         _migrate_drop_objective_digest(self._conn)
         _migrate_drop_objectives_table(self._conn)
         _migrate_add_program_id(self._conn)
         _migrate_drop_elite_pool(self._conn)
+        _migrate_add_arena_major(self._conn)
 
     def upsert_solution(
         self,
@@ -497,9 +566,9 @@ class Store:
         ]
 
     def _insert_atom_rows(self, table: str, atoms: list[Atom], *,
-                          extra: tuple[str, ...] = ()) -> int:
+                          extra: tuple[Any, ...] = ()) -> int:
         """``INSERT OR IGNORE`` ``atoms`` into ``table``, appending ``extra``
-        (the epoch/attribution columns the verified tables carry beyond
+        (the major/attribution columns the verified tables carry beyond
         ``_ATOM_COLUMNS``) to every row. Returns rows actually inserted --
         dedup on the table's own UNIQUE key makes a re-submit a no-op.
 
@@ -579,14 +648,14 @@ class Store:
 
     def insert_verified_atoms(
         self, atoms: list[Atom], *, secret_fingerprint: str,
-        verifier_token_fingerprint: str
+        verifier_token_fingerprint: str, arena_major: int
     ) -> int:
         """Insert verified atoms into the isolated ``verified_atoms`` table
         (dedup on UNIQUE key, no FKs). Returns the number of rows inserted.
         """
         return self._insert_atom_rows(
             "verified_atoms", atoms,
-            extra=(secret_fingerprint, verifier_token_fingerprint),
+            extra=(secret_fingerprint, verifier_token_fingerprint, arena_major),
         )
 
     def iter_verified_atoms(self, **filters: Any) -> list[Atom]:
@@ -600,7 +669,7 @@ class Store:
 
     def insert_verified_baseline_atoms(
         self, atoms: list[Atom], *, secret_fingerprint: str,
-        verifier_token_fingerprint: str
+        verifier_token_fingerprint: str, arena_major: int
     ) -> int:
         """Insert AutoAscend's hidden-seed floor into the isolated
         ``verified_baseline_atoms`` table (dedup on UNIQUE key, no FKs).
@@ -619,7 +688,7 @@ class Store:
         """
         return self._insert_atom_rows(
             "verified_baseline_atoms", atoms,
-            extra=(secret_fingerprint, verifier_token_fingerprint),
+            extra=(secret_fingerprint, verifier_token_fingerprint, arena_major),
         )
 
     def iter_verified_baseline_atoms(self, **filters: Any) -> list[Atom]:
@@ -631,29 +700,30 @@ class Store:
         )
 
     def insert_verified_attempt(self, *, solution_digest, secret_fingerprint,
-                                evaluator_image, verifier_token_fingerprint, status,
-                                failure_kind, message, identities_done, at):
+                                evaluator_image, arena_major, verifier_token_fingerprint,
+                                status, failure_kind, message, identities_done, at):
         """Insert an audit record of a verification attempt into the
         append-only ``verified_attempts`` table. Each call appends a new row.
         """
         cols = ", ".join(_ATTEMPT_COLUMNS)
         placeholders = ", ".join("?" for _ in _ATTEMPT_COLUMNS)
         vals = (solution_digest, secret_fingerprint, evaluator_image,
-                verifier_token_fingerprint, status, failure_kind, message,
-                identities_done, at)
+                arena_major, verifier_token_fingerprint, status, failure_kind,
+                message, identities_done, at)
         with self._conn:
             self._conn.execute(f"INSERT INTO verified_attempts ({cols}) VALUES "
                                f"({placeholders})", vals)
 
     def latest_verified_attempt(self, solution_digest, *, secret_fingerprint,
-                                evaluator_image):
-        """Return the most recent (highest id) verification attempt for the
-        given solution with the given secret and evaluator, or None if no
-        attempt exists."""
+                                arena_major):
+        """Return the most recent (highest id) verification attempt for this
+        solution within this secret + arena major, or None. Keyed on the major
+        rather than the digest, so an attempt recorded under one digest is
+        still found by a node running another digest of the same major."""
         cols = ", ".join(_ATTEMPT_COLUMNS)
         row = self._conn.execute(
             f"SELECT {cols} FROM verified_attempts"
             " WHERE solution_digest = ? AND secret_fingerprint = ? AND"
-            " evaluator_image = ? ORDER BY id DESC LIMIT 1",
-            (solution_digest, secret_fingerprint, evaluator_image)).fetchone()
+            " arena_major = ? ORDER BY id DESC LIMIT 1",
+            (solution_digest, secret_fingerprint, arena_major)).fetchone()
         return dict(zip(_ATTEMPT_COLUMNS, row, strict=True)) if row else None

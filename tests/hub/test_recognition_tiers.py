@@ -45,12 +45,12 @@ def store(tmp_path):
          _atom("sha256:a", "sam", FLOORED, 22, 0.50),
          _atom("sha256:a", "sam", UNFLOORED, 11, 0.70),
          _atom("sha256:a", "sam", UNFLOORED, 22, 0.70)],
-        secret_fingerprint=fp, verifier_token_fingerprint="tok",
+        secret_fingerprint=fp, verifier_token_fingerprint="tok", arena_major=1,
     )
     s.insert_verified_baseline_atoms(
         [_atom("autoascend", "autoascend", FLOORED, 11, 0.20, tier="baseline"),
          _atom("autoascend", "autoascend", FLOORED, 22, 0.20, tier="baseline")],
-        secret_fingerprint=fp, verifier_token_fingerprint="tok",
+        secret_fingerprint=fp, verifier_token_fingerprint="tok", arena_major=1,
     )
     return s
 
