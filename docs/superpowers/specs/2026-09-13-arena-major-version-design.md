@@ -179,9 +179,25 @@ shape, copy rows through, drop. Added as `_migrate_add_arena_major` and called f
 or already-migrated database.
 
 Backfill resolves each row's existing `evaluator_image` through the map. A row whose digest is
-unclassified would have no major; none exist today, since every verified row was written under the
-single pinned digest, and the migration fails loudly rather than guessing if that assumption ever
-breaks.
+unclassified would have no major, and **what the migration does about that depends on what the row
+is**:
+
+- `verified_atoms` and `verified_baseline_atoms` are **scored data**, so I2 binds: the migration
+  **raises**, refusing to place a row on a board it was never measured for. Both tables went
+  through an admission check enforcing byte-equality with the pin, so every row in them was written
+  under the single pinned digest and none should be unclassifiable.
+- `verified_attempts` is an **audit record**, not scored data, so an unclassifiable row is
+  **skipped**, counted and logged at WARNING. That table never had an admission check:
+  `record_attempt` stored whatever `evaluator_image` the caller reported, and
+  `eval/runner.py`'s `_default_image_digest` legitimately falls back to a bare image Id
+  (`sha256:…` with no `@`) for a locally built arena, which `major_for` can never classify no
+  matter what is added to the map. Any arena pin from before the current one lands there too.
+
+The asymmetry exists because the blast radius does. `init_schema` runs in **every uvicorn worker at
+boot**, so a raise here is not a loud failure on one request — it wedges the whole hub. Paying that
+price to protect a scored row is right; paying it over an audit row that cannot move a board is not.
+The migration returns both counts (`dropped` duplicates and `skipped` attempts) and `init_schema`
+logs each at WARNING.
 
 **Collisions.** Pooling two digests into one major can put two rows on the same
 `(solution_digest, identity, seed, secret_fingerprint, major)`. None exist today, because nothing
@@ -263,6 +279,17 @@ D3 buys simplicity by trusting a human. Two ways it bites:
   the image inputs, so byte-level equivalence is not established. A replay of one existing elite
   under both digests would settle it and is cheap; it is out of scope here by decision, and this
   paragraph exists so the assumption is on the record rather than implied.
+
+A third, smaller one, on the migration rather than the design:
+
+- **"No unclassifiable rows exist today" was never verified against the production database.** It
+  is an inference from the admission check, not a query anyone ran. It is sound for the two atom
+  tables, which that check guarded; it was simply wrong for `verified_attempts`, which had no such
+  check — hence the split in §5.2. If the inference is wrong for an atom table too, the migration
+  raises and the hub does not boot until a human classifies the digest, which is the intended
+  behaviour for scored data but is worth knowing before a deploy. Querying
+  `SELECT DISTINCT evaluator_image FROM verified_atoms` on prod before releasing this would
+  convert the inference into a fact, and costs nothing.
 
 A behavioral gate (the rejected alternative in D3) is the real answer to both, and remains the
 natural follow-on if the failure mode ever bites.

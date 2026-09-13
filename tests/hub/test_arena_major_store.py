@@ -17,6 +17,12 @@ NEW_IMAGE = (
     "d18bff83ace72a35cbbfde29df8e2da73f6a4a7c2e48bbb0ac488ac9c45c12e3"
 )
 UNKNOWN_IMAGE = "ghcr.io/dunnolab/nethackers-arena@sha256:" + "0" * 64
+# What eval/runner.py's _default_image_digest falls back to for a locally
+# built image with no RepoDigests: a bare image Id, no "@" and so no digest
+# portion at all. major_for can never classify it, whatever is added to the
+# map -- and verified_attempts, which had no admission check before this
+# branch, stored exactly what the caller reported.
+BARE_IMAGE_ID = "sha256:" + "1" * 64
 
 # The pre-migration DDL, copied verbatim from what shipped in v0.23.5 -- the
 # shape a production database is actually in when the migration first runs.
@@ -132,10 +138,11 @@ def test_migration_pools_two_digests_and_drops_the_later_duplicate(tmp_path):
     _legacy_atom_row(conn, "verified_atoms", seed=1, image=NEW_IMAGE,
                      created_at="2026-09-02T00:00:00Z", progression=0.9)
     conn.commit()
-    dropped = _migrate_add_arena_major(conn)
+    counts = _migrate_add_arena_major(conn)
     conn.close()
 
-    assert dropped == 1
+    assert counts.dropped == 1
+    assert counts.skipped == 0
     store = Store(str(path))
     store.init_schema()
     rows = store.iter_verified_atoms(arena_major=1)
@@ -346,3 +353,156 @@ def test_migration_refuses_when_an_old_table_is_already_stranded(tmp_path):
         _migrate_add_arena_major(conn)
     assert conn.execute("SELECT COUNT(*) FROM verified_atoms").fetchone()[0] == 1
     conn.close()
+
+
+def test_migration_skips_an_unclassifiable_attempt_row(tmp_path, caplog):
+    """An attempt row is an AUDIT record, not scored data, and until this
+    branch nothing validated the image it carried -- ``record_attempt`` stored
+    whatever the caller reported, and a locally built arena resolves to a bare
+    image Id that ``major_for`` can never classify. ``init_schema`` runs in
+    every uvicorn worker at boot, so raising on one of those would wedge the
+    whole hub over a row that cannot move a board. Skip it, count it, log it."""
+    path = tmp_path / "hub.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(LEGACY_SCHEMA)
+    _legacy_attempt_row(conn, image=BARE_IMAGE_ID, status="failed",
+                        failure_kind="crashed", message="boom",
+                        identities_done=0, at="2026-09-01T00:00:00Z")
+    _legacy_attempt_row(conn, image=OLD_IMAGE, status="succeeded",
+                        failure_kind=None, message=None,
+                        identities_done=73, at="2026-09-02T00:00:00Z")
+    conn.commit()
+    conn.close()
+
+    store = Store(str(path))
+    with caplog.at_level(logging.WARNING, logger="nethackers.hub.store"):
+        store.init_schema()          # must NOT raise: this is hub boot
+
+    rows = list(store._conn.execute(
+        "SELECT evaluator_image, arena_major FROM verified_attempts"))
+    assert rows == [(OLD_IMAGE, 1)], (
+        "the classifiable attempt must survive and the unclassifiable one "
+        f"must be gone; got {rows!r}"
+    )
+    messages = [r.getMessage() for r in caplog.records
+                if r.levelno == logging.WARNING]
+    assert any("skipped 1" in m for m in messages), messages
+    assert any(BARE_IMAGE_ID in m for m in messages), (
+        f"the warning must name what to classify, not just a count: {messages!r}"
+    )
+
+
+def test_migration_reports_the_skipped_count(tmp_path):
+    """The count is the assertable half of the log line above -- and the half
+    ``init_schema`` reads to decide whether to warn at all."""
+    path = tmp_path / "hub.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(LEGACY_SCHEMA)
+    for at in ("2026-09-01T00:00:00Z", "2026-09-02T00:00:00Z"):
+        _legacy_attempt_row(conn, image=BARE_IMAGE_ID, status="failed",
+                            failure_kind="crashed", message="boom",
+                            identities_done=0, at=at)
+    conn.commit()
+    counts = _migrate_add_arena_major(conn)
+    assert counts == (0, 2)
+    assert conn.execute("SELECT COUNT(*) FROM verified_attempts").fetchone()[0] == 0
+    conn.close()
+
+
+def test_migration_still_refuses_the_same_value_in_verified_atoms(tmp_path):
+    """The leniency above is scoped to the audit table by what the row IS.
+    The identical unclassifiable value in verified_atoms is scored data, so
+    it still raises rather than being quietly dropped or guessed at
+    (invariant I2) -- and the message has to tell whoever is reading a
+    container log at 3am that the hub is down and where the fix goes."""
+    path = tmp_path / "hub.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(LEGACY_SCHEMA)
+    _legacy_atom_row(conn, "verified_atoms", seed=1, image=BARE_IMAGE_ID,
+                     created_at="2026-09-01T00:00:00Z")
+    conn.commit()
+    with pytest.raises(ValueError) as excinfo:
+        _migrate_add_arena_major(conn)
+    message = str(excinfo.value)
+    assert "WILL NOT START" in message
+    assert "src/nethackers/arena_version.py" in message
+    # and the table is untouched -- the raise happens before the rename
+    assert conn.execute("SELECT COUNT(*) FROM verified_atoms").fetchone()[0] == 1
+    conn.close()
+
+
+class _RunAnotherWorkerAtBegin(sqlite3.Connection):
+    """Test double for one ``sqlite3.Connection``: runs ``hook`` once, on the
+    first ``BEGIN IMMEDIATE`` it is asked to execute, before that statement
+    reaches sqlite.
+
+    That firing point is exactly the interleaving production can produce and
+    nothing else can reproduce deterministically. ``hub/server``'s
+    ``default_workers()`` forks one uvicorn worker PROCESS per core and each
+    calls ``init_schema()``, so several of these migrations genuinely run at
+    once; the hook stands in for a SECOND worker that gets the write lock
+    first and finishes while this one is still on its way to asking for it.
+    Firing before the statement executes is what makes it deterministic: this
+    connection holds no lock yet, so the other worker's transaction can always
+    complete rather than racing for it."""
+
+    def _arm(self, hook) -> None:
+        self._hook = hook
+
+    def execute(self, sql, *args, **kwargs):
+        hook = getattr(self, "_hook", None)
+        if hook is not None and sql == "BEGIN IMMEDIATE":
+            self._hook = None
+            hook()
+        return super().execute(sql, *args, **kwargs)
+
+
+def test_a_second_worker_does_not_undo_the_first_ones_migration(tmp_path):
+    """Regression test for the concurrent-boot corruption: with the shape
+    guard and the row SELECT outside the transaction, worker B snapshotted
+    the PRE-migration table, blocked on A's write lock, and then -- after A
+    had committed a correct migration and a /verify POST had landed on the
+    socket the uvicorn parent bound before forking -- renamed A's migrated
+    table away, re-inserted its stale snapshot and dropped A's table,
+    destroying the row written in between. Reading the shape only after
+    BEGIN IMMEDIATE makes B re-read under the lock, see arena_major, and
+    no-op."""
+    path = tmp_path / "hub.db"
+    conn = sqlite3.connect(path)
+    conn.executescript(LEGACY_SCHEMA)
+    _legacy_atom_row(conn, "verified_atoms", seed=1, image=OLD_IMAGE,
+                     created_at="2026-09-01T00:00:00Z")
+    conn.commit()
+    conn.close()
+
+    def worker_a():
+        a = sqlite3.connect(path)
+        a.execute("PRAGMA busy_timeout = 5000")
+        _migrate_add_arena_major(a)
+        # The /verify POST that lands in the window, written in the migrated
+        # shape -- this is the row B's stale re-migration used to destroy.
+        a.execute(
+            "INSERT INTO verified_atoms (solution_digest, owner, tier, identity,"
+            " seed, progression, milestone, ascended, status, turns, steps,"
+            " evaluator_image, secret_fingerprint, verifier_token_fingerprint,"
+            " arena_major, created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+            ("repo@abc", "someone", "verified", "val-dwa-law-fem", 2, 0.7,
+             "Dlvl:5", 0, "ok", 100, 200, NEW_IMAGE, "secretfp", "tokenfp", 1,
+             "2026-09-03T00:00:00Z"),
+        )
+        a.commit()
+        a.close()
+
+    b = sqlite3.connect(path, factory=_RunAnotherWorkerAtBegin)
+    b.execute("PRAGMA busy_timeout = 5000")
+    b._arm(worker_a)
+    counts = _migrate_add_arena_major(b)     # B: must see the migrated shape
+    b.close()
+
+    assert counts == (0, 0), "B had nothing left to migrate"
+    store = Store(str(path))
+    seeds = sorted(a.seed for a in store.iter_verified_atoms(arena_major=1))
+    assert seeds == [1, 2], (
+        "B re-ran a stale migration over A's work: the row written between "
+        f"A's commit and B's rename is gone (seeds={seeds})"
+    )

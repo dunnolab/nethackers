@@ -36,7 +36,7 @@ import logging
 import sqlite3
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
 from nethackers.arena_version import major_for
 from nethackers.contracts.models import Atom
@@ -297,98 +297,153 @@ def _migrate_add_program_id(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
-def _migrate_add_arena_major(conn: sqlite3.Connection) -> int:
+class _ArenaMajorCounts(NamedTuple):
+    """What ``_migrate_add_arena_major`` could not carry over, by kind.
+
+    Two different things, deliberately counted apart: ``dropped`` rows lost a
+    collision to an equivalent row that is still present, while ``skipped``
+    rows are gone outright. Both are reported so ``init_schema`` can log them
+    distinctly and a test can assert on either.
+    """
+
+    dropped: int
+    skipped: int
+
+
+def _migrate_add_arena_major(conn: sqlite3.Connection) -> _ArenaMajorCounts:
     """Re-key the three verified tables from ``evaluator_image`` onto
     ``arena_major``, backfilling the major from each row's own digest.
-    Returns the number of rows dropped as duplicates (the caller, currently
-    only ``init_schema``, is expected to surface a non-zero count -- see its
-    call site). No-op (returns 0) on a fresh or already-migrated DB.
+    Returns what it could not carry over (``_ArenaMajorCounts``); the caller,
+    currently only ``init_schema``, is expected to surface both non-zero
+    counts -- see its call site. No-op (all-zero counts) on a fresh or
+    already-migrated DB.
 
     Rename-and-copy rather than ``ALTER TABLE ADD COLUMN``: sqlite cannot add
     a NOT NULL column without a default to a non-empty table, and cannot alter
     a UNIQUE constraint at all. Same shape as
-    ``_migrate_drop_objective_digest``, but each table's rename, recreate,
-    backfill and drop run inside ONE EXPLICIT transaction
-    (``BEGIN IMMEDIATE`` ... ``with conn:``'s implicit commit/rollback),
-    rather than relying on ``with conn:`` alone: sqlite3's default implicit
-    transaction handling never opens a transaction for a bare DDL statement
-    (``ALTER TABLE`` / ``CREATE TABLE`` / ``DROP TABLE``), and
-    ``executescript()`` -- used everywhere else in this module for ``_SCHEMA``
-    as a whole -- unconditionally COMMITs any open transaction before it runs.
-    Combined, those two facts meant the old version's rename and its empty
-    recreated table were ALREADY DURABLE before the insert loop even started,
-    so a failure partway through the loop (disk full, ``database is locked``,
-    a killed process) rolled back only the inserts, leaving the original data
-    stranded in ``{table}_old`` behind a NEW, EMPTY ``{table}`` that already
-    has the ``arena_major`` column -- which the guard below reads as
-    "already migrated" and will happily skip forever. Explicitly opening the
-    transaction before the rename (and recreating with a single
-    ``conn.execute(_VERIFIED_TABLE_DDL[table])`` rather than
+    ``_migrate_drop_objective_digest``, but EVERYTHING this function does to a
+    table -- its stranded-``_old`` check, its shape guard, its ``SELECT`` of
+    the rows, and then the rename, recreate, backfill and drop -- runs inside
+    ONE EXPLICIT transaction (``BEGIN IMMEDIATE`` ... ``with conn:``'s
+    implicit commit/rollback), rather than relying on ``with conn:`` alone:
+    sqlite3's default implicit transaction handling never opens a transaction
+    for a bare DDL statement (``ALTER TABLE`` / ``CREATE TABLE`` / ``DROP
+    TABLE``), and ``executescript()`` -- used everywhere else in this module
+    for ``_SCHEMA`` as a whole -- unconditionally COMMITs any open transaction
+    before it runs. Combined, those two facts meant an earlier version's
+    rename and its empty recreated table were ALREADY DURABLE before the
+    insert loop even started, so a failure partway through the loop (disk
+    full, ``database is locked``, a killed process) rolled back only the
+    inserts, leaving the original data stranded in ``{table}_old`` behind a
+    NEW, EMPTY ``{table}`` that already has the ``arena_major`` column --
+    which the guard below reads as "already migrated" and will happily skip
+    forever. Explicitly opening the transaction first (and recreating with a
+    single ``conn.execute(_VERIFIED_TABLE_DDL[table])`` rather than
     ``executescript``, so nothing commits early) makes the whole per-table
     sequence atomic: any raise anywhere in it leaves that table exactly as it
     was found, under its original name, with nothing renamed or dropped.
 
-    Belt-and-suspenders on top of that atomicity: if a ``{table}_old`` is
-    ever found lying around at the top of an iteration, this refuses to
-    proceed rather than silently trusting the shape guard. The explicit
-    transaction above should make this unreachable through this function's
-    own mid-run failures going forward, but a table by this name could still
-    exist from a run of the pre-fix version against a real database, or from
-    an operator's own out-of-band intervention -- and treating either as
-    "nothing to do" would abandon whatever real evaluation data is sitting
-    in it rather than surface the question to a human.
+    The guard and the ``SELECT`` are inside that transaction for a SECOND,
+    independent reason: production runs N of these CONCURRENTLY. ``hub/server``
+    forks one uvicorn worker PROCESS per core, each of which calls
+    ``init_schema()``, so on the 4-vCPU hub four processes enter this function
+    at once. With the guard outside, worker B could read the pre-migration
+    shape and snapshot the rows, block on A's write lock, and then -- after A
+    had committed a correct migration, and after a ``/verify`` POST had landed
+    on the socket the parent bound before forking -- rename A's already-
+    migrated table away, re-insert its own stale snapshot, and drop A's table,
+    destroying any row written in between. Reading the shape only after
+    ``BEGIN IMMEDIATE`` closes that window: B re-reads under the write lock,
+    sees ``arena_major``, and no-ops. (``continue`` inside the ``with`` simply
+    commits an empty transaction.)
 
     Rows are carried over in ``rowid`` order through ``INSERT OR IGNORE``, so
     when pooling two digests into one major collides a cell, the EARLIEST row
     wins -- arbitrary but deterministic, and harmless given the two digests are
     declared to score alike (design D7).
 
-    An unclassified digest raises instead of guessing a major: storing a row
-    under a guessed major would silently place it on a board it was never
-    measured for (design invariant I2).
+    **An unclassified digest is handled by what the row IS.** For
+    ``verified_atoms`` and ``verified_baseline_atoms`` it raises: those rows
+    are scored data, and storing one under a guessed major would silently
+    place it on a board it was never measured for (design invariant I2). For
+    ``verified_attempts`` the row is SKIPPED, counted and logged instead --
+    never a boot failure. That table is an audit record, not scored data, and
+    unlike the other two it never had an admission check: until this branch
+    ``record_attempt`` stored whatever ``evaluator_image`` the caller sent, and
+    ``eval/runner.py``'s ``_default_image_digest`` legitimately falls back to a
+    bare image Id (``sha256:...`` with no ``@``) that ``major_for`` can never
+    classify, no matter what is added to the map. Since ``init_schema`` runs in
+    every uvicorn worker at boot, raising on one of those would wedge the whole
+    hub over a row nothing scores.
     """
     dropped = 0
+    skipped = 0
     for table in ("verified_atoms", "verified_baseline_atoms", "verified_attempts"):
         old_name = f"{table}_old"
-        stranded = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
-            (old_name,),
-        ).fetchone()
-        if stranded:
-            raise RuntimeError(
-                f"{old_name} already exists -- a previous arena_major "
-                f"migration attempt on {table} did not finish cleanly. "
-                f"Refusing to guess whether {table} already holds every row "
-                f"from it; inspect {old_name} by hand before retrying."
-            )
-
-        cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
-        if not cols or "arena_major" in cols:
-            continue   # fresh or already-migrated -> nothing to do
-        carried = [c for c in cols if c != "id"]
-        col_list = ", ".join(carried)
-        rows = conn.execute(
-            f"SELECT {col_list} FROM {table} ORDER BY rowid").fetchall()
-
-        image_at = carried.index("evaluator_image")
-        majors = []
-        for row in rows:
-            major = major_for(row[image_at])
-            if major is None:
-                raise ValueError(
-                    f"{table} holds an unclassified evaluator_image "
-                    f"{row[image_at]!r}; add it to ARENA_MAJOR_BY_DIGEST "
-                    f"before migrating"
-                )
-            majors.append(major)
-
-        insert_cols = ", ".join([*carried, "arena_major"])
-        placeholders = ", ".join("?" for _ in range(len(carried) + 1))
         with conn:
             conn.execute("BEGIN IMMEDIATE")
+            stranded = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                (old_name,),
+            ).fetchone()
+            if stranded:
+                raise RuntimeError(
+                    f"{old_name} already exists -- a previous arena_major "
+                    f"migration attempt on {table} did not finish cleanly. "
+                    f"Refusing to guess whether {table} already holds every row "
+                    f"from it; inspect {old_name} by hand before retrying."
+                )
+
+            cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+            if not cols or "arena_major" in cols:
+                continue   # fresh or already-migrated -> nothing to do
+            carried = [c for c in cols if c != "id"]
+            col_list = ", ".join(carried)
+            rows = conn.execute(
+                f"SELECT {col_list} FROM {table} ORDER BY rowid").fetchall()
+
+            image_at = carried.index("evaluator_image")
+            classified: list[tuple[tuple[Any, ...], int]] = []
+            unclassifiable: list[str] = []
+            for row in rows:
+                major = major_for(row[image_at])
+                if major is not None:
+                    classified.append((row, major))
+                elif table == "verified_attempts":
+                    unclassifiable.append(row[image_at])
+                else:
+                    raise ValueError(
+                        f"{table} holds an unclassified evaluator_image "
+                        f"{row[image_at]!r}: it is absent from "
+                        f"ARENA_MAJOR_BY_DIGEST, so this row has no arena "
+                        f"major and the migration refuses to guess one "
+                        f"(design invariant I2). THE HUB WILL NOT START until "
+                        f"this is resolved -- classify the digest in "
+                        f"src/nethackers/arena_version.py (deciding whether it "
+                        f"scores like the current major or starts a new one) "
+                        f"and redeploy."
+                    )
+            if unclassifiable:
+                skipped += len(unclassifiable)
+                # The count alone cannot tell an operator what to classify, so
+                # name the distinct images too -- capped, because a sustained
+                # misconfiguration could otherwise put thousands of identical
+                # refs into one log line.
+                distinct = sorted(set(unclassifiable))
+                logger.warning(
+                    "arena_major migration skipped %d %s row(s) whose "
+                    "evaluator_image is unclassified (audit records, not "
+                    "scored data -- dropping them cannot move a board); "
+                    "distinct image(s): %s",
+                    len(unclassifiable), table,
+                    ", ".join(distinct[:5]) + (" ..." if len(distinct) > 5 else ""),
+                )
+
+            insert_cols = ", ".join([*carried, "arena_major"])
+            placeholders = ", ".join("?" for _ in range(len(carried) + 1))
             conn.execute(f"ALTER TABLE {table} RENAME TO {old_name}")
             conn.execute(_VERIFIED_TABLE_DDL[table])   # this table only, not executescript
-            for row, major in zip(rows, majors, strict=True):
+            for row, major in classified:
                 cur = conn.execute(
                     f"INSERT OR IGNORE INTO {table} ({insert_cols}) "
                     f"VALUES ({placeholders})",
@@ -396,7 +451,7 @@ def _migrate_add_arena_major(conn: sqlite3.Connection) -> int:
                 )
                 dropped += 1 - cur.rowcount
             conn.execute(f"DROP TABLE {old_name}")
-    return dropped
+    return _ArenaMajorCounts(dropped=dropped, skipped=skipped)
 
 
 class Store:
@@ -465,21 +520,29 @@ class Store:
         Finally re-key the three verified tables from ``evaluator_image``
         onto ``arena_major``, backfilling each row's major from its own
         digest (again a no-op on a fresh or already-migrated DB). That last
-        migration can pool rows that collide once re-keyed, dropping the
-        later duplicate (see ``_migrate_add_arena_major``) -- a non-zero
-        count is logged at WARNING rather than silently discarded, since
-        this runs once, unattended, over irreplaceable evaluation data."""
+        migration loses rows two ways, and both are logged at WARNING rather
+        than silently discarded, since this runs once, unattended, over
+        irreplaceable evaluation data: it can pool rows that collide once
+        re-keyed, dropping the later duplicate, and it skips
+        ``verified_attempts`` rows whose image cannot be classified at all
+        (see ``_migrate_add_arena_major`` for why those are skipped rather
+        than fatal)."""
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
         _migrate_drop_objective_digest(self._conn)
         _migrate_drop_objectives_table(self._conn)
         _migrate_add_program_id(self._conn)
         _migrate_drop_elite_pool(self._conn)
-        dropped = _migrate_add_arena_major(self._conn)
-        if dropped:
+        counts = _migrate_add_arena_major(self._conn)
+        if counts.dropped:
             logger.warning(
                 "arena_major migration pooled %d verified row(s) as "
-                "duplicates once re-keyed off evaluator_image", dropped,
+                "duplicates once re-keyed off evaluator_image", counts.dropped,
+            )
+        if counts.skipped:
+            logger.warning(
+                "arena_major migration skipped %d verified_attempts row(s) "
+                "whose evaluator_image is unclassified", counts.skipped,
             )
 
     def upsert_solution(
