@@ -28,8 +28,21 @@ import sys
 import time
 from pathlib import Path
 
+import pytest
+
 FIX = Path(__file__).parent / "fixtures"
 GRACE_SECONDS = 5.0
+
+# The guarantee under test is PR_SET_PDEATHSIG, which exists only on Linux --
+# arena/lifetime.py says so and no-ops everywhere else by design. Off Linux the
+# children really do outlive a SIGKILLed driver, so these assertions would fail
+# for the documented reason rather than a regression, and a red suite on every
+# macOS checkout teaches people to ignore it. Skip instead: CI runs Linux, and
+# there these are the real regression tests.
+pytestmark = pytest.mark.skipif(
+    not sys.platform.startswith("linux"),
+    reason="PR_SET_PDEATHSIG is Linux-only; the guard no-ops elsewhere by design",
+)
 
 
 def _alive(pid: int) -> bool:
