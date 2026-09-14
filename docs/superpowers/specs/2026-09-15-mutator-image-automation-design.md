@@ -154,7 +154,8 @@ base, so the two workflows never disagree about what a hash means.
 
 **Triggers:** `pull_request` and `push` to `main`, both filtered to the §5.1 paths plus
 `src/nethackers/_image_pins.py`; and `workflow_dispatch`. **Concurrency:** one run per ref,
-`cancel-in-progress: true`.
+queued rather than cancelled, so the bot's own push doesn't mark the build that made it
+"cancelled".
 
 Steps:
 
@@ -190,7 +191,10 @@ on a fork PR red until after merge, which hides real failures.
 
 `resolve_image(None, "mutator")`, which stays side-effect-free (it only reads files):
 
-1. An explicit ref (flag, env, `.env.stack`) wins verbatim — unchanged.
+1. An explicit ref (flag or env) wins verbatim. A `.env.stack` file can no longer set the mutator:
+   `scripts/stack.py` wrote `NETHACKERS_MUTATOR_IMAGE=nethackers/mutator:latest` into every
+   worktree's file, which would bypass this ladder and keep the stale image, so that key is
+   ignored there and new stack files omit it.
 2. Not a repo checkout → the pinned `MUTATOR_IMAGE` digest — unchanged; this is every user.
 3. A checkout → compute the mutator hash of the working tree. Equal to `MUTATOR_INPUTS` → the pinned
    digest. Otherwise → `nethackers/mutator:h-<hash>`.
