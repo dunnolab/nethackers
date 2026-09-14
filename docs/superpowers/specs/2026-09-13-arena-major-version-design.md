@@ -32,13 +32,12 @@ That is not hypothetical. As of 2026-09-13:
 | PR #66 | `d18bff83…` | re-pin from a process-lifetime fix |
 | `codex/opencode2-integration` | `052453dc…` | a second, independent re-pin |
 
-Prod holds, measured 2026-09-14: **37,470** verified participant rows over **36** programs from
-**5** owners, a **1,095**-row AutoAscend hidden-seed floor, and **34** attempt records. That is
-**38,599** rows in the three verified tables. Of the participant rows, **21,405** episodes over
-**21** ranked programs are what the board currently displays; the remainder sit on seeds no longer
-in the live hidden set, which is exactly the kind of history invariant I4 is written to preserve.
-Either branch, on release, makes all of it unreachable. Re-earning the displayed part alone is
-roughly five days of evaluator-node time.
+Prod holds, measured 2026-09-14: **37,545** verified participant rows over **36** programs from
+**5** owners, a **1,095**-row AutoAscend hidden-seed floor, and **34** attempt records. Every one of
+those participant rows is live and displayed — the board's episode count matches the table exactly.
+The corpus is also still growing: it stood at 21,405 episodes over 21 programs earlier the same day,
+so any figure here is a floor, not a total. Either branch, on release, makes all of it unreachable.
+Re-earning it is on the order of a week of evaluator-node time.
 
 The trigger is also mis-timed. Merging changes nothing; the reset fires on the **next release
 tag**, so the person who causes it is whoever tags next, for any reason, possibly weeks later.
