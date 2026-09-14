@@ -152,14 +152,15 @@ down the table.
 | `evolve` — run the loop | Docker or Podman, a coding agent CLI (`claude`, `codex`, or `opencode2`) logged in on the host, and `nethackers login` |
 | `submit` — publish a solution | Docker or Podman (it evaluates before pushing), `nethackers login`, and [`gh`](https://cli.github.com/) authenticated as the **same** GitHub account |
 
-For OpenCode 2, install the beta CLI with
-`npm install -g @opencode-ai/cli@beta`. You can either run
-`opencode2 auth login` or define a custom provider/model in the host's
-`~/.config/opencode/opencode.json`. The sandbox mounts that config read-only
-and forwards environment variables it references as `{env:NAME}` or lists in
-a provider's `env` field.
-Project `opencode.json(c)` files are also loaded, and their available models
-are populated automatically in the Evolve model picker.
+OpenCode 2 needs nothing installed on the host: its CLI ships in the sandbox.
+Give it models by defining providers in your global
+`~/.config/opencode/opencode.json` (or `.jsonc`). Only that file's `provider`
+section enters the sandbox, along with the environment variables those
+providers reference as `{env:NAME}` or list in their `env` field. So set each
+key as `{env:NAME}` or a literal `apiKey`: a `{file:...}` key, a login made with
+`opencode2 auth login`, your plugins and MCP servers, and project
+`opencode.json` files all stay outside. With no key, runs use OpenCode's free
+models, and `doctor` says so.
 
 Note that `doctor`'s `publish` capability checks the hub, your login, and `gh` —
 but not the container runtime, so it can report `publish` ready on a machine where
