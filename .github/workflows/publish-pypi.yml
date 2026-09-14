@@ -94,8 +94,14 @@ jobs:
           attempt=0
           while :; do
             attempt=$((attempt + 1))
-            FULL=$(uvx --isolated --no-cache "nethackers@$V" --version 2>&1)
-            rc=$?
+            # `set -e` is on (the default `bash -e` shell), and a failing
+            # command substitution in an assignment trips it -- so a bare
+            # `FULL=$(uvx ...)` aborted the whole step on the FIRST attempt and
+            # `rc=$?` was never reached. The retry budget below was therefore
+            # dead code: any propagation lag past the initial sleep failed the
+            # release. `|| rc=$?` keeps the non-zero status from firing `-e`.
+            rc=0
+            FULL=$(uvx --isolated --no-cache "nethackers@$V" --version 2>&1) || rc=$?
             # uvx prints install progress ("Downloading …") before the CLI's own
             # output, so match the version LINE anywhere in $FULL -- not head -1,
             # which catches the progress line and never confirms.
