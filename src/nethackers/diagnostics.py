@@ -77,9 +77,19 @@ CHECK_SPECS: dict[str, tuple[str, tuple[str, ...]]] = {
     "hub_login": ("soft", ("publish",)),
     "gh": ("soft", ("publish",)),
     "operator": ("hard", ("evolve",)),
-    # Advisory only: soft severity AND an empty capability tuple, so it gates
-    # nothing and cannot move doctor's exit code (spec I9).
-    "rosetta": ("soft", ()),
+    # Soft severity, tagged to eval/evolve -- exactly where amd64 emulation
+    # cost is actually paid (an earlier version tagged this with an empty
+    # capability tuple; that made it un-gating but also unrenderable, since
+    # render_human/render_plain group rows by `cap in r.capabilities` --
+    # capability-less rows can never appear there). Spec I9 (never moves
+    # doctor's exit code) now rests on two things instead: rosetta_state/
+    # _check_rosetta never emit "fail" (only "ok"/"warn" -- see
+    # test_check_rosetta_never_emits_fail_for_any_rosetta_state), and
+    # capability_ready's own fold -- eval/evolve both carry hard checks of
+    # their own, so they're gated PURELY by those; a soft check tagged onto
+    # a capability that has hard checks (this one, on both) never enters
+    # into the verdict at all, "ok" or "warn" alike.
+    "rosetta": ("soft", ("eval", "evolve")),
 }
 
 

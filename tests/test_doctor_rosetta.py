@@ -1,7 +1,9 @@
 import json
 from pathlib import Path
 
-from nethackers.diagnostics import CHECK_SPECS, exit_code, rosetta_state
+import pytest
+
+from nethackers.diagnostics import CHECK_SPECS, _check_rosetta, exit_code, rosetta_state
 
 SETTINGS = "settings-store.json"
 
@@ -57,15 +59,24 @@ def test_linux_is_unknown(tmp_path):
     assert rosetta_state("Linux", "x86_64", _settings(tmp_path))[0] == "unknown"
 
 
-def test_rosetta_is_registered_as_a_soft_check_gating_nothing():
+def test_rosetta_is_registered_as_a_soft_check_on_eval_and_evolve():
     severity, capabilities = CHECK_SPECS["rosetta"]
     assert severity == "soft"
-    assert capabilities == ()
+    assert capabilities == ("eval", "evolve")
 
 
 def test_rosetta_never_changes_the_exit_code():
-    """INV6/I9: a warn gates nothing, and an empty capability tuple gates
-    nothing either. Assert both directions explicitly."""
+    """I9, post-ruling: the check ships tagged to eval/evolve (not an empty
+    tuple -- see the CHECK_SPECS comment), so safety no longer comes from
+    "this check is tagged to nothing". It comes from two things holding at
+    once: rosetta only ever emits "ok"/"warn" (never "fail" -- pinned
+    separately by test_check_rosetta_never_emits_fail_for_any_rosetta_state
+    below), and eval/evolve both carry hard checks of their own
+    (container_runtime/arena_image here), so capability_ready's fold is
+    gated PURELY by those and ignores every soft check tagged onto them --
+    "ok" or "warn" alike. Assert both the concrete value (still 0/ready) and
+    that no rosetta status can move it, for both capabilities rosetta is now
+    tagged with."""
     from nethackers.diagnostics import CheckResult
 
     def results(rosetta_status: str) -> list[CheckResult]:
@@ -75,8 +86,76 @@ def test_rosetta_never_changes_the_exit_code():
             CheckResult(id="arena_image", status="ok", severity="hard",
                         detail="", fix=None, capabilities=("eval", "evolve")),
             CheckResult(id="rosetta", status=rosetta_status, severity="soft",
-                        detail="", fix=None, capabilities=()),
+                        detail="", fix=None, capabilities=("eval", "evolve")),
         ]
 
-    assert exit_code(results("ok"), "eval") == exit_code(results("warn"), "eval")
-    assert exit_code(results("ok"), "eval") == exit_code(results("unknown"), "eval")
+    for cap in ("eval", "evolve"):
+        assert exit_code(results("ok"), cap) == 0
+        assert exit_code(results("ok"), cap) == exit_code(results("warn"), cap)
+        assert exit_code(results("ok"), cap) == exit_code(results("unknown"), cap)
+
+
+# Every branch rosetta_state can take, paired with the (system, machine,
+# settings-file) input that drives it there -- used below to pin I9's other
+# half: no matter which branch fires, `_check_rosetta` must never turn it
+# into status="fail".
+_ROSETTA_STATE_CASES = [
+    ("rosetta_on", "Darwin", "arm64",
+     dict(UseVirtualizationFramework=True, UseVirtualizationFrameworkRosetta=True)),
+    ("rosetta_off", "Darwin", "arm64",
+     dict(UseVirtualizationFramework=False, UseVirtualizationFrameworkRosetta=False)),
+    ("virtualization_framework_off", "Darwin", "arm64",
+     dict(UseVirtualizationFramework=False, UseVirtualizationFrameworkRosetta=True)),
+    ("unreadable_settings", "Darwin", "arm64", None),
+    ("intel_mac", "Darwin", "x86_64", None),
+    ("linux", "Linux", "x86_64", None),
+]
+
+
+@pytest.mark.parametrize(
+    "system,machine,settings_kwargs",
+    [case[1:] for case in _ROSETTA_STATE_CASES],
+    ids=[case[0] for case in _ROSETTA_STATE_CASES],
+)
+def test_check_rosetta_never_emits_fail_for_any_rosetta_state(
+    tmp_path, system, machine, settings_kwargs,
+):
+    """I9's other half, pinned directly against `_check_rosetta` rather than
+    inferred: `CheckResult.status` admits "fail", but no `rosetta_state`
+    outcome may ever produce one -- an advisory that can read as a hard
+    failure would defeat the whole point. Covers every branch: Rosetta on,
+    Rosetta off, virtualization framework off (still a warn -- Rosetta needs
+    it), unreadable settings, an Intel Mac, and Linux."""
+    path = _settings(tmp_path, **settings_kwargs) if settings_kwargs else tmp_path / "absent.json"
+
+    state = rosetta_state(system, machine, path)
+    result = _check_rosetta(severity="soft", caps=("eval", "evolve"), rosetta=lambda: state)
+
+    assert result.status in {"ok", "warn"}
+
+
+def test_rosetta_warn_row_renders_in_render_human_output():
+    """The regression this whole ruling exists to fix: with the original
+    capabilities=() tagging, render_human/render_plain group rows by `cap in
+    r.capabilities`, so the row could never appear in bare `nethackers
+    doctor` output -- only in `-o json`. Now that rosetta is tagged
+    eval/evolve, confirm the row (and its fix text) actually renders, and
+    that the capability verdict still reads ready even though the row is a
+    warn (INV6/I9 -- a soft warn never flips it)."""
+    from nethackers.diagnostics import CheckResult, render_human
+
+    results = [
+        CheckResult(id="container_runtime", status="ok", severity="hard",
+                    detail="docker is available", fix=None,
+                    capabilities=("eval", "evolve")),
+        CheckResult(id="rosetta", status="warn", severity="soft",
+                    detail="amd64 evaluation is running under QEMU, not Rosetta",
+                    fix="enable Rosetta in Docker Desktop settings",
+                    capabilities=("eval", "evolve")),
+    ]
+
+    out = render_human(results)
+
+    assert "rosetta" in out
+    assert "enable Rosetta in Docker Desktop settings" in out
+    assert "ready to eval" in out and "ready to evolve" in out
