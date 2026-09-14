@@ -100,6 +100,8 @@ def build_docker_argv(
     if refs is not None:
         argv += ["-v", f"{refs}:/refs:ro"]
     argv += ["-w", "/workspace"]
+    if harness == "opencode2":
+        argv += ["-i"]   # the brief arrives on stdin (see _opencode2_cmd)
     argv += auth_args
     argv += [image]
     argv += ["timeout", str(caps.timeout_s)]
@@ -121,7 +123,7 @@ def _in_cage_cmd(
             for tok in cmd
         ]
     if harness == "opencode2":
-        return _opencode2_cmd(cli or "opencode2", brief, model, effort)
+        return _opencode2_cmd(cli or "opencode2", model, effort)
     raise ValueError(f"unknown harness: {harness!r}")
 
 
@@ -242,6 +244,7 @@ class ContainerOperator:
             return run_operator(
                 argv, cwd=".", backend=self.harness, on_line=on_line, stop=stop,
                 popen=self._popen,
+                stdin_text=brief if self.harness == "opencode2" else None,
             )
         finally:
             done.set()

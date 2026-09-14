@@ -1,5 +1,6 @@
 # tests/test_container_operator.py
 import os
+import subprocess
 import threading
 from pathlib import Path
 
@@ -60,6 +61,48 @@ def test_opencode2_in_cage_runs_json_and_auto_approves():
     assert a[a.index("--model") + 1] == "gpt-x#high"
 
 
+def test_opencode2_brief_goes_on_stdin_not_in_argv():
+    # `opencode2 run` quotes a spaced argv message and escapes its inner
+    # quotes, so the brief's JSON commands arrived broken. stdin is verbatim,
+    # and docker only forwards it with -i.
+    a = _argv("opencode2")
+    image_at = a.index("nethackers/mutator:test")
+    assert "-i" in a[:image_at]
+    assert "B" not in a[image_at:]
+    assert "-i" not in _argv("codex")[:image_at]
+
+
+def test_run_opencode2_writes_the_brief_to_stdin(monkeypatch, tmp_path):
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    seen = {}
+
+    class StdinPopen(FakePopen):
+        def __init__(self, cmd, **kw):
+            super().__init__(cmd, **kw)
+            seen["cmd"], seen["stdin_kw"] = cmd, kw.get("stdin")
+            self.stdin = self
+            self.written = ""
+            seen["proc"] = self
+
+        def write(self, text):
+            self.written += text
+
+        def close(self):
+            pass
+
+    brief = 'Measure with --batch \'[[0,"hum-law-fem"]]\' and a "quote".'
+    wt = tmp_path / "work" / "iter-1"
+    wt.mkdir(parents=True)
+    op = ContainerOperator(harness="opencode2", image="img:test", system="Linux", home=tmp_path)
+    op._popen = StdinPopen
+
+    op.run(wt, brief)
+
+    assert brief not in seen["cmd"]
+    assert seen["stdin_kw"] == subprocess.PIPE
+    assert seen["proc"].written == brief
+
+
 def test_unknown_harness_raises():
     with pytest.raises(ValueError, match="unknown harness"):
         _argv("pi")
@@ -71,10 +114,17 @@ def test_build_docker_argv_mounts_refs_readonly(tmp_path):
     assert "-v" in a and f"{refs}:/refs:ro" in a
 
 
+class _DiscardingStdin:
+    def write(self, text): return len(text)
+    def close(self): pass
+
+
 class FakePopen:
     def __init__(self, cmd, **kw):
         self.cmd = cmd
         self.stdout = iter(['{"type":"x"}\n'])
+        # Like Popen: a stdin object only when the caller asked for a pipe.
+        self.stdin = _DiscardingStdin() if kw.get("stdin") == subprocess.PIPE else None
         self.pid = 4321
         self.returncode = 0
     def poll(self): return 0
