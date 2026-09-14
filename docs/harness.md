@@ -171,7 +171,7 @@ cold-start each cell from the hub's elite, else from --seed
 | Selection | [`loop.py`](../src/nethackers/harness/loop.py) | Draws a cell at random (the `union` cell double-weighted once filled) and takes its elite as the parent — no score steers this |
 | Brief | [`brief.py`](../src/nethackers/harness/brief.py) | Builds the agent's prompt: identities, seeds, "make one focused change" |
 | Refs | [`refs.py`](../src/nethackers/harness/refs.py) | Assembles read-only `/refs/`: the parent bot, its per-seed results, recent attempts as real code trees, a scores table |
-| Mutation | [`container_operator.py`](../src/nethackers/harness/container_operator.py) | Runs Claude Code or Codex inside the mutator image against a bind-mounted worktree |
+| Mutation | [`container_operator.py`](../src/nethackers/harness/container_operator.py) | Runs Claude Code, Codex or OpenCode 2 inside the mutator image against a bind-mounted worktree ([the coding agents](#the-coding-agents)) |
 | Smoke gate | [`gate.py`](../src/nethackers/harness/gate.py) | Pass/fail, not a score: rejects a mutant missing its manifest/entrypoint, identical to its parent, or unable to finish one short episode on a throwaway seed |
 | Evaluation | [`evaluate.py`](../src/nethackers/harness/evaluate.py) → [`eval/runner.py`](../src/nethackers/eval/runner.py) | Runs the arena container on the objective's batch |
 | Registration | [`register.py`](../src/nethackers/harness/register.py) | Reports the whole batch's evidence for **every** evaluated candidate, win or not (publishing itself is a separate hook in `launch.py`) |
@@ -189,6 +189,101 @@ nethackers evolve val-dwa-law-fem --seed roots/autoascend --operator codex --ite
 > deliberate (the archive records what was tried, which is the point of keeping
 > the whole search visible), but it means a long run puts a lot of commits under
 > your GitHub account. `--offline` skips both.
+
+### The coding agents
+
+`--operator` (or the evolve form's Operator picker) chooses one of three
+coding-agent CLIs. Each runs headless in a fresh mutator container per iteration,
+with its approval prompts turned off ([§3](#b-the-coding-agent)). They differ in
+how they log in, how much of your own setup they see, and how a model and
+reasoning effort are pinned.
+
+| | Claude Code (`claude`) | Codex (`codex`) | OpenCode 2 (`opencode2`) |
+|---|---|---|---|
+| Log in on the host | run `claude` | `codex login` | nothing to log in to: providers come from your global `opencode.json` ([below](#opencode-2)) |
+| What enters the sandbox | the credential: `~/.claude/.credentials.json` read-only on Linux, the Keychain OAuth token as `CLAUDE_CODE_OAUTH_TOKEN` on macOS | your real `~/.codex`, **read-write** (its refresh tokens rotate, so it can't be a copy) | a read-only copy of the `provider` section of your global config, plus the env vars it names |
+| Approvals off | `--dangerously-skip-permissions` | `--dangerously-bypass-approvals-and-sandbox` | `--auto` |
+| Kept from its own past | `--no-session-persistence`, `--strict-mcp-config`, auto-memory off, and `--setting-sources project,local`: your user settings are dropped, the worktree's project settings still load | `--ephemeral`, `--ignore-user-config`, `--ignore-rules` | no such flags exist; its session store lives only in the throwaway container, and project config is switched off |
+| Model list | your account's models, from Anthropic's API on the host; aliases like `opus` always pass | `codex debug models`, run inside the sandbox so it matches the CLI there | `opencode2 models`, run inside the sandbox |
+| Reasoning effort | `--effort` | `-c model_reasoning_effort=` | a variant of the pinned model, `provider/model#variant` |
+
+#### OpenCode 2
+
+OpenCode 2 is provider-agnostic, so unlike the other two there is no single
+account to reuse. The sandbox's view of it is built from one file: your global
+`~/.config/opencode/opencode.json` or `opencode.jsonc` (under `$XDG_CONFIG_HOME`
+when that is set).
+
+**What crosses into the sandbox.** Only that file's `provider` section, copied to
+an owner-only file under `~/.nethackers/opencode2/` and mounted read-only in place
+of the original, plus the environment variables those providers name as
+`{env:NAME}` or list in their `env` field. Variables are forwarded by name, so
+their values never appear on the `docker run` command line. Your plugins, MCP
+servers, instructions and agents stay on the host.
+
+**What doesn't cross:**
+
+- **Logins made with `opencode2 auth login`**, a ChatGPT Plus/Pro login included.
+  OpenCode 2 keeps them in its own database, which the sandbox never sees, and a
+  subscription login renews itself: renewing a copy inside the sandbox would
+  invalidate the one on your machine. For GPT on a ChatGPT subscription, use the
+  `codex` operator.
+- **A `{file:...}` key.** The file isn't in the container. Use `{env:NAME}` or a
+  literal `apiKey`.
+- **Project config** — `opencode.json` files and `.opencode/` directories. The
+  worktree is a copy of someone else's program, and OpenCode trusts project config
+  completely: it can point a provider, with the forwarded key, at another server,
+  and it loads plugins and starts MCP servers. Every run and every model check
+  sets `OPENCODE_DISABLE_PROJECT_CONFIG=1`.
+
+**Without a key**, OpenCode serves a handful of free `opencode/*` models, and
+`doctor` and the evolve form say "free models only". Their availability is
+OpenCode's to decide: on 2026-09-14 some answered in two seconds and others never
+replied, and an iteration on a model that never replies waits out the 8-hour
+sandbox timeout.
+
+**Custom providers** show up in the model picker as `provider/model`, with their
+declared `variants` as the effort choices. The key's variable has to be exported
+in the shell that launches nethackers:
+
+```jsonc
+{
+  "provider": {
+    "myllm": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "baseURL": "https://llm.example.com/v1",
+        "apiKey": "{env:MYLLM_API_KEY}"
+      },
+      "models": {
+        "my-model": { "variants": { "high": { "reasoningEffort": "high" } } }
+      }
+    }
+  }
+}
+```
+
+Inside the sandbox `localhost` is the container itself, so a model server running
+on your own machine needs `http://host.docker.internal:PORT/v1` under Docker
+Desktop. Plain Docker on Linux doesn't provide that name.
+
+**Reasoning effort is a model variant.** OpenCode has no effort flag, so an
+effort needs a pinned model: `evolve --operator opencode2` refuses `--effort`
+without `--model`, and the evolve form offers no effort level while the model is
+"Harness default". Pinning `--model provider/model#variant` directly works too.
+
+**Two mechanics differ from the other agents:**
+
+- **The brief goes in on stdin** (`docker run -i`), not as an argument:
+  `opencode2 run` wraps an argument containing spaces in quotes and escapes its
+  inner quotes, which broke the JSON commands in the brief.
+- **The model list is read once it settles.** For its first few seconds in a
+  fresh container `opencode2 models` prints nothing, so the check polls until two
+  readings agree — about 3 seconds, 15 at most.
+
+**It's a beta.** The image installs `@opencode-ai/cli@beta`, a moving tag, so each
+image rebuild can pick up a different build. Everything above was checked against
+`0.0.0-beta-19271`.
 
 ### Two design choices worth stealing
 
@@ -212,8 +307,9 @@ variants of it forever. Diagnosing a stalled loop as "the mutator is broken" whe
 it is actually "the parent is frozen and the mutations are redundant" costs days.
 
 Our seal is a fresh container per iteration plus per-CLI statelessness flags
-(`--ephemeral --ignore-user-config` for Codex), so the agent carries no implicit
-session memory between iterations. What it knows of the past is only what `/refs/`
+(`--ephemeral --ignore-user-config` for Codex; OpenCode 2 has none and relies on
+the fresh container, see [the coding agents](#the-coding-agents)), so the agent
+carries no implicit session memory between iterations. What it knows of the past is only what `/refs/`
 deliberately shows it. Note this is not a hermetic boundary: `/workspace` is
 writable, the network is open, and for Codex the host's `~/.codex` is bind-mounted
 read-write — statelessness there rests on those flags, not on the container.
@@ -370,8 +466,11 @@ docker run --rm \
   there on the host, so code running in the cage can influence what your *next
   host-side* `codex` run does. For Claude on Linux only a read-only credentials
   file is mounted; on macOS the OAuth token is passed as an environment variable
-  (visible in `docker inspect`). An agent that wanted to exfiltrate your
-  coding-agent credentials could — and for Codex, modify them.
+  (visible in `docker inspect`). For OpenCode 2 a read-only copy of your provider
+  definitions is mounted, which may hold a literal key, and the keys it names
+  arrive as environment variables (also visible in `docker inspect`). An agent
+  that wanted to exfiltrate your coding-agent credentials could — and for Codex,
+  modify them.
 - **Blast radius is not confined to the worktree.** Host-side steps after the run
   (`copytree` into the tree store, into the next `/refs`, and into the published
   repo) follow symlinks by default. Combined with register-all publishing, a
@@ -435,7 +534,7 @@ program.
 | Worth borrowing | Probably skip |
 |---|---|
 | The resource caps on the agent ([§3](#b-the-coding-agent)) | Multi-arch image builds — you know your own machine |
-| `--network none` + read-only mount for scoring | Two coding-agent backends, model discovery, `doctor` |
+| `--network none` + read-only mount for scoring | Three coding-agent backends, model discovery, `doctor` |
 | Sealing the agent from its own past | The TUI, auto-provisioning, run monitoring |
 | Keeping the hidden secret out of every image | MAP-Elites specifically — any archive shape works |
 | A live env the agent can score candidates in | Our cell definition (one per identity) |

@@ -160,7 +160,8 @@ providers reference as `{env:NAME}` or list in their `env` field. So set each
 key as `{env:NAME}` or a literal `apiKey`: a `{file:...}` key, a login made with
 `opencode2 auth login`, your plugins and MCP servers, and project
 `opencode.json` files all stay outside. With no key, runs use OpenCode's free
-models, and `doctor` says so.
+models, and `doctor` says so. How each coding agent behaves in the sandbox, with
+OpenCode 2 in detail, is in [`docs/harness.md`](docs/harness.md#the-coding-agents).
 
 Note that `doctor`'s `publish` capability checks the hub, your login, and `gh` —
 but not the container runtime, so it can report `publish` ready on a machine where
