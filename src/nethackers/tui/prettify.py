@@ -218,7 +218,10 @@ def _opencode2_output(text: str, *, tail: bool, max_lines: int = 6,
             shown.append(f"… ({omitted} more lines)")
     compact = "\n".join(shown)
     if len(compact) > max_chars:
-        compact = compact[:max_chars - 1].rstrip() + "…"
+        if tail:
+            compact = "…" + compact[-(max_chars - 1):].lstrip()
+        else:
+            compact = compact[:max_chars - 1].rstrip() + "…"
     return compact
 
 

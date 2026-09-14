@@ -182,6 +182,23 @@ def test_opencode2_tool_output_is_bounded():
     assert "14 more lines" in shown[1][1]
 
 
+def test_opencode2_long_output_keeps_the_end_it_is_trimmed_for():
+    # Shell output is trimmed from the front because its summary is at the end;
+    # file previews from the back. Long lines must not flip either around.
+    first, last = "a" * 300, "===== 1 failed, 7 passed ====="
+    output = "\n".join([first] + ["x" * 300] * 7 + [last])
+
+    def shown(tool: str) -> str:
+        line = json.dumps({"type": "tool_use", "part": {"tool": tool, "state": {
+            "input": {"command": "pytest"}, "output": output,
+        }}})
+        return prettify("opencode2", line)[1][1]
+
+    assert shown("bash").endswith(last)
+    assert shown("read").startswith(f"↳ {first[:50]}")
+    assert last not in shown("read")
+
+
 def test_long_commands_are_not_truncated():
     # regression: commands used to be clipped at 80 chars with a "…"; the agent
     # log must show the full command (RichLog wraps) so nothing is hidden.
