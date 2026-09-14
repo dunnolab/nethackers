@@ -94,13 +94,19 @@ _PIN = {"arena": _image_pins.ARENA_IMAGE, "mutator": _image_pins.MUTATOR_IMAGE}
 def resolve_image(explicit: str | None, kind: str, *, repo_root=_repo_root) -> str:
     """The image ref to use for ``kind`` (``"arena"``/``"mutator"``). Ladder
     (spec §5.1): an explicit value (flag / env / .env.stack — anything that made
-    the layered Stage field non-None) wins verbatim; else a repo checkout uses the
-    locally-built dev tag; else the pinned GHCR digest. NO side effects — never
-    builds or pulls (safe in EvolveParams default factories); building/pulling
-    happens at the acquisition points. ``repo_root`` injectable for tests."""
+    the layered Stage field non-None) wins verbatim; for arena, the pinned GHCR
+    digest; for mutator, a repo checkout uses the locally-built dev tag; else the
+    pinned GHCR digest. NO side effects — never builds or pulls (safe in
+    EvolveParams default factories); building/pulling happens at the acquisition
+    points. ``repo_root`` injectable for tests."""
     if explicit is not None:
         return explicit
-    if repo_root() is not None:
+    # The arena pin names ONE platform's bytes and is what declares the
+    # reference architecture (spec 2026-09-14 D2/D6). A locally built tag is
+    # unclassified by construction and the hub refuses evidence from it, so a
+    # repo checkout must NOT silently substitute one. Reach the dev tag
+    # deliberately: --image, or NETHACKERS_ARENA_IMAGE.
+    if kind != "arena" and repo_root() is not None:
         return _LOCAL_DEV_REF[kind]
     return _PIN[kind]
 
