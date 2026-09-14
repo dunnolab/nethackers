@@ -25,7 +25,7 @@ Hand-edited, and deliberately NOT part of ``_image_pins.py``, which
 
 from __future__ import annotations
 
-ARENA_MAJOR = 1
+ARENA_MAJOR = 2
 
 ARENA_MAJOR_BY_DIGEST: dict[str, int] = {
     # The image every existing verified row was measured under.
@@ -35,6 +35,16 @@ ARENA_MAJOR_BY_DIGEST: dict[str, int] = {
     # nothing on the path that seeds, steps or scores an episode -- so it stays
     # comparable with the digest above (design D7).
     "sha256:d18bff83ace72a35cbbfde29df8e2da73f6a4a7c2e48bbb0ac488ac9c45c12e3": 1,
+    # Reference architecture pinned to linux/amd64 (design
+    # 2026-09-14-amd64-reference-reset). SCORES MOVE: NetHack consumes RNG in
+    # unsequenced sibling call arguments (e.g. mkgold(0L, somex(c), somey(c)) at
+    # src/mklev.c:831), and gcc orders call arguments left-to-right on aarch64
+    # and right-to-left on x86-64, so the same seed generates a different
+    # dungeon per architecture. Measured: the monk elite scores 0.15494 on arm64
+    # and 0.10994 on x86_64 over the same published batch. Major 1 was scored on
+    # whatever architecture each contributor happened to run, so nothing under
+    # it is comparable with anything under this.
+    "sha256:862434c5e719941a3ef63a01449dfe4ef7c158790b15ab9628d39ecd336796eb": 2,
 }
 
 

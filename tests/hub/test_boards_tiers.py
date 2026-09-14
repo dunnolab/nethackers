@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 
 from nethackers._image_pins import ARENA_IMAGE
 from nethackers.arena.seeds import secret_fingerprint
+from nethackers.arena_version import ARENA_MAJOR
 from nethackers.contracts.models import Atom
 from nethackers.hub.api import create_app
 from nethackers.hub.auth import LocalStubAuth
@@ -36,7 +37,7 @@ def store(tmp_path):
         [_atom("sha256:a", "sam", 11, 0.2), _atom("sha256:a", "sam", 22, 0.4),
          _atom("sha256:b", "kim", 11, 0.8), _atom("sha256:b", "kim", 22, 0.6)],
         secret_fingerprint=secret_fingerprint(SECRET), verifier_token_fingerprint="tok",
-        arena_major=1,
+        arena_major=ARENA_MAJOR,
     )
     return s
 

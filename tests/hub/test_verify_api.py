@@ -4,6 +4,7 @@ from fastapi.testclient import TestClient
 
 from nethackers._image_pins import ARENA_IMAGE
 from nethackers.arena.seeds import secret_fingerprint
+from nethackers.arena_version import ARENA_MAJOR
 from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
 from nethackers.hub.api import create_app
 from nethackers.hub.auth import LocalStubAuth
@@ -110,7 +111,7 @@ def test_post_verify_attempt_records_failure(tmp_path):
     r = client.post("/verify/attempts", json=body, headers={"Authorization": f"Bearer {VTOKEN}"})
     assert r.status_code == 200
     latest = store.latest_verified_attempt(f"{REPO}@{SHA}",
-                secret_fingerprint=secret_fingerprint(CFG.secret), arena_major=1)
+                secret_fingerprint=secret_fingerprint(CFG.secret), arena_major=ARENA_MAJOR)
     assert latest["status"] == "failed" and latest["failure_kind"] == "build_failed"
 
 
@@ -145,7 +146,7 @@ def test_a_failed_attempt_at_another_major_does_not_suppress_a_candidate(tmp_pat
                           owner="c", root=".", entrypoint="bot.py", registered_at="t")
     store.insert_verified_attempt(
         solution_digest=digest, secret_fingerprint=secret_fingerprint(CFG.secret),
-        evaluator_image=ARENA_IMAGE, arena_major=2,
+        evaluator_image=ARENA_IMAGE, arena_major=ARENA_MAJOR - 1,
         verifier_token_fingerprint="t", status="failed", failure_kind="build_failed",
         message="x", identities_done=0, at="t")
     r = client.get("/verify/candidates?limit=8", headers={"Authorization": f"Bearer {VTOKEN}"})
@@ -163,7 +164,7 @@ def test_candidates_excludes_fully_covered_and_failed(tmp_path):
                           owner="b", root=".", entrypoint="bot.py", registered_at="t")
     store.insert_verified_attempt(solution_digest="github.com/b/x@" + "b" * 40,
         secret_fingerprint=secret_fingerprint(CFG.secret), evaluator_image=ARENA_IMAGE,
-        arena_major=1,
+        arena_major=ARENA_MAJOR,
         verifier_token_fingerprint="t", status="failed", failure_kind="build_failed",
         message="x", identities_done=0, at="t")
     r = client.get("/verify/candidates?limit=8", headers={"Authorization": f"Bearer {VTOKEN}"})

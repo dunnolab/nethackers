@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from nethackers._image_pins import ARENA_IMAGE
 from nethackers.arena.seeds import secret_fingerprint
+from nethackers.arena_version import ARENA_MAJOR
 from nethackers.contracts.models import Atom
 from nethackers.hub.api import create_app
 from nethackers.hub.auth import LocalStubAuth
@@ -45,18 +46,18 @@ def store(tmp_path):
          _atom("sha256:a", "sam", FLOORED, 22, 0.50),
          _atom("sha256:a", "sam", UNFLOORED, 11, 0.70),
          _atom("sha256:a", "sam", UNFLOORED, 22, 0.70)],
-        secret_fingerprint=fp, verifier_token_fingerprint="tok", arena_major=1,
+        secret_fingerprint=fp, verifier_token_fingerprint="tok", arena_major=ARENA_MAJOR,
     )
     s.insert_verified_baseline_atoms(
         [_atom("autoascend", "autoascend", FLOORED, 11, 0.20, tier="baseline"),
          _atom("autoascend", "autoascend", FLOORED, 22, 0.20, tier="baseline")],
-        secret_fingerprint=fp, verifier_token_fingerprint="tok", arena_major=1,
+        secret_fingerprint=fp, verifier_token_fingerprint="tok", arena_major=ARENA_MAJOR,
     )
     return s
 
 
 def _epoch():
-    return Epoch(secret_fingerprint(SECRET), 1, SEEDS)
+    return Epoch(secret_fingerprint(SECRET), ARENA_MAJOR, SEEDS)
 
 
 def test_verified_keepers_lift_is_measured_against_the_verified_floor(store):
