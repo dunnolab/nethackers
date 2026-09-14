@@ -96,9 +96,13 @@ def test_rosetta_never_changes_the_exit_code():
 
 
 # Every branch rosetta_state can take, paired with the (system, machine,
-# settings-file) input that drives it there -- used below to pin I9's other
-# half: no matter which branch fires, `_check_rosetta` must never turn it
-# into status="fail".
+# settings-file content) input that drives it there -- used below to pin
+# I9's other half: no matter which branch fires, `_check_rosetta` must never
+# turn it into status="fail". `_ABSENT` is a distinct sentinel from `None`:
+# `None` is itself a case under test below (a settings file containing the
+# JSON literal `null`), so it can no longer double as "don't write a file".
+_ABSENT = object()
+
 _ROSETTA_STATE_CASES = [
     ("rosetta_on", "Darwin", "arm64",
      dict(UseVirtualizationFramework=True, UseVirtualizationFrameworkRosetta=True)),
@@ -106,27 +110,39 @@ _ROSETTA_STATE_CASES = [
      dict(UseVirtualizationFramework=False, UseVirtualizationFrameworkRosetta=False)),
     ("virtualization_framework_off", "Darwin", "arm64",
      dict(UseVirtualizationFramework=False, UseVirtualizationFrameworkRosetta=True)),
-    ("unreadable_settings", "Darwin", "arm64", None),
-    ("intel_mac", "Darwin", "x86_64", None),
-    ("linux", "Linux", "x86_64", None),
+    ("unreadable_settings", "Darwin", "arm64", _ABSENT),
+    ("intel_mac", "Darwin", "x86_64", _ABSENT),
+    ("linux", "Linux", "x86_64", _ABSENT),
+    # Present, valid JSON, but not the object shape Docker Desktop writes --
+    # the "unguarded escape" a reviewer found by direct reproduction: `.get()`
+    # on a list/None raises AttributeError, which `_safe`'s generic crash net
+    # used to turn into status="fail".
+    ("settings_file_is_a_json_list", "Darwin", "arm64", [1, 2, 3]),
+    ("settings_file_is_json_null", "Darwin", "arm64", None),
 ]
 
 
 @pytest.mark.parametrize(
-    "system,machine,settings_kwargs",
+    "system,machine,content",
     [case[1:] for case in _ROSETTA_STATE_CASES],
     ids=[case[0] for case in _ROSETTA_STATE_CASES],
 )
 def test_check_rosetta_never_emits_fail_for_any_rosetta_state(
-    tmp_path, system, machine, settings_kwargs,
+    tmp_path, system, machine, content,
 ):
     """I9's other half, pinned directly against `_check_rosetta` rather than
     inferred: `CheckResult.status` admits "fail", but no `rosetta_state`
     outcome may ever produce one -- an advisory that can read as a hard
     failure would defeat the whole point. Covers every branch: Rosetta on,
     Rosetta off, virtualization framework off (still a warn -- Rosetta needs
-    it), unreadable settings, an Intel Mac, and Linux."""
-    path = _settings(tmp_path, **settings_kwargs) if settings_kwargs else tmp_path / "absent.json"
+    it), unreadable settings, an Intel Mac, Linux, and a settings file that
+    is valid JSON but not an object (a list, or the literal `null`) -- the
+    escape a narrower ``except (OSError, ValueError)`` alone would miss."""
+    if content is _ABSENT:
+        path = tmp_path / "absent.json"
+    else:
+        path = tmp_path / SETTINGS
+        path.write_text(json.dumps(content))
 
     state = rosetta_state(system, machine, path)
     result = _check_rosetta(severity="soft", caps=("eval", "evolve"), rosetta=lambda: state)

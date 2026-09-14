@@ -337,8 +337,10 @@ def rosetta_state(
 
     ``"unknown"`` whenever we cannot tell -- a non-macOS host, an Intel Mac
     (which emulates nothing), a runtime that is not Docker Desktop, or an
-    unreadable settings file. NEVER report "disabled" on a guess: Colima and
-    podman machine carry their own Rosetta switches.
+    unreadable OR malformed settings file (present, valid JSON, but not the
+    object shape Docker Desktop actually writes -- e.g. a list or ``null``).
+    NEVER report "disabled" on a guess: Colima and podman machine carry their
+    own Rosetta switches.
 
     Detection is host-side on purpose. Probing inside the container does not
     work: the Rosetta mount is absent there even when Rosetta is active, so an
@@ -346,13 +348,22 @@ def rosetta_state(
     """
     if system != "Darwin" or machine not in {"arm64", "aarch64"}:
         return "unknown", "not an Apple Silicon Mac; amd64 emulation does not apply"
+    unreadable = (
+        "could not read Docker Desktop settings; if you use Colima, start it "
+        "with --vz --vz-rosetta"
+    )
     try:
         settings = json.loads(settings_path.read_text())
     except (OSError, ValueError):
-        return "unknown", (
-            "could not read Docker Desktop settings; if you use Colima, start it "
-            "with --vz --vz-rosetta"
-        )
+        return "unknown", unreadable
+    # Present and valid JSON, but not an object (a list, a bare string/number,
+    # `null`...) -- `.get()` below would raise AttributeError, which `_safe`'s
+    # generic crash net would turn into status="fail". That's exactly the
+    # outcome an advisory must never produce, so this is checked explicitly
+    # rather than folded into the except clause above (which would silently
+    # also swallow bugs in this function itself, not just bad input).
+    if not isinstance(settings, dict):
+        return "unknown", unreadable
     vz = bool(settings.get("UseVirtualizationFramework"))
     rosetta = bool(settings.get("UseVirtualizationFrameworkRosetta"))
     if vz and rosetta:
