@@ -297,6 +297,12 @@ against 4,176, so roughly 2x, which shows up as 224s against 179s in wall clock.
 **The board stays empty for a while.** Genesis discards 551 programs and 56,340
 atoms. There is no automatic refill: contributors must re-register.
 
+**The site's history time-series resets with it.** `views/progress.py` reads
+`atoms`, so `/progress` returns an empty series after genesis and rebuilds from
+the first major-2 registration onward. Intended, and stated here because it is
+the one user-visible consequence that is not obviously implied by "the board
+empties".
+
 ## 9. Testing
 
 - Admission, table-tested across classified / unclassified / wrong-major, for
