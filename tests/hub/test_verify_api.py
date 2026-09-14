@@ -110,8 +110,47 @@ def test_post_verify_attempt_records_failure(tmp_path):
     r = client.post("/verify/attempts", json=body, headers={"Authorization": f"Bearer {VTOKEN}"})
     assert r.status_code == 200
     latest = store.latest_verified_attempt(f"{REPO}@{SHA}",
-                secret_fingerprint=secret_fingerprint(CFG.secret), evaluator_image=ARENA_IMAGE)
+                secret_fingerprint=secret_fingerprint(CFG.secret), arena_major=1)
     assert latest["status"] == "failed" and latest["failure_kind"] == "build_failed"
+
+
+def test_post_verify_attempt_400s_an_unclassified_image_and_writes_nothing(tmp_path):
+    """This route could not fail before the arena major landed -- it stored
+    whatever evaluator_image the caller reported. Now an image with no major
+    is refused, because an attempt filed under a guessed one would let
+    verify_candidates skip a program over a failure that never happened in
+    that scope. The refusal must leave no half-written row behind it."""
+    client, store = _app(tmp_path)
+    body = {"reference": {"repo": REPO, "commit": SHA},
+            "evaluator_image": "sha256:" + "1" * 64,     # a bare local image Id
+            "secret_fingerprint": secret_fingerprint(CFG.secret), "status": "failed",
+            "failure_kind": "build_failed", "message": "clone failed",
+            "identities_done": 0}
+    r = client.post("/verify/attempts", json=body, headers={"Authorization": f"Bearer {VTOKEN}"})
+    assert r.status_code == 400
+    assert "ParityMismatch" in r.json()["detail"]
+    assert store._conn.execute(
+        "SELECT COUNT(*) FROM verified_attempts").fetchone()[0] == 0
+
+
+def test_a_failed_attempt_at_another_major_does_not_suppress_a_candidate(tmp_path):
+    """The whole point of scoping attempts by major. A deterministic failure
+    recorded under a DIFFERENT major says nothing about this board: the program
+    was never tried here. Suppressing it would silently strand a program on the
+    current major with no way to be re-offered, which is precisely what keying
+    attempts by the image digest used to do on every re-pin."""
+    client, store = _app(tmp_path)
+    digest = "github.com/c/x@" + "c" * 40
+    store.upsert_solution(digest, repo="github.com/c/x", commit_sha="c" * 40,
+                          owner="c", root=".", entrypoint="bot.py", registered_at="t")
+    store.insert_verified_attempt(
+        solution_digest=digest, secret_fingerprint=secret_fingerprint(CFG.secret),
+        evaluator_image=ARENA_IMAGE, arena_major=2,
+        verifier_token_fingerprint="t", status="failed", failure_kind="build_failed",
+        message="x", identities_done=0, at="t")
+    r = client.get("/verify/candidates?limit=8", headers={"Authorization": f"Bearer {VTOKEN}"})
+    assert r.status_code == 200
+    assert "github.com/c/x" in [row["reference"]["repo"] for row in r.json()["rows"]]
 
 
 def test_candidates_excludes_fully_covered_and_failed(tmp_path):
@@ -124,6 +163,7 @@ def test_candidates_excludes_fully_covered_and_failed(tmp_path):
                           owner="b", root=".", entrypoint="bot.py", registered_at="t")
     store.insert_verified_attempt(solution_digest="github.com/b/x@" + "b" * 40,
         secret_fingerprint=secret_fingerprint(CFG.secret), evaluator_image=ARENA_IMAGE,
+        arena_major=1,
         verifier_token_fingerprint="t", status="failed", failure_kind="build_failed",
         message="x", identities_done=0, at="t")
     r = client.get("/verify/candidates?limit=8", headers={"Authorization": f"Bearer {VTOKEN}"})

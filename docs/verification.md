@@ -247,20 +247,72 @@ aggregate, because it was never in the same table to begin with.
 
 ## Epochs
 
-Every verified atom is scoped by `(secret_fingerprint, evaluator_image, seed)`.
+Every verified atom is scoped by `(secret_fingerprint, arena_major, seed)`.
 Reads filter on all three, which means a **delta can never be computed across two
-different measurements**. Three things end an epoch:
+different measurements**.
+
+`arena_major` is an integer naming a set of arena image digests **declared to
+score alike** — `ARENA_MAJOR` and `ARENA_MAJOR_BY_DIGEST` in
+`src/nethackers/arena_version.py`. It is deliberately not the image digest. Two
+images can differ byte-for-byte and score identically, which is exactly what a
+change to process lifetime, logging, or an error message produces; keying the
+tier on the digest meant every such rebuild silently discarded the entire
+verified corpus. Each atom still *records* the exact digest that produced it, as
+provenance — it just is not what groups atoms into a comparable set.
+
+Three things end an epoch:
 
 | Event | Effect |
 |---|---|
 | The hidden secret is rotated | All prior verified atoms fall out of every read |
-| The arena image is re-pinned | Same — a different evaluator is a different measurement |
+| `ARENA_MAJOR` is bumped | Same — the previous major's atoms stop being read |
 | A seed is retired from the list | That seed's atoms drop out of the fold |
 
-This is a correctness property with an expensive edge: **re-pinning the arena
-image starts a new verified epoch and orphans all verified work to date.** If you
-maintain a fork, know that a routine dependency bump that changes the arena
-digest costs you every verified score you have accumulated.
+**Re-pinning the arena image is not on that list.** A rebuild that cannot change
+a score keeps the whole corpus, which is the point of the major.
+
+### After a re-pin: classify the digest
+
+A re-pin does come with an obligation. `ARENA_MAJOR_BY_DIGEST` is hand-edited and
+lives outside the generated `_image_pins.py`, so a fresh pin is **unclassified**
+until someone adds a line for it. An unclassified digest is rejected at
+admission: every submission from a node running it gets a 400, and verification
+stops accumulating.
+
+So, on the PR that carries the re-pin, add the new digest to
+`ARENA_MAJOR_BY_DIGEST` in `src/nethackers/arena_version.py` with a comment
+saying what the rebuild changed. The one judgment to make is whether it **moves
+scores**:
+
+- **It does not** — a process-lifetime, logging, packaging or dependency change
+  that cannot touch how an episode is seeded, stepped or scored. Classify it at
+  the current `ARENA_MAJOR`. The corpus carries over; nothing else to do.
+- **It does** — anything that can move an episode's outcome. Classify it at
+  `ARENA_MAJOR + 1` and bump `ARENA_MAJOR` to match. See below for what that
+  costs.
+
+Two things fail loudly if you forget: the unit test in
+`tests/test_arena_version.py`, and a step in `.github/workflows/sandbox-images.yml`
+on the run that created the pin. Neither can check that the judgment is *right* —
+only that it was made.
+
+### Bumping the major, and what it actually costs
+
+A bump touches **no rows**. Nothing is deleted, nothing is rewritten; the
+previous major's atoms stay in the database and simply stop being read, and they
+become readable again if the major is ever restored. So the cost is not data
+loss — it is that **every program reports zero verified coverage the moment the
+bumped hub starts**, and the corpus has to be re-earned by re-running the
+evaluator over the hidden grid.
+
+At the corpus size this hub was carrying when the major was introduced —
+about 21,400 participant episodes plus a 1,095-episode AutoAscend floor — that is
+roughly **five days of evaluator-node time**, during which the Private Dungeons
+board is empty or partial and every Delta-vs-AutoAscend reads `—` until the floor
+is recomputed too. Budget it as a scheduled re-measurement, not a config change.
+
+If you maintain a fork, the practical rule is: routine rebuilds are free, and you
+only pay when you change what the arena actually does.
 
 ---
 

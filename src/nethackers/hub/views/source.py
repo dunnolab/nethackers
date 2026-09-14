@@ -10,7 +10,7 @@ other -- different seeds, so the Delta measures nothing.
 being a trap: a single Source instance hands out the atom table and its MATCHING
 baseline table together, so the paired regime is the natural usage and the path
 of least resistance. Defeating the pairing requires constructing two separate
-Sources. A rotated secret, a re-pinned arena image, or a retired seed all drop
+Sources. A rotated secret, a bumped arena major, or a retired seed all drop
 out here, once, instead of at four separate call sites. Later views that read
 both atoms and baseline (such as ``views/recognition.py``) must resolve a single
 Source and reuse it for both reads.
@@ -39,11 +39,14 @@ class VerificationUnavailable(Exception):
 @dataclass(frozen=True)
 class Epoch:
     """The scope one verified measurement is comparable within. Two atoms are
-    comparable only if all three match -- a rotated secret or a re-pinned arena
-    starts a new epoch, and retired seeds fall out of the current one."""
+    comparable only if all three match. A rotated secret starts a new scope,
+    retired seeds fall out of it, and ``arena_major`` is the scorer's identity
+    -- bumped by hand only when a rebuild actually moves scores, so a
+    quality-of-life rebuild keeps everything comparable (see
+    ``nethackers.arena_version``)."""
 
     secret_fingerprint: str
-    evaluator_image: str
+    arena_major: int
     seeds: tuple[int, ...]
 
 
@@ -72,9 +75,9 @@ class Source:
             return "1 = 0", ()
         placeholders = ", ".join("?" for _ in self.epoch.seeds)
         return (
-            f"{prefix}secret_fingerprint = ? AND {prefix}evaluator_image = ? "
+            f"{prefix}secret_fingerprint = ? AND {prefix}arena_major = ? "
             f"AND {prefix}seed IN ({placeholders})",
-            (self.epoch.secret_fingerprint, self.epoch.evaluator_image,
+            (self.epoch.secret_fingerprint, self.epoch.arena_major,
              *self.epoch.seeds),
         )
 
@@ -85,7 +88,7 @@ class Source:
         return self._epoch_rows(
             store.iter_verified_atoms(
                 secret_fingerprint=self.epoch.secret_fingerprint,
-                evaluator_image=self.epoch.evaluator_image,
+                arena_major=self.epoch.arena_major,
                 **filters,
             )
         )
@@ -99,7 +102,7 @@ class Source:
         return self._epoch_rows(
             store.iter_verified_baseline_atoms(
                 secret_fingerprint=self.epoch.secret_fingerprint,
-                evaluator_image=self.epoch.evaluator_image,
+                arena_major=self.epoch.arena_major,
                 **filters,
             )
         )
