@@ -874,6 +874,12 @@ def _run(argv: list[str] | None) -> int:
         except ValueError:
             err.print(_unknown_objective(args.objective))   # "unknown objective 'X'. Use <forms>"
             return 2
+        if args.operator == "opencode2" and args.effort and not args.model:
+            # OpenCode 2 has no effort flag: effort is a variant of a named
+            # model (`provider/model#variant`), so there is nothing to attach it to.
+            err.print("[red]opencode2 applies --effort as a model variant[/] — "
+                      "pin a model with `--model provider/model`, or drop --effort.")
+            return 2
 
         # The mutator ALWAYS runs sandboxed -- there is no host-execution path.
         # Fail fast, before any hub SELECT call / run-dir creation, rather than a

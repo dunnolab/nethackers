@@ -3,8 +3,9 @@
 Streams the agent's output, meters token usage faithfully (see
 ``harness.metering``), and reaps the process at EOF. No token budget, no
 timeout: the agent runs to completion and is stopped manually (hard kill via
-its own process group). Two backends: Claude Code (``claude -p``) and Codex
-(``codex exec``), invoked headless in the worktree.
+its own process group). Backends are Claude Code (``claude -p``), Codex
+(``codex exec``), and OpenCode 2 (``opencode2 run``), invoked headless in the
+worktree.
 """
 from __future__ import annotations
 
@@ -45,6 +46,7 @@ def run_operator(
     stop: threading.Event | None = None,
     refs: Path | None = None,
     popen=subprocess.Popen,
+    stdin_text: str | None = None,
 ) -> OperatorResult:
     """Stream the operator's stdout, metering faithfully; reap at EOF. No
     budget/timeout -- the agent runs until it exits. The subprocess runs in its
@@ -53,6 +55,10 @@ def run_operator(
     and ``stopped_reason`` is ``"killed"`` (else ``"completed"``). A crashing
     ``on_line`` never aborts the run. A non-zero backend exit is surfaced as an
     error with the useful tail of its combined stdout/stderr.
+
+    ``stdin_text``, when given, is written to the process's stdin, which is then
+    closed -- for a backend that takes its prompt there (OpenCode 2). Otherwise
+    stdin is left untouched.
 
     ``refs`` is accepted but unused: it exists only for interface parity with
     ``ContainerOperator.run``, which bind-mounts it into the sandbox. This
@@ -65,8 +71,15 @@ def run_operator(
     # Keep stderr in the same stream as the backend's JSONL output.  CLI parse
     # and startup failures are written only to stderr; discarding it used to
     # make them look like successful zero-token no-ops.
+    stdin_kw = {} if stdin_text is None else {"stdin": subprocess.PIPE}
     proc = popen(cmd, cwd=str(cwd), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-                 text=True, bufsize=1, start_new_session=True)
+                 text=True, bufsize=1, start_new_session=True, **stdin_kw)
+    if stdin_text is not None:
+        # A process that dies before reading reports its own failure below.
+        with contextlib.suppress(BrokenPipeError, OSError):
+            proc.stdin.write(stdin_text)
+        with contextlib.suppress(BrokenPipeError, OSError):
+            proc.stdin.close()
     killed = threading.Event()
     done = threading.Event()
     output_tail: deque[str] = deque(maxlen=20)
@@ -129,6 +142,31 @@ def _claude_cmd(cli: str, brief: str, model: str | None, effort: str | None) -> 
         cmd += ["--model", model]     # pin the model (else Claude Code's default)
     if effort:
         cmd += ["--effort", effort]   # reasoning effort: low|medium|high|xhigh|max
+    return cmd
+
+
+def _opencode2_cmd(cli: str, model: str | None, effort: str | None) -> list[str]:
+    """Build a fresh, non-interactive OpenCode 2 run.
+
+    The brief is not an argument: ``opencode2 run`` wraps a message containing
+    spaces in quotes and escapes its inner quotes, which broke the brief's
+    JSON commands. The caller writes it to stdin, which OpenCode reads to EOF
+    verbatim. The mutator container supplies the isolation boundary, so
+    ``--auto`` lets OpenCode 2 use its tools without stopping for approval. Its
+    data directory is ephemeral (nothing is mounted over it), so sessions
+    carry no memory between iterations. OpenCode calls its provider-specific
+    reasoning setting a model ``variant``.
+    """
+    # `--thinking` is required even in JSON mode: without it OpenCode consumes
+    # provider reasoning blocks but omits them from the event stream, leaving
+    # the mutation log with tool calls only.  The formatter already renders
+    # emitted `reasoning` events, so opt in explicitly for parity with the
+    # reasoning traces shown by the Codex and Claude backends.
+    cmd = [cli, "run", "--standalone", "--format", "json", "--thinking", "--auto"]
+    if model:
+        # V2 encodes its model variant in the model reference itself.
+        selected = f"{model.split('#', 1)[0]}#{effort}" if effort else model
+        cmd += ["--model", selected]
     return cmd
 
 

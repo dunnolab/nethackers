@@ -11,6 +11,7 @@ from nethackers.harness.metering import TokenUsage
 from nethackers.harness.operator import (
     _claude_cmd,
     _codex_cmd,
+    _opencode2_cmd,
     run_operator,
 )
 
@@ -148,6 +149,55 @@ def test_codex_cmd_pins_model_and_effort_when_set():
     assert cmd[cmd.index("-m") + 1] == "gpt-5.6-sol"
     # effort is a `-c` config override (still applies under --ignore-user-config)
     assert "-c" in cmd and "model_reasoning_effort=max" in cmd
+
+
+def test_opencode2_cmd_is_headless_auto_approved_and_pinned():
+    cmd = _opencode2_cmd("opencode2", "openai/gpt-5", "high")
+    assert cmd[:2] == ["opencode2", "run"]
+    assert cmd[cmd.index("--format") + 1] == "json"
+    assert "--thinking" in cmd
+    assert "--auto" in cmd
+    assert "--standalone" in cmd
+    assert cmd[cmd.index("--model") + 1] == "openai/gpt-5#high"
+
+
+def test_opencode2_cmd_leaves_model_and_variant_unpinned_by_default():
+    cmd = _opencode2_cmd("opencode2", None, None)
+    assert "--model" not in cmd
+    assert "--thinking" in cmd
+
+
+def test_run_operator_feeds_stdin_text_and_closes_it(tmp_path):
+    class Stdin:
+        def __init__(self):
+            self.written, self.closed = "", False
+
+        def write(self, text):
+            self.written += text
+
+        def close(self):
+            self.closed = True
+
+    seen = {}
+
+    class Proc:
+        def __init__(self, cmd, **kw):
+            seen["kw"], self.stdin = kw, Stdin()
+            seen["stdin"] = self.stdin
+            self.stdout, self.pid, self.returncode = iter([]), 1, 0
+
+        def poll(self):
+            return 0
+
+        def wait(self, timeout=None):
+            return 0
+
+    brief = 'Measure: --batch \'[[0,"hum-law-fem"]]\'\nthen "stop".'
+    run_operator(["opencode2", "run"], tmp_path, backend="opencode2",
+                 stdin_text=brief, popen=Proc)
+
+    assert seen["kw"]["stdin"] == subprocess.PIPE
+    assert seen["stdin"].written == brief and seen["stdin"].closed
 
 
 def _claude_project_slug(cwd: Path) -> str:

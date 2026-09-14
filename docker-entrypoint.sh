@@ -43,16 +43,30 @@ if [ "$target_uid" != "0" ] && [ "$target_gid" != "0" ]; then
     fi
 fi
 
-# Only ever chown paths that are always this image's own filesystem layer,
-# never a bind mount -- /home/agent itself, and (if present) the .claude
-# directory Docker creates as the mount point for auth_inject.py's
-# read-only .credentials.json file. Never chown -R here: .codex is
+# Only ever chown directories that are always this image's own filesystem
+# layer, never their contents or a bind-mounted file. OpenCode writes under
+# XDG_CONFIG_HOME, XDG_DATA_HOME, XDG_STATE_HOME, and XDG_CACHE_HOME; their
+# baked ownership still has uid 1000 after `usermod` changes agent's uid, so
+# every directory component must be realigned here. Never chown -R: .codex is
 # bind-mounted read-write from the host's real ~/.codex (auth_inject.py),
 # and a recursive chown would silently rewrite ownership of the HOST's
 # actual files through that mount.
-chown agent:agent /home/agent
-if [ -d /home/agent/.claude ]; then
-    chown agent:agent /home/agent/.claude
-fi
+for owned_dir in \
+    /home/agent \
+    /home/agent/.claude \
+    /home/agent/.config \
+    /home/agent/.config/opencode \
+    /home/agent/.local \
+    /home/agent/.local/share \
+    /home/agent/.local/share/opencode \
+    /home/agent/.local/state \
+    /home/agent/.local/state/opencode \
+    /home/agent/.cache \
+    /home/agent/.cache/opencode
+do
+    if [ -d "$owned_dir" ]; then
+        chown agent:agent "$owned_dir"
+    fi
+done
 
 exec gosu agent "$@"

@@ -83,6 +83,7 @@ def _healthy_kwargs(**overrides):
         # Dockerfile.mutator/Makefile, since the suite runs from a checkout).
         repo_root=lambda: None,
         preflight_operator=lambda operator: None,
+        opencode2_keyed=lambda: True,   # never read the real ~/.config/opencode
         hub_mode=lambda hub: "github",
         load_creds=lambda: Credentials("castiel", "tok"),
         gh_state=lambda: ("castiel", "authed"),
@@ -292,6 +293,19 @@ def test_operator_narrows_to_a_single_named_agent():
     op = next(r for r in results if r.id == "operator")
     assert seen == ["codex"]                           # ONLY codex probed
     assert "codex" in op.detail and "claude" not in op.detail
+
+
+def test_operator_labels_keyless_opencode2_as_free_models_only():
+    # opencode2 always passes (its free models need no key), but calling that
+    # "logged in" claimed a login that doesn't exist.
+    def check(keyed: bool) -> tuple[str, str]:
+        results = run_checks(**_healthy_kwargs(
+            operator="opencode2", opencode2_keyed=lambda: keyed))
+        op = next(r for r in results if r.id == "operator")
+        return op.status, op.items[0].detail
+
+    assert check(False) == ("ok", "free models only")
+    assert check(True) == ("ok", "logged in")
 
 
 def test_operator_items_are_per_agent_with_flat_detail_for_json():

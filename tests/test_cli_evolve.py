@@ -195,6 +195,20 @@ def test_evolve_refuses_unavailable_model(tmp_path, monkeypatch):
     assert called["prepared"] is False        # never built a run for a doomed model
 
 
+def test_evolve_refuses_opencode2_effort_without_a_model(tmp_path, monkeypatch):
+    # OpenCode 2 applies effort only as `provider/model#variant`. Without a
+    # model it was silently dropped, while run.json still recorded it.
+    seed = _seed(tmp_path)
+    called = {"prepared": False}
+    monkeypatch.setattr(cli, "prepare_evolve",
+                        lambda *a, **k: called.update(prepared=True), raising=False)
+    rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed), "--from-seed",
+                   "--operator", "opencode2", "--effort", "high",
+                   "--workdir", str(tmp_path / "w")])
+    assert rc == 2
+    assert called["prepared"] is False
+
+
 def test_evolve_skips_preflight_without_a_pinned_model(tmp_path, monkeypatch):
     seed = _seed(tmp_path)
     fired = {"preflight": False}

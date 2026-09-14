@@ -54,6 +54,23 @@ def test_meter_codex_updates_on_turn_completed():
     assert m.usage.total == 303014 + 2862
 
 
+def test_classify_opencode2_step_finish_is_increment():
+    line = ('{"type":"step_finish","part":{"tokens":{"total":19362,'
+            '"input":209,"output":180,"reasoning":29,'
+            '"cache":{"write":0,"read":18944}}}}')
+    kind, usage = classify("opencode2", line)
+    assert kind == "inc"
+    assert usage == TokenUsage(input=209, output=209, cache_creation=0, cache_read=18944)
+    assert usage.total == 19362
+
+
+def test_meter_opencode2_sums_multiple_steps():
+    meter = Meter("opencode2")
+    meter.observe('{"type":"step_finish","part":{"tokens":{"input":2,"output":3}}}')
+    meter.observe('{"type":"step_finish","part":{"tokens":{"input":5,"output":7}}}')
+    assert meter.usage == TokenUsage(input=7, output=10)
+
+
 def test_classify_never_raises():
     assert classify("claude", "not json") is None
     assert classify("claude", "[1,2,3]") is None

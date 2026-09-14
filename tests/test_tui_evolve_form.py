@@ -267,14 +267,15 @@ async def test_operator_version_line_shows_not_found_when_missing(monkeypatch):
 
 async def test_effort_options_follow_selected_model(monkeypatch):
     # The Reasoning-effort picker is driven by the selected model's discovered
-    # efforts (not a hardcoded list); a model with no reasoning falls back to
-    # the shared static EFFORTS.
+    # efforts (not a hardcoded list). Unknown metadata falls back to the shared
+    # list, while a catalog-confirmed empty set must remain default-only.
     monkeypatch.setattr(
         ef, "probe_operator",
         lambda backend, **k: (
             CliInfo(backend, True, f"{backend} x", True),
             [ModelInfo("m-rich", "Rich", ("low", "high", "ultra"), False),
-             ModelInfo("m-bare", "Bare", (), False)]
+             ModelInfo("m-bare", "Bare", (), False),
+             ModelInfo("m-no-variants", "No variants", (), False, True)]
             if backend == "claude" else None,
         ),
     )
@@ -288,11 +289,58 @@ async def test_effort_options_follow_selected_model(monkeypatch):
             ("Harness default", ""), ("low", "low"), ("high", "high"), ("ultra", "ultra")]
         assert form._effort_options("m-bare") == [
             ("Harness default", ""), *((e, e) for e in ef.EFFORTS)]   # fallback
+        assert form._effort_options("m-no-variants") == [
+            ("Harness default", "")]
         form.query_one("#f_model", Select).value = "m-rich"
         await pilot.pause()
         eff = form.query_one("#f_effort", Select)
         eff.value = "ultra"                # a live-only level absent from static EFFORTS
         assert eff.value == "ultra"        # picker was repopulated from live reasoning
+
+
+async def _switch_operator(app, pilot, backend: str):
+    form = app.query_one(ef.EvolveForm)
+    form.query_one("#f_op", Select).value = backend
+    await pilot.pause()
+    await app.workers.wait_for_complete()
+    await pilot.pause()
+    return form
+
+
+async def test_opencode2_offers_no_effort_without_a_pinned_model(monkeypatch):
+    # OpenCode 2 applies effort only as `provider/model#variant`: under
+    # "Harness default" a picked effort was silently dropped from the run.
+    monkeypatch.setattr(ef, "probe_operator", lambda backend, **k: (
+        CliInfo(backend, True, f"{backend} x", True), None))
+    app = _Host(None)
+    async with app.run_test(size=(100, 50)) as pilot:
+        await pilot.pause()
+        form = app.query_one(ef.EvolveForm)
+        assert len(form._effort_options("")) > 1            # claude applies it model-less
+        form = await _switch_operator(app, pilot, "opencode2")
+        assert form._effort_options("") == [("Harness default", "")]
+        assert form._effort_options("__custom__") == [
+            ("Harness default", ""), *((e, e) for e in ef.EFFORTS)]
+
+
+async def test_opencode2_version_line_names_free_models_without_a_key(monkeypatch):
+    keyed = {"value": False}
+    monkeypatch.setattr(ef, "probe_operator", lambda backend, **k: (
+        CliInfo(backend, True, "opencode2 v0.0.0-beta-19271", keyed["value"]), None))
+    app = _Host(None)
+    async with app.run_test(size=(100, 50)) as pilot:
+        await pilot.pause()
+        await _switch_operator(app, pilot, "opencode2")
+        line = str(app.query_one("#f_op_version", Static).render())
+        assert "free models only" in line
+
+    keyed["value"] = True
+    app = _Host(None)
+    async with app.run_test(size=(100, 50)) as pilot:
+        await pilot.pause()
+        await _switch_operator(app, pilot, "opencode2")
+        line = str(app.query_one("#f_op_version", Static).render())
+        assert "free models only" not in line and "0.0.0-beta-19271" in line
 
 
 async def test_missing_image_builds_then_launches(monkeypatch):

@@ -12,12 +12,14 @@ results.json there itself -- one dict per batch episode, in batch order.
 """
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
 import pytest
 
 from nethackers.contracts.models import ObjectiveSpec
+from nethackers.eval import runner as eval_runner
 from nethackers.eval.runner import eval_batch
 
 _SPEC = ObjectiveSpec(
@@ -129,6 +131,67 @@ def test_eval_batch_wraps_container_results_into_evidence(tmp_path):
     assert cmd[cmd.index("--batch") + 1] == expected_batch_arg
     assert "--character" not in cmd
     assert "--seeds" not in cmd
+
+
+def test_eval_output_mount_uses_home_backed_managed_tmp(tmp_path, monkeypatch):
+    sol = tmp_path / "sol"
+    sol.mkdir()
+    (sol / "bot.py").write_text("x")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    calls = []
+
+    eval_batch(
+        sol,
+        _SPEC,
+        "img:dev",
+        now="2026-08-09T00:00:00Z",
+        runner=_make_fake_docker_run(calls),
+        image_digest_resolver=lambda img: "img@sha256:deadbeef",
+    )
+
+    out_mount = next(v for v in calls[0] if v.endswith(":/out"))
+    host_out = Path(out_mount.removesuffix(":/out"))
+    assert host_out.parent == tmp_path / ".nethackers" / "tmp"
+    assert host_out.name.startswith("arena-")
+    assert not host_out.exists()  # TemporaryDirectory still cleans each run.
+
+
+@pytest.mark.parametrize("unusable", ["root_blocked", "root_read_only"])
+def test_eval_output_mount_falls_back_to_system_temp(tmp_path, monkeypatch, unusable):
+    # Both ways ~/.nethackers/tmp can be unusable: its root can't be created,
+    # or it exists but refuses a child. Either way the eval must still run,
+    # from the system temp dir, without writing anything beside the solution.
+    if unusable == "root_read_only" and os.geteuid() == 0:
+        pytest.skip("root ignores directory permissions")
+    parent = tmp_path / "solutions"
+    sol = parent / "sol"
+    sol.mkdir(parents=True)
+    (sol / "bot.py").write_text("x")
+    home = tmp_path / "home"
+    home.mkdir()
+    if unusable == "root_blocked":
+        (home / ".nethackers").write_text("a file where the directory should be")
+    else:
+        (home / ".nethackers" / "tmp").mkdir(parents=True)
+        (home / ".nethackers" / "tmp").chmod(0o555)
+    monkeypatch.setattr(Path, "home", lambda: home)
+    system_tmp = tmp_path / "system-tmp"
+    system_tmp.mkdir()
+    monkeypatch.setattr(eval_runner.tempfile, "tempdir", str(system_tmp))
+    calls = []
+
+    eval_batch(
+        sol,
+        _SPEC,
+        "img:dev",
+        now="2026-08-09T00:00:00Z",
+        runner=_make_fake_docker_run(calls),
+        image_digest_resolver=lambda img: "img@sha256:deadbeef",
+    )
+
+    out_mount = next(v for v in calls[0] if v.endswith(":/out"))
+    assert Path(out_mount.removesuffix(":/out")).parent == system_tmp
+    assert [p.name for p in parent.iterdir()] == ["sol"]
 
 
 def test_eval_batch_absolutizes_relative_solution_mount(tmp_path, monkeypatch):
