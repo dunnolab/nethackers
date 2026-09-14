@@ -92,6 +92,21 @@ jobs:
           tags: ${{ steps.meta-arena.outputs.tags }}
           labels: ${{ steps.meta-arena.outputs.labels }}
 
+      # Spec 2026-09-14 D2/I7: the arena is pinned to ONE platform's bytes,
+      # because NetHack's level generation is architecture-dependent and
+      # linux/amd64 is the declared reference. buildx reports the manifest-LIST
+      # digest, so resolve its linux/amd64 leg here. The mutator keeps the list
+      # digest: it runs the coding agent, not scoring (D10).
+      - id: arena-amd64
+        name: Resolve the arena's linux/amd64 manifest digest
+        run: |
+          set -euo pipefail
+          ref="ghcr.io/dunnolab/nethackers-arena@${{ steps.build-arena.outputs.digest }}"
+          digest=$(docker buildx imagetools inspect --raw "$ref" \
+            | jq -r '.manifests[] | select(.platform.architecture=="amd64" and .platform.os=="linux") | .digest')
+          test -n "$digest"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
       - id: meta-mutator
         uses: docker/metadata-action@8e5442c4ef9f78752691e2d8f8d19755c6f78e81      # v5.5.1
         with:
@@ -110,19 +125,28 @@ jobs:
           tags: ${{ steps.meta-mutator.outputs.tags }}
           labels: ${{ steps.meta-mutator.outputs.labels }}
 
-      # Manifest-list digests (D4 glossary) -- the correct thing to pin: a
-      # client pulling `...@<this digest>` gets Docker/OCI to auto-select the
-      # right platform image. Surfaced in the job summary for visibility, and
-      # (next step) fed to scripts/repin_images.py, which regenerates
-      # _image_pins.py and opens a PR -- the D11 ceremony as a generated,
-      # reviewed PR rather than a hand-paste.
+      # The two images pin DIFFERENT kinds of digest, deliberately.
+      # MUTATOR_IMAGE keeps the manifest-LIST (index) digest (D4 glossary) --
+      # still the correct thing to pin there: a client pulling `...@<this
+      # digest>` gets Docker/OCI to auto-select the right platform image, and
+      # the mutator runs the coding agent, not scoring, so its architecture
+      # cannot move a score (D10). ARENA_IMAGE instead takes the linux/amd64
+      # LEG resolved by the arena-amd64 step above, never the index digest:
+      # NetHack's level generation is architecture-dependent and linux/amd64
+      # is the declared reference architecture (spec 2026-09-14 D2/I7). An
+      # index digest is unclassified in arena_version.py, and
+      # scripts/repin_images.py now refuses to emit one for the arena.
+      # Surfaced in the job summary for visibility, and (next step) fed to
+      # scripts/repin_images.py, which regenerates _image_pins.py and opens a
+      # PR -- the D11 ceremony as a generated, reviewed PR rather than a
+      # hand-paste.
       - name: Write digests to the job summary
         run: |
           {
             echo "### Sandbox image digests"
             echo
             echo '```python'
-            echo "ARENA_IMAGE   = \"ghcr.io/dunnolab/nethackers-arena@${{ steps.build-arena.outputs.digest }}\""
+            echo "ARENA_IMAGE   = \"ghcr.io/dunnolab/nethackers-arena@${{ steps.arena-amd64.outputs.digest }}\""
             echo "MUTATOR_IMAGE = \"ghcr.io/dunnolab/nethackers-mutator@${{ steps.build-mutator.outputs.digest }}\""
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
@@ -134,10 +158,15 @@ jobs:
       # PRs, `main` isn't branch-protected, and this is a deterministic,
       # generated, drift-guarded change (tests/test_repin_images.py) that
       # publish-pypi.yml independently re-verifies against GHCR before any
-      # release -- so nothing ships on an unverified pin.
+      # release -- so nothing ships on an unverified pin. ARENA_REF is the
+      # amd64 leg from the arena-amd64 step, not steps.build-arena's index
+      # digest (spec I7). PYTHONPATH=src: repin_images.py now classifies the
+      # arena digest via nethackers.arena_version (dependency-free, so this
+      # stays a bare python3, no uv/install -- see that script's docstring).
       - name: Re-pin _image_pins.py (commit to this ref)
         env:
-          ARENA_REF: ghcr.io/dunnolab/nethackers-arena@${{ steps.build-arena.outputs.digest }}
+          PYTHONPATH: src
+          ARENA_REF: ghcr.io/dunnolab/nethackers-arena@${{ steps.arena-amd64.outputs.digest }}
           MUTATOR_REF: ghcr.io/dunnolab/nethackers-mutator@${{ steps.build-mutator.outputs.digest }}
         run: |
           python3 scripts/repin_images.py --arena "$ARENA_REF" --mutator "$MUTATOR_REF"

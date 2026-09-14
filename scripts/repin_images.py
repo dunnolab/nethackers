@@ -6,10 +6,13 @@ image refs -- THE single source of the pins-file format.
 pushes the multi-arch ``arena``/``mutator`` images, so the "re-pin ceremony"
 (design spec section 8 / decision D11) is a generated, reviewable PR instead
 of a hand-paste of two 64-hex digests. Stdlib only, so CI runs it with a bare
-``python3`` (no ``uv``/deps).
+``python3`` (no ``uv``/deps) -- except that classifying the arena digest
+(spec 2026-09-14 I7) reads ``nethackers.arena_version``, so the caller needs
+``src`` on ``sys.path`` (``PYTHONPATH=src``, as the workflow sets) or an
+installed ``nethackers``.
 
 Usage:
-    python3 scripts/repin_images.py \\
+    PYTHONPATH=src python3 scripts/repin_images.py \\
         --arena   ghcr.io/dunnolab/nethackers-arena@sha256:<64 hex> \\
         --mutator ghcr.io/dunnolab/nethackers-mutator@sha256:<64 hex>
 """
@@ -55,12 +58,33 @@ def _assignment(name: str, ref: str) -> str:
 
 def render_pins(arena: str, mutator: str) -> str:
     """The exact content ``_image_pins.py`` should have for these two refs
-    (deterministic + ruff-clean). Raises ``ValueError`` on a non-digest ref."""
+    (deterministic + ruff-clean). Raises ``ValueError`` on a non-digest ref, or
+    on an arena ref whose digest is not a classified linux/amd64 manifest."""
+    arena_block = _assignment("ARENA_IMAGE", arena)
+
+    # Spec 2026-09-14 I7: the arena pin names ONE platform's bytes, and that
+    # digest must already be classified in arena_version.py. An index digest
+    # (what buildx reports by default) is not classified, so emitting one would
+    # silently revert the reference architecture and break registration for
+    # everyone. Fail here instead. The import is function-local on purpose:
+    # this module's header promises stdlib-only so CI can run it with a bare
+    # interpreter, and this keeps that true for every path that does not reach
+    # this guard (e.g. --help, or a malformed ref caught above).
+    from nethackers.arena_version import ARENA_MAJOR_BY_DIGEST
+
+    arena_digest = arena.strip().partition("@")[2]
+    if arena_digest not in ARENA_MAJOR_BY_DIGEST:
+        raise ValueError(
+            f"arena: {arena_digest} is not a classified arena image. Pin the "
+            f"linux/amd64 MANIFEST digest and add it to ARENA_MAJOR_BY_DIGEST "
+            f"first (spec 2026-09-14 I7)."
+        )
+
     return (
         f"{_DOCSTRING}\n"
         "from __future__ import annotations\n"
         "\n"
-        f"{_assignment('ARENA_IMAGE', arena)}"
+        f"{arena_block}"
         f"{_assignment('MUTATOR_IMAGE', mutator)}"
     )
 
