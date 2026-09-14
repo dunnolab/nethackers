@@ -16,10 +16,12 @@ sandboxed command, including a plain ``eval``/``submit``; ``preflight_operator``
 the arena has no operator, so eval/submit must never call it. ``preflight``
 stays as a thin backward-compatible wrapper over both, for evolve's use.
 
-``ensure_image`` makes a ``resolve_image``-produced ref actually present:
-builds the local ``:dev``/``:latest`` tag via ``make`` inside a repo checkout,
-or ``docker pull``s a GHCR digest pin otherwise -- never the reverse (INV11:
-a digest ref can't be `-t`-tagged by a build, so it is only ever pulled).
+``ensure_image`` makes a ``resolve_image``-produced ref actually present: a
+GHCR digest pin is always ``docker pull``ed -- that now includes the arena
+even inside a repo checkout -- and only a non-digest tag reachable from a
+checkout (today, that's the mutator's local ``:latest`` tag by default) is
+built via ``make`` -- never the reverse (INV11: a digest ref can't be
+`-t`-tagged by a build, so it is only ever pulled).
 
 Kept a leaf module (stdlib + containers + auth_inject + pull_events only, all
 themselves leaves too) so both ``cli`` and the Textual form can import it

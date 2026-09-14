@@ -14,7 +14,7 @@
 nethackers doctor
 ```
 
-Seven checks, folded into four capabilities — `browse`, `eval`, `evolve`,
+Eight checks, folded into four capabilities — `browse`, `eval`, `evolve`,
 `publish`. It tells you which ones this machine can do and prints a concrete fix
 for each failure. `-o json` if you want to gate a script on it. It changes nothing
 unless you pass `--pull` (which fetches missing sandbox images), but it is **not**
@@ -112,10 +112,13 @@ stall on it.
 
 ### "unreachable — ghcr.io/dunnolab/nethackers-arena@sha256:…"
 
-Neither local nor pullable. In a repo checkout, `make arena` (or `make mutator`)
-builds it locally — `eval` and `evolve` do this automatically. Outside a
-checkout, it is a network or registry problem; `NETHACKERS_ARENA_IMAGE` /
-`NETHACKERS_MUTATOR_IMAGE` can point at a reachable ref.
+Neither local nor pullable. The **arena** always resolves to the pinned
+digest, even inside a repo checkout, so `eval`/`evolve` never fall back to
+building it locally here — fix your network/registry access, or point
+`NETHACKERS_ARENA_IMAGE` at a reachable ref. The **mutator** is different: in
+a checkout, `make mutator` (which `evolve` also runs automatically) still
+builds it locally; outside one, `NETHACKERS_MUTATOR_IMAGE` is the escape
+hatch.
 
 ---
 

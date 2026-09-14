@@ -17,8 +17,9 @@ a coding agent; yours can be anything at all.
 > guess at the strongest possible search — it is the reference implementation,
 > written so that people arriving from very different backgrounds can run
 > something real on day one. A lot of what looks like complexity in here is
-> breadth, not depth: multi-arch images because contributors are on Apple
-> Silicon and Linux; two coding-agent backends because people already have one
+> breadth, not depth: a multi-arch mutator image because contributors are on
+> Apple Silicon and Linux (the arena instead pins one reference architecture —
+> more below); two coding-agent backends because people already have one
 > or the other; auto-provisioning, preflight checks, and a TUI because "install
 > Docker and compile NLE" is where most people would otherwise stop. Borrow the
 > **design decisions**; you almost certainly do not need the surface area.
@@ -222,9 +223,15 @@ read-write — statelessness there rests on those flags, not on the container.
 
 The mutator image is built **from the same NLE base as the arena**, so the agent
 experiments against the same compiled NLE it will be scored on — parity for free,
-as long as both images are built from the same base (guaranteed for the
-CI-published pair, which are re-pinned together; less so for local `make` builds
-against a mutable `:dev` tag).
+as long as both images are built from the same base **and the same CPU
+architecture**. The mutator stays multi-arch and runs natively — it drives the
+coding agent, not scoring — while the arena pins `linux/amd64` and emulates
+elsewhere (more under Safety and sandboxing, below). On an amd64 host the two
+line up. On Apple Silicon or arm64 Linux they don't: the
+mutator's embedded NLE is then compiled for a different architecture than the
+one your bot is actually scored on. Base drift is the other failure mode —
+guaranteed only for the CI-published pair, which are re-pinned together; less
+so for local `make` builds against a mutable `:dev` tag.
 
 The `nethackers` package is deliberately *not* installed in it. Only
 `nethackers.arena` and `nethackers.contracts` are copied onto `PYTHONPATH` — enough
@@ -327,10 +334,25 @@ timeouts (`BotTimeout`).
   boundary. The secret and the batch are readable from `/proc` regardless of the
   environment pop.
 - **The digest pin is a default, not a guarantee.** An explicit `--image`,
-  `NETHACKERS_ARENA_IMAGE`, or a repo checkout's `.env.stack` wins over the pinned
-  digest, and a checkout defaults to the mutable `nethackers/arena:dev`. Evidence
-  records the digest it resolved, so the hub can check parity at registration —
-  but a local score may have been computed on unpinned bytes.
+  `NETHACKERS_ARENA_IMAGE`, or a repo checkout's `.env.stack` still wins over
+  the pin, so a local `eval` can be pointed at unpinned bytes — including a
+  locally built tag, which only arena *development* needs. What changed: a
+  repo checkout no longer defaults to the mutable `nethackers/arena:dev` on
+  its own; the pin wins there too now, same as everywhere else. Evidence
+  records the digest it resolved, and the hub now refuses to register
+  anything whose digest it can't classify at the current arena major — a
+  locally built tag is unclassified by construction, so it can produce a
+  local score but never a submittable one.
+- **`linux/amd64` is the reference architecture; other hosts emulate.**
+  NetHack's C code consumes RNG in sibling function arguments, and gcc
+  sequences those differently per CPU target, so the same seed plays a
+  different game on `arm64` than on `amd64` — a native arm64 score isn't
+  comparable, which is why the hub refuses it outright rather than just
+  discouraging it. On Apple Silicon, turn on Rosetta in Docker Desktop
+  (Settings → General → Apple Virtualization framework → "Use Rosetta for
+  x86_64/amd64 emulation"): the same 15-episode batch on the same machine
+  took 823s under QEMU and 224s with Rosetta. `nethackers doctor` reports
+  whether it's on.
 
 #### b) The coding agent
 
@@ -415,8 +437,12 @@ hand-typed ref is whatever you typed.
 Any search is fair. The platform scores what comes out, so:
 
 - **Conform to the contract** — `bot.py`, `make_agent()`, integer actions.
-- **Score locally** with `nethackers eval` against a catalog objective, or run
-  the arena image yourself.
+- **Score locally** with `nethackers eval` against a catalog objective. It
+  runs the pinned `linux/amd64` arena image by default — that pin, not a
+  self-built one, is what evidence for the hub has to come from. You can
+  still build the arena image yourself for arena *development*, but a
+  self-built image is an unclassified tag, and the hub refuses evidence
+  from it.
 - **Register a `repo@commit`** with `nethackers submit` (which publishes to your
   own `github.com/<you>/nethacker` and registers it), or — if you already pushed
   it somewhere public — `nethackers register --repo github.com/you/name --commit
