@@ -30,6 +30,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from nethackers.arena_version import ARENA_MAJOR, major_for
 from nethackers.contracts.models import Evidence, ObjectiveSpec
 from nethackers.hub.atoms import evidence_to_atoms
 from nethackers.hub.auth import AuthProvider, owns_repo
@@ -101,6 +102,40 @@ class MissingImage(RegisterError):
 
 class WrongTier(RegisterError):
     """Evidence: ``evidence.tier`` isn't ``"self-reported"`` (the only tier register writes)."""
+
+
+class UnclassifiedArena(RegisterError):
+    """Evidence: ``evidence.evaluator_image`` is not a classified arena image.
+
+    Typically a locally built tag. A tag names movable bytes, so it is
+    unclassified by construction and can never be admitted.
+    """
+
+
+class WrongArenaMajor(RegisterError):
+    """Evidence: ``evidence.evaluator_image`` classifies to a retired arena
+    major, not the one this hub currently accepts."""
+
+
+def classified_major(image: str, current_major: int) -> None:
+    """Admit ``image`` only if it classifies to ``current_major``.
+
+    The single admission rule for BOTH tiers (spec 2026-09-14 D5, I5'). Reads
+    never consult the major; admitting evidence to any tier always does.
+    ``hub/verify.py`` wraps the two failures in its own ``ParityMismatch`` so
+    the verified tier's callers see an unchanged exception type.
+    """
+    submitted = major_for(image)
+    if submitted is None:
+        raise UnclassifiedArena(
+            f"evaluator_image {image!r} is not a classified arena image -- "
+            f"evidence must come from the pinned arena image, not a local build"
+        )
+    if submitted != current_major:
+        raise WrongArenaMajor(
+            f"evaluator_image {image!r} is arena major {submitted}, but this hub "
+            f"is on major {current_major} -- upgrade the nethackers CLI"
+        )
 
 
 _IDENTITY_SET = frozenset(IDENTITIES)
@@ -175,6 +210,7 @@ def register(
         raise NonFiniteMetrics("some result's progress is not finite")
     if not evidence.evaluator_image:
         raise MissingImage("evaluator_image is required")
+    classified_major(evidence.evaluator_image, ARENA_MAJOR)
     if evidence.tier != "self-reported":
         raise WrongTier(f"tier {evidence.tier!r} is not self-reported")
 

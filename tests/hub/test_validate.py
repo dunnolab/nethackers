@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import pytest
 
+from nethackers._image_pins import ARENA_IMAGE
 from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
 from nethackers.hub.auth import AuthError, LocalStubAuth
 from nethackers.hub.objectives import CATALOG, build_union_spec
@@ -22,8 +23,11 @@ from nethackers.hub.store import Store
 from nethackers.hub.validate import (
     MissingCommit,
     SolutionReference,
+    UnclassifiedArena,
+    WrongArenaMajor,
     WrongBatch,
     WrongOwner,
+    classified_major,
     register,
 )
 from nethackers.hub.views.elites import read_elites
@@ -50,10 +54,15 @@ OBJ = "val-dwa-law-fem"
 MANIFEST = {"root": "bot", "entrypoint": "bot.py"}
 
 
-def _evidence(objective_name: str = OBJ, *, full: bool = True) -> Evidence:
+def _evidence(
+    objective_name: str = OBJ, *, full: bool = True, evaluator_image: str = ARENA_IMAGE
+) -> Evidence:
     """Valid self-reported evidence whose ``(trajectory_id, character)`` set is
     exactly ``objective_name``'s published batch. ``full=False`` drops all but
-    the first episode, so the submitted set no longer matches the batch."""
+    the first episode, so the submitted set no longer matches the batch.
+    ``evaluator_image`` defaults to the real classified arena pin so callers
+    clear the arena-major admission check; pass an unclassified image to
+    exercise that rejection instead."""
     batch = CATALOG[objective_name].batch
     pairs = batch if full else batch[:1]
     results = tuple(
@@ -67,7 +76,7 @@ def _evidence(objective_name: str = OBJ, *, full: bool = True) -> Evidence:
     return Evidence.from_results(
         solution_digest="sha256:" + "ab" * 32,
         objective=Objective(character=None, seed_set=objective_name),
-        evaluator_image="img", results=results, created_at="t",
+        evaluator_image=evaluator_image, results=results, created_at="t",
     )
 
 
@@ -118,7 +127,7 @@ def _evidence_with_a_milestone(objective_name: str = OBJ) -> Evidence:
     return Evidence.from_results(
         solution_digest="sha256:" + "ab" * 32,
         objective=Objective(character=None, seed_set=objective_name),
-        evaluator_image="img", results=results, created_at="t",
+        evaluator_image=ARENA_IMAGE, results=results, created_at="t",
     )
 
 
@@ -244,7 +253,7 @@ def _set_evidence(identities, name):
     return Evidence.from_results(
         solution_digest="sha256:" + "cd" * 32,
         objective=Objective(character=None, seed_set=name),
-        evaluator_image="img", results=results, created_at="t")
+        evaluator_image=ARENA_IMAGE, results=results, created_at="t")
 
 
 def test_register_slices_a_set_objective_into_per_identity_atoms(tmp_path):
@@ -275,3 +284,49 @@ def test_register_wrong_batch_for_a_cherry_picked_set(tmp_path):
         register(s, LocalStubAuth({"t": "sam"}), token="t",
                  reference=SolutionReference("github.com/sam/nethacker", SHA),
                  manifest=MANIFEST, evidence=ev, git=_Git(), now="n")
+
+
+CLASSIFIED_MAJOR_1 = (
+    "ghcr.io/dunnolab/nethackers-arena@sha256:"
+    "9b63a7b1fb11a82c01797a1099774b4e0ef6e321fbacd3a2256d8db6b4428142"
+)
+
+
+def test_classified_major_accepts_a_digest_at_the_current_major():
+    assert classified_major(CLASSIFIED_MAJOR_1, 1) is None
+
+
+def test_classified_major_rejects_a_tag_as_unclassified():
+    with pytest.raises(UnclassifiedArena) as excinfo:
+        classified_major("nethackers/arena:dev", 1)
+    assert "nethackers/arena:dev" in str(excinfo.value)
+
+
+def test_classified_major_rejects_an_unknown_digest_as_unclassified():
+    unknown = "ghcr.io/dunnolab/nethackers-arena@sha256:" + "0" * 64
+    with pytest.raises(UnclassifiedArena):
+        classified_major(unknown, 1)
+
+
+def test_classified_major_rejects_an_older_major():
+    with pytest.raises(WrongArenaMajor) as excinfo:
+        classified_major(CLASSIFIED_MAJOR_1, 2)
+    assert "major 1" in str(excinfo.value)
+    assert "major 2" in str(excinfo.value)
+
+
+def test_register_rejects_evidence_from_an_unclassified_image(tmp_path):
+    # Same arrangement as test_register_stores_link, changing only the
+    # evidence's evaluator_image to an unclassified tag.
+    s = _store(tmp_path)
+    with pytest.raises(UnclassifiedArena):
+        register(
+            s,
+            LocalStubAuth({"t": "sam"}),
+            token="t",
+            reference=SolutionReference("github.com/sam/nethacker", SHA),
+            manifest=MANIFEST,
+            evidence=_evidence(evaluator_image="nethackers/arena:dev"),
+            git=_Git(),
+            now="n",
+        )

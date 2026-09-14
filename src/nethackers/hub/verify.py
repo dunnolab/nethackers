@@ -46,7 +46,12 @@ from nethackers.hub.atoms import evidence_to_atoms
 from nethackers.hub.ids import AUTOASCEND_ID, program_id as _program_id
 from nethackers.hub.objectives import IDENTITIES
 from nethackers.hub.store import Store
-from nethackers.hub.validate import SolutionReference
+from nethackers.hub.validate import (
+    SolutionReference,
+    UnclassifiedArena,
+    WrongArenaMajor,
+    classified_major,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -153,17 +158,12 @@ def _check_hidden_evidence(evidence: Evidence, *, secret_fingerprint: str,
     requirement between the hub and the evaluator node, and it is what stops a
     quality-of-life rebuild from orphaning the corpus (design D6).
     """
-    submitted_major = major_for(evidence.evaluator_image)
-    if submitted_major is None:
-        raise ParityMismatch(
-            f"evaluator_image {evidence.evaluator_image!r} is not a classified "
-            f"arena image"
-        )
-    if submitted_major != current_major:
-        raise ParityMismatch(
-            f"evaluator_image {evidence.evaluator_image!r} is arena major "
-            f"{submitted_major}, but this hub is on major {current_major}"
-        )
+    # One admission rule for both tiers (spec 2026-09-14 D5). Re-raised as
+    # ParityMismatch so this module's callers keep their exception contract.
+    try:
+        classified_major(evidence.evaluator_image, current_major)
+    except (UnclassifiedArena, WrongArenaMajor) as error:
+        raise ParityMismatch(str(error)) from error
 
     if secret_fingerprint != _fingerprint(hub_secret):
         raise StaleSecret("secret_fingerprint does not match the current hidden secret")
