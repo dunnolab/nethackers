@@ -16,6 +16,7 @@ from __future__ import annotations
 import pytest
 
 from nethackers._image_pins import ARENA_IMAGE
+from nethackers.arena_version import ARENA_MAJOR_BY_DIGEST
 from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
 from nethackers.hub.auth import AuthError, LocalStubAuth
 from nethackers.hub.objectives import CATALOG, build_union_spec
@@ -286,9 +287,10 @@ def test_register_wrong_batch_for_a_cherry_picked_set(tmp_path):
                  manifest=MANIFEST, evidence=ev, git=_Git(), now="n")
 
 
-CLASSIFIED_MAJOR_1 = (
-    "ghcr.io/dunnolab/nethackers-arena@sha256:"
-    "9b63a7b1fb11a82c01797a1099774b4e0ef6e321fbacd3a2256d8db6b4428142"
+CLASSIFIED_MAJOR_1 = next(
+    f"ghcr.io/dunnolab/nethackers-arena@{digest}"
+    for digest, major in ARENA_MAJOR_BY_DIGEST.items()
+    if major == 1
 )
 
 
