@@ -86,6 +86,12 @@ def _healthy_kwargs(**overrides):
         hub_mode=lambda hub: "github",
         load_creds=lambda: Credentials("castiel", "tok"),
         gh_state=lambda: ("castiel", "authed"),
+        # Without this override, the real default reads the actual host's
+        # Docker Desktop settings file -- a real, uncontrolled probe that
+        # would break this file's "no real...call" hermeticity guarantee
+        # (harmless to gating either way, since capabilities=() -- but this
+        # file's whole premise is that every probe is faked).
+        rosetta=lambda: ("ok", "Rosetta is accelerating amd64 emulation"),
     )
     kwargs.update(overrides)
     return kwargs
@@ -96,7 +102,7 @@ def test_run_checks_returns_one_result_per_check_id():
     ids = {r.id for r in results}
     assert ids == {
         "container_runtime", "arena_image", "mutator_image",
-        "hub", "hub_login", "gh", "operator",
+        "hub", "hub_login", "gh", "operator", "rosetta",
     }
 
 
@@ -154,10 +160,10 @@ def test_only_filters_results_to_exactly_the_requested_check_ids():
     assert {r.id for r in results} == {"container_runtime", "arena_image"}
 
 
-def test_only_none_default_is_unchanged_and_runs_all_seven():
+def test_only_none_default_is_unchanged_and_runs_all_eight():
     # Backward compatibility is the whole point of `only`: every existing
     # caller (the `doctor` CLI, this file's own healthy-path tests above)
-    # omits it, and must see byte-for-byte the same 7-check behavior as
+    # omits it, and must see byte-for-byte the same 8-check behavior as
     # before `only` existed.
     results = run_checks(**_healthy_kwargs())
     assert {r.id for r in results} == set(CHECK_SPECS)
@@ -232,10 +238,10 @@ def test_a_raising_probe_becomes_a_failed_check_not_an_exception():
 # --- CHECK_SPECS: the single source for each check's (severity, capabilities)
 
 
-def test_check_specs_covers_exactly_the_seven_check_ids():
+def test_check_specs_covers_exactly_the_eight_check_ids():
     assert set(CHECK_SPECS) == {
         "container_runtime", "arena_image", "mutator_image",
-        "hub", "hub_login", "gh", "operator",
+        "hub", "hub_login", "gh", "operator", "rosetta",
     }
 
 
@@ -499,7 +505,7 @@ def test_to_json_shape():
 # Independent of run_checks -- hand-built CheckResult lists, exercising the
 # hard-vs-soft contract directly: a HARD check gates every capability it's
 # tagged with, full stop. A capability with NO hard checks of its own
-# (publish/browse, in the real 7-check table) falls back to its own soft
+# (publish/browse, in the real 8-check table) falls back to its own soft
 # checks, where only "fail" gates it -- "warn" never gates ANY capability,
 # hard- or soft-only alike (INV6: "soft warnings never flip it").
 #
