@@ -12,6 +12,7 @@ results.json there itself -- one dict per batch episode, in batch order.
 """
 
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -155,24 +156,30 @@ def test_eval_output_mount_uses_home_backed_managed_tmp(tmp_path, monkeypatch):
     assert not host_out.exists()  # TemporaryDirectory still cleans each run.
 
 
-def test_eval_output_mount_falls_back_when_home_child_is_unwritable(tmp_path, monkeypatch):
-    sol = tmp_path / "sol"
-    sol.mkdir()
+@pytest.mark.parametrize("unusable", ["root_blocked", "root_read_only"])
+def test_eval_output_mount_falls_back_to_system_temp(tmp_path, monkeypatch, unusable):
+    # Both ways ~/.nethackers/tmp can be unusable: its root can't be created,
+    # or it exists but refuses a child. Either way the eval must still run,
+    # from the system temp dir, without writing anything beside the solution.
+    if unusable == "root_read_only" and os.geteuid() == 0:
+        pytest.skip("root ignores directory permissions")
+    parent = tmp_path / "solutions"
+    sol = parent / "sol"
+    sol.mkdir(parents=True)
     (sol / "bot.py").write_text("x")
     home = tmp_path / "home"
     home.mkdir()
+    if unusable == "root_blocked":
+        (home / ".nethackers").write_text("a file where the directory should be")
+    else:
+        (home / ".nethackers" / "tmp").mkdir(parents=True)
+        (home / ".nethackers" / "tmp").chmod(0o555)
     monkeypatch.setattr(Path, "home", lambda: home)
-    real_temporary_directory = eval_runner.tempfile.TemporaryDirectory
-    attempted: list[Path] = []
-
-    def temporary_directory(*, prefix, dir):
-        attempted.append(Path(dir))
-        if len(attempted) == 1:
-            raise OSError("home exists but cannot create a child")
-        return real_temporary_directory(prefix=prefix, dir=dir)
-
-    monkeypatch.setattr(eval_runner.tempfile, "TemporaryDirectory", temporary_directory)
+    system_tmp = tmp_path / "system-tmp"
+    system_tmp.mkdir()
+    monkeypatch.setattr(eval_runner.tempfile, "tempdir", str(system_tmp))
     calls = []
+
     eval_batch(
         sol,
         _SPEC,
@@ -182,7 +189,9 @@ def test_eval_output_mount_falls_back_when_home_child_is_unwritable(tmp_path, mo
         image_digest_resolver=lambda img: "img@sha256:deadbeef",
     )
 
-    assert attempted == [home / ".nethackers" / "tmp", sol.parent / ".nethackers-tmp"]
+    out_mount = next(v for v in calls[0] if v.endswith(":/out"))
+    assert Path(out_mount.removesuffix(":/out")).parent == system_tmp
+    assert [p.name for p in parent.iterdir()] == ["sol"]
 
 
 def test_eval_batch_absolutizes_relative_solution_mount(tmp_path, monkeypatch):
