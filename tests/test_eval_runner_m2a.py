@@ -123,7 +123,12 @@ def test_eval_batch_wraps_container_results_into_evidence(tmp_path):
     # Command-building: --network none, solution mounted read-only, and the
     # batch passed as [[seed, character], ...] JSON (not --character/--seeds).
     cmd = calls[0]
-    assert cmd[:5] == ["docker", "run", "--rm", "--network", "none"]
+    # --platform is cosmetic (the amd64 manifest digest already decides the
+    # architecture) but asserted, so a future edit cannot silently drop it and
+    # reintroduce Docker's mismatch warning on every emulated run.
+    assert cmd[:7] == [
+        "docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none",
+    ]
     assert f"{sol}:/sol:ro" in cmd
     expected_batch_arg = json.dumps([[seed, char] for seed, char in _SPEC.batch])
     assert cmd[cmd.index("--batch") + 1] == expected_batch_arg

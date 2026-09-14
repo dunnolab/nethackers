@@ -188,7 +188,11 @@ def eval_batch(
     with tempfile.TemporaryDirectory() as td:
         out = Path(td) / "results.json"
         cmd = [
-            runtime, "run", "--rm", "--network", "none",
+            # --platform is cosmetic: ARENA_IMAGE is an amd64 MANIFEST digest,
+            # so the architecture is already decided by the pin (spec
+            # 2026-09-14 D2). This only suppresses Docker's mismatch warning on
+            # an emulated host.
+            runtime, "run", "--platform", "linux/amd64", "--rm", "--network", "none",
             "--name", container_name("arena"), *label_args(),
             # Silence AutoAscend's numpy RuntimeWarning flood at interpreter
             # startup, for every process in the container (a plain in-arena
