@@ -246,7 +246,11 @@ passage must be corrected.
 2. Back up the hub database.
 3. Deploy the hub. It begins rejecting major-1 evidence immediately.
 4. Run genesis (§5.5) at once, so the window in which the board shows major-1
-   numbers nobody can add to stays short.
+   numbers nobody can add to stays short:
+   `python -m nethackers.hub.genesis --db <hub db path>`. It lives beside
+   `hub/baseline_compute.py` rather than in `cli.py` deliberately: the CLI is a
+   client that reaches the hub only over HTTP, and its `stage.data_root` is the
+   local evolve workdir, not the hub's database.
 5. Recompute the AutoAscend floor on the amd64 image and insert it.
 6. The verified worker re-queues by itself under the new epoch.
 
