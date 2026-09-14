@@ -32,9 +32,13 @@ That is not hypothetical. As of 2026-09-13:
 | PR #66 | `d18bff83…` | re-pin from a process-lifetime fix |
 | `codex/opencode2-integration` | `052453dc…` | a second, independent re-pin |
 
-Prod currently holds **21,405** verified participant episodes across **21** board rows from
-three owners, plus a **1,095**-episode AutoAscend hidden-seed floor. Either branch, on release,
-makes all of it unreachable. Re-earning it is roughly five days of evaluator-node time.
+Prod holds, measured 2026-09-14: **37,470** verified participant rows over **36** programs from
+**5** owners, a **1,095**-row AutoAscend hidden-seed floor, and **34** attempt records. That is
+**38,599** rows in the three verified tables. Of the participant rows, **21,405** episodes over
+**21** ranked programs are what the board currently displays; the remainder sit on seeds no longer
+in the live hidden set, which is exactly the kind of history invariant I4 is written to preserve.
+Either branch, on release, makes all of it unreachable. Re-earning the displayed part alone is
+roughly five days of evaluator-node time.
 
 The trigger is also mis-timed. Merging changes nothing; the reset fires on the **next release
 tag**, so the person who causes it is whoever tags next, for any reason, possibly weeks later.
@@ -100,7 +104,7 @@ Each: **decision — why — rejected alternative — consequence.**
 
 - **D1. The verified key becomes `(secret_fingerprint, arena_major)`.** The digest answers "which
   bytes", not "comparable with what". *Rejected:* keeping the digest in the key and accepting a
-  reset per rebuild (the status quo, which costs ~22,500 episodes per quality-of-life change).
+  reset per rebuild (the status quo, which orphans all 38,599 verified rows per quality-of-life change).
   *Consequence:* a column swap plus a migration on three tables (§5.2).
 - **D2. The digest column stays and is surfaced.** Provenance must survive; a row must still say
   which exact image produced it. *Rejected:* dropping it once it leaves the key. *Consequence:*
@@ -302,14 +306,15 @@ D3 buys simplicity by trusting a human. Two ways it bites:
 
 A third, smaller one, on the migration rather than the design:
 
-- **"No unclassifiable rows exist today" was never verified against the production database.** It
-  is an inference from the admission check, not a query anyone ran. It is sound for the two atom
-  tables, which that check guarded; it was simply wrong for `verified_attempts`, which had no such
-  check — hence the split in §5.2. If the inference is wrong for an atom table too, the migration
-  raises and the hub does not boot until a human classifies the digest, which is the intended
-  behaviour for scored data but is worth knowing before a deploy. Querying
-  `SELECT DISTINCT evaluator_image FROM verified_atoms` on prod before releasing this would
-  convert the inference into a fact, and costs nothing.
+- **"No unclassifiable rows exist today" is now a measured fact, not an inference.** It began as
+  an inference from the admission check, sound for the two atom tables that check guarded and
+  simply wrong for `verified_attempts`, which had no such check — hence the split in §5.2. A
+  read-only query against the live database on **2026-09-14** settled it: all three tables hold
+  exactly **one** distinct `evaluator_image`, and it is
+  `sha256:9b63a7b1…`, already classified at major 1. So the backfill classifies every existing row,
+  the hard raise cannot fire on this database, and the `verified_attempts` skip path exists for
+  future rows rather than present ones. The split in §5.2 stays regardless: it is the right shape
+  for a table whose write path never validated the image, and it costs nothing when unused.
 
 A behavioral gate (the rejected alternative in D3) is the real answer to both, and remains the
 natural follow-on if the failure mode ever bites.
