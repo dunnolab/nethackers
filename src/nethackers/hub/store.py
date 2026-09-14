@@ -117,15 +117,21 @@ _VERIFIED_TABLE_DDL: dict[str, str] = {
     "verified_attempts": _VERIFIED_ATTEMPTS_DDL,
 }
 
-# The whole DDL (task-5-context.md), verbatim. CREATE TABLE IF NOT EXISTS
-# throughout makes init_schema() idempotent.
-_SCHEMA = f"""
-CREATE TABLE IF NOT EXISTS solutions (
+# The PUBLIC (self-reported) tables' DDL, pulled out of _SCHEMA below for
+# exactly the reason the verified three above were: Store.genesis() recreates
+# ONE renamed-away table at a time via a plain conn.execute(), because
+# conn.executescript() would COMMIT its transaction out from under it.
+#
+# These carry no leading newline, unlike the verified three, purely so the
+# f-string below reproduces the original schema text byte for byte; sqlite
+# ignores leading whitespace either way.
+_SOLUTIONS_DDL = """CREATE TABLE IF NOT EXISTS solutions (
     digest TEXT PRIMARY KEY,
     repo TEXT, commit_sha TEXT, owner TEXT, root TEXT, entrypoint TEXT,
     registered_at TEXT
 );
-CREATE TABLE IF NOT EXISTS atoms (
+"""
+_ATOMS_DDL = """CREATE TABLE IF NOT EXISTS atoms (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     solution_digest TEXT NOT NULL REFERENCES solutions(digest),
     owner TEXT NOT NULL, tier TEXT NOT NULL, identity TEXT NOT NULL,
@@ -135,7 +141,8 @@ CREATE TABLE IF NOT EXISTS atoms (
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE(solution_digest, identity, seed)
 );
-CREATE TABLE IF NOT EXISTS baseline_atoms (
+"""
+_BASELINE_ATOMS_DDL = """CREATE TABLE IF NOT EXISTS baseline_atoms (
     solution_digest TEXT NOT NULL,
     owner TEXT NOT NULL,
     tier TEXT NOT NULL,
@@ -150,14 +157,18 @@ CREATE TABLE IF NOT EXISTS baseline_atoms (
     evaluator_image TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-{_VERIFIED_ATOMS_DDL}{_VERIFIED_BASELINE_ATOMS_DDL}{_VERIFIED_ATTEMPTS_DDL}
-CREATE TABLE IF NOT EXISTS lineage (
+"""
+_LINEAGE_DDL = """CREATE TABLE IF NOT EXISTS lineage (
     child_digest TEXT NOT NULL REFERENCES solutions(digest),
     parent_digest TEXT NOT NULL,         -- may be an external/base solution: NO FK
     kind TEXT NOT NULL CHECK(kind IN ('parent','influence')),
     PRIMARY KEY(child_digest, parent_digest, kind)
 );
-CREATE TABLE IF NOT EXISTS poll_votes (
+"""
+# Named for symmetry only: poll_votes is deliberately ABSENT from
+# _PUBLIC_TABLE_DDL. The prophecy poll has nothing to do with the arena, so
+# genesis must not archive it.
+_POLL_VOTES_DDL = """CREATE TABLE IF NOT EXISTS poll_votes (
     voter_id   TEXT PRIMARY KEY,           -- one prophecy per browser
     method     TEXT NOT NULL,
     timeline   TEXT NOT NULL,
@@ -166,18 +177,50 @@ CREATE TABLE IF NOT EXISTS poll_votes (
     created_at TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
--- derived views (schema only here; Tasks 7-8 populate)
-CREATE TABLE IF NOT EXISTS attainment (
+"""
+_ATTAINMENT_DDL = """CREATE TABLE IF NOT EXISTS attainment (
     identity TEXT NOT NULL, milestone TEXT NOT NULL,
     first_solution TEXT NOT NULL, first_owner TEXT NOT NULL, first_at TEXT NOT NULL,
     PRIMARY KEY(identity, milestone)
 );
-CREATE TABLE IF NOT EXISTS attainment_holders (
+"""
+_ATTAINMENT_HOLDERS_DDL = """CREATE TABLE IF NOT EXISTS attainment_holders (
     identity TEXT NOT NULL, milestone TEXT NOT NULL,
     solution_digest TEXT NOT NULL, owner TEXT NOT NULL, reached_at TEXT NOT NULL,
     PRIMARY KEY(identity, milestone, solution_digest)
 );
 """
+
+# Keyed by table name so genesis() can look up exactly the one CREATE TABLE
+# statement it needs after renaming that table away.
+#
+# INSERTION ORDER IS LOAD-BEARING: ``solutions`` must be renamed and recreated
+# FIRST. sqlite's ALTER TABLE ... RENAME TO rewrites the REFERENCES clauses of
+# OTHER tables when PRAGMA foreign_keys is ON (it is -- see Store._conn), so
+# renaming ``solutions`` repoints ``atoms``/``lineage`` at ``solutions_v1``.
+# Doing it first means the archive ends up self-consistent (atoms_v1 ->
+# solutions_v1) and each freshly recreated child binds to the fresh
+# ``solutions``. Renaming a child first would instead leave the fresh, live
+# ``atoms`` pointing its foreign key at the ARCHIVE.
+_PUBLIC_TABLE_DDL: dict[str, str] = {
+    "solutions": _SOLUTIONS_DDL,
+    "atoms": _ATOMS_DDL,
+    "baseline_atoms": _BASELINE_ATOMS_DDL,
+    "lineage": _LINEAGE_DDL,
+    "attainment": _ATTAINMENT_DDL,
+    "attainment_holders": _ATTAINMENT_HOLDERS_DDL,
+}
+
+# The whole DDL (task-5-context.md), verbatim -- composed from the per-table
+# constants above rather than duplicating their text, so the two can never
+# drift. CREATE TABLE IF NOT EXISTS throughout makes init_schema() idempotent.
+_SCHEMA = (
+    f"\n{_SOLUTIONS_DDL}{_ATOMS_DDL}{_BASELINE_ATOMS_DDL}"
+    f"{_VERIFIED_ATOMS_DDL}{_VERIFIED_BASELINE_ATOMS_DDL}{_VERIFIED_ATTEMPTS_DDL}\n"
+    f"{_LINEAGE_DDL}{_POLL_VOTES_DDL}"
+    "-- derived views (schema only here; Tasks 7-8 populate)\n"
+    f"{_ATTAINMENT_DDL}{_ATTAINMENT_HOLDERS_DDL}"
+)
 
 _SOLUTION_COLUMNS: tuple[str, ...] = (
     "digest", "repo", "commit_sha", "owner", "root", "entrypoint", "registered_at",
@@ -295,6 +338,39 @@ def _migrate_add_program_id(conn: sqlite3.Connection) -> None:
         "CREATE UNIQUE INDEX IF NOT EXISTS idx_solutions_program_id"
         " ON solutions(program_id)")
     conn.commit()
+
+
+def _restore_program_id_shape(conn: sqlite3.Connection) -> None:
+    """Re-apply to a freshly recreated ``solutions`` what
+    ``_migrate_add_program_id`` applies to a legacy one. Takes no transaction of
+    its own -- ``Store.genesis``, its only caller, owns one.
+
+    ``_SCHEMA``'s ``solutions`` DDL is NOT the whole live shape: ``program_id``
+    and its unique index are added additively, AFTER the CREATE, by
+    ``_migrate_add_program_id``. Recreating the table from ``_PUBLIC_TABLE_DDL``
+    alone therefore yields a ``solutions`` that ``upsert_solution`` cannot
+    insert into at all (``table solutions has no column named program_id``):
+    registration would break for every contributor the moment genesis
+    committed. No backfill is needed here, unlike in the migration proper --
+    the table genesis hands over is empty by construction.
+
+    The index needs the same care for a quieter reason. ``ALTER TABLE ... RENAME
+    TO`` carries a table's indexes across UNDER THEIR OWN NAMES, so
+    ``idx_solutions_program_id`` follows the rows onto ``solutions_v1`` and the
+    canonical name is taken. ``_migrate_add_program_id``'s ``CREATE UNIQUE INDEX
+    IF NOT EXISTS`` would then silently no-op at every subsequent boot, and the
+    live table would lose its uniqueness guarantee for good. Freeing the name,
+    and handing the archive its index back as ``idx_solutions_v1_program_id``,
+    leaves both tables indexed -- dropping an index moves no rows, so I8 holds.
+    """
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(solutions)")]
+    if "program_id" not in cols:
+        conn.execute("ALTER TABLE solutions ADD COLUMN program_id TEXT")
+    conn.execute("DROP INDEX IF EXISTS idx_solutions_program_id")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_solutions_v1_program_id"
+                 " ON solutions_v1(program_id)")
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_solutions_program_id"
+                 " ON solutions(program_id)")
 
 
 class _ArenaMajorCounts(NamedTuple):
@@ -544,6 +620,59 @@ class Store:
                 "arena_major migration skipped %d verified_attempts row(s) "
                 "whose evaluator_image is unclassified", counts.skipped,
             )
+
+    def genesis(self) -> dict[str, int]:
+        """Archive the live PUBLIC tables and recreate them empty.
+
+        The self-reported half of the arena-major-2 reset (design 2026-09-14,
+        D3/D12, Sec 5.5). Scores measured before it were produced on mixed CPU
+        architectures and are not comparable with anything measured after it.
+        The verified tables are deliberately untouched: invariant I4 already
+        makes old-major verified rows unreachable the moment ``ARENA_MAJOR`` is
+        bumped, with no migration at all. ``poll_votes`` is unrelated.
+
+        Archives; never deletes (I8). Idempotent (I8): guarded on the PRESENCE
+        OF THE ARCHIVE, not on ``ARENA_MAJOR``, so a deploy that rolls back and
+        redeploys cannot re-fire it and empty a board that has since refilled.
+        Returns ``{table: rows_archived}``, empty on a no-op.
+
+        Transaction handling follows ``_migrate_add_arena_major``'s hard-won
+        shape (see its docstring). Two rules, both load-bearing. ``BEGIN
+        IMMEDIATE`` is explicit because sqlite3 never opens a transaction for a
+        bare DDL statement (``ALTER TABLE`` / ``CREATE TABLE``). And the
+        recreate is a per-table ``conn.execute(_PUBLIC_TABLE_DDL[t])`` rather
+        than ``conn.executescript(_SCHEMA)``, because ``executescript``
+        unconditionally COMMITs any open transaction before it runs: using it
+        here would make the renames durable ahead of the recreate, so a failure
+        partway through would strand every public row behind a table that
+        already looks migrated to the guard below.
+
+        The guard is INSIDE the transaction for a second, independent reason:
+        ``hub/server`` forks one uvicorn worker per core and, although genesis
+        is an explicit one-shot command (D12), it runs against a live hub.
+        Reading the guard only after ``BEGIN IMMEDIATE`` -- that is, under the
+        write lock -- means a concurrent caller re-reads, sees the archive, and
+        no-ops rather than archiving the archive.
+        """
+        conn = self._conn
+        counts: dict[str, int] = {}
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            already = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                ("atoms_v1",),
+            ).fetchone()
+            if already is not None:
+                logger.info("genesis: already applied, nothing to do")
+                return {}
+            for table, ddl in _PUBLIC_TABLE_DDL.items():
+                counts[table] = conn.execute(
+                    f"SELECT count(*) FROM {table}").fetchone()[0]
+                conn.execute(f"ALTER TABLE {table} RENAME TO {table}_v1")
+                conn.execute(ddl)
+            _restore_program_id_shape(conn)
+        logger.info("genesis: archived %s", counts)
+        return counts
 
     def upsert_solution(
         self,
