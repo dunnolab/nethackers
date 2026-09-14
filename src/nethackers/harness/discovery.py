@@ -134,7 +134,7 @@ def probe_operator(
     elif backend == "claude":
         script = f"claude --version; echo {_PROBE_SEP}; claude auth status --json 2>/dev/null"
     else:
-        script = f"opencode2 --version; echo {_PROBE_SEP}; opencode2 models"
+        script = f"opencode2 --version; echo {_PROBE_SEP}; {_OPENCODE2_SETTLED_MODELS}"
     parts = (_run_image_script(
         image, binary, script, docker=docker, run=run, home=home,
     ) or "").split(_PROBE_SEP)
@@ -178,6 +178,15 @@ def list_models(
     if image is not None:
         if not image_present(image, runtime=docker, run=run):
             return None   # image not built -> unknown; never the host CLI's cache
+        if backend == "opencode2":
+            # The settling loop has to run inside ONE container: a fresh
+            # container per `opencode2 models` call never gets past the empty
+            # snapshot.
+            output = _run_image_script(image, "opencode2", _OPENCODE2_SETTLED_MODELS,
+                                       docker=docker, run=run, home=home)
+            return _opencode2_parse(
+                output or "", variants=_opencode2_config_variants(home=home or Path.home()),
+            )
         # probe the mutator container (via the resolved runtime), not the host
         run = _container_run(image, docker=docker, home=home, run=run)
     if backend == "codex":
@@ -218,11 +227,24 @@ def _opencode2_parse(
     return models or None
 
 
+# `opencode2 models` prints the background service's current model snapshot,
+# which is empty until the service has loaded its catalog -- always the case on
+# the first call in a fresh container, where it settled in ~3s when measured.
+# Poll until two non-empty readings agree (max ~15s), then print the last one.
+_OPENCODE2_SETTLED_MODELS = (
+    "prev=; i=0; while [ $i -lt 15 ]; do out=$(opencode2 models 2>/dev/null); "
+    'if [ -n "$out" ] && [ "$out" = "$prev" ]; then break; fi; '
+    "prev=$out; i=$((i + 1)); sleep 1; done; "
+    "printf '%s\\n' \"$out\""
+)
+
+
 def _opencode2_models(
     *, run: Callable, variants: dict[str, tuple[str, ...]] | None = None,
 ) -> list[ModelInfo] | None:
     try:
-        proc = run(["opencode2", "models"], capture_output=True, text=True, timeout=30)
+        proc = run(["sh", "-c", _OPENCODE2_SETTLED_MODELS],
+                   capture_output=True, text=True, timeout=40)
         if proc.returncode == 0:
             return _opencode2_parse(proc.stdout or "", variants=variants)
     except Exception:

@@ -1,4 +1,5 @@
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -38,6 +39,29 @@ def test_list_models_opencode2_parses_provider_model_lines():
 
 def test_list_models_opencode2_empty_output_is_unknown():
     assert list_models("opencode2", run=_run_ok("")) is None
+
+
+def test_list_models_opencode2_waits_for_the_model_list_to_settle(tmp_path, monkeypatch):
+    # `opencode2 models` prints the background service's current snapshot:
+    # empty right after the service starts (always, in a fresh container),
+    # complete a few seconds later. Reading it once showed no models at all.
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    calls = tmp_path / "calls"
+    fake = tmp_path / "bin" / "opencode2"
+    fake.parent.mkdir()
+    fake.write_text(
+        "#!/bin/sh\n"
+        f'n=$(cat "{calls}" 2>/dev/null || echo 0); n=$((n + 1)); echo "$n" > "{calls}"\n'
+        '[ "$1" = models ] || exit 2\n'
+        '[ "$n" -ge 2 ] && printf "opencode/big-pickle\\nopencode/mimo-v2.5-free\\n"\n'
+        "exit 0\n"
+    )
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{fake.parent}{os.pathsep}{os.environ['PATH']}")
+
+    models = list_models("opencode2", home=tmp_path)
+
+    assert [m.id for m in models] == ["opencode/big-pickle", "opencode/mimo-v2.5-free"]
 
 
 def _global_opencode_config(home: Path, text: str, name: str = "opencode.json") -> None:
@@ -246,7 +270,7 @@ def _opencode2_version_only(cmd, **kwargs):
     # `auth list` isn't consulted: the sandbox never sees OpenCode's login store.
     if cmd == ["opencode2", "--version"]:
         return SimpleNamespace(returncode=0, stdout="opencode2 v0.0.0-beta-19271\n")
-    if cmd == ["opencode2", "models"]:
+    if cmd[:2] == ["sh", "-c"] and "opencode2 models" in cmd[2]:   # the settling loop
         return SimpleNamespace(returncode=0, stdout="custom/my-model\nopencode/big-pickle\n")
     raise AssertionError(cmd)
 
