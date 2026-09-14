@@ -94,6 +94,18 @@ def test_preflight_passes_operator_to_auth(monkeypatch):
 # --- preflight no longer gates on the image: it's auto-built on demand -------
 
 
+def test_preflight_operator_opencode2_needs_no_key_and_writes_nothing(tmp_path, monkeypatch):
+    # Free models run without a key, so opencode2 is always usable. The check
+    # must not write the sandbox's provider-config copy: doctor is read-only.
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    config = tmp_path / ".config" / "opencode" / "opencode.json"
+    config.parent.mkdir(parents=True)
+    config.write_text('{"provider": {"p": {"options": {"apiKey": "k"}}}}')
+
+    assert sp.preflight_operator("opencode2", system="Linux", home=tmp_path) is None
+    assert not (tmp_path / ".nethackers").exists()
+
+
 def test_preflight_does_not_probe_for_the_image(monkeypatch):
     # The image is auto-provisioned (build_mutator_image), NOT a precondition the
     # user must satisfy -- so preflight (docker + login) never touches it.

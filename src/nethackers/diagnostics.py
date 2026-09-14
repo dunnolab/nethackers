@@ -34,6 +34,7 @@ from nethackers import _image_pins
 from nethackers.config import load_stage
 from nethackers.containers import RuntimeReport, container_runtime, probe_container_runtime
 from nethackers.harness import sandbox_preflight
+from nethackers.harness.auth_inject import opencode2_has_provider_key
 from nethackers.harness.version import RUN_SCHEMA_VERSION
 from nethackers.hubclient.client import HubClient, HubUnreachable
 from nethackers.hubclient.credentials import Credentials, load as _default_load_creds
@@ -148,6 +149,12 @@ def _default_hub_mode(hub: str) -> str | None:
     of truth with it (INV5). May raise ``HubUnreachable``; ``_check_hub`` is
     the only place that catches it."""
     return HubClient(hub).hub_mode()
+
+
+def _default_opencode2_keyed() -> bool:
+    """Whether a global OpenCode provider carries a key the sandbox can use
+    (``auth_inject``, the same rule a run applies)."""
+    return opencode2_has_provider_key(home=Path.home())
 
 
 _RUNTIME_ITEM_STATUS = {"usable": "ok", "absent": "warn", "broken": "fail"}
@@ -275,17 +282,28 @@ def _check_gh(
 def _check_operator(
     operators: tuple[str, ...], *, severity: str, caps: tuple[str, ...],
     mutator_present: bool, preflight_operator: Callable[[str], str | None],
+    opencode2_keyed: Callable[[], bool],
 ) -> CheckResult:
     """Host-login readiness across the registered coding agents. Probes EVERY
     agent the caller asked about (``run_checks(operator=None)`` -> all of
     ``operators.OPERATORS``; a single name -> just that one) rather than one
     agent plus a "note the other": evolve drives ONE operator chosen at Start,
     so this is ready as long as AT LEAST ONE agent is logged in, and the detail
-    lists each agent's status so the options are visible."""
+    lists each agent's status so the options are visible.
+
+    OpenCode 2 is always usable (free models need no key), so it always
+    counts as ready -- but without a provider key it says "free models only"
+    rather than claiming a login."""
     status = {op: preflight_operator(op) for op in operators}  # None == logged in
+
+    def ready_detail(op: str) -> str:
+        if op == "opencode2" and not opencode2_keyed():
+            return "free models only"
+        return "logged in"
+
     items = tuple(
         CheckItem(label=op, status="ok" if status[op] is None else "fail",
-                  detail="logged in" if status[op] is None else "not logged in")
+                  detail=ready_detail(op) if status[op] is None else "not logged in")
         for op in operators)
     flat = ", ".join(f"{it.label}: {it.detail}" for it in items)  # flattened for -o json
     if any(status[op] is None for op in operators):
@@ -329,6 +347,7 @@ def run_checks(
     manifest_reachable: Callable[[str], bool] | None = None,
     repo_root: Callable[[], Path | None] = sandbox_preflight._repo_root,
     preflight_operator: Callable[[str], str | None] = sandbox_preflight.preflight_operator,
+    opencode2_keyed: Callable[[], bool] = _default_opencode2_keyed,
     hub_mode: Callable[[str], str | None] = _default_hub_mode,
     load_creds: Callable[[], Credentials | None] = _default_load_creds,
     gh_state: Callable[[], tuple[str | None, str]] = _default_gh_state,
@@ -444,7 +463,8 @@ def run_checks(
         results.append(_safe("operator", severity, caps,
                              lambda: _check_operator(ops, severity=severity, caps=caps,
                                                      mutator_present=mutator_present,
-                                                     preflight_operator=preflight_operator)))
+                                                     preflight_operator=preflight_operator,
+                                                     opencode2_keyed=opencode2_keyed)))
     return results
 
 

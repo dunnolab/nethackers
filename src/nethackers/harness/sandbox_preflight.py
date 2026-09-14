@@ -353,7 +353,13 @@ def preflight_operator(operator: str, *, system: str | None = None,
     in" message. ``evolve``-only: the arena has no operator, so a plain
     ``eval``/``submit`` must NEVER call this (spec S5.5's "two separate
     gates" -- fusing them back together is exactly the bug this split
-    fixes)."""
+    fixes).
+
+    OpenCode 2 is always usable: without a provider key it runs OpenCode's
+    free models. Returning early also keeps this check from writing the
+    sandbox's provider-config copy (``auth_inject``), since doctor calls it."""
+    if operator == "opencode2":
+        return None
     try:
         auth_docker_args(operator, system=system or platform.system(),
                          home=home or Path.home(), _require_exists=True)
