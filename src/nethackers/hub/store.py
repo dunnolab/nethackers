@@ -32,17 +32,94 @@ already-migrated DB.
 from __future__ import annotations
 
 import json
+import logging
 import sqlite3
 import threading
 from pathlib import Path
-from typing import Any
+from typing import Any, NamedTuple
 
+from nethackers.arena_version import major_for
 from nethackers.contracts.models import Atom
 from nethackers.hub.ids import program_id
 
+logger = logging.getLogger(__name__)
+
+# The three verified tables' DDL, pulled out of _SCHEMA below and named so
+# _migrate_add_arena_major can recreate exactly ONE renamed-away table at a
+# time via a plain conn.execute() (see that function). conn.executescript()
+# -- used for _SCHEMA as a whole everywhere else -- always issues an
+# implicit COMMIT before it runs, which would silently end the migration's
+# own explicit transaction and reopen the very stranded-``_old``-table
+# failure mode that transaction exists to prevent.
+_VERIFIED_ATOMS_DDL = """
+CREATE TABLE IF NOT EXISTS verified_atoms (
+    solution_digest TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    tier TEXT NOT NULL,
+    identity TEXT NOT NULL,
+    seed INTEGER NOT NULL,
+    progression REAL NOT NULL,
+    milestone TEXT,
+    ascended INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    turns INTEGER NOT NULL,
+    steps INTEGER NOT NULL,
+    evaluator_image TEXT NOT NULL,
+    secret_fingerprint TEXT NOT NULL,
+    verifier_token_fingerprint TEXT NOT NULL,
+    arena_major INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(solution_digest, identity, seed, secret_fingerprint, arena_major)
+);
+"""
+_VERIFIED_BASELINE_ATOMS_DDL = """
+CREATE TABLE IF NOT EXISTS verified_baseline_atoms (
+    solution_digest TEXT NOT NULL,
+    owner TEXT NOT NULL,
+    tier TEXT NOT NULL,
+    identity TEXT NOT NULL,
+    seed INTEGER NOT NULL,
+    progression REAL NOT NULL,
+    milestone TEXT,
+    ascended INTEGER NOT NULL,
+    status TEXT NOT NULL,
+    turns INTEGER NOT NULL,
+    steps INTEGER NOT NULL,
+    evaluator_image TEXT NOT NULL,
+    secret_fingerprint TEXT NOT NULL,
+    verifier_token_fingerprint TEXT NOT NULL,
+    arena_major INTEGER NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(identity, seed, secret_fingerprint, arena_major)
+);
+"""
+_VERIFIED_ATTEMPTS_DDL = """
+CREATE TABLE IF NOT EXISTS verified_attempts (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    solution_digest TEXT NOT NULL,
+    secret_fingerprint TEXT NOT NULL,
+    evaluator_image TEXT NOT NULL,
+    arena_major INTEGER NOT NULL,
+    verifier_token_fingerprint TEXT NOT NULL,
+    status TEXT NOT NULL,
+    failure_kind TEXT,
+    message TEXT,
+    identities_done INTEGER NOT NULL,
+    at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+"""
+
+# Keyed by table name so _migrate_add_arena_major can look up exactly the
+# one CREATE TABLE statement it needs after renaming that table away.
+_VERIFIED_TABLE_DDL: dict[str, str] = {
+    "verified_atoms": _VERIFIED_ATOMS_DDL,
+    "verified_baseline_atoms": _VERIFIED_BASELINE_ATOMS_DDL,
+    "verified_attempts": _VERIFIED_ATTEMPTS_DDL,
+}
+
 # The whole DDL (task-5-context.md), verbatim. CREATE TABLE IF NOT EXISTS
 # throughout makes init_schema() idempotent.
-_SCHEMA = """
+_SCHEMA = f"""
 CREATE TABLE IF NOT EXISTS solutions (
     digest TEXT PRIMARY KEY,
     repo TEXT, commit_sha TEXT, owner TEXT, root TEXT, entrypoint TEXT,
@@ -73,54 +150,7 @@ CREATE TABLE IF NOT EXISTS baseline_atoms (
     evaluator_image TEXT NOT NULL,
     created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
-CREATE TABLE IF NOT EXISTS verified_atoms (
-    solution_digest TEXT NOT NULL,
-    owner TEXT NOT NULL,
-    tier TEXT NOT NULL,
-    identity TEXT NOT NULL,
-    seed INTEGER NOT NULL,
-    progression REAL NOT NULL,
-    milestone TEXT,
-    ascended INTEGER NOT NULL,
-    status TEXT NOT NULL,
-    turns INTEGER NOT NULL,
-    steps INTEGER NOT NULL,
-    evaluator_image TEXT NOT NULL,
-    secret_fingerprint TEXT NOT NULL,
-    verifier_token_fingerprint TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(solution_digest, identity, seed, secret_fingerprint, evaluator_image)
-);
-CREATE TABLE IF NOT EXISTS verified_baseline_atoms (
-    solution_digest TEXT NOT NULL,
-    owner TEXT NOT NULL,
-    tier TEXT NOT NULL,
-    identity TEXT NOT NULL,
-    seed INTEGER NOT NULL,
-    progression REAL NOT NULL,
-    milestone TEXT,
-    ascended INTEGER NOT NULL,
-    status TEXT NOT NULL,
-    turns INTEGER NOT NULL,
-    steps INTEGER NOT NULL,
-    evaluator_image TEXT NOT NULL,
-    secret_fingerprint TEXT NOT NULL,
-    verifier_token_fingerprint TEXT NOT NULL,
-    created_at TEXT NOT NULL DEFAULT (datetime('now')),
-    UNIQUE(identity, seed, secret_fingerprint, evaluator_image)
-);
-CREATE TABLE IF NOT EXISTS verified_attempts (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    solution_digest TEXT NOT NULL,
-    secret_fingerprint TEXT NOT NULL,
-    evaluator_image TEXT NOT NULL,
-    verifier_token_fingerprint TEXT NOT NULL,
-    status TEXT NOT NULL,
-    failure_kind TEXT,
-    message TEXT,
-    identities_done INTEGER NOT NULL,
-    at TEXT NOT NULL DEFAULT (datetime('now'))
-);
+{_VERIFIED_ATOMS_DDL}{_VERIFIED_BASELINE_ATOMS_DDL}{_VERIFIED_ATTEMPTS_DDL}
 CREATE TABLE IF NOT EXISTS lineage (
     child_digest TEXT NOT NULL REFERENCES solutions(digest),
     parent_digest TEXT NOT NULL,         -- may be an external/base solution: NO FK
@@ -178,14 +208,16 @@ _ITER_ATOMS_FILTER_KEYS: frozenset[str] = frozenset(
     }
 )
 
-_VERIFIED_EXTRA_COLUMNS = ("secret_fingerprint", "verifier_token_fingerprint")
+_VERIFIED_EXTRA_COLUMNS = (
+    "secret_fingerprint", "verifier_token_fingerprint", "arena_major")
 _ITER_VERIFIED_FILTER_KEYS = _ITER_ATOMS_FILTER_KEYS | {
     "secret_fingerprint", "evaluator_image", "verifier_token_fingerprint",
+    "arena_major",
 }
 
 _ATTEMPT_COLUMNS = ("solution_digest", "secret_fingerprint", "evaluator_image",
-                    "verifier_token_fingerprint", "status", "failure_kind", "message",
-                    "identities_done", "at")
+                    "arena_major", "verifier_token_fingerprint", "status",
+                    "failure_kind", "message", "identities_done", "at")
 
 
 def _migrate_drop_objective_digest(conn: sqlite3.Connection) -> None:
@@ -265,6 +297,163 @@ def _migrate_add_program_id(conn: sqlite3.Connection) -> None:
     conn.commit()
 
 
+class _ArenaMajorCounts(NamedTuple):
+    """What ``_migrate_add_arena_major`` could not carry over, by kind.
+
+    Two different things, deliberately counted apart: ``dropped`` rows lost a
+    collision to an equivalent row that is still present, while ``skipped``
+    rows are gone outright. Both are reported so ``init_schema`` can log them
+    distinctly and a test can assert on either.
+    """
+
+    dropped: int
+    skipped: int
+
+
+def _migrate_add_arena_major(conn: sqlite3.Connection) -> _ArenaMajorCounts:
+    """Re-key the three verified tables from ``evaluator_image`` onto
+    ``arena_major``, backfilling the major from each row's own digest.
+    Returns what it could not carry over (``_ArenaMajorCounts``); the caller,
+    currently only ``init_schema``, is expected to surface both non-zero
+    counts -- see its call site. No-op (all-zero counts) on a fresh or
+    already-migrated DB.
+
+    Rename-and-copy rather than ``ALTER TABLE ADD COLUMN``: sqlite cannot add
+    a NOT NULL column without a default to a non-empty table, and cannot alter
+    a UNIQUE constraint at all. Same shape as
+    ``_migrate_drop_objective_digest``, but EVERYTHING this function does to a
+    table -- its stranded-``_old`` check, its shape guard, its ``SELECT`` of
+    the rows, and then the rename, recreate, backfill and drop -- runs inside
+    ONE EXPLICIT transaction (``BEGIN IMMEDIATE`` ... ``with conn:``'s
+    implicit commit/rollback), rather than relying on ``with conn:`` alone:
+    sqlite3's default implicit transaction handling never opens a transaction
+    for a bare DDL statement (``ALTER TABLE`` / ``CREATE TABLE`` / ``DROP
+    TABLE``), and ``executescript()`` -- used everywhere else in this module
+    for ``_SCHEMA`` as a whole -- unconditionally COMMITs any open transaction
+    before it runs. Combined, those two facts meant an earlier version's
+    rename and its empty recreated table were ALREADY DURABLE before the
+    insert loop even started, so a failure partway through the loop (disk
+    full, ``database is locked``, a killed process) rolled back only the
+    inserts, leaving the original data stranded in ``{table}_old`` behind a
+    NEW, EMPTY ``{table}`` that already has the ``arena_major`` column --
+    which the guard below reads as "already migrated" and will happily skip
+    forever. Explicitly opening the transaction first (and recreating with a
+    single ``conn.execute(_VERIFIED_TABLE_DDL[table])`` rather than
+    ``executescript``, so nothing commits early) makes the whole per-table
+    sequence atomic: any raise anywhere in it leaves that table exactly as it
+    was found, under its original name, with nothing renamed or dropped.
+
+    The guard and the ``SELECT`` are inside that transaction for a SECOND,
+    independent reason: production runs N of these CONCURRENTLY. ``hub/server``
+    forks one uvicorn worker PROCESS per core, each of which calls
+    ``init_schema()``, so on the 4-vCPU hub four processes enter this function
+    at once. With the guard outside, worker B could read the pre-migration
+    shape and snapshot the rows, block on A's write lock, and then -- after A
+    had committed a correct migration, and after a ``/verify`` POST had landed
+    on the socket the parent bound before forking -- rename A's already-
+    migrated table away, re-insert its own stale snapshot, and drop A's table,
+    destroying any row written in between. Reading the shape only after
+    ``BEGIN IMMEDIATE`` closes that window: B re-reads under the write lock,
+    sees ``arena_major``, and no-ops. (``continue`` inside the ``with`` simply
+    commits an empty transaction.)
+
+    Rows are carried over in ``rowid`` order through ``INSERT OR IGNORE``, so
+    when pooling two digests into one major collides a cell, the EARLIEST row
+    wins -- arbitrary but deterministic, and harmless given the two digests are
+    declared to score alike (design D7).
+
+    **An unclassified digest is handled by what the row IS.** For
+    ``verified_atoms`` and ``verified_baseline_atoms`` it raises: those rows
+    are scored data, and storing one under a guessed major would silently
+    place it on a board it was never measured for (design invariant I2). For
+    ``verified_attempts`` the row is SKIPPED, counted and logged instead --
+    never a boot failure. That table is an audit record, not scored data, and
+    unlike the other two it never had an admission check: until this branch
+    ``record_attempt`` stored whatever ``evaluator_image`` the caller sent, and
+    ``eval/runner.py``'s ``_default_image_digest`` legitimately falls back to a
+    bare image Id (``sha256:...`` with no ``@``) that ``major_for`` can never
+    classify, no matter what is added to the map. Since ``init_schema`` runs in
+    every uvicorn worker at boot, raising on one of those would wedge the whole
+    hub over a row nothing scores.
+    """
+    dropped = 0
+    skipped = 0
+    for table in ("verified_atoms", "verified_baseline_atoms", "verified_attempts"):
+        old_name = f"{table}_old"
+        with conn:
+            conn.execute("BEGIN IMMEDIATE")
+            stranded = conn.execute(
+                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?",
+                (old_name,),
+            ).fetchone()
+            if stranded:
+                raise RuntimeError(
+                    f"{old_name} already exists -- a previous arena_major "
+                    f"migration attempt on {table} did not finish cleanly. "
+                    f"Refusing to guess whether {table} already holds every row "
+                    f"from it; inspect {old_name} by hand before retrying."
+                )
+
+            cols = [r[1] for r in conn.execute(f"PRAGMA table_info({table})")]
+            if not cols or "arena_major" in cols:
+                continue   # fresh or already-migrated -> nothing to do
+            carried = [c for c in cols if c != "id"]
+            col_list = ", ".join(carried)
+            rows = conn.execute(
+                f"SELECT {col_list} FROM {table} ORDER BY rowid").fetchall()
+
+            image_at = carried.index("evaluator_image")
+            classified: list[tuple[tuple[Any, ...], int]] = []
+            unclassifiable: list[str] = []
+            for row in rows:
+                major = major_for(row[image_at])
+                if major is not None:
+                    classified.append((row, major))
+                elif table == "verified_attempts":
+                    unclassifiable.append(row[image_at])
+                else:
+                    raise ValueError(
+                        f"{table} holds an unclassified evaluator_image "
+                        f"{row[image_at]!r}: it is absent from "
+                        f"ARENA_MAJOR_BY_DIGEST, so this row has no arena "
+                        f"major and the migration refuses to guess one "
+                        f"(design invariant I2). THE HUB WILL NOT START until "
+                        f"this is resolved -- classify the digest in "
+                        f"src/nethackers/arena_version.py (deciding whether it "
+                        f"scores like the current major or starts a new one) "
+                        f"and redeploy."
+                    )
+            if unclassifiable:
+                skipped += len(unclassifiable)
+                # The count alone cannot tell an operator what to classify, so
+                # name the distinct images too -- capped, because a sustained
+                # misconfiguration could otherwise put thousands of identical
+                # refs into one log line.
+                distinct = sorted(set(unclassifiable))
+                logger.warning(
+                    "arena_major migration skipped %d %s row(s) whose "
+                    "evaluator_image is unclassified (audit records, not "
+                    "scored data -- dropping them cannot move a board); "
+                    "distinct image(s): %s",
+                    len(unclassifiable), table,
+                    ", ".join(distinct[:5]) + (" ..." if len(distinct) > 5 else ""),
+                )
+
+            insert_cols = ", ".join([*carried, "arena_major"])
+            placeholders = ", ".join("?" for _ in range(len(carried) + 1))
+            conn.execute(f"ALTER TABLE {table} RENAME TO {old_name}")
+            conn.execute(_VERIFIED_TABLE_DDL[table])   # this table only, not executescript
+            for row, major in classified:
+                cur = conn.execute(
+                    f"INSERT OR IGNORE INTO {table} ({insert_cols}) "
+                    f"VALUES ({placeholders})",
+                    (*row, major),
+                )
+                dropped += 1 - cur.rowcount
+            conn.execute(f"DROP TABLE {old_name}")
+    return _ArenaMajorCounts(dropped=dropped, skipped=skipped)
+
+
 class Store:
     """A sqlite3 data layer over the hub's schema, with ONE CONNECTION PER
     THREAD.
@@ -327,13 +516,34 @@ class Store:
         ``objective_digest`` column) to the identity-keyed shape -- a no-op
         on a fresh or already-migrated DB (Task A4) -- and drop the legacy
         ``elite_pool`` table (Part 2: ``/elites`` is now a live query, so an
-        existing DB just sheds it; also a no-op once already dropped)."""
+        existing DB just sheds it; also a no-op once already dropped).
+        Finally re-key the three verified tables from ``evaluator_image``
+        onto ``arena_major``, backfilling each row's major from its own
+        digest (again a no-op on a fresh or already-migrated DB). That last
+        migration loses rows two ways, and both are logged at WARNING rather
+        than silently discarded, since this runs once, unattended, over
+        irreplaceable evaluation data: it can pool rows that collide once
+        re-keyed, dropping the later duplicate, and it skips
+        ``verified_attempts`` rows whose image cannot be classified at all
+        (see ``_migrate_add_arena_major`` for why those are skipped rather
+        than fatal)."""
         self._conn.executescript(_SCHEMA)
         self._conn.commit()
         _migrate_drop_objective_digest(self._conn)
         _migrate_drop_objectives_table(self._conn)
         _migrate_add_program_id(self._conn)
         _migrate_drop_elite_pool(self._conn)
+        counts = _migrate_add_arena_major(self._conn)
+        if counts.dropped:
+            logger.warning(
+                "arena_major migration pooled %d verified row(s) as "
+                "duplicates once re-keyed off evaluator_image", counts.dropped,
+            )
+        if counts.skipped:
+            logger.warning(
+                "arena_major migration skipped %d verified_attempts row(s) "
+                "whose evaluator_image is unclassified", counts.skipped,
+            )
 
     def upsert_solution(
         self,
@@ -497,9 +707,9 @@ class Store:
         ]
 
     def _insert_atom_rows(self, table: str, atoms: list[Atom], *,
-                          extra: tuple[str, ...] = ()) -> int:
+                          extra: tuple[Any, ...] = ()) -> int:
         """``INSERT OR IGNORE`` ``atoms`` into ``table``, appending ``extra``
-        (the epoch/attribution columns the verified tables carry beyond
+        (the major/attribution columns the verified tables carry beyond
         ``_ATOM_COLUMNS``) to every row. Returns rows actually inserted --
         dedup on the table's own UNIQUE key makes a re-submit a no-op.
 
@@ -579,20 +789,30 @@ class Store:
 
     def insert_verified_atoms(
         self, atoms: list[Atom], *, secret_fingerprint: str,
-        verifier_token_fingerprint: str
+        verifier_token_fingerprint: str, arena_major: int
     ) -> int:
         """Insert verified atoms into the isolated ``verified_atoms`` table
         (dedup on UNIQUE key, no FKs). Returns the number of rows inserted.
         """
         return self._insert_atom_rows(
             "verified_atoms", atoms,
-            extra=(secret_fingerprint, verifier_token_fingerprint),
+            extra=(secret_fingerprint, verifier_token_fingerprint, arena_major),
         )
 
     def iter_verified_atoms(self, **filters: Any) -> list[Atom]:
         """Return verified atoms matching every ``column=value`` filter
         (AND'ed). Filter keys include solution_digest, identity, seed, plus
-        secret_fingerprint, evaluator_image, verifier_token_fingerprint.
+        secret_fingerprint, arena_major, verifier_token_fingerprint --
+        ``arena_major`` being the one every production read scopes on, since
+        it is half of the epoch key.
+
+        ``evaluator_image`` is also accepted, but it is NOT a scope: it is the
+        exact digest that produced the row, kept as provenance once the major
+        took its place in the key (design D2/I1). Filtering on it asks "which
+        bytes produced this", not "what is this comparable with", and a major
+        can legitimately span several digests -- so a read that means to scope
+        a board wants ``arena_major``, and only a provenance question wants
+        this.
         """
         return self._iter_atom_rows(
             "verified_atoms", _ITER_VERIFIED_FILTER_KEYS, "iter_verified_atoms", filters,
@@ -600,7 +820,7 @@ class Store:
 
     def insert_verified_baseline_atoms(
         self, atoms: list[Atom], *, secret_fingerprint: str,
-        verifier_token_fingerprint: str
+        verifier_token_fingerprint: str, arena_major: int
     ) -> int:
         """Insert AutoAscend's hidden-seed floor into the isolated
         ``verified_baseline_atoms`` table (dedup on UNIQUE key, no FKs).
@@ -619,7 +839,7 @@ class Store:
         """
         return self._insert_atom_rows(
             "verified_baseline_atoms", atoms,
-            extra=(secret_fingerprint, verifier_token_fingerprint),
+            extra=(secret_fingerprint, verifier_token_fingerprint, arena_major),
         )
 
     def iter_verified_baseline_atoms(self, **filters: Any) -> list[Atom]:
@@ -631,29 +851,30 @@ class Store:
         )
 
     def insert_verified_attempt(self, *, solution_digest, secret_fingerprint,
-                                evaluator_image, verifier_token_fingerprint, status,
-                                failure_kind, message, identities_done, at):
+                                evaluator_image, arena_major, verifier_token_fingerprint,
+                                status, failure_kind, message, identities_done, at):
         """Insert an audit record of a verification attempt into the
         append-only ``verified_attempts`` table. Each call appends a new row.
         """
         cols = ", ".join(_ATTEMPT_COLUMNS)
         placeholders = ", ".join("?" for _ in _ATTEMPT_COLUMNS)
         vals = (solution_digest, secret_fingerprint, evaluator_image,
-                verifier_token_fingerprint, status, failure_kind, message,
-                identities_done, at)
+                arena_major, verifier_token_fingerprint, status, failure_kind,
+                message, identities_done, at)
         with self._conn:
             self._conn.execute(f"INSERT INTO verified_attempts ({cols}) VALUES "
                                f"({placeholders})", vals)
 
     def latest_verified_attempt(self, solution_digest, *, secret_fingerprint,
-                                evaluator_image):
-        """Return the most recent (highest id) verification attempt for the
-        given solution with the given secret and evaluator, or None if no
-        attempt exists."""
+                                arena_major):
+        """Return the most recent (highest id) verification attempt for this
+        solution within this secret + arena major, or None. Keyed on the major
+        rather than the digest, so an attempt recorded under one digest is
+        still found by a node running another digest of the same major."""
         cols = ", ".join(_ATTEMPT_COLUMNS)
         row = self._conn.execute(
             f"SELECT {cols} FROM verified_attempts"
             " WHERE solution_digest = ? AND secret_fingerprint = ? AND"
-            " evaluator_image = ? ORDER BY id DESC LIMIT 1",
-            (solution_digest, secret_fingerprint, evaluator_image)).fetchone()
+            " arena_major = ? ORDER BY id DESC LIMIT 1",
+            (solution_digest, secret_fingerprint, arena_major)).fetchone()
         return dict(zip(_ATTEMPT_COLUMNS, row, strict=True)) if row else None

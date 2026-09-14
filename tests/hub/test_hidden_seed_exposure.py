@@ -35,6 +35,7 @@ def client(tmp_path):
               evaluator_image=ARENA_IMAGE)
          for seed in HIDDEN_SEEDS],
         secret_fingerprint=secret_fingerprint(SECRET), verifier_token_fingerprint="tok",
+        arena_major=1,
     )
     cfg = VerifierConfig(tokens=frozenset({"tok"}), secret=SECRET, seeds=HIDDEN_SEEDS)
     return TestClient(create_app(s, LocalStubAuth({"t": "sam"}), verifier=cfg))

@@ -2,6 +2,7 @@ import pytest
 
 from nethackers._image_pins import ARENA_IMAGE
 from nethackers.arena.seeds import secret_fingerprint
+from nethackers.arena_version import ARENA_MAJOR
 from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
 from nethackers.hub.objectives import IDENTITIES
 from nethackers.hub.store import Store
@@ -46,7 +47,7 @@ def test_register_verified_writes_verified_atoms(tmp_path):
     res = register_verified(s, reference=SolutionReference(REPO, SHA), evidence=_evidence(),
                             secret_fingerprint=secret_fingerprint(SECRET),
                             verifier_token_fingerprint="tok", now="t",
-                            expected_image=ARENA_IMAGE, hub_secret=SECRET, seeds=SEEDS)
+                            current_major=ARENA_MAJOR, hub_secret=SECRET, seeds=SEEDS)
     assert res.owner == "sam" and res.inserted == 2
     assert res.total == len(IDENTITIES) * len(SEEDS)
     assert res.done == len(SEEDS)  # one identity submitted, every seed of it covered
@@ -60,7 +61,7 @@ def test_register_verified_is_idempotent(tmp_path):
     kwargs = dict(
         reference=SolutionReference(REPO, SHA), evidence=_evidence(),
         secret_fingerprint=secret_fingerprint(SECRET), verifier_token_fingerprint="tok",
-        now="t", expected_image=ARENA_IMAGE, hub_secret=SECRET, seeds=SEEDS)
+        now="t", current_major=ARENA_MAJOR, hub_secret=SECRET, seeds=SEEDS)
     first = register_verified(s, **kwargs)
     second = register_verified(s, **kwargs)
     assert first.inserted == 2
@@ -78,7 +79,7 @@ def test_parity_mismatch_rejected(tmp_path):
             s, reference=SolutionReference(REPO, SHA),
             evidence=_evidence(image="wrong@sha256:0"),
             secret_fingerprint=secret_fingerprint(SECRET), verifier_token_fingerprint="tok",
-            now="t", expected_image=ARENA_IMAGE, hub_secret=SECRET, seeds=SEEDS)
+            now="t", current_major=ARENA_MAJOR, hub_secret=SECRET, seeds=SEEDS)
 
 
 def test_stale_secret_rejected(tmp_path):
@@ -86,7 +87,7 @@ def test_stale_secret_rejected(tmp_path):
     with pytest.raises(StaleSecret):
         register_verified(s, reference=SolutionReference(REPO, SHA), evidence=_evidence(),
                           secret_fingerprint="deadbeef", verifier_token_fingerprint="tok",
-                          now="t", expected_image=ARENA_IMAGE, hub_secret=SECRET, seeds=SEEDS)
+                          now="t", current_major=ARENA_MAJOR, hub_secret=SECRET, seeds=SEEDS)
 
 
 def test_unknown_solution_rejected(tmp_path):
@@ -96,7 +97,7 @@ def test_unknown_solution_rejected(tmp_path):
         register_verified(
             s, reference=SolutionReference(REPO, SHA), evidence=_evidence(),
             secret_fingerprint=secret_fingerprint(SECRET), verifier_token_fingerprint="tok",
-            now="t", expected_image=ARENA_IMAGE, hub_secret=SECRET, seeds=SEEDS)
+            now="t", current_major=ARENA_MAJOR, hub_secret=SECRET, seeds=SEEDS)
 
 
 def test_seed_outside_config_rejected(tmp_path):
@@ -105,7 +106,7 @@ def test_seed_outside_config_rejected(tmp_path):
         register_verified(
             s, reference=SolutionReference(REPO, SHA), evidence=_evidence(seeds=(999,)),
             secret_fingerprint=secret_fingerprint(SECRET), verifier_token_fingerprint="tok",
-            now="t", expected_image=ARENA_IMAGE, hub_secret=SECRET, seeds=SEEDS)
+            now="t", current_major=ARENA_MAJOR, hub_secret=SECRET, seeds=SEEDS)
 
 
 def test_bad_identity_rejected(tmp_path):
@@ -115,7 +116,7 @@ def test_bad_identity_rejected(tmp_path):
             s, reference=SolutionReference(REPO, SHA),
             evidence=_evidence(identity="not-a-real-identity"),
             secret_fingerprint=secret_fingerprint(SECRET), verifier_token_fingerprint="tok",
-            now="t", expected_image=ARENA_IMAGE, hub_secret=SECRET, seeds=SEEDS)
+            now="t", current_major=ARENA_MAJOR, hub_secret=SECRET, seeds=SEEDS)
 
 
 def test_non_finite_metrics_rejected(tmp_path):
@@ -133,5 +134,5 @@ def test_non_finite_metrics_rejected(tmp_path):
         register_verified(
             s, reference=SolutionReference(REPO, SHA), evidence=evidence,
             secret_fingerprint=secret_fingerprint(SECRET), verifier_token_fingerprint="tok",
-            now="t", expected_image=ARENA_IMAGE, hub_secret=SECRET, seeds=SEEDS)
+            now="t", current_major=ARENA_MAJOR, hub_secret=SECRET, seeds=SEEDS)
     assert s.iter_verified_atoms(solution_digest=SID) == []

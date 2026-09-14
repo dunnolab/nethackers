@@ -52,10 +52,12 @@ result and NO floor -- reproducing production's real "verified on more
 identities than the floor covers yet" state, which is the case that must be
 EXCLUDED from keepers/breakthroughs rather than credited against a floor of
 0.0. They are inserted under ``secret_fingerprint(DEV_HIDDEN_SECRET)`` and
-stamped with the real pinned ``ARENA_IMAGE`` (never the self-reported
-tier's fake ``_EVALUATOR_IMAGE`` below) -- the hub filters every verified
-read on exactly that secret/image pair, so getting either wrong makes the
-fixture atoms silently invisible rather than loudly wrong.
+``arena_major=ARENA_MAJOR`` -- the hub filters every verified read on
+exactly that secret/major pair, so getting either wrong makes the fixture
+atoms silently invisible rather than loudly wrong. They are also stamped
+with the real pinned ``ARENA_IMAGE`` (never the self-reported tier's fake
+``_EVALUATOR_IMAGE`` below), which is provenance only now -- no verified
+read filters on it.
 ``DEV_HIDDEN_SECRET``/``DEV_HIDDEN_SEEDS`` mirror ``compose.override.yaml``'s
 ``NETHACKERS_HIDDEN_SECRET``/``NETHACKERS_HIDDEN_SEEDS`` so the offline hub
 process actually reads what these fixtures write -- pinned equal by
@@ -81,6 +83,7 @@ from dataclasses import replace
 from nethackers._image_pins import ARENA_IMAGE
 from nethackers.arena.progress import ACHIEVEMENTS
 from nethackers.arena.seeds import secret_fingerprint
+from nethackers.arena_version import ARENA_MAJOR
 from nethackers.contracts.models import Atom, ResultStatus
 from nethackers.hub.store import Store
 from nethackers.hub.views.attainment import update_attainment
@@ -264,6 +267,7 @@ def load_fixtures(store: Store, *, now: str = "2026-01-01T00:00:00Z") -> None:
     store.insert_verified_atoms(
         verified, secret_fingerprint=fingerprint,
         verifier_token_fingerprint="offline-verifier",
+        arena_major=ARENA_MAJOR,
     )
     floor = [
         replace(
@@ -283,6 +287,7 @@ def load_fixtures(store: Store, *, now: str = "2026-01-01T00:00:00Z") -> None:
     store.insert_verified_baseline_atoms(
         floor, secret_fingerprint=fingerprint,
         verifier_token_fingerprint="offline-verifier",
+        arena_major=ARENA_MAJOR,
     )
 
 
@@ -331,11 +336,14 @@ def _verified_atom(
     """One fixture atom for the private tier. Two differences from ``_atom``:
     ``tier="verified"`` (kept for consistency with production's verified
     rows -- nothing actually filters ``verified_atoms`` by ``tier``; reads
-    key off ``secret_fingerprint``/``evaluator_image``/``seed`` instead), and
-    ``evaluator_image=ARENA_IMAGE``, which IS load-bearing: the hub filters
-    verified reads on the real pinned arena, so a fixture stamped with the
-    fake ``_EVALUATOR_IMAGE`` would be silently invisible to every
-    private-tier view."""
+    key off ``secret_fingerprint``/``arena_major``/``seed`` instead), and
+    ``evaluator_image=ARENA_IMAGE``. That image stamp is provenance, not
+    what makes these atoms visible -- visibility is governed by
+    ``arena_major=ARENA_MAJOR``, passed on the ``insert_verified_atoms``/
+    ``insert_verified_baseline_atoms`` calls that write these atoms (not by
+    this function). Getting the *major* wrong there, not the image, is what
+    would make a fixture atom silently invisible to every private-tier
+    view."""
     return replace(
         _atom(solution_digest, identity=identity, seed=seed, milestone=milestone,
               ascended=ascended, turns=turns, steps=steps, progression=progression,

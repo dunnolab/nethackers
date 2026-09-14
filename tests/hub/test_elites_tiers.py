@@ -38,14 +38,14 @@ def store(tmp_path):
 
 def _epoch(store):
     from nethackers.arena.seeds import secret_fingerprint
-    return Epoch(secret_fingerprint(SECRET), ARENA_IMAGE, SEEDS)
+    return Epoch(secret_fingerprint(SECRET), 1, SEEDS)
 
 
 def test_verified_elites_rank_over_the_verified_table(store):
     store.insert_verified_atoms(
         [_atom("sha256:a", 11, 0.4), _atom("sha256:a", 22, 0.6)],
         secret_fingerprint=_epoch(store).secret_fingerprint,
-        verifier_token_fingerprint="tok",
+        verifier_token_fingerprint="tok", arena_major=1,
     )
     rows = read_elites(store, scope=IDENT, tier="verified", epoch=_epoch(store))
     assert len(rows) == 1
@@ -58,7 +58,7 @@ def test_verified_elites_exclude_a_retired_seed(store):
     store.insert_verified_atoms(
         [_atom("sha256:a", 11, 0.4), _atom("sha256:a", 999, 1.0)],
         secret_fingerprint=_epoch(store).secret_fingerprint,
-        verifier_token_fingerprint="tok",
+        verifier_token_fingerprint="tok", arena_major=1,
     )
     rows = read_elites(store, scope=IDENT, tier="verified", epoch=_epoch(store))
     assert rows[0]["score"] == pytest.approx(0.4), "seed 999 is not in the epoch"
@@ -78,7 +78,7 @@ def test_route_returns_verified_rows(store):
     store.insert_verified_atoms(
         [_atom("sha256:a", 11, 0.4)],
         secret_fingerprint=_epoch(store).secret_fingerprint,
-        verifier_token_fingerprint="tok",
+        verifier_token_fingerprint="tok", arena_major=1,
     )
     cfg = VerifierConfig(tokens=frozenset({"tok"}), secret=SECRET, seeds=SEEDS)
     body = _client(store, verifier=cfg).get(f"/elites?scope={IDENT}&tier=verified").json()

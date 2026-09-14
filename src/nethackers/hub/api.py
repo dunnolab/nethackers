@@ -44,8 +44,8 @@ from fastapi import FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, HTMLResponse
 from pydantic import BaseModel
 
-from nethackers._image_pins import ARENA_IMAGE
 from nethackers.arena.seeds import secret_fingerprint as _fp
+from nethackers.arena_version import ARENA_MAJOR, ARENA_MAJOR_BY_DIGEST
 from nethackers.contracts.models import Evidence, ObjectiveSpec
 from nethackers.hub.auth import AuthError, AuthProvider, GitHubAppAuth, LocalStubAuth
 from nethackers.hub.envelope import envelope
@@ -85,7 +85,7 @@ from nethackers.hub.views.programs import count_programs, get_program, list_prog
 from nethackers.hub.views.progress import read_progress
 from nethackers.hub.views.recognition import read_recognition
 from nethackers.hub.views.solution import read_solution_frontier
-from nethackers.hub.views.source import Epoch, VerificationUnavailable, source_for
+from nethackers.hub.views.source import VERIFIED, Epoch, VerificationUnavailable, source_for
 from nethackers.hub.views.stats import read_stats
 from nethackers.hub.views.verified import read_verified, read_verified_baseline
 
@@ -200,16 +200,26 @@ def create_app(
 
     def _epoch() -> Epoch | None:
         """The one verified epoch this hub can currently read, or None when no
-        verifier is configured. ``ARENA_IMAGE`` is the pinned arena the hub
-        accepts evidence from, so it is also the only image whose verified
-        atoms are comparable."""
+        verifier is configured. ``ARENA_MAJOR`` is this hub's current arena
+        major -- the comparability key every verified read is scoped to now,
+        not any single pinned image digest. A verified atom reads back through
+        this epoch as long as the digest it was written under classifies to
+        this major in ``arena_version``; which exact digest that was is
+        provenance, not part of the scope."""
         if verifier is None:
             return None
         return Epoch(
             secret_fingerprint=_fp(verifier.secret),
-            evaluator_image=ARENA_IMAGE,
+            arena_major=ARENA_MAJOR,
             seeds=verifier.seeds,
         )
+
+    def _major_context(tier: str) -> int | None:
+        """The arena major a response was read under, or None for a tier that
+        is not scoped by one. ``envelope`` drops None, so a self-reported
+        board gains no key."""
+        epoch = _epoch()
+        return epoch.arena_major if tier == VERIFIED and epoch else None
 
     def _source_guard(tier: str) -> None:
         """503 for a verified read on a hub with no verifier, matching the rest
@@ -317,7 +327,8 @@ def create_app(
             rows = read_elites(store, scope=scope, tier=tier, epoch=_epoch())
         except ValueError as e:
             raise HTTPException(status_code=404, detail=f"unknown scope: {scope!r}") from e
-        return envelope(rows, scope=scope, tier=tier)
+        return envelope(rows, scope=scope, tier=tier,
+                        arena_major=_major_context(tier))
 
     @app.get("/board")
     def get_board(
@@ -343,7 +354,8 @@ def create_app(
             except ValueError as e:
                 raise HTTPException(status_code=404, detail=f"unknown scope: {scope!r}") from e
             rows = aggregate_board(store, ids, tier=tier, epoch=_epoch())
-        return envelope(rows, scope=scope, tier=tier)
+        return envelope(rows, scope=scope, tier=tier,
+                        arena_major=_major_context(tier))
 
     @app.get("/hackers")
     def hackers(scope: str = "generalist", tier: str = "self-reported") -> dict[str, Any]:
@@ -468,7 +480,7 @@ def create_app(
                 secret_fingerprint=body.secret_fingerprint,
                 verifier_token_fingerprint=tok_fp,
                 now=datetime.now(UTC).isoformat(),
-                expected_image=ARENA_IMAGE,
+                current_major=ARENA_MAJOR,
                 hub_secret=verifier.secret,
                 seeds=verifier.seeds,
             )
@@ -503,7 +515,7 @@ def create_app(
                 evidence=Evidence.from_dict(body.evidence),
                 secret_fingerprint=body.secret_fingerprint,
                 verifier_token_fingerprint=tok_fp,
-                expected_image=ARENA_IMAGE,
+                current_major=ARENA_MAJOR,
                 hub_secret=verifier.secret,
                 seeds=verifier.seeds,
             )
@@ -525,14 +537,17 @@ def create_app(
             tok_fp = resolve_verifier(token, verifier)
         except VerifierAuthError as e:
             raise HTTPException(status_code=401, detail=str(e)) from e
-        record_attempt(
-            store, reference=SolutionReference(**body.reference),
-            secret_fingerprint=body.secret_fingerprint,
-            evaluator_image=body.evaluator_image,
-            verifier_token_fingerprint=tok_fp, status=body.status,
-            failure_kind=body.failure_kind,
-            message=body.message, identities_done=body.identities_done,
-            now=datetime.now(UTC).isoformat())
+        try:
+            record_attempt(
+                store, reference=SolutionReference(**body.reference),
+                secret_fingerprint=body.secret_fingerprint,
+                evaluator_image=body.evaluator_image,
+                verifier_token_fingerprint=tok_fp, status=body.status,
+                failure_kind=body.failure_kind,
+                message=body.message, identities_done=body.identities_done,
+                now=datetime.now(UTC).isoformat())
+        except VerifyError as e:
+            raise HTTPException(status_code=400, detail=f"{type(e).__name__}: {e}") from e
         return {"ok": True}
 
     @app.get("/verify/candidates")
@@ -548,7 +563,7 @@ def create_app(
             raise HTTPException(status_code=401, detail=str(e)) from e
         rows = verify_candidates(
             store, secret_fingerprint=_fp(verifier.secret),
-            evaluator_image=ARENA_IMAGE, seeds=verifier.seeds, limit=limit,
+            arena_major=ARENA_MAJOR, seeds=verifier.seeds, limit=limit,
         )
         return envelope(rows)
 
@@ -558,20 +573,33 @@ def create_app(
         # seed ids (the seeds are secret). ``baseline`` is AutoAscend's floor
         # on the same hidden seeds under the same epoch -- what makes a
         # verified progression readable as "vs AutoAscend" rather than a bare
-        # number. It is additive: callers reading only per_identity/overall
-        # are unaffected.
+        # number. ``arena_major``/``arena_digests`` are additive too: callers
+        # reading only per_identity/overall/baseline are unaffected. They
+        # name which digests the current major accepts, so a reader can tell
+        # a rebuild-driven gap in the corpus from a real regression without
+        # cross-referencing ``arena_version`` by hand.
         empty: dict[str, Any] = {"per_identity": {}, "overall": None}
+        majors = {
+            "arena_major": ARENA_MAJOR,
+            "arena_digests": sorted(
+                d for d, m in ARENA_MAJOR_BY_DIGEST.items() if m == ARENA_MAJOR
+            ),
+        }
         if verifier is None:
-            return {**empty, "baseline": empty}
+            # No verifier configured to read through, but the major is a fact
+            # about this build of the code, not about any live data -- true
+            # to report even when there is nothing else to report.
+            return {**empty, "baseline": empty, **majors}
         # Explicit kwargs rather than a **dict: the two reads MUST share one
         # epoch scope (a Delta across epochs is meaningless), and spelling it
         # out keeps that checkable by the typechecker.
         fingerprint, seeds = _fp(verifier.secret), verifier.seeds
         return {
             **read_verified(store, secret_fingerprint=fingerprint, seeds=seeds,
-                            evaluator_image=ARENA_IMAGE),
+                            arena_major=ARENA_MAJOR),
             "baseline": read_verified_baseline(store, secret_fingerprint=fingerprint,
-                                               seeds=seeds, evaluator_image=ARENA_IMAGE),
+                                               seeds=seeds, arena_major=ARENA_MAJOR),
+            **majors,
         }
 
     return app

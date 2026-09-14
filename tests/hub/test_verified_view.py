@@ -36,14 +36,16 @@ def test_read_verified_aggregates_current_epoch(tmp_path):
         [_atom(4839201, prog=0.4), _atom(1029384, prog=0.6)],
         secret_fingerprint=FP,
         verifier_token_fingerprint="t",
+        arena_major=1,
     )
     # a stale-secret row must NOT be counted
     s.insert_verified_atoms(
         [_atom(4839201, prog=1.0)],
         secret_fingerprint="c" * 64,
         verifier_token_fingerprint="t",
+        arena_major=1,
     )
-    got = read_verified(s, secret_fingerprint=FP, seeds=SEEDS, evaluator_image=IMG)
+    got = read_verified(s, secret_fingerprint=FP, seeds=SEEDS, arena_major=1)
     assert got["per_identity"]["val-dwa-law-fem"]["progression"] == 0.5
 
 
@@ -51,7 +53,7 @@ def test_verification_status_states(tmp_path):
     s = _store(tmp_path)
     assert (
         verification_status(
-            s, "sha256:s", secret_fingerprint=FP, evaluator_image=IMG, seeds=SEEDS
+            s, "sha256:s", secret_fingerprint=FP, arena_major=1, seeds=SEEDS
         )["state"]
         == "not_attempted"
     )
@@ -59,6 +61,7 @@ def test_verification_status_states(tmp_path):
         solution_digest="sha256:s",
         secret_fingerprint=FP,
         evaluator_image=IMG,
+        arena_major=1,
         verifier_token_fingerprint="t",
         status="failed",
         failure_kind="crashed",
@@ -68,7 +71,7 @@ def test_verification_status_states(tmp_path):
     )
     assert (
         verification_status(
-            s, "sha256:s", secret_fingerprint=FP, evaluator_image=IMG, seeds=SEEDS
+            s, "sha256:s", secret_fingerprint=FP, arena_major=1, seeds=SEEDS
         )["state"]
         == "attempted"
     )

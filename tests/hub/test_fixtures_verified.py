@@ -1,9 +1,12 @@
 """The offline fixture set must populate the private tier, or `make hub`
 serves an empty Private Dungeons view and there is nothing to e2e against.
 
-The epoch has to line up exactly: the atoms are stamped with ARENA_IMAGE (the
-real pinned arena the hub filters on -- NOT the fixtures' fake
-_EVALUATOR_IMAGE) and inserted under sha256(DEV_HIDDEN_SECRET).
+The epoch has to line up exactly: the atoms are inserted at ARENA_MAJOR -- the
+arena major the hub filters every verified read on -- under
+sha256(DEV_HIDDEN_SECRET). They also carry ARENA_IMAGE (the real pinned arena,
+never the fixtures' fake _EVALUATOR_IMAGE) in ``evaluator_image``, but that is
+provenance only: no verified read filters on it, so it is the major, not the
+image, that this file's ``_epoch()`` has to match.
 
 Follow-up regression guard: the fixture set must ALSO populate the PUBLIC
 floor (``baseline_atoms``), or ``views.recognition``'s missing-floor
@@ -15,6 +18,7 @@ import pytest
 
 from nethackers._image_pins import ARENA_IMAGE
 from nethackers.arena.seeds import secret_fingerprint
+from nethackers.arena_version import ARENA_MAJOR
 from nethackers.hub.fixtures import (
     DEV_HIDDEN_SECRET,
     DEV_HIDDEN_SEEDS,
@@ -37,7 +41,11 @@ def store(tmp_path):
 
 
 def _epoch():
-    return Epoch(secret_fingerprint(DEV_HIDDEN_SECRET), ARENA_IMAGE, DEV_HIDDEN_SEEDS)
+    # ARENA_MAJOR, not a literal: load_fixtures writes at ARENA_MAJOR, so a
+    # literal here would break every test in this file on a major bump for a
+    # reason that has nothing to do with what any of them assert.
+    return Epoch(secret_fingerprint(DEV_HIDDEN_SECRET), ARENA_MAJOR,
+                 DEV_HIDDEN_SEEDS)
 
 
 def test_fixtures_populate_the_verified_tier(store):

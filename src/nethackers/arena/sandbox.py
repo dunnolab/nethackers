@@ -13,6 +13,7 @@ from multiprocessing.connection import Connection
 from pathlib import Path
 from typing import Any
 
+from nethackers.arena.lifetime import die_with_parent
 from nethackers.contracts.bot import ArenaBot
 
 
@@ -54,8 +55,13 @@ def _load_agent(submission_path: Path) -> ArenaBot:
     return agent
 
 
-def _agent_process(connection: Connection, submission_path: str, bot_seed: int) -> None:
+def _agent_process(
+    connection: Connection, submission_path: str, bot_seed: int, parent_pid: int
+) -> None:
     try:
+        # A bot inside act() is not reading the connection, so a dead parent's
+        # EOF cannot reach it; only the kernel can (see arena/lifetime.py).
+        die_with_parent(parent_pid)
         os.environ.pop("NETHACK_ARENA_SECRET", None)
         os.chdir(submission_path)
         random.seed(bot_seed)
@@ -105,7 +111,7 @@ class AgentClient:
         self._connection = parent
         self._process = process_context.Process(
             target=_agent_process,
-            args=(child, str(submission_path), bot_seed),
+            args=(child, str(submission_path), bot_seed, os.getpid()),
             name="nethack-arena-bot",
             daemon=True,
         )

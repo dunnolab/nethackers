@@ -65,7 +65,19 @@ class LoginModal(ModalScreen[Credentials | None]):
             self.app.call_from_thread(self._done, login, tok)
 
     def _show(self, uri: str, code: str) -> None:
-        note = "  [#00a000](copied to clipboard)[/]" if clipboard.copy(code) else ""
+        # Render the actionable part first.  Clipboard integration is only a
+        # convenience and must never hold the device code hostage when a
+        # Wayland/X11 helper is present but its display server is unavailable.
+        self._show_code(uri, code, copied=False)
+        self._copy_code(uri, code)
+
+    @work(thread=True, exit_on_error=False)
+    def _copy_code(self, uri: str, code: str) -> None:
+        if clipboard.copy(code):
+            self.app.call_from_thread(self._show_code, uri, code, True)
+
+    def _show_code(self, uri: str, code: str, copied: bool) -> None:
+        note = "  [#00a000](copied to clipboard)[/]" if copied else ""
         # [link='…'] emits an OSC 8 hyperlink so the URL is clickable inside the
         # full-screen app (the terminal's own URL auto-detection never fires
         # here). The quotes are required -- textual's markup parser rejects a
