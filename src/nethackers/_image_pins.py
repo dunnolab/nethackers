@@ -6,9 +6,9 @@ from __future__ import annotations
 
 ARENA_IMAGE = (
     "ghcr.io/dunnolab/nethackers-arena@sha256:"
-    "9b63a7b1fb11a82c01797a1099774b4e0ef6e321fbacd3a2256d8db6b4428142"
+    "d18bff83ace72a35cbbfde29df8e2da73f6a4a7c2e48bbb0ac488ac9c45c12e3"
 )
 MUTATOR_IMAGE = (
     "ghcr.io/dunnolab/nethackers-mutator@sha256:"
-    "003b998d740a274778c3132da4dafe32e5fd7d88a7b523611d1d7ce8185f1b72"
+    "ae467d9d645690a0d843452798e1a642e49a0d05f3b33708dd82c965872c114e"
 )
