@@ -35,6 +35,13 @@ ARENA_MAJOR_BY_DIGEST: dict[str, int] = {
     # nothing on the path that seeds, steps or scores an episode -- so it stays
     # comparable with the digest above (design D7).
     "sha256:d18bff83ace72a35cbbfde29df8e2da73f6a4a7c2e48bbb0ac488ac9c45c12e3": 1,
+    # PR #67: the OpenCode 2 operator, merged with main at 0.24.1. Everything
+    # that differs from the digest above's build sits off the scoring path:
+    # harness/, tui/, eval/, hub/, a few top-level modules, README.md and the
+    # pyproject version. arena/ and contracts/ import nothing outside
+    # themselves and are unchanged, as are uv.lock and nle-base, so it stays
+    # comparable with the digest above. Read from the diff, not measured.
+    "sha256:97ba883e04fd79d334c9074bfd92bfe8b0c923a0882881bef5435b369b6a1601": 1,
 }
 
 
