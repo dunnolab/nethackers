@@ -208,12 +208,12 @@ class ContainerOperator:
             self._run_id, worktree.name, worktree.parent.name
         )
         # Resolve auth/config BEFORE shelling out to docker: login-only
-        # backends fail early instead of mounting an empty path, while
-        # OpenCode 2 may proceed with global/project config and no auth.json.
+        # backends fail early instead of mounting an empty path. OpenCode 2
+        # never fails here (no key still leaves its free models), and never
+        # reads the worktree's config: that tree is untrusted.
         # AuthUnavailable propagates to the caller (the CLI catches it).
         auth = auth_docker_args(
-            self.harness, system=self.system, home=self.home, project=worktree,
-            _require_exists=True,
+            self.harness, system=self.system, home=self.home, _require_exists=True,
         )
         argv = build_docker_argv(
             harness=self.harness, image=self.image, name=name, worktree=worktree,

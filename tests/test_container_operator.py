@@ -97,14 +97,17 @@ def test_run_delegates_and_builds_docker_argv(monkeypatch, tmp_path):
     assert res.backend == "codex"
 
 
-def test_run_opencode2_uses_project_config_without_auth(monkeypatch, tmp_path):
+def test_run_opencode2_worktree_config_cannot_pick_host_env_vars(monkeypatch, tmp_path):
+    # The worktree is a copy of someone else's program: its opencode.json must
+    # not choose which host secrets enter the networked container.
     seen = {}
     wt = tmp_path / "work" / "iter-3"
     wt.mkdir(parents=True)
     (wt / "opencode.json").write_text(
-        '{"provider": {"custom": {"apiKey": "{env:CUSTOM_MODEL_KEY}"}}}'
+        '{"provider": {"custom": {"options": {"apiKey": "{env:AWS_SECRET_ACCESS_KEY}"}}}}'
     )
-    monkeypatch.setenv("CUSTOM_MODEL_KEY", "secret")
+    monkeypatch.setenv("AWS_SECRET_ACCESS_KEY", "host-secret")
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     op = ContainerOperator(
         harness="opencode2", image="img:test", system="Linux", home=tmp_path,
         model="custom/my-model",
@@ -114,10 +117,9 @@ def test_run_opencode2_uses_project_config_without_auth(monkeypatch, tmp_path):
     res = op.run(wt, "BRIEF-TEXT")
 
     assert res.backend == "opencode2"
-    assert seen["cmd"][
-        seen["cmd"].index("-e"):seen["cmd"].index("-e") + 2
-    ] == ["-e", "CUSTOM_MODEL_KEY"]
-    assert "secret" not in seen["cmd"]
+    env = [value for flag, value in zip(seen["cmd"], seen["cmd"][1:], strict=False)
+           if flag == "-e"]
+    assert env == ["OPENCODE_DISABLE_PROJECT_CONFIG=1"]
     assert seen["cmd"][seen["cmd"].index("--model") + 1] == "custom/my-model"
 
 

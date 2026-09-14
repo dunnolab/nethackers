@@ -1,9 +1,14 @@
 import json
+import os
 from pathlib import Path
 
 import pytest
 
-from nethackers.harness.auth_inject import AuthUnavailable, auth_docker_args
+from nethackers.harness.auth_inject import (
+    AuthUnavailable,
+    auth_docker_args,
+    opencode2_has_provider_key,
+)
 
 
 def test_codex_mounts_the_one_canonical_dir():
@@ -11,60 +16,114 @@ def test_codex_mounts_the_one_canonical_dir():
     assert args == ["-v", "/h/.codex:/home/agent/.codex"]
 
 
-def test_opencode2_mounts_global_config_ro_and_optional_auth_rw(tmp_path):
-    config = tmp_path / ".config" / "opencode" / "opencode.json"
-    config.parent.mkdir(parents=True)
-    config.write_text("{}")
+def _opencode_config(home: Path, text: str, name: str = "opencode.json") -> Path:
+    path = home / ".config" / "opencode" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+    return path
+
+
+def _mounted_ro(args: list[str], target: str) -> Path:
+    """The host file bind-mounted read-only at ``target`` in ``args``."""
+    for flag, value in zip(args, args[1:], strict=False):
+        if flag == "-v" and value.endswith(f":{target}:ro"):
+            return Path(value.removesuffix(f":{target}:ro"))
+    raise AssertionError(f"nothing mounted read-only at {target}: {args}")
+
+
+def test_opencode2_sandbox_gets_only_the_provider_section_of_the_global_config(tmp_path):
+    # Plugins and MCP servers execute, instructions steer the agent: none of it
+    # may follow the user's interactive setup into a mutation. Providers may.
+    _opencode_config(tmp_path, """{
+      // OpenCode reads JSONC, trailing commas included
+      "provider": {"custom": {"options": {"apiKey": "{env:CUSTOM_KEY}"},
+                              "models": {"m1": {"variants": {"high": {}}}}}},
+      "plugin": ["memory-plugin"],
+      "mcp": {"memory": {"type": "remote", "url": "https://mcp.example"}},
+      "instructions": ["~/rules.md"],
+    }""")
+
+    args = auth_docker_args("opencode2", system="Linux", home=tmp_path, environ={})
+
+    mounted = _mounted_ro(args, "/home/agent/.config/opencode/opencode.json")
+    assert json.loads(mounted.read_text()) == {"provider": {"custom": {
+        "options": {"apiKey": "{env:CUSTOM_KEY}"},
+        "models": {"m1": {"variants": {"high": {}}}},
+    }}}
+    assert mounted.stat().st_mode & 0o077 == 0   # may hold a literal key
+
+
+def test_opencode2_forwards_only_env_vars_named_by_global_providers(tmp_path):
+    _opencode_config(tmp_path, json.dumps({
+        "provider": {"custom": {"options": {"apiKey": "{env:CUSTOM_KEY}"},
+                                "env": ["CUSTOM_TOKEN", "UNSET_TOKEN"]}},
+        "mcp": {"memory": {"headers": {"Authorization": "Bearer {env:MCP_TOKEN}"}}},
+    }))
+
+    args = auth_docker_args("opencode2", system="Linux", home=tmp_path, environ={
+        "CUSTOM_KEY": "key-value", "CUSTOM_TOKEN": "token-value",
+        "MCP_TOKEN": "mcp-value", "UNRELATED": "other-value",
+    })
+
+    env = [value for flag, value in zip(args, args[1:], strict=False) if flag == "-e"]
+    assert env == ["OPENCODE_DISABLE_PROJECT_CONFIG=1", "CUSTOM_KEY", "CUSTOM_TOKEN"]
+    assert not any("value" in arg for arg in args)   # values travel by name only
+
+
+def test_opencode2_never_mounts_the_host_credential_store(tmp_path):
+    # OpenCode 2 keeps logins in opencode.db and ignores auth.json in a fresh
+    # container, so the old read-write auth.json mount delivered nothing.
     auth = tmp_path / ".local" / "share" / "opencode" / "auth.json"
     auth.parent.mkdir(parents=True)
-    auth.write_text("{}")
+    auth.write_text('{"openai": {"type": "api", "key": "sk-host"}}')
 
-    args = auth_docker_args("opencode2", system="Linux", home=tmp_path)
-    assert args == [
-        "-v",
-        f"{config}:/home/agent/.config/opencode/opencode.json:ro",
-        "-v",
-        f"{auth}:/home/agent/.local/share/opencode/auth.json",
-    ]
-    assert not args[-1].endswith(":ro")
-
-
-def test_opencode2_config_does_not_require_auth_login(tmp_path):
-    config = tmp_path / ".config" / "opencode" / "opencode.jsonc"
-    config.parent.mkdir(parents=True)
-    config.write_text("{}")
     assert auth_docker_args(
-        "opencode2", system="Linux", home=tmp_path, _require_exists=True,
-    ) == ["-v", f"{config}:/home/agent/.config/opencode/opencode.jsonc:ro"]
+        "opencode2", system="Linux", home=tmp_path, environ={}, _require_exists=True,
+    ) == ["-e", "OPENCODE_DISABLE_PROJECT_CONFIG=1"]
 
 
-def test_opencode2_forwards_only_env_vars_referenced_by_global_or_project_config(tmp_path):
-    global_config = tmp_path / ".config" / "opencode" / "opencode.json"
-    global_config.parent.mkdir(parents=True)
-    global_config.write_text('{"apiKey": "{env:CUSTOM_API_KEY}"}')
-    project = tmp_path / "project"
-    project.mkdir()
-    (project / "opencode.json").write_text(
-        '{"baseURL": "{env:CUSTOM_BASE_URL}", "env": ["CUSTOM_PROVIDER_TOKEN"]}'
-    )
+def test_opencode2_reads_the_global_config_under_xdg_config_home(tmp_path):
+    xdg = tmp_path / "xdg"
+    (xdg / "opencode").mkdir(parents=True)
+    (xdg / "opencode" / "opencode.jsonc").write_text('{"provider": {"p": {}}}')
 
-    args = auth_docker_args(
-        "opencode2", system="Linux", home=tmp_path, project=project,
-        environ={"CUSTOM_API_KEY": "secret", "CUSTOM_BASE_URL": "https://example.test",
-                 "CUSTOM_PROVIDER_TOKEN": "token",
-                 "UNRELATED_SECRET": "do-not-forward"},
-    )
-    assert args[2:4] == ["-e", "CUSTOM_API_KEY"]
-    assert args[4:6] == ["-e", "CUSTOM_BASE_URL"]
-    assert args[6:8] == ["-e", "CUSTOM_PROVIDER_TOKEN"]
-    assert "UNRELATED_SECRET" not in args
-    assert "secret" not in args
+    args = auth_docker_args("opencode2", system="Linux", home=tmp_path,
+                            environ={"XDG_CONFIG_HOME": str(xdg)})
+
+    mounted = _mounted_ro(args, "/home/agent/.config/opencode/opencode.jsonc")
+    assert json.loads(mounted.read_text()) == {"provider": {"p": {}}}
 
 
-def test_opencode2_without_config_or_auth_needs_no_mount(tmp_path):
-    assert auth_docker_args(
-        "opencode2", system="Linux", home=tmp_path, _require_exists=True,
-    ) == []
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores directory permissions")
+def test_opencode2_unreadable_config_dir_counts_as_no_config(tmp_path):
+    config = _opencode_config(tmp_path, '{"provider": {"p": {"options": {"apiKey": "k"}}}}')
+    config.parent.chmod(0)
+    try:
+        args = auth_docker_args("opencode2", system="Linux", home=tmp_path, environ={},
+                                _require_exists=True)
+        has_key = opencode2_has_provider_key(home=tmp_path, environ={})
+    finally:
+        config.parent.chmod(0o755)
+    assert args == ["-e", "OPENCODE_DISABLE_PROJECT_CONFIG=1"]
+    assert has_key is False
+
+
+@pytest.mark.parametrize(("provider", "environ", "expected"), [
+    ({"options": {"apiKey": "sk-literal"}}, {}, True),
+    ({"options": {"apiKey": "{env:KEY}"}}, {"KEY": "v"}, True),
+    ({"options": {"apiKey": "{env:KEY}"}}, {}, False),
+    ({"env": ["KEY"]}, {"KEY": "v"}, True),
+    ({"env": ["KEY"]}, {}, False),
+    ({"options": {"apiKey": "{file:~/.secrets/key}"}}, {}, False),   # absent in the cage
+    ({"models": {"m1": {}}}, {}, False),
+])
+def test_opencode2_provider_key_detection(tmp_path, provider, environ, expected):
+    _opencode_config(tmp_path, json.dumps({"provider": {"p": provider}}))
+    assert opencode2_has_provider_key(home=tmp_path, environ=environ) is expected
+
+
+def test_opencode2_has_no_provider_key_without_a_global_config(tmp_path):
+    assert opencode2_has_provider_key(home=tmp_path, environ={"OPENAI_API_KEY": "v"}) is False
 
 
 def test_claude_linux_mounts_credentials_json_ro():

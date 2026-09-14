@@ -40,12 +40,17 @@ def test_list_models_opencode2_empty_output_is_unknown():
     assert list_models("opencode2", run=_run_ok("")) is None
 
 
-def test_list_models_opencode2_reads_list_and_mapping_variants(tmp_path):
-    config = tmp_path / ".config" / "opencode" / "opencode.jsonc"
-    config.parent.mkdir(parents=True)
-    config.write_text(r'''{
+def _global_opencode_config(home: Path, text: str, name: str = "opencode.json") -> None:
+    path = home / ".config" / "opencode" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text)
+
+
+def test_list_models_opencode2_reads_list_and_mapping_variants(tmp_path, monkeypatch):
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    _global_opencode_config(tmp_path, r'''{
       // OpenCode 2 list form
-      "providers": {"airi": {"models": {
+      "provider": {"airi": {"models": {
         "gpt-oss": {"variants": [
           {"id": "low", "settings": {}},
           {"id": "high", "settings": {}},
@@ -53,7 +58,7 @@ def test_list_models_opencode2_reads_list_and_mapping_variants(tmp_path):
         "qwen": {},
         "mapped": {"variants": {"fast": {}, "deep": {}}},
       }}}
-    }''')
+    }''', name="opencode.jsonc")
     models = list_models(
         "opencode2",
         run=_run_ok("airi/gpt-oss\nairi/qwen\nairi/mapped\nopencode/big-pickle\n"),
@@ -65,6 +70,37 @@ def test_list_models_opencode2_reads_list_and_mapping_variants(tmp_path):
     assert by_id["airi/qwen"].reasoning == ()
     assert by_id["opencode/big-pickle"].reasoning == ()
     assert all(m.reasoning_known for m in models)
+
+
+def test_list_models_opencode2_unions_variants_across_global_files(tmp_path, monkeypatch):
+    # OpenCode merges opencode.json and opencode.jsonc and unions variants by
+    # id; a file that only renames the model must not wipe the other's variants.
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    _global_opencode_config(tmp_path, json.dumps({"provider": {"airi": {"models": {
+        "gpt-oss": {"variants": {"low": {}}}}}}}))
+    _global_opencode_config(tmp_path, json.dumps({"provider": {"airi": {"models": {
+        "gpt-oss": {"name": "GPT OSS", "variants": [{"id": "high"}]},
+        "renamed": {"name": "Renamed"}}}}}), name="opencode.jsonc")
+
+    models = list_models("opencode2", run=_run_ok("airi/gpt-oss\n"), home=tmp_path)
+
+    assert models[0].reasoning == ("low", "high")
+
+
+def test_list_models_opencode2_ignores_project_config_in_the_current_directory(
+    tmp_path, monkeypatch,
+):
+    # A run never sees the launch directory's config, so the picker mustn't either.
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    project = tmp_path / "project"
+    project.mkdir()
+    (project / "opencode.json").write_text(json.dumps({"provider": {"airi": {"models": {
+        "gpt-oss": {"variants": {"high": {}}}}}}}))
+    monkeypatch.chdir(project)
+
+    models = list_models("opencode2", run=_run_ok("airi/gpt-oss\n"), home=tmp_path / "home")
+
+    assert models[0].reasoning == ()
 
 
 def test_list_models_codex_parses_debug_models_and_drops_hidden():
@@ -206,50 +242,57 @@ def test_detect_cli_installed_reports_version():
     assert info.logged_in is True
 
 
-def test_detect_cli_opencode2_reports_login_from_credential_count():
-    def run(cmd, **kwargs):
-        if cmd == ["opencode2", "--version"]:
-            return SimpleNamespace(returncode=0, stdout="1.2.3\n")
-        if cmd == ["opencode2", "auth", "list"]:
-            return SimpleNamespace(returncode=0, stdout="Credentials /x/auth.json\n2 credentials\n")
-        raise AssertionError(cmd)
-
-    info = detect_cli("opencode2", run=run, which=_which_ok)
-    assert info == CliInfo("opencode2", True, "1.2.3", True)
+def _opencode2_version_only(cmd, **kwargs):
+    # `auth list` isn't consulted: the sandbox never sees OpenCode's login store.
+    if cmd == ["opencode2", "--version"]:
+        return SimpleNamespace(returncode=0, stdout="opencode2 v0.0.0-beta-19271\n")
+    if cmd == ["opencode2", "models"]:
+        return SimpleNamespace(returncode=0, stdout="custom/my-model\nopencode/big-pickle\n")
+    raise AssertionError(cmd)
 
 
-def test_detect_cli_opencode2_accepts_v2_stored_account_rows():
-    def run(cmd, **kwargs):
-        if cmd[1:] == ["--version"]:
-            return SimpleNamespace(returncode=0, stdout="opencode2 beta")
-        return SimpleNamespace(returncode=0, stdout="OpenCode  default  stored\n")
+def test_detect_cli_opencode2_is_logged_in_when_a_global_provider_has_a_key(
+    tmp_path, monkeypatch,
+):
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    _global_opencode_config(tmp_path, '{"provider": {"custom": {"options": {"apiKey": "sk-x"}}}}')
 
-    assert detect_cli("opencode2", run=run, which=_which_ok).logged_in is True
+    info = detect_cli("opencode2", run=_opencode2_version_only, which=_which_ok)
 
-
-def test_detect_cli_opencode2_reports_logged_out_from_zero_credentials():
-    def run(cmd, **kwargs):
-        if cmd[1:] == ["--version"]:
-            return SimpleNamespace(returncode=0, stdout="1.2.3")
-        return SimpleNamespace(returncode=0, stdout="0 credentials")
-
-    assert detect_cli("opencode2", run=run, which=_which_ok).logged_in is False
+    assert info == CliInfo("opencode2", True, "opencode2 v0.0.0-beta-19271", True)
 
 
-def test_preflight_opencode2_allows_configured_model_without_stored_login():
-    def run(cmd, **kwargs):
-        if cmd[1:] == ["--version"]:
-            return SimpleNamespace(returncode=0, stdout="1.2.3")
-        if cmd[1:] == ["auth", "list"]:
-            return SimpleNamespace(returncode=0, stdout="0 credentials")
-        if cmd[1:] == ["models"]:
-            return SimpleNamespace(returncode=0, stdout="custom/my-model\n")
-        raise AssertionError(cmd)
+def test_detect_cli_opencode2_without_a_provider_key_is_not_logged_in(tmp_path, monkeypatch):
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    info = detect_cli("opencode2", run=_opencode2_version_only, which=_which_ok)
+
+    assert info.logged_in is False
+
+
+def test_preflight_opencode2_proceeds_without_a_key_for_free_models(tmp_path, monkeypatch):
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
 
     pf = preflight_model(
-        "opencode2", "custom/my-model", run=run, which=_which_ok,
+        "opencode2", "opencode/big-pickle", run=_opencode2_version_only, which=_which_ok,
+        home=tmp_path,
     )
+
     assert pf.action == "proceed"
+
+
+def test_is_model_available_opencode2_checks_the_model_and_its_variant():
+    models = [
+        ModelInfo("custom/m", "custom/m", reasoning=("high",), reasoning_known=True),
+        ModelInfo("other/m", "other/m"),   # variants not reported
+    ]
+    assert is_model_available("opencode2", "custom/m#high", models=models) is True
+    assert is_model_available("opencode2", "custom/m#nope", models=models) is False
+    assert is_model_available("opencode2", "missing/m#high", models=models) is False
+    assert is_model_available("opencode2", "other/m#high", models=models) is True
 
 
 def test_detect_cli_missing_binary():
@@ -405,9 +448,10 @@ def test_detect_cli_with_image_ignores_host_which_and_reads_container_version():
     assert info.installed is True and info.version == "codex-cli 0.149.0"
 
 
-def test_probe_operator_opencode2_is_a_single_docker_run():
-    combined = (f"1.2.3\n{_disc._PROBE_SEP}\n1 credential\n"
-                f"{_disc._PROBE_SEP}\nopenai/gpt-5\nanthropic/claude-sonnet-4-5")
+def test_probe_operator_opencode2_is_a_single_docker_run(tmp_path, monkeypatch):
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    combined = (f"opencode2 v0.0.0-beta-19271\n{_disc._PROBE_SEP}\n"
+                "openai/gpt-5\nopencode/big-pickle")
     runs = {"docker_run": 0}
 
     def _run(argv, **kwargs):
@@ -416,44 +460,40 @@ def test_probe_operator_opencode2_is_a_single_docker_run():
         runs["docker_run"] += 1
         return SimpleNamespace(returncode=0, stdout=combined)
 
-    cli, models = _disc.probe_operator("opencode2", image="img", run=_run)
+    cli, models = _disc.probe_operator("opencode2", image="img", run=_run, home=tmp_path)
     assert runs["docker_run"] == 1
-    assert cli == CliInfo("opencode2", True, "1.2.3", True)
-    assert [m.id for m in models] == ["openai/gpt-5", "anthropic/claude-sonnet-4-5"]
+    assert cli == CliInfo("opencode2", True, "opencode2 v0.0.0-beta-19271", False)
+    assert [m.id for m in models] == ["openai/gpt-5", "opencode/big-pickle"]
 
 
-def test_probe_operator_opencode2_mounts_project_config_for_model_picker(
-    tmp_path, monkeypatch,
-):
-    project = tmp_path / "project"
-    project.mkdir()
-    (project / "opencode.json").write_text(
-        '{"providers":{"custom":{"env":["CUSTOM_KEY"],'
-        '"models":{"my-model":{"name":"My Model"}}}}}'
-    )
-    monkeypatch.setenv("CUSTOM_KEY", "secret")
-    combined = (f"1.2.3\n{_disc._PROBE_SEP}\n0 credentials\n"
-                f"{_disc._PROBE_SEP}\ncustom/my-model")
-    seen = {}
+def test_opencode2_probes_mount_nothing_from_the_current_directory(tmp_path, monkeypatch):
+    # The probe used to bind-mount the launch directory (often $HOME) into a
+    # networked container and forward env vars its opencode.json named.
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    cwd = tmp_path / "launch-dir"
+    cwd.mkdir()
+    (cwd / "opencode.json").write_text('{"provider": {"x": {"env": ["CWD_SECRET"]}}}')
+    monkeypatch.chdir(cwd)
+    monkeypatch.setenv("CWD_SECRET", "cwd-value")
+    seen: list[list[str]] = []
 
     def run(argv, **kwargs):
         if argv[1:3] == ["image", "inspect"]:
             return SimpleNamespace(returncode=0, stdout="")
-        seen["argv"] = argv
-        return SimpleNamespace(returncode=0, stdout=combined)
+        seen.append(argv)
+        return SimpleNamespace(returncode=0, stdout="custom/my-model\n")
 
-    _cli, models = _disc.probe_operator(
-        "opencode2", image="img", run=run, home=tmp_path, project=project,
-    )
+    _disc.probe_operator("opencode2", image="img", run=run, home=tmp_path)
+    list_models("opencode2", image="img", run=run, home=tmp_path)
 
-    assert f"{project}:/workspace:ro" in seen["argv"]
-    assert seen["argv"][seen["argv"].index("-w") + 1] == "/workspace"
-    env_at = seen["argv"].index("-e")
-    assert seen["argv"][env_at:env_at + 2] == ["-e", "CUSTOM_KEY"]
-    assert "secret" not in seen["argv"]
-    assert models == [ModelInfo(
-        "custom/my-model", "custom/my-model", reasoning_known=True,
-    )]
+    assert len(seen) == 2
+    for argv in seen:
+        image_at = argv.index("img")
+        assert not any("/workspace" in arg for arg in argv[:image_at])
+        assert "-w" not in argv[:image_at]
+        env = [value for flag, value in zip(argv[:image_at], argv[1:image_at], strict=False)
+               if flag == "-e"]
+        assert env == ["OPENCODE_DISABLE_PROJECT_CONFIG=1"]
 
 
 # --- image not built: degrade to 'unknown', never the host CLI's stale cache --
