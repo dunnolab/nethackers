@@ -332,3 +332,39 @@ def test_register_rejects_evidence_from_an_unclassified_image(tmp_path):
             git=_Git(),
             now="n",
         )
+
+
+def test_register_rejects_a_major_1_image_against_the_live_arena_major(tmp_path):
+    """This is the exact path every contributor still running an older
+    release hits the moment the amd64 reset ships: their evidence carries a
+    genuinely CLASSIFIED image (unlike the tag above), just not at the hub's
+    current major. register() must still refuse it.
+
+    Deliberately passes no major anywhere -- the point is to exercise the
+    wiring at validate.py's ``classified_major(evidence.evaluator_image,
+    ARENA_MAJOR)`` call, which reads the module-level ``ARENA_MAJOR`` itself
+    rather than taking one as an argument. test_classified_major_rejects_an_older_major
+    above, and its sibling in test_arena_major_admission.py, both call
+    ``classified_major`` directly with an explicitly-injected
+    ``current_major=2`` literal -- they prove the comparison logic is
+    correct, but neither one ever touches ``register()``'s wiring to
+    ``ARENA_MAJOR``. A swapped argument or a wrong constant on that line
+    would still pass every other test in the suite; only calling ``register``
+    itself, as done here, would catch it.
+
+    Built from ``CLASSIFIED_MAJOR_1`` (derived from the map, not hand-typed)
+    so this keeps testing the right thing across the next major bump too: a
+    major-1 image stays wrong against whatever ``ARENA_MAJOR`` becomes next.
+    """
+    s = _store(tmp_path)
+    with pytest.raises(WrongArenaMajor):
+        register(
+            s,
+            LocalStubAuth({"t": "sam"}),
+            token="t",
+            reference=SolutionReference("github.com/sam/nethacker", SHA),
+            manifest=MANIFEST,
+            evidence=_evidence(evaluator_image=CLASSIFIED_MAJOR_1),
+            git=_Git(),
+            now="n",
+        )
