@@ -281,8 +281,8 @@ NLE, and rebuilt on the next change. Nobody runs `make`.
 
 1. `nethackers-nle-base` public on GHCR — done 2026-09-15.
 2. A GitHub App for `dunnolab`: repository permission **Contents: Read and write** (Metadata read
-   comes with it), installed on `dunnolab/nethackers` only. Store its App ID and a private key as
-   the repository secrets `IMAGE_BOT_APP_ID` and `IMAGE_BOT_PRIVATE_KEY`.
+   comes with it), installed on `dunnolab/nethackers` only. Store its Client ID and a private key
+   as the repository secrets `IMAGE_BOT_CLIENT_ID` and `IMAGE_BOT_PRIVATE_KEY`.
 3. The PR implementing this bootstraps `NLE_BASE_IMAGE` and `MUTATOR_INPUTS`. Its version pins
    change `Dockerfile.mutator`, so that PR is also the first automatic rebuild.
 
