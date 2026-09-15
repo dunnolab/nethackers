@@ -39,9 +39,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Headless coding-agent CLIs the ContainerOperator can wrap
-# (harness/operator.py's command builders choose the harness at runtime).
+# (harness/operator.py's command builders choose the harness at runtime), at
+# exact versions: a bump is an edit here, which moves the mutator's input
+# fingerprint (src/nethackers/image_inputs.py) so CI rebuilds and re-pins it.
 # Pi remains deferred to Plan B.
-RUN npm install -g @anthropic-ai/claude-code @openai/codex @opencode-ai/cli@beta \
+RUN npm install -g @anthropic-ai/claude-code@2.1.270 @openai/codex@0.154.0 \
+        @opencode-ai/cli@0.0.0-beta-19271 \
     && npm cache clean --force
 
 # Seed-free experimentation kit onto PYTHONPATH: ONLY nethackers.arena (the
