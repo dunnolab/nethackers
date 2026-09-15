@@ -318,29 +318,22 @@ class _FakeDocker:
     """A scripted ``run`` answering the calls the fingerprint path makes, and
     recording every argv."""
 
-    def __init__(self, *, remote_exists, local_refs=(), created=None):
+    def __init__(self, *, remote_exists):
         self.calls = []
         self.remote_exists = remote_exists
-        self.local_refs = list(local_refs)
-        self.created = created or {}
 
     def __call__(self, argv, **kw):
         self.calls.append(argv)
         sub = argv[1:]
-        if sub[:2] == ["image", "inspect"] and "--format" not in sub:
+        if sub[:2] == ["image", "inspect"]:
             return _Result(1)                          # the fingerprint ref isn't local yet
         if sub[:2] == ["manifest", "inspect"]:
             return _Result(0 if self.remote_exists else 1)
-        if sub[:2] == ["image", "ls"]:
-            return _Result(0, "\n".join(self.local_refs) + "\n")
-        if sub[:2] == ["image", "inspect"]:
-            refs = sub[sub.index("--format") + 2:]
-            return _Result(0, "\n".join(self.created[r] for r in refs) + "\n")
-        return _Result(0)                              # tag / image rm
+        return _Result(0)                              # tag
 
 
 def test_fingerprint_ref_pulls_the_ci_image_and_tags_it(tmp_path):
-    docker = _FakeDocker(remote_exists=True, local_refs=[FP])
+    docker = _FakeDocker(remote_exists=True)
     popened = []
 
     def _popen(argv, **kw):
@@ -355,7 +348,7 @@ def test_fingerprint_ref_pulls_the_ci_image_and_tags_it(tmp_path):
 
 
 def test_fingerprint_ref_builds_on_the_pinned_base_when_ci_has_none(tmp_path):
-    docker = _FakeDocker(remote_exists=False, local_refs=[FP])
+    docker = _FakeDocker(remote_exists=False)
     seen = {}
 
     def _popen(argv, **kw):
@@ -381,20 +374,27 @@ def test_fingerprint_build_failure_is_styled(tmp_path):
     assert err is not None and "setup failed" in err.lower() and "make" not in err
 
 
-def test_cleanup_keeps_the_new_image_and_the_newest_other(tmp_path):
-    old1, old2, newer = ("nethackers/mutator:h-" + c * 64 for c in "123")
-    docker = _FakeDocker(
-        remote_exists=True,
-        local_refs=[old1, FP, newer, old2, "nethackers/mutator:latest"],
-        created={old1: "2026-09-01T00:00:00Z", old2: "2026-09-02T00:00:00Z",
-                 newer: "2026-09-10T00:00:00Z"},
-    )
-    sp.ensure_image(FP, "mutator", run=docker, popen=lambda *a, **k: _FakeProc([], 0),
-                    repo_root=lambda: tmp_path)
+def test_fingerprint_ref_falls_back_to_build_when_the_pull_fails(tmp_path):
+    # spec S5.5: GHCR has the fingerprint, but the pull itself fails (a flaky
+    # registry, a half-published manifest) -- fall through to the local build
+    # rather than surfacing the registry error (which could even tell someone
+    # already inside the repo to "clone the repo").
+    docker = _FakeDocker(remote_exists=True)
+    popened = []
 
-    removed = sorted(c[3] for c in docker.calls if c[1:3] == ["image", "rm"])
-    assert removed == sorted([
-        old1, old2,
-        "ghcr.io/dunnolab/nethackers-mutator:h-" + "1" * 64,
-        "ghcr.io/dunnolab/nethackers-mutator:h-" + "2" * 64,
-    ])
+    def _popen(argv, **kw):
+        popened.append(argv)
+        if argv[:2] == ["docker", "pull"]:
+            return _FakeProc([], 1)
+        return _FakeProc([], 0)
+
+    err = sp.ensure_image(FP, "mutator", run=docker, popen=_popen, repo_root=lambda: tmp_path)
+
+    assert err is None
+    assert popened == [
+        ["docker", "pull", REMOTE],
+        ["docker", "build", "-f", "Dockerfile.mutator",
+         "--build-arg", f"NLE_BASE={_image_pins.NLE_BASE_IMAGE}",
+         "--label", "org.dunnolab.nethackers.image=mutator",
+         "-t", FP, "."],
+    ]

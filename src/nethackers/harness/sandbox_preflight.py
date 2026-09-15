@@ -99,7 +99,6 @@ LOCAL_MUTATOR_REPO = "nethackers/mutator"
 _GHCR_MUTATOR_REPO = _image_pins.MUTATOR_IMAGE.partition("@")[0]
 _MUTATOR_BUILD_LABEL = "org.dunnolab.nethackers.image=mutator"
 _FINGERPRINT_REF_RE = re.compile(rf"{re.escape(LOCAL_MUTATOR_REPO)}:h-[0-9a-f]{{64}}")
-_KEEP_FINGERPRINTS = 2
 
 
 def resolve_image(explicit: str | None, kind: str, *, repo_root=_repo_root) -> str:
@@ -199,29 +198,30 @@ def _run_build(argv: list[str], *, cwd: Path, image: str, kind: str, on_line=Non
 
 def _acquire_mutator_fingerprint(ref: str, *, runtime: str, on_line, on_event, popen, run,
                                  repo_root) -> str | None:
-    """Fill a checkout's fingerprint ref: pull CI's image for the same files when
-    GHCR has it, else build it locally on the pinned base. Then clean up older
-    fingerprint images (spec 2026-09-15 D9)."""
+    """Fill a checkout's fingerprint ref: pull CI's image for the same files and
+    tag it locally when GHCR has it. Otherwise -- or if that pull or tag fails --
+    build it locally on the pinned base instead. No cleanup of older fingerprint
+    images (spec 2026-09-15 D9): a run starts a fresh container every iteration,
+    so nothing holds an image between iterations, and removing "old" fingerprints
+    from one worktree could break an evolve running in another."""
     remote = ghcr_mutator_ref(ref)
     if _remote_image_exists(remote, runtime=runtime, run=run):
         err = _pull_image(remote, "mutator", runtime=runtime, on_line=on_line,
                           on_event=on_event, popen=popen)
         if err is None:
             err = _tag_image(remote, ref, runtime=runtime, run=run)
-    else:
-        root = repo_root()
-        if root is None:
-            return ("[red]can't set up the sandbox[/]: run nethackers from its repo "
-                    "(the mutator image builds from Dockerfile.mutator there)")
-        err = _run_build(
-            [runtime, "build", "-f", "Dockerfile.mutator",
-             "--build-arg", f"NLE_BASE={_image_pins.NLE_BASE_IMAGE}",
-             "--label", _MUTATOR_BUILD_LABEL, "-t", ref, "."],
-            cwd=root, image=ref, kind="mutator", on_line=on_line, on_event=on_event,
-            popen=popen)
-    if err is None:
-        _prune_mutator_fingerprints(keep=ref, runtime=runtime, run=run)
-    return err
+        if err is None:
+            return None
+    root = repo_root()
+    if root is None:
+        return ("[red]can't set up the sandbox[/]: run nethackers from its repo "
+                "(the mutator image builds from Dockerfile.mutator there)")
+    return _run_build(
+        [runtime, "build", "-f", "Dockerfile.mutator",
+         "--build-arg", f"NLE_BASE={_image_pins.NLE_BASE_IMAGE}",
+         "--label", _MUTATOR_BUILD_LABEL, "-t", ref, "."],
+        cwd=root, image=ref, kind="mutator", on_line=on_line, on_event=on_event,
+        popen=popen)
 
 
 def _remote_image_exists(ref: str, *, runtime: str, run) -> bool:
@@ -240,31 +240,6 @@ def _tag_image(source: str, target: str, *, runtime: str, run) -> str | None:
     if result.returncode != 0:
         return f"[red]sandbox setup failed[/] — couldn't tag {source} as {target}"
     return None
-
-
-def _prune_mutator_fingerprints(*, keep: str, runtime: str, run) -> None:
-    """Keep ``keep`` and the newest other local fingerprint image; remove the
-    rest, with the GHCR-named tag a pull leaves behind. Best effort: any failure
-    leaves images in place (an image a container still uses can't be removed)."""
-    try:
-        listing = run([runtime, "image", "ls", LOCAL_MUTATOR_REPO,
-                       "--format", "{{.Repository}}:{{.Tag}}"],
-                      capture_output=True, text=True, timeout=30)
-        others = [r for r in listing.stdout.split()
-                  if is_local_mutator_fingerprint(r) and r != keep]
-        if len(others) < _KEEP_FINGERPRINTS:
-            return
-        created = run([runtime, "image", "inspect", "--format", "{{.Created}}", *others],
-                      capture_output=True, text=True, timeout=30)
-        stamps = created.stdout.splitlines()
-        if len(stamps) != len(others):
-            return
-        newest_first = [ref for _, ref in sorted(zip(stamps, others, strict=True), reverse=True)]
-        for stale in newest_first[_KEEP_FINGERPRINTS - 1:]:
-            run([runtime, "image", "rm", stale], capture_output=True, timeout=60)
-            run([runtime, "image", "rm", ghcr_mutator_ref(stale)], capture_output=True, timeout=60)
-    except (OSError, subprocess.SubprocessError):
-        return
 
 
 def build_mutator_image(image: str, *, on_line=None, popen=subprocess.Popen) -> str | None:
@@ -396,8 +371,9 @@ def ensure_image(ref: str, kind: str, *, runtime: str = "docker", on_line=None,
          someone hand-sets an env override) case of a repo checkout with an
          explicit pinned ref.
       3. a checkout's mutator fingerprint (``nethackers/mutator:h-<hash>``) ->
-         pull CI's image for the same files and tag it locally, else build it
-         on the pinned base; then keep only the two newest fingerprint images.
+         pull CI's image for the same files and tag it locally; if GHCR has no
+         such image, or that pull or tag fails, build it on the pinned base
+         instead.
       4. else, inside a nethackers checkout (``_repo_root``) -> ``make {kind}``
          builds it -- the local dev tag, or any other non-digest tag asked for.
       5. else (a custom non-digest ref with no repo to build it from) ->

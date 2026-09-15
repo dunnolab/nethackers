@@ -103,8 +103,11 @@ plus the base image it builds on. Same files, same fingerprint.
   `@opencode-ai/cli@0.0.0-beta-19271`. A version bump is an edit to that line, so it changes the
   hash and rebuilds automatically. *Not pinned, known drift:* NodeSource's Node 22 minor (today
   `v22.23.2`), apt packages, and `python:3.11-slim` in the base.
-- **D9. Clean up local fingerprint images.** After acquiring one, keep the two newest
-  fingerprint images, whether built or pulled, and remove the rest.
+- **D9. No automatic cleanup of local fingerprint images.** A run starts a fresh container
+  every iteration, so between iterations nothing holds its image; deleting "old" fingerprints
+  from one worktree could break an evolve running in another, and removing a pulled
+  fingerprint's last tag can drop the pinned mutator image with it. Old
+  `nethackers/mutator:h-*` images stay until the developer removes them.
 - **D10. Make the tripwire per image.** Arena and base inputs changed since the last release tag →
   the `ARENA_IMAGE` pin must have changed. Mutator consistency is checked exactly, by hash, at
   release (§5.4), so mutator-only paths leave the regex.
@@ -209,11 +212,6 @@ on a fork PR red until after merge, which hides real failures.
    nethackers/mutator:h-<hash> <repo root>`, streaming progress as builds do today. This calls
    `docker build` directly rather than `make mutator`, whose `nle-base` prerequisite would compile
    NLE locally.
-4. After 2 or 3, clean up (D9): among `nethackers/mutator:h-*` tags, keep the two whose images
-   were created most recently and remove the others, together with the
-   `ghcr.io/dunnolab/nethackers-mutator:h-*` tag a pull leaves behind for the same image. Pinned
-   digests and every other repository are never touched. Failures are ignored; an image a
-   container is using simply stays.
 
 The arena in a checkout is unchanged: `nethackers/arena:dev`, built via `make` when absent.
 `make mutator` stays as a manual developer tool, used with `NETHACKERS_MUTATOR_IMAGE` for
@@ -297,7 +295,7 @@ NLE, and rebuilt on the next change. Nobody runs `make`.
 - **Resolution:** unchanged checkout → pinned digest; changed → `h-` ref; an explicit ref wins; no
   checkout → pinned digest, with no hashing at all.
 - **Acquisition:** pull hit → tag, no build; pull miss → the exact `docker build` argv (base arg,
-  label, tag); cleanup keeps the two newest and never touches other repositories.
+  label, tag).
 - **Doctor:** the three `h-` branches, and no message mentioning `make`.
 - **Workflow, on a scratch branch before merge:** a no-op PR skips; a mutator change builds,
   re-pins, and CI runs on the bot's commit; a re-run builds and commits nothing; the fork guard
@@ -319,6 +317,9 @@ NLE, and rebuilt on the next change. Nobody runs `make`.
   native arm runners if it is.
 - **R6. Updates stop when the App's key expires or is revoked.** The re-pin step fails loudly, and
   the release gate still blocks a mismatched release.
+- **R7. Fingerprint images accumulate on developer machines.** Most layers are shared with the
+  base and with each other, so each extra image costs its top layers; `docker image ls
+  nethackers/mutator` shows them.
 
 ## 11. Non-goals
 

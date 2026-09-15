@@ -319,8 +319,10 @@ read-write — statelessness there rests on those flags, not on the container.
 
 The mutator image is built **from the same NLE base as the arena**, so the agent
 experiments against the same compiled NLE it will be scored on — parity for free,
-as long as both images are built from the same base. The pins record that base,
-and a checkout that needs its own mutator builds it on the same pinned base.
+as long as both images are built from the same base. The published pair is: the pins
+record the base they share. In a repo checkout the mutator builds on that pinned
+base while the arena is still built locally on a locally compiled base, so the two
+can differ.
 
 The `nethackers` package is deliberately *not* installed in it. Only
 `nethackers.arena` and `nethackers.contracts` are copied onto `PYTHONPATH` — enough
