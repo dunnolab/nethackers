@@ -2,7 +2,7 @@
 recreate them empty (design 2026-09-14, Sec 5.5 / D3 / D12).
 
 Run against the DEPLOYED hub, after a database backup, immediately after the
-arena-major bump goes out -- step 4 of that design's rollout, so the window in
+arena-major bump goes out -- step 5 of that design's rollout, so the window in
 which the board still shows major-1 numbers nobody can add to stays short.
 Deliberately NOT a boot migration (D12): this empties the live board, and hub
 deploys auto-roll-back on a failed health check, which would otherwise leave
@@ -18,15 +18,20 @@ run the same way, by the hub image's own python against the mounted database:
 
     python -m nethackers.hub.genesis --db /data/hub.db
 
-Unlike ``baseline_compute``, it does NOT call ``init_schema()`` first. A typo'd
-``--db`` would otherwise create an empty database at the wrong path and report a
-successful all-zero genesis over it; without it, sqlite says ``no such table:
-solutions`` and the operator finds out.
+Unlike ``baseline_compute``, it does NOT call ``init_schema()`` first, and it
+checks the file exists before opening it at all. A typo'd ``--db`` would
+otherwise create an empty database at the wrong path and report a successful
+all-zero genesis over it. Opening a sqlite connection is itself creative, so
+the existence check has to come BEFORE ``Store(...)`` -- leaving the check to
+the first query would still litter a stray empty file, and would surface as a
+raw ``OperationalError`` traceback rather than a sentence and an exit code.
 """
 
 from __future__ import annotations
 
 import argparse
+import sys
+from pathlib import Path
 
 from nethackers.hub.store import Store
 
@@ -46,6 +51,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
+    if not Path(args.db).is_file():
+        print(f"genesis: no database at {args.db} — nothing was created or changed.\n"
+              f"Point --db at the hub's sqlite file (in the container: /data/hub.db).",
+              file=sys.stderr)
+        return 2
     counts = Store(args.db).genesis()
     if not counts:
         print("genesis: already applied, nothing to do")

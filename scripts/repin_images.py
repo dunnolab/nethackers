@@ -59,7 +59,19 @@ def _assignment(name: str, ref: str) -> str:
 def render_pins(arena: str, mutator: str) -> str:
     """The exact content ``_image_pins.py`` should have for these two refs
     (deterministic + ruff-clean). Raises ``ValueError`` on a non-digest ref, or
-    on an arena ref whose digest is not a classified linux/amd64 manifest."""
+    on an arena digest that is not a key of ``ARENA_MAJOR_BY_DIGEST``.
+
+    Note what that second check is and is NOT. It checks MEMBERSHIP in a
+    hand-maintained map -- nothing here can look at a digest and tell whether
+    it names a linux/amd64 manifest or a multi-arch index; that judgment was
+    made by the human who added the entry. So it catches the expected
+    regression (buildx reporting a fresh index digest, which nobody has
+    classified) but would pass an already-classified index digest -- e.g.
+    ``d18bff83…``, classified at major 1, is an index. The workflow's own
+    guard step closes that gap for the current major by requiring
+    ``major == ARENA_MAJOR``; a genuine amd64-vs-index assertion would need
+    the registry, which this stdlib-only script deliberately does not touch.
+    """
     arena_block = _assignment("ARENA_IMAGE", arena)
 
     # Spec 2026-09-14 I7: the arena pin names ONE platform's bytes, and that

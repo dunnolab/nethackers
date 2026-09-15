@@ -215,15 +215,25 @@ def _check_image(
 ) -> CheckResult:
     """``present`` (already local) / ``warn``-``pullable`` (not local, but
     the registry has it -- ``nethackers doctor --pull`` fetches it) /
-    ``fail``-``unreachable`` (neither) -- spec S5.6. The "unreachable" fix
-    text branches on whether this is actually a repo checkout
-    (``repo_root() is not None``) -- mirroring ``ensure_image``'s own real
-    branch order -- rather than inferring that from the ref's shape: a repo
-    checkout can build locally (``make``, which ``eval``/``evolve`` also run
-    automatically) regardless of what ref happens to be resolved; outside a
-    repo (the installed-user path, or a hand-set ``NETHACKERS_*_IMAGE``
-    override with no checkout to build from) the only path is the
-    network/registry, so the fix names that instead."""
+    ``fail``-``unreachable`` (neither) -- spec S5.6.
+
+    The "unreachable" fix must name a command that will actually work, so it
+    reproduces ``ensure_image``'s real outcome for this ``kind``:
+
+    - **arena**: never builds. ``resolve_image`` returns the pinned digest
+      even inside a checkout (spec 2026-09-14 D6), and ``ensure_image``
+      branches on ref SHAPE before it looks for a repo -- a ``@sha256:`` ref
+      is pulled, never built (INV11). So the fix is the network or
+      ``NETHACKERS_ARENA_IMAGE``, in a checkout as much as outside one.
+      ``make arena`` would build a tag this command is not going to use.
+    - **mutator**: unchanged. Inside a checkout ``ensure_image`` really does
+      reach ``make mutator`` (which ``evolve`` runs for you); outside one --
+      the installed-user path, or a hand-set override with no checkout to
+      build from -- only the registry is left.
+
+    This tracks ``docs/troubleshooting.md``'s "unreachable" entry, which
+    documents exactly this split.
+    """
     check_id = f"{kind}_image"
     ref = resolve_image(None, kind)
     if image_present(ref):
@@ -234,8 +244,8 @@ def _check_image(
                            detail=f"not local yet, but pullable — {ref}",
                            fix="run `nethackers doctor --pull` to fetch it now",
                            capabilities=caps)
-    if repo_root() is not None:
-        fix = f"run `make {kind}` (or just `nethackers eval`/`evolve`, which auto-builds it)"
+    if kind == "mutator" and repo_root() is not None:
+        fix = f"run `make {kind}` (or just `nethackers evolve`, which auto-builds it)"
     else:
         fix = (f"check your network connection, or set NETHACKERS_{kind.upper()}_IMAGE "
               "to a reachable ref")

@@ -198,7 +198,17 @@ jobs:
       # Unconditional (not gated on the re-pin step having committed), so a
       # pin left unclassified by an earlier run is caught too. PYTHONPATH=src
       # rather than an install: both modules are dependency-free literals.
-      - name: Fail if the pinned arena image is unclassified
+      #
+      # It fails on a mismatch too, not only on `None`. `major_for` answers
+      # "which major", not "which architecture", and a digest classified at an
+      # OLD major passes an is-it-classified check while being exactly the
+      # regression I7 exists to stop -- `d18bff83…` (major 1) is an INDEX
+      # digest, so a re-pin that re-emitted it would slip through a
+      # `major is None` gate and silently revert the reference architecture.
+      # Requiring `major == ARENA_MAJOR` is the check that actually holds:
+      # only the current major's digests are admitted by the hub, so a pin at
+      # any other major breaks registration just as completely as no pin.
+      - name: Fail if the pinned arena image is not at the current arena major
         run: |
           PYTHONPATH=src python3 - <<'PY'
           import sys
@@ -226,6 +236,21 @@ jobs:
                   f"every board (nothing is deleted -- see docs/verification.md).\n\n"
                   f"Until then the hub rejects every submission from a node "
                   f"running this image, and verification stops accumulating."
+              )
+          if major != ARENA_MAJOR:
+              sys.exit(
+                  f"\nThe pinned arena image is at arena major {major}, but "
+                  f"ARENA_MAJOR is {ARENA_MAJOR}:\n\n"
+                  f"    {ARENA_IMAGE}\n\n"
+                  f"The hub admits evidence ONLY from digests classified at "
+                  f"the current major, so shipping this pin makes every "
+                  f"submission 400 -- the same outage as an unclassified pin.\n\n"
+                  f"Either the re-pin emitted the wrong digest (a stale one, "
+                  f"or the multi-arch INDEX digest rather than the linux/amd64 "
+                  f"manifest -- spec 2026-09-14 I7), or ARENA_MAJOR was bumped "
+                  f"without re-pinning. Fix whichever it is; do not classify "
+                  f"this digest at the current major just to get past this "
+                  f"step."
               )
           print(f"arena pin classified at major {major} (current: {ARENA_MAJOR})")
           PY

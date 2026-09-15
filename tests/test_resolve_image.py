@@ -14,7 +14,11 @@ def test_explicit_wins(monkeypatch):
     assert sp.resolve_image("me/arena:x", "arena", repo_root=lambda: None) == "me/arena:x"
 
 
-def test_repo_checkout_uses_local_dev_ref(tmp_path):
+def test_repo_checkout_uses_the_local_dev_ref_for_the_mutator_only(tmp_path):
+    """The ladder split by kind (spec 2026-09-14 D6): in a checkout the MUTATOR
+    still resolves to its locally built tag, while the ARENA resolves to the
+    pin -- the local arena tag is unclassified by construction, and resolving
+    to it is how Mac checkouts silently scored on arm64."""
     from nethackers import _image_pins
     assert sp.resolve_image(None, "arena", repo_root=lambda: tmp_path) == (
         _image_pins.ARENA_IMAGE

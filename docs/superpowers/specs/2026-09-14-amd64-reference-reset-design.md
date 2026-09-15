@@ -93,9 +93,21 @@ does not.
   architecture is decided, it needs no new flag, and it makes an arm64-only
   image fail the existing presence and pull checks by construction rather than
   by new platform-awareness in three call sites. `--platform linux/amd64` is
-  still passed at the run site, but only to suppress the mismatch warning Docker
-  prints on every emulated run. It is cosmetic and carries no correctness
-  weight; the pin alone is load-bearing.
+  still passed at the run site, but **only when the resolved ref is the pin**,
+  and there it is cosmetic: the architecture is already decided, and the flag
+  merely suppresses the mismatch warning Docker prints on every emulated run.
+
+  An earlier draft of this decision called the flag cosmetic unconditionally
+  and passed it unconditionally. That was wrong. `docker run --platform
+  linux/amd64` against a locally built arm64-only image does not run it with a
+  warning — it fails outright ("pull access denied", the daemon finding no
+  amd64 variant and falling through to a registry pull). Passed
+  unconditionally it therefore breaks exactly the two paths this design means
+  to keep working: D6's `--image` / `NETHACKERS_ARENA_IMAGE` arena-development
+  override, and the per-worktree `arena:<slug>` of `docs/local-stack.md`, on
+  every Apple Silicon host. So the flag is scoped to the pin — omitted on any
+  other ref *because* it would break it, not because it stopped mattering.
+  The pin alone remains the load-bearing part.
 - **D3. This is a full genesis, including the program registry.** Atoms,
   programs, baselines, lineage and attainment are all archived. Contributors
   re-register. Rejected: keeping programs and gating the verification queue,
@@ -242,20 +254,54 @@ passage must be corrected.
 
 ## 6. Rollout
 
-1. Release the CLI carrying §5.1-§5.4, §5.6, §5.7.
-2. Back up the hub database.
-3. Deploy the hub. It begins rejecting major-1 evidence immediately.
-4. Run genesis (§5.5) at once, so the window in which the board shows major-1
+**The CD cannot produce "CLI first, then hub".** The hub deploys on
+`push: tags: ["v*"]` (`.github/workflows/hub-image.yml`), while PyPI publishes
+on `release:` (`.github/workflows/publish-pypi.yml`). One tag push therefore
+deploys the strict hub *before* the new CLI exists on PyPI. The sequencing
+mechanism that does exist is `[skip hub-deploy]` in the release commit message,
+which `hub-image.yml`'s deploy job checks. Use it:
+
+1. Tag the release with `[skip hub-deploy]` in the release commit message, then
+   `gh release create vX.Y.Z` — PyPI is release-triggered, not tag-triggered.
+   The CLI carrying §5.1-§5.4, §5.6, §5.7 is now installable, and the hub is
+   untouched and still on major 1.
+2. Wait for the PyPI publish to land, then announce. Everyone who upgrades now
+   keeps working; everyone who does not fails at register from step 4 onward —
+   which is why §5.3's error text matters, and why the announcement is a step
+   of this rollout rather than an afterthought.
+3. Back up the hub database.
+4. Deploy the hub: a `v*` tag WITHOUT `[skip hub-deploy]`, or a manual
+   `workflow_dispatch` of `hub-image.yml`. It begins rejecting major-1 evidence
+   immediately.
+5. Run genesis (§5.5) at once, so the window in which the board shows major-1
    numbers nobody can add to stays short:
    `python -m nethackers.hub.genesis --db <hub db path>`. It lives beside
    `hub/baseline_compute.py` rather than in `cli.py` deliberately: the CLI is a
    client that reaches the hub only over HTTP, and its `stage.data_root` is the
    local evolve workdir, not the hub's database.
-5. Recompute the AutoAscend floor on the amd64 image and insert it.
-6. The verified worker re-queues by itself under the new epoch.
+6. Start **both** AutoAscend floors immediately — they are the long pole of the
+   whole rollout, hours each, and neither is recomputed automatically:
+   - public: `python -m nethackers.hub.baseline_compute --db <hub db path>
+     --image <pin>`. Genesis archived `baseline_atoms` along with everything
+     else, so until this lands the public board has no floor to read against.
+     The command refuses any image not classified at the current major, on the
+     same rule register applies.
+   - verified: `nethackers-worker --baseline --tree roots/autoascend`
+     (`worker/server.py`), roughly 1095 episodes. `register_verified_baseline`
+     stamps `arena_major`, and the verified baseline read is scoped by it, so
+     the major bump empties the verified floor exactly as genesis empties the
+     public one. **The verification daemon does not do this**: it re-queues
+     *candidates*, never the floor. It is a separate one-shot, and it is the
+     step most easily discovered too late.
 
-Contributors on older releases start failing at register the moment step 3
-lands. This needs an announcement, and it is why §5.3's error text matters.
+   Neither can start before step 4 — both are checked against the hub's current
+   major — so "start early" means the moment that deploy is green, not after
+   the board has been admired empty.
+7. The verified worker re-queues *candidates* by itself under the new epoch.
+
+**Accepted consequence: the hub goes strict before every contributor has
+upgraded.** Steps 1-2 shrink that window to however long an announcement takes
+to read; they do not remove it, because the CD offers no ordering that would.
 
 ## 7. Invariants
 
@@ -284,7 +330,18 @@ registration fails globally until someone notices. Mitigation: the existing
 re-pin guard step, extended to fail on an index digest (I7).
 
 **Genesis runs, then the deploy rolls back.** Mitigated by D12 (explicit
-command, after the health check has already passed) and by the backup in step 2.
+command, after the health check has already passed) and by the backup in step 3.
+
+**Genesis has no reverse command, and hand-reversing it collides ids.** The
+only supported undo is restoring that backup. Renaming `*_v1` back is NOT
+equivalent once even one major-2 registration has landed: `ALTER TABLE …
+RENAME TO` carries the table's `sqlite_sequence` row along with it, so the
+freshly recreated `atoms`/`solutions` start their `AUTOINCREMENT` counters at
+1 again. A hand-reversal then has to merge two tables whose ids both begin at
+1 and mean different rows. This is a stated limitation, not a defect to fix:
+the reverse operation is "restore the backup taken in rollout step 3", and an
+undo command would be a second destructive one-shot to get right for a case
+the backup already covers.
 
 **An arm64 contributor sees evaluation slow down.** Expected, and the reason
 §5.6 exists. Measured on one machine, one 15-episode identity batch. Rosetta

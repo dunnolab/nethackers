@@ -268,12 +268,29 @@ def test_the_operator_command_reports_counts_then_says_it_is_done(
     assert _row_count(populated_store, "atoms_v1") == 2
 
 
-def test_the_operator_command_refuses_a_database_that_is_not_a_hub(tmp_path):
+def test_the_operator_command_refuses_a_database_that_is_not_there(tmp_path, capsys):
     # A typo'd --db must not silently create an empty database and report a
-    # successful all-zero genesis over it -- which is why main() deliberately
-    # does not call init_schema() first.
+    # successful all-zero genesis over it. The check runs BEFORE Store() --
+    # opening a sqlite connection creates the file -- so the mistyped path is
+    # left untouched, and the operator gets a sentence and a non-zero exit
+    # code rather than a raw sqlite traceback.
+    typo = tmp_path / "typo.db"
+
+    assert genesis_cmd.main(["--db", str(typo)]) == 2
+
+    assert not typo.exists()
+    err = capsys.readouterr().err
+    assert "no database at" in err
+    assert "Traceback" not in err
+
+
+def test_the_operator_command_refuses_a_database_that_is_not_a_hub(tmp_path):
+    # A file that DOES exist but holds no hub schema is a different mistake,
+    # and still one the command must not paper over.
+    not_a_hub = tmp_path / "empty.db"
+    sqlite3.connect(not_a_hub).close()
     with pytest.raises(sqlite3.OperationalError):
-        genesis_cmd.main(["--db", str(tmp_path / "typo.db")])
+        genesis_cmd.main(["--db", str(not_a_hub)])
 
 
 def test_public_ddl_map_stays_a_view_onto_the_schema():

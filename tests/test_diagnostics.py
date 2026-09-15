@@ -88,9 +88,10 @@ def _healthy_kwargs(**overrides):
         gh_state=lambda: ("castiel", "authed"),
         # Without this override, the real default reads the actual host's
         # Docker Desktop settings file -- a real, uncontrolled probe that
-        # would break this file's "no real...call" hermeticity guarantee
-        # (harmless to gating either way, since capabilities=() -- but this
-        # file's whole premise is that every probe is faked).
+        # would break this file's "no real...call" hermeticity guarantee.
+        # Harmless to gating either way (the check is soft, and eval/evolve
+        # are gated purely by their own hard checks) -- but this file's whole
+        # premise is that every probe is faked.
         rosetta=lambda: ("ok", "Rosetta is accelerating amd64 emulation"),
     )
     kwargs.update(overrides)
@@ -363,24 +364,41 @@ def test_run_checks_explicit_hub_never_consults_load_stage(monkeypatch):
     run_checks(**_healthy_kwargs(hub="https://example.invalid"))  # must not raise
 
 
-# --- image "unreachable" fix text: branches on repo presence, not ref shape
+# --- image "unreachable" fix text: per-KIND, because the two kinds differ
 
 
-def test_image_unreachable_fix_suggests_make_inside_a_repo_checkout():
+def test_mutator_unreachable_fix_suggests_make_inside_a_repo_checkout():
     results = run_checks(**_healthy_kwargs(
         image_present=lambda ref: False, manifest_reachable=lambda ref: False,
         repo_root=lambda: Path("/fake/repo"),
     ))
-    arena = next(r for r in results if r.id == "arena_image")
-    assert arena.status == "fail"
-    assert "make arena" in arena.fix
-    assert "NETHACKERS_" not in arena.fix
+    mutator = next(r for r in results if r.id == "mutator_image")
+    assert mutator.status == "fail"
+    assert "make mutator" in mutator.fix
+    assert "NETHACKERS_" not in mutator.fix
 
 
-def test_image_unreachable_fix_suggests_network_override_outside_a_repo():
+def test_mutator_unreachable_fix_suggests_network_override_outside_a_repo():
     results = run_checks(**_healthy_kwargs(
         image_present=lambda ref: False, manifest_reachable=lambda ref: False,
         repo_root=lambda: None,
+    ))
+    mutator = next(r for r in results if r.id == "mutator_image")
+    assert mutator.status == "fail"
+    assert "make" not in mutator.fix
+    assert "NETHACKERS_MUTATOR_IMAGE" in mutator.fix
+
+
+@pytest.mark.parametrize("repo_root", [lambda: Path("/fake/repo"), lambda: None])
+def test_arena_unreachable_fix_never_suggests_a_build_even_in_a_checkout(repo_root):
+    """The arena resolves to the pinned digest everywhere (spec D6) and
+    ``ensure_image`` pulls a digest ref rather than building it (INV11), so
+    `make arena` would build a tag this run is not going to use. doctor must
+    not print advice its own acquisition path will not follow -- which is also
+    what docs/troubleshooting.md's "unreachable" entry tells the reader."""
+    results = run_checks(**_healthy_kwargs(
+        image_present=lambda ref: False, manifest_reachable=lambda ref: False,
+        repo_root=repo_root,
     ))
     arena = next(r for r in results if r.id == "arena_image")
     assert arena.status == "fail"
