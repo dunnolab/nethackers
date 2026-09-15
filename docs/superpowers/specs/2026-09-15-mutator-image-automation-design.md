@@ -170,7 +170,9 @@ Steps:
 5. If `MUTATOR_IMAGE` or `MUTATOR_INPUTS` differ from the result, run `repin_images.py` for the
    mutator, commit `chore(images): re-pin mutator (h-<first 12>)`, and push it to the head branch
    (or `main`) with a token from `actions/create-github-app-token`, SHA-pinned like the repo's
-   other actions. A non-fast-forward push exits cleanly: the newer push triggers its own run.
+   other actions. If a PR branch moved meanwhile, the job exits cleanly: the newer push triggers
+   its own run. Elsewhere it fails and names the fix (run this workflow on the branch), because a
+   newer commit on `main` that touches no mutator input starts no run.
 6. **Fork PRs** (`head.repo.full_name != github.repository`): build amd64 only, push nothing, and
    say in the job summary that publishing happens after merge.
 

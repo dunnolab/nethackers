@@ -151,13 +151,19 @@ jobs:
           if git push --force-with-lease="refs/heads/$BRANCH:$BUILT_FROM" origin "HEAD:refs/heads/$BRANCH"; then
             exit 0
           fi
-          # A newer push (or a merge that deleted the branch) wins: its own run
-          # re-pins. Any other failure -- a revoked App, a protected branch -- is an
-          # error, or the pins would silently stay stale.
           remote=$(git ls-remote origin "refs/heads/$BRANCH") || { echo "::error::could not reach origin to check $BRANCH"; exit 1; }
-          if [ "$(printf '%s' "$remote" | cut -f1)" != "$BUILT_FROM" ]; then
+          if [ "$(printf '%s' "$remote" | cut -f1)" = "$BUILT_FROM" ]; then
+            # The branch didn't move, so the push itself was refused (a revoked App, a
+            # protected branch). Fail, or the pins would silently stay stale.
+            echo "::error::could not push the mutator re-pin to $BRANCH"
+            exit 1
+          fi
+          # The branch moved, or a merge deleted it. A PR's newer push always re-runs
+          # this workflow: PR path filters see the whole PR diff. A push to main is
+          # filtered on its own diff alone, so an unrelated merge starts no run.
+          if [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
             echo "::notice::$BRANCH moved during the build; the newer push re-runs this workflow"
             exit 0
           fi
-          echo "::error::could not push the mutator re-pin to $BRANCH"
+          echo "::error::$BRANCH is no longer at the commit this run built, so the mutator is not re-pinned. The image is published: run this workflow on $BRANCH (Actions > Mutator image > Run workflow) to commit the pin."
           exit 1
