@@ -1,6 +1,6 @@
 # Mutator Image Automation — content-addressed builds, automatic re-pin, pinned agent CLIs
 
-**Status:** Design — ready for review
+**Status:** Approved — implemented on `vkurenkov/mutator-image-automation`
 **Date:** 2026-09-15
 **Extends:** `2026-08-28-sandbox-image-distribution-design.md` (digest pins, the manual re-pin
 ceremony D11, the image-pins tripwire D12) and `2026-09-13-arena-major-version-design.md` (every
@@ -125,7 +125,8 @@ mutator`.
 - **Input list**, one constant: `Dockerfile.mutator`, `docker-entrypoint.sh`,
   `src/nethackers/__init__.py`, and every file under `src/nethackers/arena/` and
   `src/nethackers/contracts/`.
-- **Excluded**, mirroring `.dockerignore`: `__pycache__/` directories and `*.pyc` files.
+- **Excluded**, mirroring `.dockerignore`: `__pycache__/` directories, `*.pyc` files and
+  `.DS_Store` files, at any depth.
 - **Per file:** POSIX path relative to the repo root, the executable bit, and `sha256` of the
   content, sorted by path.
 - **Digest:** `sha256("nethackers-mutator-inputs/v1\n" + NLE_BASE_IMAGE + "\n" + one line per
@@ -291,7 +292,7 @@ NLE, and rebuilt on the next change. Nobody runs `make`.
 ## 9. Testing
 
 - **Hash:** stable across file order; changes with content, the executable bit, or the base digest;
-  ignores `__pycache__` and `*.pyc`. The `COPY` coverage contract test.
+  ignores `__pycache__`, `*.pyc` and `.DS_Store`. The `COPY` coverage contract test.
 - **Pins:** `repin_images.py` updates the mutator alone and keeps the arena and base lines
   byte-identical.
 - **Resolution:** unchanged checkout → pinned digest; changed → `h-` ref; an explicit ref wins; no

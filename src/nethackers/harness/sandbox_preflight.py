@@ -69,7 +69,7 @@ def docker_available(*, run=subprocess.run) -> bool:
 
 def image_present(image: str, *, runtime: str = "docker", run=subprocess.run) -> bool:
     """Is the image available locally? Cheap ``<runtime> image inspect`` (no
-    pull). Used to decide whether to auto-build it (``build_mutator_image``) and
+    pull). Used to decide whether to acquire it (``ensure_image``) and
     by discovery, so an unbuilt image degrades quietly instead of silently
     reporting the host CLI's models. ``runtime`` is the resolved container CLI
     (``container_runtime()``); callers thread it through rather than re-probing,
@@ -273,17 +273,6 @@ def _tag_image(source: str, target: str, *, runtime: str, run) -> str | None:
     if result.returncode != 0:
         return f"[red]sandbox setup failed[/] — couldn't tag {source} as {target}"
     return None
-
-
-def build_mutator_image(image: str, *, on_line=None, popen=subprocess.Popen) -> str | None:
-    """Build the mutator sandbox image (``make mutator`` -> nle-base + mutator),
-    streaming each build line to ``on_line``. ``None`` on success, else a styled
-    error. The mutator ALWAYS runs sandboxed, so the very first run auto-provisions
-    the image here (users never run ``make`` themselves) -- the only cost is the
-    one-time NLE compile. A thin back-compat wrapper over ``_build_image``; new
-    code should call ``ensure_image(image, "mutator", ...)`` instead, which also
-    covers the pulled/pinned case."""
-    return _build_image(image, "mutator", on_line=on_line, popen=popen)
 
 
 def _final_pull_event(kind: str, ref: str, state: PullParseState, phase: str,

@@ -110,7 +110,7 @@ def test_preflight_operator_opencode2_needs_no_key_and_writes_nothing(tmp_path, 
 
 
 def test_preflight_does_not_probe_for_the_image(monkeypatch):
-    # The image is auto-provisioned (build_mutator_image), NOT a precondition the
+    # The image is auto-provisioned (ensure_image), NOT a precondition the
     # user must satisfy -- so preflight (docker + login) never touches it.
     monkeypatch.setattr(sp, "docker_available", lambda **kw: True)
     monkeypatch.setattr(sp, "auth_docker_args", lambda *a, **kw: [])
@@ -125,7 +125,7 @@ def test_image_present_true_on_zero_exit():
     assert sp.image_present("img", run=lambda *a, **k: SimpleNamespace(returncode=1)) is False
 
 
-# --- auto-build: the first run provisions the image itself (no `make` for users)
+# --- a scripted Popen: the build and pull tests below read its lines and exit code
 
 
 class _FakeProc:
@@ -137,44 +137,8 @@ class _FakeProc:
         return self._rc
 
 
-def test_build_mutator_image_streams_and_succeeds(monkeypatch, tmp_path):
-    # a repo root (Dockerfile.mutator + Makefile) is found; `make mutator` runs,
-    # its output streams to on_line, rc 0 -> None (success).
-    (tmp_path / "Dockerfile.mutator").write_text("x")
-    (tmp_path / "Makefile").write_text("x")
-    monkeypatch.setattr(sp.Path, "cwd", classmethod(lambda cls: tmp_path))
-    seen = {"argv": None, "cwd": None, "lines": []}
-
-    def _popen(argv, **kw):
-        seen["argv"], seen["cwd"] = argv, kw.get("cwd")
-        return _FakeProc(["step 1/10", "step 2/10"], 0)
-
-    assert sp.build_mutator_image("my/mut:tag", on_line=seen["lines"].append,
-                                  popen=_popen) is None
-    assert seen["argv"] == ["make", "mutator", "MUTATOR_IMAGE=my/mut:tag"]
-    assert seen["cwd"] == str(tmp_path)
-    assert seen["lines"] == ["step 1/10", "step 2/10"]
-
-
-def test_build_mutator_image_reports_build_failure(monkeypatch, tmp_path):
-    (tmp_path / "Dockerfile.mutator").write_text("x")
-    (tmp_path / "Makefile").write_text("x")
-    monkeypatch.setattr(sp.Path, "cwd", classmethod(lambda cls: tmp_path))
-    err = sp.build_mutator_image("img", popen=lambda *a, **k: _FakeProc([], 2))
-    assert err is not None and "setup failed" in err.lower()
-
-
-def test_build_mutator_image_errors_outside_the_repo(monkeypatch, tmp_path):
-    # no Dockerfile.mutator/Makefile up the tree -> can't build; clear message.
-    monkeypatch.setattr(sp.Path, "cwd", classmethod(lambda cls: tmp_path))
-    err = sp.build_mutator_image("img", popen=lambda *a, **k: _FakeProc([], 0))
-    assert err is not None and "repo" in err.lower()
-
-
-# --- _build_image: on_event start/done/error bracket (spec S5.5) -----------
-# build_mutator_image (the public wrapper exercised above) doesn't forward
-# on_event -- these call _build_image directly, exactly like ensure_image's
-# own branch 3 does.
+# --- _build_image / _run_build: the on_event bracket (spec S5.5), a failed build's output
+# These call them directly, as ensure_image's two build branches (3 and 4) do.
 
 
 def test_build_image_emits_start_then_done_bracket(monkeypatch, tmp_path):
@@ -182,13 +146,15 @@ def test_build_image_emits_start_then_done_bracket(monkeypatch, tmp_path):
     (tmp_path / "Makefile").write_text("x")
     monkeypatch.setattr(sp.Path, "cwd", classmethod(lambda cls: tmp_path))
     events = []
+    lines: list[str] = []
 
     err = sp._build_image(
-        "my/mut:tag", "mutator", on_event=events.append,
-        popen=lambda *a, **k: _FakeProc(["step 1/10"], 0),
+        "my/mut:tag", "mutator", on_event=events.append, on_line=lines.append,
+        popen=lambda *a, **k: _FakeProc(["step 1/10\n"], 0),
     )
 
     assert err is None
+    assert lines == ["step 1/10"]            # each build line streams to on_line, rstripped
     assert [e.phase for e in events] == ["start", "done"]
     # No layer concept on the make path -- always None/None, never 0/0.
     assert all(e.layers_total is None and e.layers_complete is None for e in events)
