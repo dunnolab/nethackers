@@ -93,6 +93,22 @@ trusted worker produced this number). *Hidden* is the seeds it happened to use.
 Full mechanism, including the verifier's scheduler:
 [`docs/verification.md`](docs/verification.md).
 
+### Reference architecture
+
+`linux/amd64` is the scoring architecture — every score the hub accepts came
+from the pinned amd64 arena image, which is what `nethackers eval` uses by
+default. That's what makes "the same batch as everyone else's" (above) true
+regardless of what you're running it on.
+
+Other hosts emulate, and that's required, not optional: the same seed plays a
+different game of NetHack on a different CPU architecture, so a native arm64
+score isn't comparable — the hub refuses it.
+
+On Apple Silicon, turn on Rosetta in Docker Desktop (Settings → General →
+Apple Virtualization framework → "Use Rosetta for x86_64/amd64 emulation").
+It's worth doing: the same 15-episode batch on the same machine took 823s
+under QEMU and 224s with Rosetta. `nethackers doctor` reports whether it's on.
+
 ## Safety: this runs untrusted code
 
 > ⚠️ **Read this before running `evolve`, `eval`, or `pull`.**
@@ -181,7 +197,7 @@ uv tool install nethackers
 nethackers doctor
 ```
 
-`doctor` runs seven checks and folds them into four capabilities — `browse`,
+`doctor` runs eight checks and folds them into four capabilities — `browse`,
 `eval`, `evolve`, `publish` — telling you exactly which ones this machine can do
 and what to fix for the rest. It honors `-o json` if you want to gate a script on
 it. It reaches the network (a hub round-trip, and a registry probe for any

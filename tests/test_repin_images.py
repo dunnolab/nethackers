@@ -8,8 +8,17 @@ from pathlib import Path
 
 import pytest
 
+from nethackers.arena_version import ARENA_MAJOR_BY_DIGEST
+
 _ROOT = Path(__file__).resolve().parent.parent
 _PINS = _ROOT / "src" / "nethackers" / "_image_pins.py"
+
+# A digest arena_version.py has already classified -- render_pins (spec I7)
+# rejects any arena digest that is not in this map, so fixture refs below must
+# use one of these rather than an arbitrary hex string.
+CLASSIFIED_ARENA_DIGEST = next(iter(ARENA_MAJOR_BY_DIGEST))
+
+MUTATOR = "ghcr.io/dunnolab/nethackers-mutator@sha256:" + "a" * 64
 
 
 def _load_script():
@@ -31,7 +40,9 @@ def _exec(source: str) -> dict:
     return ns
 
 
-ARENA = "ghcr.io/dunnolab/nethackers-arena@sha256:" + "a" * 64
+# Must be a CLASSIFIED digest: render_pins now refuses an arena digest that
+# arena_version.py does not know (spec 2026-09-14 I7).
+ARENA = f"ghcr.io/dunnolab/nethackers-arena@{next(iter(ARENA_MAJOR_BY_DIGEST))}"
 MUTATOR = "ghcr.io/dunnolab/nethackers-mutator@sha256:" + "b" * 64
 BASE = "ghcr.io/dunnolab/nethackers-nle-base@sha256:" + "c" * 64
 INPUTS = "sha256:" + "d" * 64
@@ -100,3 +111,23 @@ def test_committed_pins_file_matches_the_generator():
     regenerated = repin.render_pins(_image_pins.ARENA_IMAGE, _image_pins.MUTATOR_IMAGE,
                                     _image_pins.NLE_BASE_IMAGE, _image_pins.MUTATOR_INPUTS)
     assert regenerated == _PINS.read_text()
+
+
+def test_repin_rejects_an_arena_digest_that_is_not_classified():
+    """Spec I7: ARENA_IMAGE must name a platform-specific manifest digest that
+    arena_version has classified. buildx reports an index digest by default,
+    which is NOT classified, so emitting one must fail loudly rather than
+    silently revert the reference architecture."""
+    unclassified = "ghcr.io/dunnolab/nethackers-arena@sha256:" + "b" * 64
+    with pytest.raises(ValueError, match="not a classified arena"):
+        repin.render_pins(unclassified, MUTATOR, BASE, INPUTS)
+
+
+def test_repin_accepts_a_classified_arena_digest():
+    # Not `assert CLASSIFIED_ARENA_DIGEST in out`: _assignment splits
+    # "repo@sha256:" and the bare hex onto separate string literals, so the
+    # full "sha256:<hex>" string is never contiguous in the generated source.
+    # Round-trip through _exec instead, as the other render_pins tests do.
+    arena = f"ghcr.io/dunnolab/nethackers-arena@{CLASSIFIED_ARENA_DIGEST}"
+    out = repin.render_pins(arena, MUTATOR, BASE, INPUTS)
+    assert _exec(out)["ARENA_IMAGE"] == arena

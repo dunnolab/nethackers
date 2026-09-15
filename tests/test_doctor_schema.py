@@ -180,6 +180,12 @@ def _kwargs(**overrides):
         hub_mode=lambda hub: "github",
         load_creds=lambda: Credentials("castiel", "tok"),
         gh_state=lambda: ("castiel", "authed"),
+        # Without this override, the real default reads the actual host's
+        # Docker Desktop settings file -- breaking run_checks's own
+        # documented "no real...call is made by this function's own test
+        # suite" guarantee (test_diagnostics.py's `_healthy_kwargs` carries
+        # the identical fake, for the identical reason).
+        rosetta=lambda: ("ok", "Rosetta is accelerating amd64 emulation"),
     )
     kwargs.update(overrides)
     return kwargs

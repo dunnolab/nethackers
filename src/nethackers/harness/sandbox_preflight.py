@@ -16,11 +16,12 @@ sandboxed command, including a plain ``eval``/``submit``; ``preflight_operator``
 the arena has no operator, so eval/submit must never call it. ``preflight``
 stays as a thin backward-compatible wrapper over both, for evolve's use.
 
-``ensure_image`` makes a ``resolve_image``-produced ref actually present:
-builds the arena's local ``:dev`` tag via ``make``, and a checkout's mutator by
-content fingerprint, or ``docker pull``s a GHCR digest pin otherwise -- never
-the reverse (INV11: a digest ref can't be `-t`-tagged by a build, so it is
-only ever pulled).
+``ensure_image`` makes a ``resolve_image``-produced ref actually present: a
+GHCR digest pin is always ``docker pull``ed -- that now includes the arena
+even inside a repo checkout (spec 2026-09-14 D6) -- and only a non-digest tag
+reachable from a checkout (the mutator's content-fingerprint tag) is built via
+``make`` -- never the reverse (INV11: a digest ref can't be `-t`-tagged by a
+build, so it is only ever pulled).
 
 Kept a leaf module (stdlib + containers + auth_inject + pull_events only, all
 themselves leaves too) so both ``cli`` and the Textual form can import it
@@ -92,7 +93,6 @@ def _repo_root() -> Path | None:
     return None
 
 
-_LOCAL_DEV_REF = {"arena": "nethackers/arena:dev"}
 _PIN = {"arena": _image_pins.ARENA_IMAGE, "mutator": _image_pins.MUTATOR_IMAGE}
 
 # A checkout's own mutator builds (spec 2026-09-15 §5.5): content-addressed tags
@@ -106,12 +106,14 @@ _FINGERPRINT_REF_RE = re.compile(rf"{re.escape(LOCAL_MUTATOR_REPO)}:h-[0-9a-f]{{
 
 def resolve_image(explicit: str | None, kind: str, *, repo_root=_repo_root) -> str:
     """The image ref to use for ``kind`` (``"arena"``/``"mutator"``). Ladder
-    (spec §5.1; for the mutator, spec 2026-09-15 §5.5): an explicit value (flag /
-    env -- anything that made the layered Stage field non-None) wins verbatim;
-    outside a repo checkout, the pinned GHCR digest. Inside a checkout the arena
-    uses its locally-built dev tag, and the mutator the image matching the
-    checkout's own files: the pinned digest when they are the pinned build's
-    inputs, else the fingerprint tag ``nethackers/mutator:h-<64 hex>``.
+    (spec §5.1; for the mutator, spec 2026-09-15 §5.5; for the arena, spec
+    2026-09-14 D6): an explicit value (flag / env -- anything that made the
+    layered Stage field non-None) wins verbatim; otherwise the ARENA always
+    resolves to its pinned GHCR digest, checkout or not, because that pin is
+    what declares the reference architecture. The mutator resolves to the image
+    matching the checkout's own files: the pinned digest when they are the
+    pinned build's inputs, else the fingerprint tag
+    ``nethackers/mutator:h-<64 hex>``; outside a checkout, its pinned digest.
     NO side effects -- it only reads files, never builds or pulls (safe in
     EvolveParams default factories). ``repo_root`` injectable for tests."""
     if explicit is not None:
@@ -121,7 +123,12 @@ def resolve_image(explicit: str | None, kind: str, *, repo_root=_repo_root) -> s
         return _PIN[kind]
     if kind == "mutator":
         return _checkout_mutator_ref(root)
-    return _LOCAL_DEV_REF[kind]
+    # The arena pin names ONE platform's bytes and is what declares the
+    # reference architecture (spec 2026-09-14 D2/D6). A locally built tag is
+    # unclassified by construction and the hub refuses evidence from it, so a
+    # repo checkout must NOT silently substitute one. Reach a local build
+    # deliberately: --image, or NETHACKERS_ARENA_IMAGE.
+    return _PIN[kind]
 
 
 def _checkout_mutator_ref(root: Path) -> str:
@@ -372,8 +379,9 @@ def _pull_error_message(kind: str, text: str) -> str:
 # concurrent `ensure_image(ref)` call for the SAME ref must not start a second
 # `docker pull`/`make` build -- it waits for the in-flight one, then re-checks
 # rather than assuming success. Keyed on the resolved `ref` string alone (an
-# arena ref and a mutator ref are never textually identical -- `_LOCAL_DEV_REF`
-# / `_PIN` always bake the kind into the name -- so `ref` alone is already a
+# arena ref and a mutator ref are never textually identical -- `_PIN` and the
+# mutator's fingerprint tag always bake the kind into the name -- so `ref`
+# alone is already a
 # unique key, no need for a compound `(kind, ref)` one). Process-local only:
 # a SECOND `nethackers` process racing this one is not covered (cross-process
 # locking, e.g. a lockfile, is explicitly out of scope for this seam) -- only

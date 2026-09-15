@@ -90,7 +90,10 @@ unrelated games, because HMAC under a different key is independent. So **the
 secret is the only thing that separates public games from private ones.**
 
 - The **public secret** is published. That is what makes `nethackers eval`
-  reproducible on your laptop and identical to everyone else's run.
+  reproducible on your laptop and identical to everyone else's run — as long
+  as it's the pinned `linux/amd64` arena image doing the running, which is
+  the default. See
+  [`../README.md#reference-architecture`](../README.md#reference-architecture).
 - The **hidden secret** is held by the hub and handed only to a verifier
   presenting a trusted token.
 

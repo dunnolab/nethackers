@@ -127,9 +127,14 @@ jobs:
         if: env.SAME_REPO != 'true'
         run: echo "Built linux/amd64 only. The image is published and pinned after merge, by this workflow's run on main." >> "$GITHUB_STEP_SUMMARY"
 
+      # PYTHONPATH=src: repin_images.py classifies the ARENA digest it carries
+      # through via nethackers.arena_version, even when only --mutator changes
+      # (spec 2026-09-14 I7). Without it this step dies with ModuleNotFoundError.
+      # Both callers of that script need it; sandbox-images.yml sets it too.
       - name: Re-pin the mutator (commit to this branch)
         if: env.SAME_REPO == 'true'
         env:
+          PYTHONPATH: src
           BUILT_FROM: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           if [ "${{ steps.exists.outputs.exists }}" = "true" ]; then

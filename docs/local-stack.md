@@ -54,6 +54,34 @@ image tags -- comes from the stage, not a flag. `nethackers whoami` is
 the fastest sanity check that discovery is wired up: run it anywhere
 inside the worktree and it reports the active stage name and hub URL.
 
+### The per-worktree arena tag cannot register
+
+`.env.stack` sets `NETHACKERS_ARENA_IMAGE=nethackers/arena:<slug>`, so the
+loop above **runs** against this worktree's own arena build -- and every
+registration it attempts is refused, recorded as `local-only` in the run
+log.
+
+That is by design, not a bug to work around. Since the amd64 reference
+reset (`docs/superpowers/specs/2026-09-14-amd64-reference-reset-design.md`,
+D5) the hub admits evidence only from an arena digest classified at the
+current `ARENA_MAJOR`. A tag names movable bytes, so `arena:<slug>` is
+unclassified *by construction* and `register` raises `UnclassifiedArena`.
+The local hub runs the same admission code as prod, so it refuses it too.
+
+To exercise register -> board locally, run the **pinned** arena instead --
+process env beats `.env.stack`, so one variable is enough:
+
+```console
+export NETHACKERS_ARENA_IMAGE=$(python -c \
+  'from nethackers._image_pins import ARENA_IMAGE; print(ARENA_IMAGE)')
+nethackers evolve val-dwa-law-fem --seed roots/autoascend --operator claude --iterations 1
+```
+
+(`--image <pin>` on `eval`/`evolve`/`submit` does the same for one command.)
+On Apple Silicon that runs under emulation -- see `nethackers doctor`'s
+Rosetta advisory. Conversely, keep the worktree tag when you are actually
+changing arena code: that is the one thing the pin cannot do.
+
 The mutator is deliberately **not stubbed**. The bugs this path exists to
 catch live in the real agent x sandbox x eval interaction (codex's
 login-shell PATH loss, operator auth injection, stale-image drift, the
@@ -105,6 +133,12 @@ and the commit-existence check finds the actually-pushed public commit.
 The only difference from prod is the DB pointing at a local sqlite
 volume instead of the production one.
 
+Auth is not the only gate on that path any more: the hub also checks the
+*arena* the evidence came from, in both modes. Real-auth mode plus the
+per-worktree arena tag gets you through the GitHub ladder and then stops
+at admission, so pair it with the pinned image (above) whenever the thing
+under test is register -> board rather than the board itself.
+
 To self-host against your own GitHub App instead of the shared default,
 override the client id: `NETHACKERS_CLIENT_ID=<your app id> make up HUB_AUTH=github`.
 
@@ -124,13 +158,15 @@ against the real-auth stack above:
 2. **Commit on the per-run ref.**
    `git ls-remote https://github.com/<login>/nh-dev-<slug> 'refs/heads/evo-harness-v1/*'`
    lists the run's sha -- the parallel-safe one-ref-per-run contract.
-3. **Registration accepted.**
+3. **Registration accepted.** *(requires the pinned arena image -- see
+   "The per-worktree arena tag cannot register" above; with the default
+   `arena:<slug>` this criterion reads `local-only` and cannot pass.)*
    The run log shows `registered`, never `local-only` or a
    publish/register failure; `nethackers search --owner <login>` lists
    the solution -- meaning the full ladder passed with real auth: login
    resolved, repo ownership OK, commit existence OK against
-   api.github.com.
-4. **Board updated.**
+   api.github.com, and the evidence came from a classified arena digest.
+4. **Board updated.** *(same precondition as 3.)*
    `nethackers leaderboard --objective val-dwa-law-fem` shows the
    program with its self-reported dev score.
 5. **Pull fetches the exact commit.**

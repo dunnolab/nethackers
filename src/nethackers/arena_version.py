@@ -25,7 +25,7 @@ Hand-edited, and deliberately NOT part of ``_image_pins.py``, which
 
 from __future__ import annotations
 
-ARENA_MAJOR = 1
+ARENA_MAJOR = 2
 
 ARENA_MAJOR_BY_DIGEST: dict[str, int] = {
     # The image every existing verified row was measured under.
@@ -42,6 +42,22 @@ ARENA_MAJOR_BY_DIGEST: dict[str, int] = {
     # themselves and are unchanged, as are uv.lock and nle-base, so it stays
     # comparable with the digest above. Read from the diff, not measured.
     "sha256:97ba883e04fd79d334c9074bfd92bfe8b0c923a0882881bef5435b369b6a1601": 1,
+    # THE amd64 REFERENCE (design 2026-09-14-amd64-reference-reset). This is the
+    # linux/amd64 LEG of the index digest directly above, and it is major 2
+    # while that index is major 1. That is deliberate, not a mistake: an index
+    # resolves to whichever platform the host is, so evidence produced through
+    # it comes from the mixed-architecture population major 1 describes. This
+    # leg pins every host to amd64, which is a different comparability class.
+    # SCORES MOVE across that boundary because NetHack consumes RNG in
+    # unsequenced sibling call arguments (e.g. mkgold(0L, somex(c), somey(c)) at
+    # src/mklev.c:831) and gcc orders call arguments left-to-right on aarch64
+    # and right-to-left on x86-64, so one seed generates a different dungeon per
+    # architecture. Measured: the monk elite scores 0.15494 on arm64 and 0.10994
+    # on x86_64 over the same published batch. Measured again when adopting this
+    # leg: all 15 published monk starting maps are identical to the leg the
+    # design was written against (862434c5...), so PR #67's "not measured"
+    # equivalence claim above holds for amd64.
+    "sha256:5c8c0cee2f28d2a0de5e9b78170a01ec0991a18a9802de0a43e8e312590d151c": 2,
 }
 
 

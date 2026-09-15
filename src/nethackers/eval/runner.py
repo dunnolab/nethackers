@@ -32,6 +32,7 @@ from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 
+from nethackers import _image_pins
 from nethackers.containers import container_name, container_runtime, label_args
 from nethackers.contracts.models import Evidence, Objective, ObjectiveSpec, TrajectoryResult
 
@@ -94,8 +95,19 @@ def _solution_digest(solution_path: Path) -> str:
 def _default_image_digest(image: str, *, runtime: str | None = None) -> str:
     """Resolve ``image`` to a content digest via ``<runtime> image inspect``.
 
-    Prefers the first RepoDigest (``repo@sha256:...``, present once an image
-    has been pushed to/pulled from a registry); falls back to the image Id
+    A ref that is ALREADY digest-pinned (``repo@sha256:...`` -- what
+    ``resolve_image`` returns for the arena) is returned VERBATIM, without
+    consulting the runtime at all. It already names exactly the bytes that
+    ran, and this string now gates hub admission (spec 2026-09-14 D5, via
+    ``arena_version.major_for``), so it must not depend on how a runtime
+    happens to order its metadata: ``RepoDigests`` is a list, its order is an
+    implementation detail, and podman (issue #50) need not put the same entry
+    first that docker does. A mirrored or renamed repo entry winning index 0
+    would turn a correctly pinned run into an unclassified one at register.
+
+    Otherwise (a tag -- a local dev build, or an ``--image`` override) it
+    shells out: prefers the first RepoDigest (present once an image has been
+    pushed to/pulled from a registry); falls back to the image Id
     (``sha256:...``) for locally-built images that have no RepoDigests yet.
     Only ever invoked as the default digest resolver -- tests always inject a
     fake resolver instead, so this shells out to a real runtime binary only
@@ -103,6 +115,8 @@ def _default_image_digest(image: str, *, runtime: str | None = None) -> str:
     (docker OR podman -- issue #50) when not given, so ``launch.py``'s
     provenance use is podman-aware too without threading a name through.
     """
+    if "@sha256:" in image:
+        return image
     rt = runtime or container_runtime() or "docker"
     out = subprocess.run(
         [
@@ -177,6 +191,10 @@ def eval_batch(
     one per batch entry in batch order regardless of completion order) and
     wraps it into an ``Evidence``.
 
+    ``--platform linux/amd64`` is added only when ``image`` is the arena pin
+    (``_image_pins.ARENA_IMAGE``), where it is cosmetic. On any other ref it
+    would be fatal rather than cosmetic -- see the comment at the call site.
+
     ``evaluator_image`` is set to ``image_digest_resolver(image)`` -- the
     image's resolved content digest, not the (mutable) ``image`` tag passed
     in -- so evidence records exactly which image bytes produced it.
@@ -206,8 +224,21 @@ def eval_batch(
     )
     with _eval_temp_dir() as td:
         out = Path(td) / "results.json"
+        # --platform is cosmetic FOR THE PIN and only for it: ARENA_IMAGE is an
+        # amd64 MANIFEST digest, so the architecture is already decided (spec
+        # 2026-09-14 D2) and the flag merely suppresses the mismatch warning
+        # Docker prints on every emulated run.
+        #
+        # It is NOT harmless on any other ref. `docker run --platform
+        # linux/amd64` against a locally built arm64-only image FAILS ("pull
+        # access denied" -- the daemon finds no amd64 variant and falls through
+        # to a registry pull), which would break both paths D6 deliberately
+        # keeps open: `--image`/NETHACKERS_ARENA_IMAGE for arena development,
+        # and the per-worktree `arena:<slug>` of docs/local-stack.md. So it is
+        # passed only when the resolved ref IS the pin.
+        platform = ["--platform", "linux/amd64"] if image == _image_pins.ARENA_IMAGE else []
         cmd = [
-            runtime, "run", "--rm", "--network", "none",
+            runtime, "run", *platform, "--rm", "--network", "none",
             "--name", container_name("arena"), *label_args(),
             # Silence AutoAscend's numpy RuntimeWarning flood at interpreter
             # startup, for every process in the container (a plain in-arena

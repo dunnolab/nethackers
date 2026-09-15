@@ -6,10 +6,14 @@ image refs -- THE single source of the pins-file format.
 pushes the multi-arch ``arena``/``mutator`` images, so the "re-pin ceremony"
 (design spec section 8 / decision D11) is a generated, reviewable PR instead
 of a hand-paste of two 64-hex digests. Stdlib only, so CI runs it with a bare
-``python3`` (no ``uv``/deps).
+``python3`` (no ``uv``/deps) -- except that classifying the arena digest
+(spec 2026-09-14 I7) reads ``nethackers.arena_version``, so the caller needs
+``src`` on ``sys.path`` (``PYTHONPATH=src``, as the workflow sets) or an
+installed ``nethackers``.
 
-Usage (any subset; omitted values are kept from the current file):
-    python3 scripts/repin_images.py \\
+Usage (any subset; omitted values are kept from the current file). PYTHONPATH=src
+because the arena guard below imports ``nethackers.arena_version``:
+    PYTHONPATH=src python3 scripts/repin_images.py \\
         --arena          ghcr.io/dunnolab/nethackers-arena@sha256:<64 hex> \\
         --mutator        ghcr.io/dunnolab/nethackers-mutator@sha256:<64 hex> \\
         --nle-base       ghcr.io/dunnolab/nethackers-nle-base@sha256:<64 hex> \\
@@ -55,16 +59,50 @@ def _assignment(name: str, ref: str) -> str:
 
 def render_pins(arena: str, mutator: str, nle_base: str, mutator_inputs: str) -> str:
     """The exact content ``_image_pins.py`` should have (deterministic +
-    ruff-clean). Raises ``ValueError`` on a non-digest ref or a malformed
-    fingerprint."""
+    ruff-clean). Raises ``ValueError`` on a non-digest ref, a malformed
+    fingerprint, or an arena digest that is not a key of
+    ``ARENA_MAJOR_BY_DIGEST``.
+
+    Note what that last check is and is NOT. It checks MEMBERSHIP in a
+    hand-maintained map -- nothing here can look at a digest and tell whether
+    it names a linux/amd64 manifest or a multi-arch index; that judgment was
+    made by the human who added the entry. So it catches the expected
+    regression (buildx reporting a fresh index digest, which nobody has
+    classified) but would pass an already-classified index digest -- e.g.
+    ``97ba883e…``, classified at major 1, is an index. The workflow's own
+    guard step closes that gap for the current major by requiring
+    ``major == ARENA_MAJOR``; a genuine amd64-vs-index assertion would need
+    the registry, which this stdlib-only script deliberately does not touch.
+    """
     if _INPUTS_RE.match(mutator_inputs) is None:
         raise ValueError(
             f"MUTATOR_INPUTS: expected 'sha256:<64 hex>', got {mutator_inputs!r}")
+
+    # Spec 2026-09-14 I7: the arena pin names ONE platform's bytes, and that
+    # digest must already be classified in arena_version.py. An index digest
+    # (what buildx reports by default) is not classified, so emitting one would
+    # silently revert the reference architecture and break registration for
+    # everyone. Fail here instead. The import is function-local on purpose:
+    # this module's header promises stdlib-only so CI can run it with a bare
+    # interpreter, and this keeps that true for every path that does not reach
+    # this guard (e.g. --help, or a malformed ref caught above).
+    from nethackers.arena_version import ARENA_MAJOR_BY_DIGEST
+
+    arena_digest = arena.strip().partition("@")[2]
+    if arena_digest not in ARENA_MAJOR_BY_DIGEST:
+        raise ValueError(
+            f"arena: {arena_digest} is not a classified arena image. Pin the "
+            f"linux/amd64 MANIFEST digest and add it to ARENA_MAJOR_BY_DIGEST "
+            f"first (spec 2026-09-14 I7)."
+        )
+
+    arena_block = _assignment("ARENA_IMAGE", arena)
+
     return (
         f"{_DOCSTRING}\n"
         "from __future__ import annotations\n"
         "\n"
-        f"{_assignment('ARENA_IMAGE', arena)}"
+        f"{arena_block}"
         f"{_assignment('MUTATOR_IMAGE', mutator)}"
         f"{_assignment('NLE_BASE_IMAGE', nle_base)}"
         f'MUTATOR_INPUTS = "{mutator_inputs}"\n'

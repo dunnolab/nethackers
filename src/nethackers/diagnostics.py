@@ -22,6 +22,7 @@ for "am I logged in" / "is the hub reachable", without this module ever
 importing ``cli`` itself (which imports FROM here -- that would cycle)."""
 from __future__ import annotations
 
+import json
 import platform
 import re
 import subprocess
@@ -68,7 +69,7 @@ CAPABILITIES = ("eval", "evolve", "publish", "browse")
 # so neither can drift out of sync with the other (previously each was a
 # separately hand-written literal at two call sites). Also the constant a
 # future exhaustive fold-table test reads, rather than re-deriving the same
-# 7-row table a third time.
+# 8-row table a third time.
 CHECK_SPECS: dict[str, tuple[str, tuple[str, ...]]] = {
     "container_runtime": ("hard", ("eval", "evolve")),
     "arena_image": ("hard", ("eval", "evolve")),
@@ -77,6 +78,19 @@ CHECK_SPECS: dict[str, tuple[str, tuple[str, ...]]] = {
     "hub_login": ("soft", ("publish",)),
     "gh": ("soft", ("publish",)),
     "operator": ("hard", ("evolve",)),
+    # Soft severity, tagged to eval/evolve -- exactly where amd64 emulation
+    # cost is actually paid (an earlier version tagged this with an empty
+    # capability tuple; that made it un-gating but also unrenderable, since
+    # render_human/render_plain group rows by `cap in r.capabilities` --
+    # capability-less rows can never appear there). Spec I9 (never moves
+    # doctor's exit code) now rests on two things instead: rosetta_state/
+    # _check_rosetta never emit "fail" (only "ok"/"warn" -- see
+    # test_check_rosetta_never_emits_fail_for_any_rosetta_state), and
+    # capability_ready's own fold -- eval/evolve both carry hard checks of
+    # their own, so they're gated PURELY by those; a soft check tagged onto
+    # a capability that has hard checks (this one, on both) never enters
+    # into the verdict at all, "ok" or "warn" alike.
+    "rosetta": ("soft", ("eval", "evolve")),
 }
 
 
@@ -339,6 +353,89 @@ def _check_operator(
                        fix=fix, capabilities=caps, items=items)
 
 
+DOCKER_DESKTOP_SETTINGS = (
+    Path.home()
+    / "Library"
+    / "Group Containers"
+    / "group.com.docker"
+    / "settings-store.json"
+)
+
+# Measured on one machine, one 15-episode identity batch, same games both
+# sides: QEMU 823s vs Rosetta 224s (spec 2026-09-14 section 8).
+_ROSETTA_COST = "same batch: 823s under QEMU vs 224s with Rosetta"
+
+
+def rosetta_state(
+    system: str, machine: str, settings_path: Path
+) -> tuple[str, str]:
+    """``(status, detail)`` for the amd64-emulation advisory.
+
+    ``"unknown"`` whenever we cannot tell -- a non-macOS host, an Intel Mac
+    (which emulates nothing), a runtime that is not Docker Desktop, or an
+    unreadable OR malformed settings file (present, valid JSON, but not the
+    object shape Docker Desktop actually writes -- e.g. a list or ``null``).
+    NEVER report "disabled" on a guess: Colima and podman machine carry their
+    own Rosetta switches.
+
+    Detection is host-side on purpose. Probing inside the container does not
+    work: the Rosetta mount is absent there even when Rosetta is active, so an
+    in-container probe reports the wrong answer silently.
+    """
+    if system != "Darwin" or machine not in {"arm64", "aarch64"}:
+        return "unknown", "not an Apple Silicon Mac; amd64 emulation does not apply"
+    unreadable = (
+        "could not read Docker Desktop settings; if you use Colima, start it "
+        "with --vz --vz-rosetta"
+    )
+    try:
+        settings = json.loads(settings_path.read_text())
+    except (OSError, ValueError):
+        return "unknown", unreadable
+    # Present and valid JSON, but not an object (a list, a bare string/number,
+    # `null`...) -- `.get()` below would raise AttributeError, which `_safe`'s
+    # generic crash net would turn into status="fail". That's exactly the
+    # outcome an advisory must never produce, so this is checked explicitly
+    # rather than folded into the except clause above (which would silently
+    # also swallow bugs in this function itself, not just bad input).
+    if not isinstance(settings, dict):
+        return "unknown", unreadable
+    vz = bool(settings.get("UseVirtualizationFramework"))
+    rosetta = bool(settings.get("UseVirtualizationFrameworkRosetta"))
+    if vz and rosetta:
+        return "ok", "Rosetta is accelerating amd64 emulation"
+    return "warn", (
+        f"amd64 evaluation is running under QEMU, not Rosetta ({_ROSETTA_COST})"
+    )
+
+
+def _check_rosetta(
+    *,
+    severity: str,
+    caps: tuple[str, ...],
+    rosetta: Callable[[], tuple[str, str]],
+) -> CheckResult:
+    state, detail = rosetta()
+    # CheckResult.status admits only ok/warn/fail. "unknown" means the advisory
+    # does not apply or could not be determined, which must not read as a
+    # problem -- so it surfaces as "ok" and the detail carries the nuance.
+    status = "warn" if state == "warn" else "ok"
+    fix = None
+    if state == "warn":
+        fix = (
+            "Docker Desktop > Settings > General: choose Apple Virtualization "
+            "framework, then tick 'Use Rosetta for x86_64/amd64 emulation'"
+        )
+    return CheckResult(
+        id="rosetta",
+        status=status,
+        severity=severity,
+        detail=detail,
+        fix=fix,
+        capabilities=caps,
+    )
+
+
 def _safe(
     check_id: str, severity: str, capabilities: tuple[str, ...], build: Callable[[], CheckResult],
 ) -> CheckResult:
@@ -369,9 +466,12 @@ def run_checks(
     hub_mode: Callable[[str], str | None] = _default_hub_mode,
     load_creds: Callable[[], Credentials | None] = _default_load_creds,
     gh_state: Callable[[], tuple[str | None, str]] = _default_gh_state,
+    rosetta: Callable[[], tuple[str, str]] = lambda: rosetta_state(
+        platform.system(), platform.machine(), DOCKER_DESKTOP_SETTINGS
+    ),
     only: Collection[str] | None = None,
 ) -> list[CheckResult]:
-    """The 7 checks behind ``nethackers doctor`` (spec S5.6). NEVER raises,
+    """The 8 checks behind ``nethackers doctor`` (spec S5.6). NEVER raises,
     regardless of what any injected probe does (each check runs under its
     own ``_safe``). Every dependency is injectable with a real, working
     default, so a bare call is a genuine (if possibly slow/networked)
@@ -390,15 +490,15 @@ def run_checks(
     ``only``, when given, restricts execution to just the named check ids
     (keys of ``CHECK_SPECS``) -- every other check is skipped ENTIRELY: its
     probe is never called, not merely hidden from the returned list. ``None``
-    (the default) runs all 7, byte-for-byte unchanged for every existing
+    (the default) runs all 8, byte-for-byte unchanged for every existing
     caller (the ``doctor`` CLI, the schema/conformance tests). This exists
     for a targeted, DISPLAY-ONLY caller that only ever shows a subset of the
-    7 checks and must not trigger the others' network/subprocess calls just
+    8 checks and must not trigger the others' network/subprocess calls just
     to throw the results away -- e.g. the TUI's evolve-readiness strip, which
     must never make a hub HTTPS round-trip / ``gh`` subprocess / creds-file
     read just because the user opened that tab (spec S5.8). A filtered
     result must NEVER be passed to ``to_json``: its ``capabilities`` map
-    assumes all 7 checks ran, so an un-run capability's tagged checks would
+    assumes all 8 checks ran, so an un-run capability's tagged checks would
     simply be absent from ``results`` and ``capability_ready`` would read it
     as vacuously ready (INV6's fold has nothing to gate on).
     """
@@ -483,6 +583,12 @@ def run_checks(
                                                      mutator_present=mutator_present,
                                                      preflight_operator=preflight_operator,
                                                      opencode2_keyed=opencode2_keyed)))
+
+    if _wanted("rosetta"):
+        severity, caps = CHECK_SPECS["rosetta"]
+        results.append(_safe("rosetta", severity, caps,
+                             lambda: _check_rosetta(severity=severity, caps=caps,
+                                                    rosetta=rosetta)))
     return results
 
 
@@ -493,7 +599,7 @@ def capability_ready(results: list[CheckResult], cap: str) -> bool:
     (every one must be ``"ok"``) -- a soft check tagged onto the same
     capability, if any, never enters into it: "a soft check failing does
     not make a hard-gated capability unready" (spec S5.6/INV6). A
-    capability with NO hard checks at all (``publish``, in the real 7-check
+    capability with NO hard checks at all (``publish``, in the real 8-check
     table) falls back to its own soft checks instead, where only a
     ``"fail"`` gates it -- a soft ``"warn"`` never gates anything, for any
     capability (INV6's "soft warnings never flip it")."""
