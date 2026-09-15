@@ -375,7 +375,14 @@ def test_run_checks_explicit_hub_never_consults_load_stage(monkeypatch):
 
 
 def test_image_unreachable_fix_suggests_make_inside_a_repo_checkout():
+    # Arena's real resolve_image never returns a digest inside a checkout --
+    # its local dev tag (sandbox_preflight.py's `nethackers/arena:dev`) --
+    # unlike the shared `_ref` fake (a digest shape, by design: see its own
+    # comment). Fix round 1 makes the fallback's fix-text selection care
+    # about that shape, so this fixture must reflect the real non-digest ref
+    # to exercise the checkout/`make` path rather than the digest/network one.
     results = run_checks(**_healthy_kwargs(
+        resolve_image=lambda explicit, kind: "nethackers/arena:dev",
         image_present=lambda ref: False, manifest_reachable=lambda ref: False,
         repo_root=lambda: Path("/fake/repo"),
     ))
@@ -383,6 +390,22 @@ def test_image_unreachable_fix_suggests_make_inside_a_repo_checkout():
     assert arena.status == "fail"
     assert "make arena" in arena.fix
     assert "NETHACKERS_" not in arena.fix
+
+
+def test_image_unreachable_fix_never_suggests_make_for_a_digest_ref():
+    # A checkout whose mutator matches its pin resolves to the pinned digest
+    # (Task 5's resolve_image), and nethackers only ever pulls a digest
+    # (ensure_image) -- never builds it, even inside a checkout. `make
+    # mutator` can't fix an unreachable digest, so the fix must still name
+    # the network, exactly like outside a repo.
+    results = run_checks(**_healthy_kwargs(
+        image_present=lambda ref: False, manifest_reachable=lambda ref: False,
+        repo_root=lambda: Path("/fake/repo"),
+    ))
+    mutator = next(r for r in results if r.id == "mutator_image")
+    assert mutator.status == "fail"
+    assert "make" not in mutator.fix
+    assert "NETHACKERS_MUTATOR_IMAGE" in mutator.fix
 
 
 def test_image_unreachable_fix_suggests_network_override_outside_a_repo():

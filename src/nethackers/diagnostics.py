@@ -209,14 +209,14 @@ def _check_image(
     """``present`` (already local) / ``warn``-``pullable`` (not local, but
     the registry has it -- ``nethackers doctor --pull`` fetches it) /
     ``fail``-``unreachable`` (neither) -- spec S5.6. The "unreachable" fix
-    text branches on whether this is actually a repo checkout
-    (``repo_root() is not None``) -- mirroring ``ensure_image``'s own real
-    branch order -- rather than inferring that from the ref's shape: a repo
-    checkout can build locally (``make``, which ``eval``/``evolve`` also run
-    automatically) regardless of what ref happens to be resolved; outside a
-    repo (the installed-user path, or a hand-set ``NETHACKERS_*_IMAGE``
-    override with no checkout to build from) the only path is the
-    network/registry, so the fix names that instead."""
+    text mirrors ``ensure_image``'s own real branch order (spec 2026-09-15
+    §5.5), keyed off the ref's shape, not just the checkout: a digest ref
+    (``"@sha256:" in ref``) is only ever pulled, checkout or not, so its fix
+    always names the network; a checkout's fingerprint mutator ref is
+    pulled-or-built (the branch above, before this one ever runs); any other
+    ref inside a checkout (the arena's local dev tag) is built locally, so
+    its fix names ``make``; outside a checkout the only path left, for
+    anything else, is the network/registry."""
     check_id = f"{kind}_image"
     ref = resolve_image(None, kind)
     if image_present(ref):
@@ -242,7 +242,7 @@ def _check_image(
                            detail=f"not local yet, but pullable — {ref}",
                            fix="run `nethackers doctor --pull` to fetch it now",
                            capabilities=caps)
-    if repo_root() is not None:
+    if repo_root() is not None and "@sha256:" not in ref:
         fix = f"run `make {kind}` (or just `nethackers eval`/`evolve`, which auto-builds it)"
     else:
         fix = (f"check your network connection, or set NETHACKERS_{kind.upper()}_IMAGE "
