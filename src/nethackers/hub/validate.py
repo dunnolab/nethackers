@@ -129,7 +129,9 @@ def classified_major(image: str, current_major: int) -> None:
     if submitted is None:
         raise UnclassifiedArena(
             f"evaluator_image {image!r} is not a classified arena image -- "
-            f"evidence must come from the pinned arena image, not a local build"
+            f"evidence must come from the pinned arena image, not a local build. "
+            f"If you set NETHACKERS_ARENA_IMAGE (a local stack's .env.stack sets "
+            f"it to this worktree's own arena tag), unset it and re-run"
         )
     if submitted != current_major:
         raise WrongArenaMajor(
