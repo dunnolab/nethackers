@@ -33,7 +33,8 @@ inspect`. A missing image reads as a clean skip, not a wall of docker
 
 Excluded from the routine run via the `docker` marker (`uv run pytest -m
 "not nle and not docker and not claude_live"`); run directly with `uv run
-pytest tests/test_mutator_image.py -v -m docker` after `make mutator`.
+pytest tests/test_mutator_image.py -v -m docker` after `nethackers doctor
+--pull`, which pulls or builds the mutator this checkout needs.
 """
 
 from __future__ import annotations
@@ -43,7 +44,10 @@ import subprocess
 
 import pytest
 
-IMAGE = "nethackers/mutator:latest"
+from nethackers.harness.sandbox_preflight import resolve_image
+
+# The mutator this checkout resolves to: its fingerprint image, or the pin.
+IMAGE = resolve_image(None, "mutator")
 
 pytestmark = [
     pytest.mark.docker,
@@ -64,7 +68,7 @@ def _image_built(image: str) -> bool:
 @pytest.fixture(autouse=True)
 def _require_image() -> None:
     if not _image_built(IMAGE):
-        pytest.skip(f"{IMAGE} not built locally -- run `make mutator` (needs `make arena` first)")
+        pytest.skip(f"{IMAGE} not built locally -- run `nethackers doctor --pull`")
 
 
 def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
