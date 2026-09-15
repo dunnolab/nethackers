@@ -257,9 +257,18 @@ def _without_errors(on_event: Callable[[PullEvent], None] | None
     return forward
 
 
+# How long a registry reachability probe may take. `manifest inspect` walks every
+# sub-manifest of a multi-arch index, which measured 7-16s against GHCR on a laptop
+# (and longer for an index with many platforms), so a tighter budget makes a
+# reachable image look gone. `diagnostics._manifest_reachable` shares this number:
+# doctor must never call an image unreachable that acquisition would pull happily.
+MANIFEST_PROBE_TIMEOUT = 30
+
+
 def _remote_image_exists(ref: str, *, runtime: str, run) -> bool:
     try:
-        result = run([runtime, "manifest", "inspect", ref], capture_output=True, timeout=30)
+        result = run([runtime, "manifest", "inspect", ref], capture_output=True,
+                     timeout=MANIFEST_PROBE_TIMEOUT)
         return bool(result.returncode == 0)
     except (OSError, subprocess.SubprocessError):
         return False

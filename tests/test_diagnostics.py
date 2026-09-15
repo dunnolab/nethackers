@@ -34,6 +34,7 @@ from nethackers.diagnostics import (
     run_checks,
     to_json,
 )
+from nethackers.harness import sandbox_preflight
 from nethackers.hubclient.client import HubUnreachable
 from nethackers.hubclient.credentials import Credentials
 
@@ -686,3 +687,24 @@ def test_fingerprint_mutator_nobody_built_says_it_builds_on_first_use():
 def test_short_digest_also_shortens_fingerprint_tags():
     shortened = _short_digest(f"present — {_FP}")
     assert shortened == "present — nethackers/mutator:h-" + "e" * 19 + "…"
+
+
+# --- the registry probe: doctor must not be stricter than acquisition -------
+
+
+def test_doctor_probe_is_not_stricter_than_the_acquisition_probe():
+    # A slow registry made doctor report `unreachable` for an image ensure_image
+    # pulls without complaint: `docker manifest inspect` walks every sub-manifest
+    # of a multi-arch index, which measured 7-16s against GHCR on a laptop --
+    # over doctor's old 10s budget, inside acquisition's. Both probes now share
+    # one budget, so the two can't disagree about the same image.
+    seen: dict = {}
+
+    def _run(argv, **kw):
+        seen[argv[1]] = kw.get("timeout")
+        return SimpleNamespace(returncode=0)
+
+    ref = "ghcr.io/dunnolab/nethackers-mutator@sha256:" + "a" * 64
+    assert diagnostics._manifest_reachable(ref, run=_run) is True
+    assert sandbox_preflight._remote_image_exists(ref, runtime="docker", run=_run) is True
+    assert seen["manifest"] == sandbox_preflight.MANIFEST_PROBE_TIMEOUT >= 30

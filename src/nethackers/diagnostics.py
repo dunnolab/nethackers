@@ -135,9 +135,12 @@ def _manifest_reachable(ref: str, *, runtime: str = "docker", run=subprocess.run
     missing): distinguishing *why* isn't doctor's job here -- ``ensure_
     image``'s own error mapping already covers that at actual-pull time.
     ``runtime`` is threaded in from ``run_checks`` (``container_runtime()``) so
-    a podman-only host probes with podman, not a missing ``docker``."""
+    a podman-only host probes with podman, not a missing ``docker``. The budget
+    is ``sandbox_preflight``'s, so a registry slow enough to outlast it can't
+    make doctor report "unreachable" for an image ``ensure_image`` then pulls."""
     try:
-        result = run([runtime, "manifest", "inspect", ref], capture_output=True, timeout=10)
+        result = run([runtime, "manifest", "inspect", ref], capture_output=True,
+                     timeout=sandbox_preflight.MANIFEST_PROBE_TIMEOUT)
         return bool(result.returncode == 0)
     except (OSError, subprocess.SubprocessError):
         return False
