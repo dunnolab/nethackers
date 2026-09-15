@@ -22,6 +22,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.text import Text
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -95,6 +96,10 @@ def _version_line(backend: str, cli: CliInfo) -> str:
     if not cli.installed:
         return f"[#c04040]{backend} not found on PATH[/]"
     ver = cli.version or f"{backend} (version unknown)"
+    if cli.logged_in is False and backend == "opencode2":
+        # No provider key in the global opencode.json: runs still work, on
+        # OpenCode's free models only.
+        return f"[dim]{ver} · free models only[/]"
     if cli.logged_in is False:
         return f"[dim]{ver}[/] · [#c04040]not logged in[/]"
     return f"[dim]{ver}[/]"
@@ -253,7 +258,8 @@ class EvolveForm(Vertical):
             "#f_obj_grid": "The NetHack character(s) to evolve a bot for. Pick one "
                            "identity, a whole role, or several — the bot is scored on "
                            "every one you select.",
-            "#f_op": "The coding agent that rewrites the bot each round (Claude or Codex).",
+            "#f_op": ("The coding agent that rewrites the bot each round "
+                      "(Claude, Codex, or OpenCode 2)."),
             "#f_model": "Which model that agent uses. 'Harness default' lets it choose.",
             "#f_model_custom": "Type an exact model id the picker doesn't list.",
             "#f_effort": "How hard the model thinks per change: higher = smarter but "
@@ -299,6 +305,7 @@ class EvolveForm(Vertical):
 
     def on_select_changed(self, event: Select.Changed) -> None:
         if event.select.id == "f_op":  # repopulate the model list for the new harness
+            self._live = {}  # never carry another operator's effort metadata across
             model = self.query_one("#f_model", Select)
             model.set_options(self._model_options(str(event.value)))
             model.value = ""
@@ -406,9 +413,18 @@ class EvolveForm(Vertical):
     def _effort_options(self, model_id: str) -> list[tuple[str, str]]:
         # Efforts the selected model actually supports (from live discovery);
         # fall back to the shared static EFFORTS for an unknown / custom /
-        # harness-default pick or when discovery gave no per-model reasoning.
+        # harness-default pick or when discovery gave no per-model metadata.
+        # A known-empty set is different: OpenCode models such as Big Pickle
+        # have no variants, so offering "medium" creates a provider.no-route
+        # error instead of changing reasoning effort. And OpenCode 2 applies
+        # effort only as a variant of a named model, so with no model pinned
+        # there is nothing to apply it to.
+        if (str(self.query_one("#f_op", Select).value) == "opencode2"
+                and model_id in ("", _NO_SANDBOX_MODEL_VALUE)):
+            return [("Harness default", "")]
         m = self._live.get(model_id)
-        levels = list(m.reasoning) if (m and m.reasoning) else list(EFFORTS)
+        levels = (list(m.reasoning) if m and (m.reasoning or m.reasoning_known)
+                  else list(EFFORTS))
         return [("Harness default", ""), *((e, e) for e in levels)]
 
     def _set_effort_options(self, model_id: str) -> None:
@@ -514,8 +530,11 @@ class EvolveForm(Vertical):
                 ref, kind, runtime=runtime,
                 on_event=lambda e: self.app.call_from_thread(self._apply_pull, e))
             if err is not None:
+                # Rich markup, with any raw build lines in it escaped for Rich: read it
+                # with Rich as the CLI does, since Textual's own parser takes some of
+                # those brackets (`[ 45%]`, `[Warning]`) for tags.
                 self.app.call_from_thread(
-                    lambda e=err: self.query_one("#f_err", Static).update(e))
+                    lambda e=err: self.query_one("#f_err", Static).update(Text.from_markup(e)))
                 return
         self.app.call_from_thread(self._launch, params)
 
@@ -553,4 +572,6 @@ class EvolveForm(Vertical):
             self.query_one("#f_pull", Static).update(
                 f"[green]✓ {event.kind} sandbox ready[/]  {short_ref}")
         elif event.phase == "error":
-            self.query_one("#f_err", Static).update(f"[red]{event.detail or 'pull failed'}[/]")
+            # raw build/pull output: shown as written, never parsed as markup
+            self.query_one("#f_err", Static).update(Text(event.detail or "pull failed",
+                                                         style="red"))

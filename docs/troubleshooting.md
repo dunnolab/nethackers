@@ -120,6 +120,14 @@ a checkout, `make mutator` (which `evolve` also runs automatically) still
 builds it locally; outside one, `NETHACKERS_MUTATOR_IMAGE` is the escape
 hatch.
 
+### "not built yet — nethackers/mutator:h-…"
+
+You are running from a checkout whose mutator files (its Dockerfile, entrypoint,
+or the arena code it copies) differ from the pinned build, and CI hasn't published
+an image for them. `nethackers doctor --pull` builds it now; `evolve` builds it on
+its own. Nothing to run by hand. Older fingerprint images stay on disk until you
+remove them; `docker image ls nethackers/mutator` lists them.
+
 ---
 
 ## Login and publishing
@@ -234,19 +242,21 @@ directory-named project and leaves the real `hubdata` volume untouched.
 violation — is gone: the `objectives` table was dropped and the catalog now lives
 only in memory.)
 
-### CI fails: "image-input paths changed (since &lt;tag&gt;) without re-pinning …"
+### CI fails: "arena inputs changed since &lt;tag&gt; without re-pinning ARENA_IMAGE"
 
-Something that changes the sandbox images' contents was modified —
-`Dockerfile.mutator`, `nle-base/Dockerfile`, `arena/Dockerfile`, `uv.lock`,
-`src/nethackers/arena/`, or `src/nethackers/contracts/` — without
-`_image_pins.py` changing too.
+Something that changes the arena image's contents was modified —
+`arena/Dockerfile`, `nle-base/Dockerfile`, `uv.lock`, `src/nethackers/arena/`,
+or `src/nethackers/contracts/` — while `ARENA_IMAGE` in `_image_pins.py` stayed
+the same. The mutator never trips this: its pin is re-pinned automatically.
 
 Check the diff it prints before assuming it was you: the base is the **last `v*`
 release tag**, not your PR's base branch, so drift from an earlier
-merged-but-unreleased PR fails your PR as well. Read
-[`contributing.md`](contributing.md#two-traps-that-cost-real-time) before
-re-pinning — it is not a formality, and re-pinning the arena image orphans every
-verified score accumulated so far.
+merged-but-unreleased PR fails your PR as well. The fix is in
+[`contributing.md`](contributing.md#two-traps-that-cost-real-time): run
+`.github/workflows/sandbox-images.yml` on your branch, then classify the new
+arena digest in `src/nethackers/arena_version.py`. A rebuild that doesn't move
+scores keeps the verified corpus; one that bumps `ARENA_MAJOR` retires it from
+every board (nothing is deleted).
 
 ### A test passes but clearly isn't testing anything
 

@@ -165,8 +165,19 @@ down the table.
 |---|---|
 | Browse the hub (TUI, boards, frontier) | nothing else |
 | `eval` — score a bot | Docker or Podman |
-| `evolve` — run the loop | Docker or Podman, a coding agent CLI (`claude` or `codex`) logged in on the host, and `nethackers login` |
+| `evolve` — run the loop | Docker or Podman, a coding agent CLI (`claude`, `codex`, or `opencode2`) logged in on the host, and `nethackers login` |
 | `submit` — publish a solution | Docker or Podman (it evaluates before pushing), `nethackers login`, and [`gh`](https://cli.github.com/) authenticated as the **same** GitHub account |
+
+OpenCode 2 needs nothing installed on the host: its CLI ships in the sandbox.
+Give it models by defining providers in your global
+`~/.config/opencode/opencode.json` (or `.jsonc`). Only that file's `provider`
+section enters the sandbox, along with the environment variables those
+providers reference as `{env:NAME}` or list in their `env` field. So set each
+key as `{env:NAME}` or a literal `apiKey`: a `{file:...}` key, a login made with
+`opencode2 auth login`, your plugins and MCP servers, and project
+`opencode.json` files all stay outside. With no key, runs use OpenCode's free
+models, and `doctor` says so. How each coding agent behaves in the sandbox, with
+OpenCode 2 in detail, is in [`docs/harness.md`](docs/harness.md#the-coding-agents).
 
 Note that `doctor`'s `publish` capability checks the hub, your login, and `gh` —
 but not the container runtime, so it can report `publish` ready on a machine where

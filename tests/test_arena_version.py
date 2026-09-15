@@ -10,8 +10,13 @@ from nethackers.arena_version import (
 
 UNKNOWN_DIGEST = "sha256:" + "0" * 64
 
+# The linux/amd64 LEG of the arena index main pins. Deliberately a literal and
+# not derived from ARENA_IMAGE: this test exists to say WHICH digest the amd64
+# reference is, so a re-pin that changes it has to change this line too and get
+# read by a human. Verified against the live manifest when adopted: all 15
+# published monk starting maps match the leg the design was measured on.
 AMD64_MAJOR_2 = (
-    "sha256:862434c5e719941a3ef63a01449dfe4ef7c158790b15ab9628d39ecd336796eb"
+    "sha256:5c8c0cee2f28d2a0de5e9b78170a01ec0991a18a9802de0a43e8e312590d151c"
 )
 
 

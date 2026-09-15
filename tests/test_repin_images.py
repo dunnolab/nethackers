@@ -40,12 +40,18 @@ def _exec(source: str) -> dict:
     return ns
 
 
-def test_render_pins_round_trips_the_two_digest_refs():
-    arena = f"ghcr.io/dunnolab/nethackers-arena@{CLASSIFIED_ARENA_DIGEST}"
-    mutator = "ghcr.io/dunnolab/nethackers-mutator@sha256:" + "b" * 64
-    ns = _exec(repin.render_pins(arena, mutator))
-    assert ns["ARENA_IMAGE"] == arena
-    assert ns["MUTATOR_IMAGE"] == mutator
+# Must be a CLASSIFIED digest: render_pins now refuses an arena digest that
+# arena_version.py does not know (spec 2026-09-14 I7).
+ARENA = f"ghcr.io/dunnolab/nethackers-arena@{next(iter(ARENA_MAJOR_BY_DIGEST))}"
+MUTATOR = "ghcr.io/dunnolab/nethackers-mutator@sha256:" + "b" * 64
+BASE = "ghcr.io/dunnolab/nethackers-nle-base@sha256:" + "c" * 64
+INPUTS = "sha256:" + "d" * 64
+
+
+def test_render_pins_round_trips_all_four_values():
+    ns = _exec(repin.render_pins(ARENA, MUTATOR, BASE, INPUTS))
+    assert (ns["ARENA_IMAGE"], ns["MUTATOR_IMAGE"], ns["NLE_BASE_IMAGE"],
+            ns["MUTATOR_INPUTS"]) == (ARENA, MUTATOR, BASE, INPUTS)
 
 
 @pytest.mark.parametrize("bad", [
@@ -56,33 +62,54 @@ def test_render_pins_round_trips_the_two_digest_refs():
 ])
 def test_render_pins_rejects_a_non_digest_ref(bad):
     with pytest.raises(ValueError):
-        repin.render_pins(bad, "ghcr.io/x/m@sha256:" + "b" * 64)
+        repin.render_pins(bad, MUTATOR, BASE, INPUTS)
 
 
-def test_main_writes_the_out_file(tmp_path):
+@pytest.mark.parametrize("bad", ["d" * 64, "sha256:" + "D" * 64, "sha256:" + "d" * 63])
+def test_render_pins_rejects_a_malformed_fingerprint(bad):
+    with pytest.raises(ValueError):
+        repin.render_pins(ARENA, MUTATOR, BASE, bad)
+
+
+def test_main_writes_all_four_pins(tmp_path):
     out = tmp_path / "_image_pins.py"
-    rc = repin.main([
-        "--arena", f"ghcr.io/dunnolab/nethackers-arena@{CLASSIFIED_ARENA_DIGEST}",
-        "--mutator", "ghcr.io/dunnolab/nethackers-mutator@sha256:" + "d" * 64,
-        "--out", str(out)])
-    assert rc == 0 and out.exists()
-    assert _exec(out.read_text())["ARENA_IMAGE"].endswith(CLASSIFIED_ARENA_DIGEST)
+    rc = repin.main(["--arena", ARENA, "--mutator", MUTATOR, "--nle-base", BASE,
+                     "--mutator-inputs", INPUTS, "--out", str(out)])
+    assert rc == 0
+    assert _exec(out.read_text())["NLE_BASE_IMAGE"] == BASE
+
+
+def test_main_updates_the_mutator_alone_and_keeps_the_rest_byte_identical(tmp_path):
+    # The automatic mutator rebuild passes only --mutator/--mutator-inputs; the
+    # arena and base pins it didn't build must not change.
+    out = tmp_path / "_image_pins.py"
+    out.write_text(repin.render_pins(ARENA, MUTATOR, BASE, INPUTS))
+    new_mutator = MUTATOR.replace("b" * 64, "e" * 64)
+    new_inputs = "sha256:" + "f" * 64
+    assert repin.main(["--mutator", new_mutator, "--mutator-inputs", new_inputs,
+                       "--out", str(out)]) == 0
+    assert out.read_text() == repin.render_pins(ARENA, new_mutator, BASE, new_inputs)
+
+
+def test_main_refuses_when_a_value_is_neither_given_nor_on_file(tmp_path):
+    out = tmp_path / "_image_pins.py"
+    rc = repin.main(["--arena", ARENA, "--mutator", MUTATOR, "--out", str(out)])
+    assert rc == 2 and not out.exists()
 
 
 def test_main_rejects_a_bad_ref_without_writing(tmp_path):
     out = tmp_path / "_image_pins.py"
-    rc = repin.main(["--arena", "not-a-ref", "--mutator", "ghcr.io/x/m@sha256:" + "b" * 64,
-                     "--out", str(out)])
+    rc = repin.main(["--arena", "not-a-ref", "--mutator", MUTATOR, "--nle-base", BASE,
+                     "--mutator-inputs", INPUTS, "--out", str(out)])
     assert rc == 2 and not out.exists()
 
 
 def test_committed_pins_file_matches_the_generator():
     # Drift guard: the checked-in _image_pins.py is byte-for-byte what
-    # render_pins would produce for its own current digests -- so a hand-edit
-    # (or a generator tweak) that drifts the two apart fails here, keeping the
-    # file a purely generated artifact (spec D11).
+    # render_pins produces for its own values, so it stays generated (spec D11).
     from nethackers import _image_pins
-    regenerated = repin.render_pins(_image_pins.ARENA_IMAGE, _image_pins.MUTATOR_IMAGE)
+    regenerated = repin.render_pins(_image_pins.ARENA_IMAGE, _image_pins.MUTATOR_IMAGE,
+                                    _image_pins.NLE_BASE_IMAGE, _image_pins.MUTATOR_INPUTS)
     assert regenerated == _PINS.read_text()
 
 
@@ -93,7 +120,7 @@ def test_repin_rejects_an_arena_digest_that_is_not_classified():
     silently revert the reference architecture."""
     unclassified = "ghcr.io/dunnolab/nethackers-arena@sha256:" + "b" * 64
     with pytest.raises(ValueError, match="not a classified arena"):
-        repin.render_pins(unclassified, MUTATOR)
+        repin.render_pins(unclassified, MUTATOR, BASE, INPUTS)
 
 
 def test_repin_accepts_a_classified_arena_digest():
@@ -102,5 +129,5 @@ def test_repin_accepts_a_classified_arena_digest():
     # full "sha256:<hex>" string is never contiguous in the generated source.
     # Round-trip through _exec instead, as the other render_pins tests do.
     arena = f"ghcr.io/dunnolab/nethackers-arena@{CLASSIFIED_ARENA_DIGEST}"
-    out = repin.render_pins(arena, MUTATOR)
+    out = repin.render_pins(arena, MUTATOR, BASE, INPUTS)
     assert _exec(out)["ARENA_IMAGE"] == arena

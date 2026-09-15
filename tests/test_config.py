@@ -95,3 +95,20 @@ def test_prod_flag_bypasses_discovery(tmp_path, monkeypatch):
 
     assert _stage_from_argv([]).name == "wt"          # discovery finds the worktree stage...
     assert _stage_from_argv(["--prod"]).name == "prod"  # ...but --prod forces prod regardless
+
+
+def test_stack_file_can_no_longer_pin_the_mutator_image(tmp_path):
+    # Older .env.stack files carry NETHACKERS_MUTATOR_IMAGE=nethackers/mutator:latest.
+    # Honoring it would bypass content-based resolution and bring the stale image back.
+    (tmp_path / ".env.stack").write_text(
+        "NETHACKERS_MUTATOR_IMAGE=nethackers/mutator:latest\n"
+        "NETHACKERS_ARENA_IMAGE=nethackers/arena:wt\n")
+    stage = load_stage(cwd=tmp_path, environ={})
+    assert stage.mutator_image is None
+    assert stage.arena_image == "nethackers/arena:wt"
+
+
+def test_process_env_still_overrides_the_mutator_image(tmp_path):
+    (tmp_path / ".env.stack").write_text("NETHACKERS_MUTATOR_IMAGE=nethackers/mutator:latest\n")
+    stage = load_stage(cwd=tmp_path, environ={"NETHACKERS_MUTATOR_IMAGE": "me/mutator:x"})
+    assert stage.mutator_image == "me/mutator:x"

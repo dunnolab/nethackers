@@ -35,16 +35,29 @@ ARENA_MAJOR_BY_DIGEST: dict[str, int] = {
     # nothing on the path that seeds, steps or scores an episode -- so it stays
     # comparable with the digest above (design D7).
     "sha256:d18bff83ace72a35cbbfde29df8e2da73f6a4a7c2e48bbb0ac488ac9c45c12e3": 1,
-    # Reference architecture pinned to linux/amd64 (design
-    # 2026-09-14-amd64-reference-reset). SCORES MOVE: NetHack consumes RNG in
+    # PR #67: the OpenCode 2 operator, merged with main at 0.24.1. Everything
+    # that differs from the digest above's build sits off the scoring path:
+    # harness/, tui/, eval/, hub/, a few top-level modules, README.md and the
+    # pyproject version. arena/ and contracts/ import nothing outside
+    # themselves and are unchanged, as are uv.lock and nle-base, so it stays
+    # comparable with the digest above. Read from the diff, not measured.
+    "sha256:97ba883e04fd79d334c9074bfd92bfe8b0c923a0882881bef5435b369b6a1601": 1,
+    # THE amd64 REFERENCE (design 2026-09-14-amd64-reference-reset). This is the
+    # linux/amd64 LEG of the index digest directly above, and it is major 2
+    # while that index is major 1. That is deliberate, not a mistake: an index
+    # resolves to whichever platform the host is, so evidence produced through
+    # it comes from the mixed-architecture population major 1 describes. This
+    # leg pins every host to amd64, which is a different comparability class.
+    # SCORES MOVE across that boundary because NetHack consumes RNG in
     # unsequenced sibling call arguments (e.g. mkgold(0L, somex(c), somey(c)) at
-    # src/mklev.c:831), and gcc orders call arguments left-to-right on aarch64
-    # and right-to-left on x86-64, so the same seed generates a different
-    # dungeon per architecture. Measured: the monk elite scores 0.15494 on arm64
-    # and 0.10994 on x86_64 over the same published batch. Major 1 was scored on
-    # whatever architecture each contributor happened to run, so nothing under
-    # it is comparable with anything under this.
-    "sha256:862434c5e719941a3ef63a01449dfe4ef7c158790b15ab9628d39ecd336796eb": 2,
+    # src/mklev.c:831) and gcc orders call arguments left-to-right on aarch64
+    # and right-to-left on x86-64, so one seed generates a different dungeon per
+    # architecture. Measured: the monk elite scores 0.15494 on arm64 and 0.10994
+    # on x86_64 over the same published batch. Measured again when adopting this
+    # leg: all 15 published monk starting maps are identical to the leg the
+    # design was written against (862434c5...), so PR #67's "not measured"
+    # equivalence claim above holds for amd64.
+    "sha256:5c8c0cee2f28d2a0de5e9b78170a01ec0991a18a9802de0a43e8e312590d151c": 2,
 }
 
 
