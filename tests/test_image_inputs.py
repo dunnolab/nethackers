@@ -85,3 +85,10 @@ def test_main_prints_the_fingerprint(tmp_path, capsys):
     root = _tree(tmp_path)
     assert image_inputs.main(["mutator", "--base", BASE, "--root", str(root)]) == 0
     assert capsys.readouterr().out.strip() == GOLDEN
+
+
+def test_main_defaults_to_the_pinned_base(tmp_path, capsys, monkeypatch):
+    from nethackers import _image_pins
+    monkeypatch.setattr(_image_pins, "NLE_BASE_IMAGE", BASE)
+    assert image_inputs.main(["mutator", "--root", str(_tree(tmp_path))]) == 0
+    assert capsys.readouterr().out.strip() == GOLDEN

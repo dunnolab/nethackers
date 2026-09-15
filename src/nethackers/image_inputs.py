@@ -73,10 +73,14 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="python -m nethackers.image_inputs",
                                      description="Print an image's input fingerprint.")
     parser.add_argument("kind", choices=["mutator"])
-    parser.add_argument("--base", required=True, help="the base image ref it builds on")
+    parser.add_argument("--base", help="base image ref (default: the pinned NLE_BASE_IMAGE)")
     parser.add_argument("--root", type=Path, default=REPO_ROOT, help="repo root to hash")
     args = parser.parse_args(argv)
-    print(mutator_inputs_hash(args.root, args.base))
+    base = args.base
+    if base is None:
+        from nethackers import _image_pins  # stdlib-only generated module
+        base = _image_pins.NLE_BASE_IMAGE
+    print(mutator_inputs_hash(args.root, base))
     return 0
 
 
