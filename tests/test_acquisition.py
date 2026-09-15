@@ -398,3 +398,40 @@ def test_fingerprint_ref_falls_back_to_build_when_the_pull_fails(tmp_path):
          "--label", "org.dunnolab.nethackers.image=mutator",
          "-t", FP, "."],
     ]
+
+
+def _pull_fails_then_build_exits(build_rc):
+    """A ``popen`` whose ``docker pull`` fails and whose build exits ``build_rc``."""
+    def _popen(argv, **kw):
+        if argv[:2] == ["docker", "pull"]:
+            return _FakeProc(["Error response from daemon: unexpected EOF\n"], 1)
+        return _FakeProc(["ERROR: failed to solve: base unreachable\n"], build_rc)
+    return _popen
+
+
+def test_fingerprint_pull_failure_reports_no_error_when_the_build_succeeds(tmp_path):
+    # The build that follows decides the outcome: a pull error shown first would
+    # sit in the TUI's #f_err through a build that then succeeds.
+    docker = _FakeDocker(remote_exists=True)
+    events = []
+
+    err = sp.ensure_image(FP, "mutator", run=docker, popen=_pull_fails_then_build_exits(0),
+                          on_event=events.append, repo_root=lambda: tmp_path)
+
+    assert err is None
+    assert [e.phase for e in events if e.phase == "error"] == []
+    assert events[-1].phase == "done" and events[-1].ref == FP      # the build's own outcome
+
+
+def test_fingerprint_pull_and_build_failures_report_only_the_builds_error(tmp_path):
+    docker = _FakeDocker(remote_exists=True)
+    events = []
+
+    err = sp.ensure_image(FP, "mutator", run=docker, popen=_pull_fails_then_build_exits(1),
+                          on_event=events.append, repo_root=lambda: tmp_path)
+
+    assert err is not None and "sandbox setup failed" in err
+    errors = [e for e in events if e.phase == "error"]
+    assert len(errors) == 1
+    assert errors[0].ref == FP                                        # the build's, not the pull's
+    assert "failed to solve" in errors[0].detail

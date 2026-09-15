@@ -32,8 +32,11 @@ import platform
 import re
 import subprocess
 import threading
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
+
+from rich.markup import escape
 
 from nethackers import _image_pins, image_inputs
 from nethackers.containers import container_runtime
@@ -162,6 +165,9 @@ def _build_image(image: str, kind: str, *, on_line=None,
                       kind=kind, on_line=on_line, on_event=on_event, popen=popen)
 
 
+_BUILD_TAIL_LINES = 15
+
+
 def _run_build(argv: list[str], *, cwd: Path, image: str, kind: str, on_line=None,
                on_event: Callable[[PullEvent], None] | None = None,
                popen=subprocess.Popen) -> str | None:
@@ -169,16 +175,24 @@ def _run_build(argv: list[str], *, cwd: Path, image: str, kind: str, on_line=Non
     ``on_event``, when given, gets exactly two ``PullEvent``s bracketing the
     build -- ``phase="start"`` before, ``phase="done"``/``phase="error"`` after.
     ``layers_total``/``layers_complete`` are always ``None``: a build has no
-    layer concept (that vocabulary is ``docker pull``-only)."""
+    layer concept (that vocabulary is ``docker pull``-only).
+
+    A failed build's error event (raw) and message (escaped for Rich markup)
+    carry its last non-empty output lines: callers that pass only ``on_event``
+    show no build output, so this is the only place the cause can surface."""
     if on_event is not None:
         on_event(PullEvent(kind=kind, ref=image, phase="start",
                            layers_total=None, layers_complete=None, detail=""))
+    tail: deque[str] = deque(maxlen=_BUILD_TAIL_LINES)
     try:
         proc = popen(argv, cwd=str(cwd),
                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         for line in proc.stdout:
+            stripped = line.rstrip()
+            if stripped:
+                tail.append(stripped)
             if on_line is not None:
-                on_line(line.rstrip())
+                on_line(stripped)
         rc = proc.wait()
     except (OSError, subprocess.SubprocessError) as exc:
         if on_event is not None:
@@ -186,10 +200,15 @@ def _run_build(argv: list[str], *, cwd: Path, image: str, kind: str, on_line=Non
                                layers_total=None, layers_complete=None, detail=str(exc)))
         return f"[red]sandbox setup failed[/]: {exc}"
     if rc != 0:
+        last_lines = "\n".join(tail)
         if on_event is not None:
             on_event(PullEvent(kind=kind, ref=image, phase="error",
-                               layers_total=None, layers_complete=None, detail=""))
-        return "[red]sandbox setup failed[/] — the build did not complete (see the log above)"
+                               layers_total=None, layers_complete=None, detail=last_lines))
+        if not last_lines:
+            return (f"[red]sandbox setup failed[/] — the {kind} image build did not complete "
+                    f"(exit code {rc})")
+        return (f"[red]sandbox setup failed[/] — the {kind} image build did not complete. "
+                f"Its last lines:\n{escape(last_lines)}")
     if on_event is not None:
         on_event(PullEvent(kind=kind, ref=image, phase="done",
                            layers_total=None, layers_complete=None, detail=""))
@@ -200,14 +219,16 @@ def _acquire_mutator_fingerprint(ref: str, *, runtime: str, on_line, on_event, p
                                  repo_root) -> str | None:
     """Fill a checkout's fingerprint ref: pull CI's image for the same files and
     tag it locally when GHCR has it. Otherwise -- or if that pull or tag fails --
-    build it locally on the pinned base instead. No cleanup of older fingerprint
-    images (spec 2026-09-15 D9): a run starts a fresh container every iteration,
-    so nothing holds an image between iterations, and removing "old" fingerprints
-    from one worktree could break an evolve running in another."""
+    build it locally on the pinned base instead. The pull's ``error`` event never
+    reaches ``on_event``: a build follows, and its outcome is the one to report.
+    No cleanup of older fingerprint images (spec 2026-09-15 D9): a run starts a
+    fresh container every iteration, so nothing holds an image between
+    iterations, and removing "old" fingerprints from one worktree could break an
+    evolve running in another."""
     remote = ghcr_mutator_ref(ref)
     if _remote_image_exists(remote, runtime=runtime, run=run):
         err = _pull_image(remote, "mutator", runtime=runtime, on_line=on_line,
-                          on_event=on_event, popen=popen)
+                          on_event=_without_errors(on_event), popen=popen)
         if err is None:
             err = _tag_image(remote, ref, runtime=runtime, run=run)
         if err is None:
@@ -222,6 +243,18 @@ def _acquire_mutator_fingerprint(ref: str, *, runtime: str, on_line, on_event, p
          "--label", _MUTATOR_BUILD_LABEL, "-t", ref, "."],
         cwd=root, image=ref, kind="mutator", on_line=on_line, on_event=on_event,
         popen=popen)
+
+
+def _without_errors(on_event: Callable[[PullEvent], None] | None
+                    ) -> Callable[[PullEvent], None] | None:
+    """``on_event`` with every ``phase="error"`` event dropped."""
+    if on_event is None:
+        return None
+
+    def forward(event: PullEvent) -> None:
+        if event.phase != "error":
+            on_event(event)
+    return forward
 
 
 def _remote_image_exists(ref: str, *, runtime: str, run) -> bool:

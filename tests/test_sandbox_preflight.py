@@ -9,6 +9,9 @@ import time
 from pathlib import Path
 from types import SimpleNamespace
 
+from rich.markup import escape
+from rich.text import Text
+
 from nethackers.harness import sandbox_preflight as sp
 from nethackers.harness.auth_inject import AuthUnavailable
 
@@ -202,8 +205,10 @@ def test_build_image_emits_error_event_on_build_failure(monkeypatch, tmp_path):
                           popen=lambda *a, **k: _FakeProc([], 2))
 
     assert err is not None and "setup failed" in err.lower()
+    assert "the mutator image build did not complete (exit code 2)" in err   # no output to show
     assert [e.phase for e in events] == ["start", "error"]
     assert events[-1].layers_total is None and events[-1].layers_complete is None
+    assert events[-1].detail == ""
 
 
 def test_build_image_emits_no_events_when_outside_the_repo(monkeypatch, tmp_path):
@@ -219,6 +224,31 @@ def test_build_image_emits_no_events_when_outside_the_repo(monkeypatch, tmp_path
 
     assert err is not None and "repo" in err.lower()
     assert events == []
+
+
+def test_run_build_failure_carries_the_builds_last_lines(tmp_path):
+    # evolve, doctor --pull and the TUI pass on_event only, never on_line, so the
+    # build's own output is the only place a failure's cause can come from.
+    lines = [f"#9 build line {n:02d}\n" for n in range(1, 21)]
+    lines[9] = "#5 [internal] load metadata for x\n"
+    lines[14] = "[/nope]\n"
+    lines.insert(17, "\n")                     # blank lines don't count toward the 15
+    events = []
+
+    err = sp._run_build(["docker", "build", "."], cwd=tmp_path, image="img", kind="mutator",
+                        on_event=events.append, popen=lambda *a, **k: _FakeProc(lines, 1))
+
+    assert err is not None and "sandbox setup failed" in err
+    assert "#9 build line 20" in err                                   # the last line
+    assert escape("#5 [internal] load metadata for x") in err
+    assert escape("[/nope]") in err
+    assert "see the log above" not in err
+    assert "build line 01" not in err                                  # line 1 is past the 15
+    rendered = Text.from_markup(err).plain                             # Rich reads it literally
+    assert "#5 [internal] load metadata for x" in rendered and "[/nope]" in rendered
+    last_15_raw = [ln.rstrip() for ln in lines if ln.strip()][-15:]
+    assert events[-1].phase == "error"
+    assert events[-1].detail == "\n".join(last_15_raw)
 
 
 # --- _pull_image: typed PullEvents alongside the raw on_line (spec S5.5) ----

@@ -22,6 +22,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
+from rich.text import Text
 from textual import work
 from textual.app import ComposeResult
 from textual.binding import Binding
@@ -529,8 +530,11 @@ class EvolveForm(Vertical):
                 ref, kind, runtime=runtime,
                 on_event=lambda e: self.app.call_from_thread(self._apply_pull, e))
             if err is not None:
+                # Rich markup, with any raw build lines in it escaped for Rich: read it
+                # with Rich as the CLI does, since Textual's own parser takes some of
+                # those brackets (`[ 45%]`, `[Warning]`) for tags.
                 self.app.call_from_thread(
-                    lambda e=err: self.query_one("#f_err", Static).update(e))
+                    lambda e=err: self.query_one("#f_err", Static).update(Text.from_markup(e)))
                 return
         self.app.call_from_thread(self._launch, params)
 
@@ -568,4 +572,6 @@ class EvolveForm(Vertical):
             self.query_one("#f_pull", Static).update(
                 f"[green]✓ {event.kind} sandbox ready[/]  {short_ref}")
         elif event.phase == "error":
-            self.query_one("#f_err", Static).update(f"[red]{event.detail or 'pull failed'}[/]")
+            # raw build/pull output: shown as written, never parsed as markup
+            self.query_one("#f_err", Static).update(Text(event.detail or "pull failed",
+                                                         style="red"))
