@@ -87,22 +87,24 @@ To point the CLI at production from inside a worktree, use `nethackers --prod`.
 
 ## Two traps that cost real time
 
-**The image-pins tripwire.** On every PR, CI fails if `Dockerfile.mutator`,
-`nle-base/Dockerfile`, `arena/Dockerfile`, `uv.lock`, `src/nethackers/arena/`, or
-`src/nethackers/contracts/` changed without `src/nethackers/_image_pins.py` also
-changing. Those paths change the sandbox images' contents, and a pin that no
-longer matches its image is a scoring-parity bug.
+**Sandbox image pins.** `src/nethackers/_image_pins.py` pins the images a release
+pulls. How each one changes:
 
-The confusing part: the diff base is **the last `v*` release tag, not your PR's
-base branch**. That is deliberate (drift from merged-but-unreleased PRs still gets
-caught), but it means your PR can fail this check having touched none of those
-paths, because someone else's unreleased merge did.
-
-The fix is to run `.github/workflows/sandbox-images.yml`, which rebuilds, pushes,
-and re-pins. But **understand the cost before you do**: re-pinning the arena image
-starts a new verified epoch and orphans every verified score accumulated so far
-(see [`verification.md#epochs`](verification.md#epochs)). Touching `uv.lock`
-trips this, so a routine dependency bump is not routine here.
+- **The mutator is automatic.** A PR that touches `Dockerfile.mutator`, the
+  entrypoint, or the arena/contracts code the mutator copies gets its image built,
+  pushed and re-pinned by `.github/workflows/mutator-image.yml`, which commits the
+  new pin to your branch. Wait for that commit before merging. A fork PR's image is
+  published by the run on `main` after merge. The release refuses to publish if the
+  mutator pin doesn't match the tagged files.
+- **The arena and the shared base are manual.** CI fails if `arena/Dockerfile`,
+  `nle-base/Dockerfile`, `uv.lock`, `src/nethackers/arena/` or
+  `src/nethackers/contracts/` changed since the last release tag without
+  `ARENA_IMAGE` changing. Run `.github/workflows/sandbox-images.yml` on your branch,
+  then classify the new arena digest in `src/nethackers/arena_version.py`; a
+  rebuild that doesn't move scores keeps the verified corpus. The diff base is **the
+  last `v*` release tag, not your PR's base branch**, so this can fire for someone
+  else's unreleased merge. Touching `uv.lock` trips it, so a routine dependency bump
+  is not routine here.
 
 **Injectable seams bind at import.** Many functions take dependencies as keyword
 defaults (`run=subprocess.run`, `repo_root=...`). Those defaults are evaluated at

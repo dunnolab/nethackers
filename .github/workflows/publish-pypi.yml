@@ -39,6 +39,18 @@ jobs:
         run: |
           uv build --no-sources
           uvx twine check dist/*
+      - name: Gate on the mutator pin matching its files
+        run: |
+          # Spec 2026-09-15 §5.4: a release must never ship a mutator pin built from
+          # different files than the ones it tags.
+          pinned=$(uv run python -c 'from nethackers._image_pins import MUTATOR_INPUTS; print(MUTATOR_INPUTS)')
+          actual=$(uv run python -m nethackers.image_inputs mutator --root .)
+          if [ "$pinned" != "$actual" ]; then
+            echo "::error::MUTATOR_INPUTS is $pinned but this tree's mutator files hash to $actual"
+            echo "let .github/workflows/mutator-image.yml re-pin the mutator, move the tag onto that commit, and re-run this release"
+            exit 1
+          fi
+          echo "mutator pin matches its files: $actual"
       - name: Gate on published sandbox images
         env:
           # `docker manifest` is still marked experimental in the Docker CLI.

@@ -60,28 +60,30 @@ jobs:
           fetch-depth: 0
           fetch-tags: true
 
-      - name: Fail if image inputs changed without a re-pin
+      - name: Fail if arena inputs changed without an arena re-pin
         run: |
-          # design doc docs/superpowers/specs/2026-08-28-sandbox-image-distribution-design.md
-          # section 5.12 / D12: these paths feed the arena/mutator image
-          # contents (see src/nethackers/_image_pins.py's own docstring and
-          # the sandbox-images.yml bootstrap). Diffed against the last
-          # RELEASED tag (not just this PR's base branch), per D12/section
-          # 5.12, so drift accumulated across merged-but-unreleased PRs -- or
-          # a direct push to main -- is still caught, not only drift
-          # introduced by this one PR. `--match 'v*'` restricts to actual
-          # release tags (hub-image.yml/publish-pypi.yml's own convention),
-          # in case any non-release tag ever exists in this repo.
+          # Per image (spec 2026-09-15 D10). The mutator is re-pinned automatically
+          # by mutator-image.yml and checked exactly at release (publish-pypi.yml),
+          # so this guards only the arena: if its inputs changed since the last
+          # RELEASED tag, ARENA_IMAGE must have changed too. Diffed against the last
+          # `v*` tag, not the PR base, so drift across merged-but-unreleased PRs is
+          # still caught (spec 2026-08-28 D12).
           base="$(git describe --tags --abbrev=0 --match 'v*')"
           echo "diffing against last released tag: $base"
           changed=$(git diff --name-only "${base}...HEAD")
-          image_inputs='^(Dockerfile\.mutator|nle-base/Dockerfile|arena/Dockerfile|uv\.lock)$|^(src/nethackers/arena/|src/nethackers/contracts/)'
+          arena_inputs='^(nle-base/Dockerfile|arena/Dockerfile|uv\.lock)$|^(src/nethackers/arena/|src/nethackers/contracts/)'
 
-          if echo "$changed" | grep -qE "$image_inputs" && ! echo "$changed" | grep -qx 'src/nethackers/_image_pins\.py'; then
-            echo "::error::image-input paths changed (since $base) without re-pinning src/nethackers/_image_pins.py"
-            echo "$changed" | grep -E "$image_inputs"
-            echo "fix: run .github/workflows/sandbox-images.yml, then paste the new digests into src/nethackers/_image_pins.py (spec section 8)"
-            exit 1
+          if ! echo "$changed" | grep -qE "$arena_inputs"; then
+            echo "ok -- no arena-input changes since $base"
+            exit 0
           fi
 
-          echo "ok -- no image-input drift since $base, or the pins were updated alongside it"
+          arena_then=$(git show "${base}:src/nethackers/_image_pins.py" | python3 -c 'import sys; ns = {}; exec(sys.stdin.read(), ns); print(ns["ARENA_IMAGE"])')
+          arena_now=$(PYTHONPATH=src python3 -c 'from nethackers._image_pins import ARENA_IMAGE; print(ARENA_IMAGE)')
+          if [ "$arena_then" = "$arena_now" ]; then
+            echo "::error::arena inputs changed since $base without re-pinning ARENA_IMAGE"
+            echo "$changed" | grep -E "$arena_inputs"
+            echo "fix: run .github/workflows/sandbox-images.yml on this branch, then classify the new arena digest in src/nethackers/arena_version.py"
+            exit 1
+          fi
+          echo "ok -- arena inputs changed and ARENA_IMAGE was re-pinned"
