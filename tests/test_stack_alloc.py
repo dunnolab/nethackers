@@ -54,4 +54,4 @@ def test_allocate_writes_throwaway_names(tmp_path):
     v = stack.allocate(wt, is_free=lambda p: True)
     assert v["NETHACKERS_REPO_NAME"] == "nh-dev-tripletail"
     assert v["NETHACKERS_ARENA_IMAGE"] == "nethackers/arena:tripletail"
-    assert v["NETHACKERS_MUTATOR_IMAGE"] == "nethackers/mutator:latest"
+    assert "NETHACKERS_MUTATOR_IMAGE" not in v   # chosen by content, never by the stack file
