@@ -11,6 +11,8 @@ this suite must never do."""
 from __future__ import annotations
 
 import pytest
+from rich.markup import escape
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Input, Select, Static
 
@@ -501,6 +503,70 @@ async def test_pull_error_phase_writes_to_f_err_not_f_pull(monkeypatch):
         err_text = str(app.query_one("#f_err", Static).render())
         assert "couldn't reach the registry" in err_text   # the mapped, authoritative message
         assert app.started is None   # provisioning failed -- the run never launched
+
+
+async def test_pull_error_detail_shows_its_brackets_literally(monkeypatch):
+    """An error event's detail is raw build or pull output, which routinely holds
+    bracketed text. Parsed as markup, `[internal]` would vanish and `[/nope]`
+    would raise; #f_err must show both as written."""
+    monkeypatch.setattr(ef, "prepare_evolve", lambda *a, **k: _Plan())
+    monkeypatch.setattr(ef, "image_present", lambda *a, **k: False)
+    detail = "#5 [internal] load metadata for x\n[/nope]"
+
+    def _ensure(ref, kind, on_event=None, **k):
+        if kind == "mutator":
+            if on_event is not None:
+                on_event(PullEvent(kind="mutator", ref=ref, phase="error",
+                                   layers_total=None, layers_complete=None, detail=detail))
+            return "[red]sandbox setup failed[/]"
+        return None
+
+    monkeypatch.setattr(ef, "ensure_image", _ensure)
+    app = _Host(None)
+    async with app.run_test(size=(100, 40)) as pilot:
+        form = app.query_one(ef.EvolveForm)
+        shown: list[str] = []
+        real_apply = form._apply_pull
+
+        def _spy(event):
+            real_apply(event)   # on the UI thread (via call_from_thread), like production
+            shown.append(str(form.query_one("#f_err", Static).render()))
+
+        form._apply_pull = _spy
+        form._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+    assert shown == [detail]
+
+
+async def test_provisioning_error_renders_its_build_lines_as_the_cli_prints_them(monkeypatch):
+    """`ensure_image`'s message is Rich markup with the build's raw lines escaped
+    for Rich, and the CLI prints it through Rich. Textual's own parser reads some
+    brackets Rich's escape leaves alone (`[ 45%]`, `[Warning]`) as tags, so #f_err
+    must read the message with Rich's parser too."""
+    monkeypatch.setattr(ef, "prepare_evolve", lambda *a, **k: _Plan())
+    monkeypatch.setattr(ef, "image_present", lambda *a, **k: False)
+    raw = ("#5 [internal] load metadata for x\n[/nope]\n"
+           "[ 45%] Building C object\n[Warning] low disk space")
+    message = ("[red]sandbox setup failed[/] — the mutator image build did not complete. "
+               f"Its last lines:\n{escape(raw)}")
+    monkeypatch.setattr(ef, "ensure_image",
+                        lambda ref, kind, **k: message if kind == "mutator" else None)
+    app = _Host(None)
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        shown = str(app.query_one("#f_err", Static).render())
+
+    assert raw in shown
+    assert shown == Text.from_markup(message).plain
+    assert app.started is None
 
 
 async def test_operator_switch_uses_cache_second_time(monkeypatch):

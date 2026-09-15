@@ -281,9 +281,10 @@ without `--model`, and the evolve form offers no effort level while the model is
   fresh container `opencode2 models` prints nothing, so the check polls until two
   readings agree — about 3 seconds, 15 at most.
 
-**It's a beta.** The image installs `@opencode-ai/cli@beta`, a moving tag, so each
-image rebuild can pick up a different build. Everything above was checked against
-`0.0.0-beta-19271`.
+**It's a beta, pinned.** The image installs one exact build,
+`@opencode-ai/cli@0.0.0-beta-19271`, next to pinned Claude Code and Codex versions.
+Moving to a newer build is an edit to `Dockerfile.mutator`, which rebuilds the image.
+Everything above was checked against that build.
 
 ### Two design choices worth stealing
 
@@ -318,9 +319,10 @@ read-write — statelessness there rests on those flags, not on the container.
 
 The mutator image is built **from the same NLE base as the arena**, so the agent
 experiments against the same compiled NLE it will be scored on — parity for free,
-as long as both images are built from the same base (guaranteed for the
-CI-published pair, which are re-pinned together; less so for local `make` builds
-against a mutable `:dev` tag).
+as long as both images are built from the same base. The published pair is: the pins
+record the base they share. In a repo checkout the mutator builds on that pinned
+base while the arena is still built locally on a locally compiled base, so the two
+can differ.
 
 The `nethackers` package is deliberately *not* installed in it. Only
 `nethackers.arena` and `nethackers.contracts` are copied onto `PYTHONPATH` — enough

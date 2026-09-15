@@ -1,11 +1,14 @@
 name: Sandbox images
 
+# The mutator alone is rebuilt and re-pinned automatically by mutator-image.yml;
+# run this workflow when the arena or the shared nle-base changes.
+#
 # Manual bootstrap / re-pin workflow (design doc
 # docs/superpowers/specs/2026-08-28-sandbox-image-distribution-design.md,
 # sections 5.3/5.4/8, decision D11). Builds+pushes `nle-base` once, multi-arch
-# (an unpinned GHCR intermediate -- a registry ref, so buildx's isolated
-# docker-container driver can resolve it as a FROM base on both arches; never
-# referenced outside this workflow, never pulled by users), then builds and
+# (a GHCR registry ref, so buildx's isolated docker-container driver can
+# resolve it as a FROM base on both arches; its digest is pinned as
+# NLE_BASE_IMAGE, which every mutator build uses), then builds and
 # pushes BOTH `arena` and `mutator` multi-arch FROM that exact nle-base ref --
 # section 5.3's "pull both, fetch the base once" precondition -- to GHCR,
 # public, each under a permanent `sha-<gitsha>` tag (GHCR's GC deletes
@@ -54,9 +57,9 @@ jobs:
       # registry ref resolves for either arch, so nle-base is pushed here,
       # multi-arch, purely so the two legs below share the exact same
       # compiled-NLE layer (section 5.3: "CI builds nle-base once and both
-      # images build FROM that exact digest"). It is never pinned in
-      # _image_pins.py and never pulled directly by users -- this tag exists
-      # only for this workflow's own FROM references.
+      # images build FROM that exact digest"). Its digest is pinned in
+      # _image_pins.py as NLE_BASE_IMAGE: mutator-image.yml and repo checkouts
+      # build the mutator FROM it.
       - id: meta-nle-base
         uses: docker/metadata-action@8e5442c4ef9f78752691e2d8f8d19755c6f78e81      # v5.5.1
         with:
@@ -86,7 +89,7 @@ jobs:
         with:
           context: .
           file: arena/Dockerfile
-          build-args: NLE_BASE=${{ steps.meta-nle-base.outputs.tags }}
+          build-args: NLE_BASE=ghcr.io/dunnolab/nethackers-nle-base@${{ steps.build-nle-base.outputs.digest }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta-arena.outputs.tags }}
@@ -104,11 +107,23 @@ jobs:
         with:
           context: .
           file: Dockerfile.mutator
-          build-args: NLE_BASE=${{ steps.meta-nle-base.outputs.tags }}
+          build-args: NLE_BASE=ghcr.io/dunnolab/nethackers-nle-base@${{ steps.build-nle-base.outputs.digest }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta-mutator.outputs.tags }}
           labels: ${{ steps.meta-mutator.outputs.labels }}
+
+      # Same fingerprint mutator-image.yml computes, on the base just built, so a
+      # later automatic run finds this image instead of rebuilding it.
+      - name: Fingerprint the mutator and tag it by its inputs
+        id: fingerprint
+        env:
+          NLE_BASE_REF: ghcr.io/dunnolab/nethackers-nle-base@${{ steps.build-nle-base.outputs.digest }}
+          MUTATOR_REF: ghcr.io/dunnolab/nethackers-mutator@${{ steps.build-mutator.outputs.digest }}
+        run: |
+          inputs=$(PYTHONPATH=src python3 -m nethackers.image_inputs mutator --base "$NLE_BASE_REF")
+          docker buildx imagetools create -t "ghcr.io/dunnolab/nethackers-mutator:h-${inputs#sha256:}" "$MUTATOR_REF"
+          echo "inputs=$inputs" >> "$GITHUB_OUTPUT"
 
       # Manifest-list digests (D4 glossary) -- the correct thing to pin: a
       # client pulling `...@<this digest>` gets Docker/OCI to auto-select the
@@ -124,6 +139,8 @@ jobs:
             echo '```python'
             echo "ARENA_IMAGE   = \"ghcr.io/dunnolab/nethackers-arena@${{ steps.build-arena.outputs.digest }}\""
             echo "MUTATOR_IMAGE = \"ghcr.io/dunnolab/nethackers-mutator@${{ steps.build-mutator.outputs.digest }}\""
+            echo "NLE_BASE_IMAGE = \"ghcr.io/dunnolab/nethackers-nle-base@${{ steps.build-nle-base.outputs.digest }}\""
+            echo "MUTATOR_INPUTS = \"${{ steps.fingerprint.outputs.inputs }}\""
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -139,8 +156,11 @@ jobs:
         env:
           ARENA_REF: ghcr.io/dunnolab/nethackers-arena@${{ steps.build-arena.outputs.digest }}
           MUTATOR_REF: ghcr.io/dunnolab/nethackers-mutator@${{ steps.build-mutator.outputs.digest }}
+          NLE_BASE_REF: ghcr.io/dunnolab/nethackers-nle-base@${{ steps.build-nle-base.outputs.digest }}
+          MUTATOR_INPUTS: ${{ steps.fingerprint.outputs.inputs }}
         run: |
-          python3 scripts/repin_images.py --arena "$ARENA_REF" --mutator "$MUTATOR_REF"
+          python3 scripts/repin_images.py --arena "$ARENA_REF" --mutator "$MUTATOR_REF" \
+            --nle-base "$NLE_BASE_REF" --mutator-inputs "$MUTATOR_INPUTS"
           if git diff --quiet -- src/nethackers/_image_pins.py; then
             echo "digests unchanged -- nothing to re-pin"
             exit 0

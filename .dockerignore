@@ -3,11 +3,11 @@
 .venv
 .superpowers
 **/__pycache__/
-*.pyc
+**/*.pyc
 .pytest_cache
 .ruff_cache
 .mypy_cache
-.DS_Store
+**/.DS_Store
 docs
 roots
 tests

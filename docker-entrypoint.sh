@@ -5,7 +5,7 @@
 # whatever command the caller supplied -- ContainerOperator's per-iteration
 # `timeout <n> claude|codex ...` (harness/container_operator.py's
 # build_docker_argv), or an ad hoc `docker run --entrypoint ...
-# nethackers/mutator:latest ...` smoke check. See Dockerfile.mutator's header
+# <mutator image> ...` smoke check. See Dockerfile.mutator's header
 # comment for why this exists (Claude Code refuses
 # --dangerously-skip-permissions as root).
 #

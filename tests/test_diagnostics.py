@@ -34,6 +34,7 @@ from nethackers.diagnostics import (
     run_checks,
     to_json,
 )
+from nethackers.harness import sandbox_preflight
 from nethackers.hubclient.client import HubUnreachable
 from nethackers.hubclient.credentials import Credentials
 
@@ -375,7 +376,14 @@ def test_run_checks_explicit_hub_never_consults_load_stage(monkeypatch):
 
 
 def test_image_unreachable_fix_suggests_make_inside_a_repo_checkout():
+    # Arena's real resolve_image never returns a digest inside a checkout --
+    # its local dev tag (sandbox_preflight.py's `nethackers/arena:dev`) --
+    # unlike the shared `_ref` fake (a digest shape, by design: see its own
+    # comment). Fix round 1 makes the fallback's fix-text selection care
+    # about that shape, so this fixture must reflect the real non-digest ref
+    # to exercise the checkout/`make` path rather than the digest/network one.
     results = run_checks(**_healthy_kwargs(
+        resolve_image=lambda explicit, kind: "nethackers/arena:dev",
         image_present=lambda ref: False, manifest_reachable=lambda ref: False,
         repo_root=lambda: Path("/fake/repo"),
     ))
@@ -383,6 +391,22 @@ def test_image_unreachable_fix_suggests_make_inside_a_repo_checkout():
     assert arena.status == "fail"
     assert "make arena" in arena.fix
     assert "NETHACKERS_" not in arena.fix
+
+
+def test_image_unreachable_fix_never_suggests_make_for_a_digest_ref():
+    # A checkout whose mutator matches its pin resolves to the pinned digest
+    # (Task 5's resolve_image), and nethackers only ever pulls a digest
+    # (ensure_image) -- never builds it, even inside a checkout. `make
+    # mutator` can't fix an unreachable digest, so the fix must still name
+    # the network, exactly like outside a repo.
+    results = run_checks(**_healthy_kwargs(
+        image_present=lambda ref: False, manifest_reachable=lambda ref: False,
+        repo_root=lambda: Path("/fake/repo"),
+    ))
+    mutator = next(r for r in results if r.id == "mutator_image")
+    assert mutator.status == "fail"
+    assert "make" not in mutator.fix
+    assert "NETHACKERS_MUTATOR_IMAGE" in mutator.fix
 
 
 def test_image_unreachable_fix_suggests_network_override_outside_a_repo():
@@ -619,3 +643,68 @@ def test_fold_probe_crash_matches_an_authored_hard_fail():
     _, expected_by_cap = _SCENARIOS["one_hard_fail"]
     for cap, expected in expected_by_cap.items():
         assert exit_code(results, cap) == expected, cap
+
+
+# --- a checkout's mutator fingerprint ref (spec 2026-09-15 §5.6) ------------
+
+_FP = "nethackers/mutator:h-" + "e" * 64
+_FP_REMOTE = "ghcr.io/dunnolab/nethackers-mutator:h-" + "e" * 64
+
+
+def _fingerprint_resolver(explicit, kind):
+    return _FP if kind == "mutator" else _ref(explicit, kind)
+
+
+def test_fingerprint_mutator_present_is_ok():
+    results = run_checks(**_healthy_kwargs(resolve_image=_fingerprint_resolver))
+    mutator = next(r for r in results if r.id == "mutator_image")
+    assert mutator.status == "ok" and _FP in mutator.detail
+
+
+def test_fingerprint_mutator_published_by_ci_is_pullable():
+    probed = []
+    results = run_checks(**_healthy_kwargs(
+        resolve_image=_fingerprint_resolver,
+        image_present=lambda ref: ref != _FP,
+        manifest_reachable=lambda ref: probed.append(ref) or ref == _FP_REMOTE,
+    ))
+    mutator = next(r for r in results if r.id == "mutator_image")
+    assert mutator.status == "warn" and "pullable" in mutator.detail
+    assert _FP_REMOTE in probed                          # asks GHCR under its published name
+
+
+def test_fingerprint_mutator_nobody_built_says_it_builds_on_first_use():
+    results = run_checks(**_healthy_kwargs(
+        resolve_image=_fingerprint_resolver,
+        image_present=lambda ref: ref != _FP,
+        manifest_reachable=lambda ref: False,
+    ))
+    mutator = next(r for r in results if r.id == "mutator_image")
+    assert mutator.status == "warn"
+    assert "doctor --pull" in mutator.fix and "make" not in mutator.fix
+
+
+def test_short_digest_also_shortens_fingerprint_tags():
+    shortened = _short_digest(f"present — {_FP}")
+    assert shortened == "present — nethackers/mutator:h-" + "e" * 19 + "…"
+
+
+# --- the registry probe: doctor must not be stricter than acquisition -------
+
+
+def test_doctor_probe_is_not_stricter_than_the_acquisition_probe():
+    # A slow registry made doctor report `unreachable` for an image ensure_image
+    # pulls without complaint: `docker manifest inspect` walks every sub-manifest
+    # of a multi-arch index, which measured 7-16s against GHCR on a laptop --
+    # over doctor's old 10s budget, inside acquisition's. Both probes now share
+    # one budget, so the two can't disagree about the same image.
+    seen: dict = {}
+
+    def _run(argv, **kw):
+        seen[argv[1]] = kw.get("timeout")
+        return SimpleNamespace(returncode=0)
+
+    ref = "ghcr.io/dunnolab/nethackers-mutator@sha256:" + "a" * 64
+    assert diagnostics._manifest_reachable(ref, run=_run) is True
+    assert sandbox_preflight._remote_image_exists(ref, runtime="docker", run=_run) is True
+    assert seen["manifest"] == sandbox_preflight.MANIFEST_PROBE_TIMEOUT >= 30

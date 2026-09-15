@@ -106,20 +106,6 @@ def test_dev_tag_in_repo_builds_via_make(tmp_path):
     assert seen["cwd"] == str(tmp_path)
 
 
-def test_mutator_dev_tag_in_repo_builds_via_make(tmp_path):
-    seen = {}
-
-    def _popen(argv, **kw):
-        seen["argv"] = argv
-        return _FakeProc([], 0)
-
-    err = sp.ensure_image("nethackers/mutator:latest", "mutator", run=_present(False),
-                          popen=_popen, repo_root=lambda: tmp_path)
-
-    assert err is None
-    assert seen["argv"] == ["make", "mutator", "MUTATOR_IMAGE=nethackers/mutator:latest"]
-
-
 def test_build_failure_is_styled_without_a_traceback(tmp_path):
     err = sp.ensure_image("nethackers/arena:dev", "arena", run=_present(False),
                           popen=lambda *a, **k: _FakeProc([], 1), repo_root=lambda: tmp_path)
@@ -313,3 +299,139 @@ def test_eval_blocked_by_preflight_runtime_never_reaches_eval_batch(monkeypatch,
     rc = cli.main(["eval", str(tmp_path), "--objective", "val-dwa-law-fem"])
 
     assert rc != 0
+
+
+# --- a checkout's fingerprint ref: pull CI's image, else build on the pinned base ---
+
+from nethackers import _image_pins  # noqa: E402
+
+FP = "nethackers/mutator:h-" + "e" * 64
+REMOTE = "ghcr.io/dunnolab/nethackers-mutator:h-" + "e" * 64
+
+
+class _Result:
+    def __init__(self, returncode, stdout=""):
+        self.returncode, self.stdout = returncode, stdout
+
+
+class _FakeDocker:
+    """A scripted ``run`` answering the calls the fingerprint path makes, and
+    recording every argv."""
+
+    def __init__(self, *, remote_exists):
+        self.calls = []
+        self.remote_exists = remote_exists
+
+    def __call__(self, argv, **kw):
+        self.calls.append(argv)
+        sub = argv[1:]
+        if sub[:2] == ["image", "inspect"]:
+            return _Result(1)                          # the fingerprint ref isn't local yet
+        if sub[:2] == ["manifest", "inspect"]:
+            return _Result(0 if self.remote_exists else 1)
+        return _Result(0)                              # tag
+
+
+def test_fingerprint_ref_pulls_the_ci_image_and_tags_it(tmp_path):
+    docker = _FakeDocker(remote_exists=True)
+    popened = []
+
+    def _popen(argv, **kw):
+        popened.append(argv)
+        return _FakeProc([], 0)
+
+    err = sp.ensure_image(FP, "mutator", run=docker, popen=_popen, repo_root=lambda: tmp_path)
+
+    assert err is None
+    assert popened == [["docker", "pull", REMOTE]]      # pulled, never built
+    assert ["docker", "tag", REMOTE, FP] in docker.calls
+
+
+def test_fingerprint_ref_builds_on_the_pinned_base_when_ci_has_none(tmp_path):
+    docker = _FakeDocker(remote_exists=False)
+    seen = {}
+
+    def _popen(argv, **kw):
+        seen["argv"], seen["cwd"] = argv, kw.get("cwd")
+        return _FakeProc(["#1 [internal] load build definition"], 0)
+
+    err = sp.ensure_image(FP, "mutator", run=docker, popen=_popen, repo_root=lambda: tmp_path)
+
+    assert err is None
+    assert seen["argv"] == [
+        "docker", "build", "-f", "Dockerfile.mutator",
+        "--build-arg", f"NLE_BASE={_image_pins.NLE_BASE_IMAGE}",
+        "--label", "org.dunnolab.nethackers.image=mutator",
+        "-t", FP, ".",
+    ]
+    assert seen["cwd"] == str(tmp_path)
+
+
+def test_fingerprint_build_failure_is_styled(tmp_path):
+    docker = _FakeDocker(remote_exists=False)
+    err = sp.ensure_image(FP, "mutator", run=docker, popen=lambda *a, **k: _FakeProc([], 1),
+                          repo_root=lambda: tmp_path)
+    assert err is not None and "setup failed" in err.lower() and "make" not in err
+
+
+def test_fingerprint_ref_falls_back_to_build_when_the_pull_fails(tmp_path):
+    # spec S5.5: GHCR has the fingerprint, but the pull itself fails (a flaky
+    # registry, a half-published manifest) -- fall through to the local build
+    # rather than surfacing the registry error (which could even tell someone
+    # already inside the repo to "clone the repo").
+    docker = _FakeDocker(remote_exists=True)
+    popened = []
+
+    def _popen(argv, **kw):
+        popened.append(argv)
+        if argv[:2] == ["docker", "pull"]:
+            return _FakeProc([], 1)
+        return _FakeProc([], 0)
+
+    err = sp.ensure_image(FP, "mutator", run=docker, popen=_popen, repo_root=lambda: tmp_path)
+
+    assert err is None
+    assert popened == [
+        ["docker", "pull", REMOTE],
+        ["docker", "build", "-f", "Dockerfile.mutator",
+         "--build-arg", f"NLE_BASE={_image_pins.NLE_BASE_IMAGE}",
+         "--label", "org.dunnolab.nethackers.image=mutator",
+         "-t", FP, "."],
+    ]
+
+
+def _pull_fails_then_build_exits(build_rc):
+    """A ``popen`` whose ``docker pull`` fails and whose build exits ``build_rc``."""
+    def _popen(argv, **kw):
+        if argv[:2] == ["docker", "pull"]:
+            return _FakeProc(["Error response from daemon: unexpected EOF\n"], 1)
+        return _FakeProc(["ERROR: failed to solve: base unreachable\n"], build_rc)
+    return _popen
+
+
+def test_fingerprint_pull_failure_reports_no_error_when_the_build_succeeds(tmp_path):
+    # The build that follows decides the outcome: a pull error shown first would
+    # sit in the TUI's #f_err through a build that then succeeds.
+    docker = _FakeDocker(remote_exists=True)
+    events = []
+
+    err = sp.ensure_image(FP, "mutator", run=docker, popen=_pull_fails_then_build_exits(0),
+                          on_event=events.append, repo_root=lambda: tmp_path)
+
+    assert err is None
+    assert [e.phase for e in events if e.phase == "error"] == []
+    assert events[-1].phase == "done" and events[-1].ref == FP      # the build's own outcome
+
+
+def test_fingerprint_pull_and_build_failures_report_only_the_builds_error(tmp_path):
+    docker = _FakeDocker(remote_exists=True)
+    events = []
+
+    err = sp.ensure_image(FP, "mutator", run=docker, popen=_pull_fails_then_build_exits(1),
+                          on_event=events.append, repo_root=lambda: tmp_path)
+
+    assert err is not None and "sandbox setup failed" in err
+    errors = [e for e in events if e.phase == "error"]
+    assert len(errors) == 1
+    assert errors[0].ref == FP                                        # the build's, not the pull's
+    assert "failed to solve" in errors[0].detail

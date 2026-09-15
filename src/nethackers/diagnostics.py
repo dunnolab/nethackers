@@ -135,9 +135,12 @@ def _manifest_reachable(ref: str, *, runtime: str = "docker", run=subprocess.run
     missing): distinguishing *why* isn't doctor's job here -- ``ensure_
     image``'s own error mapping already covers that at actual-pull time.
     ``runtime`` is threaded in from ``run_checks`` (``container_runtime()``) so
-    a podman-only host probes with podman, not a missing ``docker``."""
+    a podman-only host probes with podman, not a missing ``docker``. The budget
+    is ``sandbox_preflight``'s, so a registry slow enough to outlast it can't
+    make doctor report "unreachable" for an image ``ensure_image`` then pulls."""
     try:
-        result = run([runtime, "manifest", "inspect", ref], capture_output=True, timeout=10)
+        result = run([runtime, "manifest", "inspect", ref], capture_output=True,
+                     timeout=sandbox_preflight.MANIFEST_PROBE_TIMEOUT)
         return bool(result.returncode == 0)
     except (OSError, subprocess.SubprocessError):
         return False
@@ -209,25 +212,40 @@ def _check_image(
     """``present`` (already local) / ``warn``-``pullable`` (not local, but
     the registry has it -- ``nethackers doctor --pull`` fetches it) /
     ``fail``-``unreachable`` (neither) -- spec S5.6. The "unreachable" fix
-    text branches on whether this is actually a repo checkout
-    (``repo_root() is not None``) -- mirroring ``ensure_image``'s own real
-    branch order -- rather than inferring that from the ref's shape: a repo
-    checkout can build locally (``make``, which ``eval``/``evolve`` also run
-    automatically) regardless of what ref happens to be resolved; outside a
-    repo (the installed-user path, or a hand-set ``NETHACKERS_*_IMAGE``
-    override with no checkout to build from) the only path is the
-    network/registry, so the fix names that instead."""
+    text mirrors ``ensure_image``'s own real branch order (spec 2026-09-15
+    §5.5), keyed off the ref's shape, not just the checkout: a digest ref
+    (``"@sha256:" in ref``) is only ever pulled, checkout or not, so its fix
+    always names the network; a checkout's fingerprint mutator ref is
+    pulled-or-built (the branch above, before this one ever runs); any other
+    ref inside a checkout (the arena's local dev tag) is built locally, so
+    its fix names ``make``; outside a checkout the only path left, for
+    anything else, is the network/registry."""
     check_id = f"{kind}_image"
     ref = resolve_image(None, kind)
     if image_present(ref):
         return CheckResult(id=check_id, status="ok", severity=severity,
                            detail=f"present — {ref}", fix=None, capabilities=caps)
+    if sandbox_preflight.is_local_mutator_fingerprint(ref):
+        # A checkout whose mutator files differ from the pinned build. CI may have
+        # published an image for exactly these files; otherwise nethackers builds it.
+        remote = sandbox_preflight.ghcr_mutator_ref(ref)
+        if manifest_reachable(remote):
+            return CheckResult(id=check_id, status="warn", severity=severity,
+                               detail=f"not local yet, but pullable — {remote}",
+                               fix="run `nethackers doctor --pull` to fetch it now",
+                               capabilities=caps)
+        return CheckResult(id=check_id, status="warn", severity=severity,
+                           detail=(f"not built yet — {ref} (this checkout's mutator files "
+                                   "differ from the pinned build)"),
+                           fix=("run `nethackers doctor --pull` to build it now, "
+                                "or just start evolve, which builds it"),
+                           capabilities=caps)
     if manifest_reachable(ref):
         return CheckResult(id=check_id, status="warn", severity=severity,
                            detail=f"not local yet, but pullable — {ref}",
                            fix="run `nethackers doctor --pull` to fetch it now",
                            capabilities=caps)
-    if repo_root() is not None:
+    if repo_root() is not None and "@sha256:" not in ref:
         fix = f"run `make {kind}` (or just `nethackers eval`/`evolve`, which auto-builds it)"
     else:
         fix = (f"check your network connection, or set NETHACKERS_{kind.upper()}_IMAGE "
@@ -514,6 +532,7 @@ def to_json(results: list[CheckResult]) -> dict:
 
 
 _SHA256_RE = re.compile(r"@sha256:[0-9a-f]{64}")
+_FINGERPRINT_TAG_RE = re.compile(r":h-[0-9a-f]{64}")
 _DIGEST_PREFIX_LEN = 19  # matches cli.py:_short_pin's prefix length exactly
 
 
@@ -525,15 +544,18 @@ def _short_digest(text: str) -> str:
     in ``CheckResult.detail``, breaking column alignment on any normal
     terminal; that's the DEFAULT experience for every installed (non-repo)
     user, since a repo checkout's local dev tags are short and never trigger
-    this. Applied ONLY at render time (``render_human``/``render_plain``
-    below) -- never to ``CheckResult.detail`` itself and never to
-    ``to_json``, which must always carry the full, unmodified digest
+    this. A checkout's mutator fingerprint tag (``:h-<64 hex>``) is shortened
+    the same way. Applied ONLY at render time (``render_human``/
+    ``render_plain`` below) -- never to ``CheckResult.detail`` itself and
+    never to ``to_json``, which must always carry the full, unmodified digest
     (``hubclient/output.py``'s own "never a stringified table" rule).
     ``cli.py:_short_pin`` (``--version``'s equivalent truncation) reuses this
     as its single source of the 19-char prefix length, so the two can never
     drift apart."""
     keep = len("@sha256:") + _DIGEST_PREFIX_LEN
-    return _SHA256_RE.sub(lambda m: m.group()[:keep] + "…", text)
+    text = _SHA256_RE.sub(lambda m: m.group()[:keep] + "…", text)
+    keep_tag = len(":h-") + _DIGEST_PREFIX_LEN
+    return _FINGERPRINT_TAG_RE.sub(lambda m: m.group()[:keep_tag] + "…", text)
 
 
 _GLYPH = {"ok": "[green]✓[/]", "warn": "[yellow]⚠[/]", "fail": "[red]✗[/]"}

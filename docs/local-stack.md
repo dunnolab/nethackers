@@ -39,12 +39,15 @@ self-heals on the second run):
 cd <worktree>
 make stack                              # allocate .env.stack first (own port/project/tags)
 make up HUB_AUTH=github                 # hub up first (real auth, empty DB), THEN builds arena:<slug>
-make mutator                            # once per machine -- the operator sandbox image
 nethackers login                        # once per machine -- GitHub device flow
 nethackers evolve val-dwa-law-fem --seed roots/autoascend --operator claude --iterations 2
 nethackers leaderboard --objective val-dwa-law-fem       # this worktree's own board
 nethackers pull <login>/nh-dev-<slug>@<sha> /tmp/check   # fetch an exact published commit back
 ```
+
+There is no mutator step: `nethackers evolve` fetches the operator sandbox
+image that matches this worktree's files, pulling it when CI has published it
+and building it otherwise.
 
 Every value above -- hub port, compose project, data root, repo name,
 image tags -- comes from the stage, not a flag. `nethackers whoami` is

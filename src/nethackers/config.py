@@ -51,6 +51,13 @@ _ENV_TO_FIELD = {
 }
 
 
+# Keys a .env.stack file may no longer set. The mutator image is chosen by
+# content (sandbox_preflight.resolve_image), and stack files written before
+# that still say NETHACKERS_MUTATOR_IMAGE=nethackers/mutator:latest. The process
+# env and --mutator-image can still override it.
+_IGNORED_STACK_KEYS = frozenset({"NETHACKERS_MUTATOR_IMAGE"})
+
+
 def _coerce(field_name: str, raw: str) -> object:
     if field_name == "hub_port":
         return int(raw)
@@ -97,7 +104,8 @@ def _parse_env_file(path: Path | None) -> dict[str, object]:
         line = line.strip()
         if line and not line.startswith("#") and "=" in line:
             k, _, v = line.partition("=")
-            field = _ENV_TO_FIELD.get(k.strip())
+            key = k.strip()
+            field = None if key in _IGNORED_STACK_KEYS else _ENV_TO_FIELD.get(key)
             if field:
                 out[field] = _coerce(field, v.strip())
     return out
