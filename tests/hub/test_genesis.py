@@ -284,13 +284,21 @@ def test_the_operator_command_refuses_a_database_that_is_not_there(tmp_path, cap
     assert "Traceback" not in err
 
 
-def test_the_operator_command_refuses_a_database_that_is_not_a_hub(tmp_path):
+def test_the_operator_command_refuses_a_database_that_is_not_a_hub(tmp_path, capsys):
     # A file that DOES exist but holds no hub schema is a different mistake,
-    # and still one the command must not paper over.
-    not_a_hub = tmp_path / "empty.db"
+    # and still one the command must not paper over. This used to assert a raw
+    # sqlite3.OperationalError, which prevented damage but was a crash, not a
+    # refusal -- on a destructive command run by hand against production. The
+    # case is real: the deployed hub's data directory holds a zero-byte
+    # /data/hub.db beside the real /data/hub.sqlite3, and it passes is_file().
+    # Found by rehearsing genesis against a production snapshot.
+    not_a_hub = tmp_path / "hub.db"
     sqlite3.connect(not_a_hub).close()
-    with pytest.raises(sqlite3.OperationalError):
-        genesis_cmd.main(["--db", str(not_a_hub)])
+    assert genesis_cmd.main(["--db", str(not_a_hub)]) == 2
+    err = capsys.readouterr().err
+    assert "is not a hub database" in err
+    assert "hub.sqlite3" in err
+    assert "Traceback" not in err
 
 
 def test_public_ddl_map_stays_a_view_onto_the_schema():
@@ -303,3 +311,14 @@ def test_public_ddl_map_stays_a_view_onto_the_schema():
     assert store_mod._POLL_VOTES_DDL not in store_mod._PUBLIC_TABLE_DDL.values()
     # Insertion order is load-bearing -- see _PUBLIC_TABLE_DDL's comment.
     assert next(iter(store_mod._PUBLIC_TABLE_DDL)) == "solutions"
+
+
+def test_genesis_missing_path_names_the_real_container_path(tmp_path, capsys):
+    """The message used to say /data/hub.db, which is the stray empty file,
+    not the database the hub actually opens (NETHACKERS_DB=/data/hub.sqlite3)."""
+    from nethackers.hub.genesis import main
+
+    assert main(["--db", str(tmp_path / "absent.db")]) == 2
+    err = capsys.readouterr().err
+    assert "/data/hub.sqlite3" in err
+    assert "Traceback" not in err
