@@ -91,20 +91,22 @@ To point the CLI at production from inside a worktree, use `nethackers --prod`.
 pulls. How each one changes:
 
 - **The mutator is automatic.** A PR that touches `Dockerfile.mutator`, the
-  entrypoint, or the arena/contracts code the mutator copies gets its image built,
-  pushed and re-pinned by `.github/workflows/mutator-image.yml`, which commits the
-  new pin to your branch. Wait for that commit before merging. A fork PR's image is
-  published by the run on `main` after merge. The release refuses to publish if the
-  mutator pin doesn't match the tagged files.
+  entrypoint, or the package code the mutator copies (`src/nethackers/__init__.py`,
+  `arena/`, `contracts/`) gets its image built, pushed and re-pinned by
+  `.github/workflows/mutator-image.yml`, which commits the new pin to your branch.
+  Wait for that commit before merging. A fork PR's image is published by the run on
+  `main` after merge. The release refuses to publish if the mutator pin doesn't
+  match the tagged files.
 - **The arena and the shared base are manual.** CI fails if `arena/Dockerfile`,
   `nle-base/Dockerfile`, `uv.lock`, `src/nethackers/arena/` or
   `src/nethackers/contracts/` changed since the last release tag without
   `ARENA_IMAGE` changing. Run `.github/workflows/sandbox-images.yml` on your branch,
-  then classify the new arena digest in `src/nethackers/arena_version.py`; a
-  rebuild that doesn't move scores keeps the verified corpus. The diff base is **the
-  last `v*` release tag, not your PR's base branch**, so this can fire for someone
-  else's unreleased merge. Touching `uv.lock` trips it, so a routine dependency bump
-  is not routine here.
+  then classify the new arena digest in `src/nethackers/arena_version.py`: a
+  rebuild that doesn't move scores keeps the verified corpus, and one that does
+  bumps `ARENA_MAJOR`, which retires that corpus from every board (nothing is
+  deleted). The diff base is **the last `v*` release tag, not your PR's base
+  branch**, so this can fire for someone else's unreleased merge. Touching
+  `uv.lock` trips it, so a routine dependency bump is not routine here.
 
 **Injectable seams bind at import.** Many functions take dependencies as keyword
 defaults (`run=subprocess.run`, `repo_root=...`). Those defaults are evaluated at

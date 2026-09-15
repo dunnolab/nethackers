@@ -47,7 +47,10 @@ jobs:
           actual=$(uv run python -m nethackers.image_inputs mutator --root .)
           if [ "$pinned" != "$actual" ]; then
             echo "::error::MUTATOR_INPUTS is $pinned but this tree's mutator files hash to $actual"
-            echo "let .github/workflows/mutator-image.yml re-pin the mutator, move the tag onto that commit, and re-run this release"
+            echo "Nothing was published to PyPI. Once .github/workflows/mutator-image.yml has re-pinned the mutator on"
+            echo "main (run it there if it has not), cut the next patch release from the re-pinned commit. Moving this"
+            echo "tag onto that commit and re-running this workflow also works, but pushing a v* tag re-runs the hub"
+            echo "deploy (hub-image.yml) and releases everything merged to main since this tag."
             exit 1
           fi
           echo "mutator pin matches its files: $actual"
