@@ -619,3 +619,47 @@ def test_fold_probe_crash_matches_an_authored_hard_fail():
     _, expected_by_cap = _SCENARIOS["one_hard_fail"]
     for cap, expected in expected_by_cap.items():
         assert exit_code(results, cap) == expected, cap
+
+
+# --- a checkout's mutator fingerprint ref (spec 2026-09-15 §5.6) ------------
+
+_FP = "nethackers/mutator:h-" + "e" * 64
+_FP_REMOTE = "ghcr.io/dunnolab/nethackers-mutator:h-" + "e" * 64
+
+
+def _fingerprint_resolver(explicit, kind):
+    return _FP if kind == "mutator" else _ref(explicit, kind)
+
+
+def test_fingerprint_mutator_present_is_ok():
+    results = run_checks(**_healthy_kwargs(resolve_image=_fingerprint_resolver))
+    mutator = next(r for r in results if r.id == "mutator_image")
+    assert mutator.status == "ok" and _FP in mutator.detail
+
+
+def test_fingerprint_mutator_published_by_ci_is_pullable():
+    probed = []
+    results = run_checks(**_healthy_kwargs(
+        resolve_image=_fingerprint_resolver,
+        image_present=lambda ref: ref != _FP,
+        manifest_reachable=lambda ref: probed.append(ref) or ref == _FP_REMOTE,
+    ))
+    mutator = next(r for r in results if r.id == "mutator_image")
+    assert mutator.status == "warn" and "pullable" in mutator.detail
+    assert _FP_REMOTE in probed                          # asks GHCR under its published name
+
+
+def test_fingerprint_mutator_nobody_built_says_it_builds_on_first_use():
+    results = run_checks(**_healthy_kwargs(
+        resolve_image=_fingerprint_resolver,
+        image_present=lambda ref: ref != _FP,
+        manifest_reachable=lambda ref: False,
+    ))
+    mutator = next(r for r in results if r.id == "mutator_image")
+    assert mutator.status == "warn"
+    assert "doctor --pull" in mutator.fix and "make" not in mutator.fix
+
+
+def test_short_digest_also_shortens_fingerprint_tags():
+    shortened = _short_digest(f"present — {_FP}")
+    assert shortened == "present — nethackers/mutator:h-" + "e" * 19 + "…"

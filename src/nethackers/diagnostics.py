@@ -222,6 +222,21 @@ def _check_image(
     if image_present(ref):
         return CheckResult(id=check_id, status="ok", severity=severity,
                            detail=f"present — {ref}", fix=None, capabilities=caps)
+    if sandbox_preflight.is_local_mutator_fingerprint(ref):
+        # A checkout whose mutator files differ from the pinned build. CI may have
+        # published an image for exactly these files; otherwise nethackers builds it.
+        remote = sandbox_preflight.ghcr_mutator_ref(ref)
+        if manifest_reachable(remote):
+            return CheckResult(id=check_id, status="warn", severity=severity,
+                               detail=f"not local yet, but pullable — {remote}",
+                               fix="run `nethackers doctor --pull` to fetch it now",
+                               capabilities=caps)
+        return CheckResult(id=check_id, status="warn", severity=severity,
+                           detail=(f"not built yet — {ref} (this checkout's mutator files "
+                                   "differ from the pinned build)"),
+                           fix=("run `nethackers doctor --pull` to build it now, "
+                                "or just start evolve, which builds it"),
+                           capabilities=caps)
     if manifest_reachable(ref):
         return CheckResult(id=check_id, status="warn", severity=severity,
                            detail=f"not local yet, but pullable — {ref}",
@@ -514,6 +529,7 @@ def to_json(results: list[CheckResult]) -> dict:
 
 
 _SHA256_RE = re.compile(r"@sha256:[0-9a-f]{64}")
+_FINGERPRINT_TAG_RE = re.compile(r":h-[0-9a-f]{64}")
 _DIGEST_PREFIX_LEN = 19  # matches cli.py:_short_pin's prefix length exactly
 
 
@@ -525,15 +541,18 @@ def _short_digest(text: str) -> str:
     in ``CheckResult.detail``, breaking column alignment on any normal
     terminal; that's the DEFAULT experience for every installed (non-repo)
     user, since a repo checkout's local dev tags are short and never trigger
-    this. Applied ONLY at render time (``render_human``/``render_plain``
-    below) -- never to ``CheckResult.detail`` itself and never to
-    ``to_json``, which must always carry the full, unmodified digest
+    this. A checkout's mutator fingerprint tag (``:h-<64 hex>``) is shortened
+    the same way. Applied ONLY at render time (``render_human``/
+    ``render_plain`` below) -- never to ``CheckResult.detail`` itself and
+    never to ``to_json``, which must always carry the full, unmodified digest
     (``hubclient/output.py``'s own "never a stringified table" rule).
     ``cli.py:_short_pin`` (``--version``'s equivalent truncation) reuses this
     as its single source of the 19-char prefix length, so the two can never
     drift apart."""
     keep = len("@sha256:") + _DIGEST_PREFIX_LEN
-    return _SHA256_RE.sub(lambda m: m.group()[:keep] + "…", text)
+    text = _SHA256_RE.sub(lambda m: m.group()[:keep] + "…", text)
+    keep_tag = len(":h-") + _DIGEST_PREFIX_LEN
+    return _FINGERPRINT_TAG_RE.sub(lambda m: m.group()[:keep_tag] + "…", text)
 
 
 _GLYPH = {"ok": "[green]✓[/]", "warn": "[yellow]⚠[/]", "fail": "[red]✗[/]"}

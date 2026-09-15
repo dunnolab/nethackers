@@ -112,10 +112,18 @@ stall on it.
 
 ### "unreachable — ghcr.io/dunnolab/nethackers-arena@sha256:…"
 
-Neither local nor pullable. In a repo checkout, `make arena` (or `make mutator`)
-builds it locally — `eval` and `evolve` do this automatically. Outside a
-checkout, it is a network or registry problem; `NETHACKERS_ARENA_IMAGE` /
-`NETHACKERS_MUTATOR_IMAGE` can point at a reachable ref.
+Neither local nor pullable. Outside a repo checkout, it is a network or registry
+problem; `NETHACKERS_ARENA_IMAGE` / `NETHACKERS_MUTATOR_IMAGE` can point at a
+reachable ref. In a checkout, `eval` and `evolve` build the arena image
+automatically.
+
+### "not built yet — nethackers/mutator:h-…"
+
+You are running from a checkout whose mutator files (its Dockerfile, entrypoint,
+or the arena code it copies) differ from the pinned build, and CI hasn't published
+an image for them. `nethackers doctor --pull` builds it now; `evolve` builds it on
+its own. Nothing to run by hand. Older fingerprint images stay on disk until you
+remove them; `docker image ls nethackers/mutator` lists them.
 
 ---
 
