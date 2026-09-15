@@ -39,6 +39,11 @@ def test_load_stage_no_inputs_equals_prod_defaults(tmp_path, monkeypatch):
 
 def test_env_overrides_defaults_with_casts():
     s = load_stage(environ={
+        # Skip the .env.stack layer explicitly. Without this the test reads
+        # whatever file `make stack` left in the worktree, so the final
+        # assertion ("untouched -> default") passed or failed depending on
+        # whether the developer had ever run `make stack` here.
+        "NETHACKERS_STAGE_FILE": "",
         "NETHACKERS_STAGE": "tripletail",
         "NETHACKERS_HUB": "http://localhost:28417",
         "NETHACKERS_HUB_PORT": "28417",
