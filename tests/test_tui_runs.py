@@ -250,6 +250,48 @@ def test_run_totals_over_read_runs_sums_tokens(tmp_path):
     assert totals["iterations"] == 3
 
 
+def test_reconstruct_run_rebuilds_from_disk_and_flags_no_seed_detail(tmp_path):
+    from nethackers.tui.screens.runs import reconstruct_run
+
+    run_dir = tmp_path / "20260916-abc-sam"
+    _mk(run_dir, {
+        "run_id": "20260916-abc-sam", "objective": "sam-hum-law-fem,val-dwa-law-fem",
+        "operator": "claude", "iterations": 3, "model": "sonnet", "effort": "high",
+        "operator_version": "claude-code 1.0", "created_at": "2026-09-16T13:00:00",
+    }, [
+        {"iteration": 0, "outcome": "baseline", "dev_fitness": 0.07},
+        {"iteration": 1, "outcome": "rejected", "reason": "no dev gain", "dev_fitness": 0.06,
+         "tokens": 1000, "causes": {"killed by a jackal": 2}},
+        {"iteration": 2, "outcome": "registered", "reason": "registered", "dev_fitness": 0.12,
+         "improved": ["sam-hum-law-fem", "union"], "tokens": 3000, "child_digest": "sha256:dead"},
+    ])
+    logs = run_dir / "logs"
+    logs.mkdir()
+    (logs / "iter-2-3.log").write_text(  # run.tag(2) == "iter 2/3" -> _slug -> iter-2-3.log
+        '{"type":"assistant","message":{"content":[{"type":"text","text":"try altars"}]}}\n')
+
+    run = reconstruct_run(run_dir)
+    assert run is not None
+    assert run.reopened is True and run.status == "done"
+    assert run.cfg.backend == "claude" and run.cfg.iterations == 3
+    assert run.cfg.model == "sonnet" and run.cfg.effort == "high"
+    assert run.identities() == ["sam-hum-law-fem", "val-dwa-law-fem"]   # from the objective
+    # baseline (iter 0) skipped; iters 1 (rejected) + 2 (registered) rebuilt
+    assert run.iteration_status(1) == "rejected"
+    assert run.iteration_status(2) == "registered"
+    assert run.iter_results[2].dev_fitness == 0.12
+    assert run.iter_results[2].improved == ["sam-hum-law-fem", "union"]
+    assert run.iter_results[2].results is None                 # per-seed detail not on disk
+    assert run.iter_results[1].causes == {"killed by a jackal": 2}
+    assert run.ledger_rows == [(1, False, "no dev gain"), (2, True, "registered")]
+    assert run.logs.get(run.tag(2))                                     # transcript replayed
+
+
+def test_reconstruct_run_missing_record_returns_none(tmp_path):
+    from nethackers.tui.screens.runs import reconstruct_run
+    assert reconstruct_run(tmp_path / "does-not-exist") is None
+
+
 class _Plan:
     def __init__(self, run):
         self.rid = "r-abc"

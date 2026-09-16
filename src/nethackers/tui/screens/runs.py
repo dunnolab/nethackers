@@ -14,7 +14,11 @@ from textual.css.query import NoMatches
 from textual.widgets import Button, Static
 
 from nethackers.config import load_stage
-from nethackers.tui.status import _clock, _compact
+from nethackers.harness.loop import IterationResult
+from nethackers.harness.metering import TokenUsage
+from nethackers.harness.runlog import _slug
+from nethackers.tui.run import Run
+from nethackers.tui.status import EvolveConfig, _clock, _compact
 
 if TYPE_CHECKING:
     from nethackers.tui.app import NetHackersApp
@@ -75,6 +79,86 @@ def read_runs(runs_dir: Path) -> list[dict]:
     return out
 
 
+def reconstruct_run(run_dir: Path) -> Run | None:
+    """Rebuild a Run from a finished run's on-disk record so it can be reopened
+    in the monitor: ``run.json`` (config), ``metrics.jsonl`` (per-iteration
+    outcome / score / causes / tokens) and ``logs/`` (the mutator transcript).
+    Per-seed detail and per-identity Progress scores were never persisted (they
+    only ever existed live), so the run is flagged ``reopened`` and the monitor
+    renders those as "not recorded". Returns None if run.json is unreadable."""
+    try:
+        j = json.loads((run_dir / "run.json").read_text())
+    except (OSError, ValueError):
+        return None
+    if not isinstance(j, dict):
+        return None
+    cfg = EvolveConfig(
+        objective=j.get("objective", ""), backend=j.get("operator", ""),
+        iterations=int(j.get("iterations", 0) or 0), model=j.get("model"),
+        effort=j.get("effort"), operator_version=j.get("operator_version"))
+    run = Run(j.get("run_id", run_dir.name), cfg)
+    run.reopened = True
+    run.status = "done"                 # the final status isn't persisted -- it's finished
+    run.finished_at = run.started
+    # The loop only puts identities in LIVE state; derive them from the objective
+    # (a set objective is a comma-joined identity list) so the monitor's roles
+    # and rows still resolve.
+    idents = [s for s in cfg.objective.split(",") if s]
+    run.state = {**run.state, "phase": "done", "identities": idents}
+    _replay_metrics(run, run_dir)
+    _replay_logs(run, run_dir)
+    return run
+
+
+def _replay_metrics(run: Run, run_dir: Path) -> None:
+    mfile = run_dir / "metrics.jsonl"
+    if not mfile.exists():
+        return
+    for line in mfile.read_text().splitlines():
+        try:
+            m = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(m, dict) or m.get("outcome") == "baseline":
+            continue
+        try:
+            k = int(m.get("iteration", 0))
+        except (TypeError, ValueError):
+            continue
+        if k <= 0:
+            continue
+        registered = m.get("outcome") in ("registered", "local-only")
+        usage = None
+        if isinstance(m.get("usage"), dict):
+            try:
+                usage = TokenUsage(**m["usage"])
+            except TypeError:
+                usage = None
+        run.apply_iteration(k, IterationResult(
+            registered=registered, reason=str(m.get("reason") or ""),
+            dev_fitness=m.get("dev_fitness"), tokens=m.get("tokens"), usage=usage,
+            digest=m.get("child_digest"), stopped_reason=m.get("stopped_reason"),
+            causes=m.get("causes"), hub_reason=m.get("hub_reason"),
+            improved=m.get("improved"), results=None))  # per-seed detail not on disk
+        reason = m.get("hub_reason") or ("registered" if registered
+                                         else str(m.get("reason") or "rejected"))
+        run.ledger_rows.append((k, registered, reason))
+
+
+def _replay_logs(run: Run, run_dir: Path) -> None:
+    logs = run_dir / "logs"
+    if not logs.is_dir():
+        return
+    for k in range(1, run.cfg.iterations + 1):
+        tag = run.tag(k)
+        f = logs / f"{_slug(tag)}.log"
+        if not f.exists():
+            continue
+        for line in f.read_text().splitlines():
+            if line.strip():
+                run.apply_log(tag, line)
+
+
 def run_totals(runs: list[dict]) -> dict:
     """Aggregate the local evolve runs for the Home summary: how many runs,
     total accepted wins, and total operator tokens spent across them all."""
@@ -106,12 +190,14 @@ class RunsView(VerticalScroll):
     RunsView { margin: 1 2; padding: 0 1; height: 1fr; }
     RunsView #runs_ongoing_title { color: #d2a24c; text-style: bold; }
     RunsView #runs_ongoing { height: auto; margin-bottom: 1; }
-    RunsView .ongoing-run {
+    RunsView .ongoing-run, RunsView .past-run {
         width: 1fr; height: 3; margin: 0 0 1 0;
-        border: round #d2a24c; background: #16161c; color: #d7c9a2;
+        background: #16161c; color: #d7c9a2;
         text-align: left; content-align: left middle; text-style: none;
     }
-    RunsView .ongoing-run:hover { background: #20202b; }
+    RunsView .ongoing-run { border: round #d2a24c; }
+    RunsView .past-run { border: round #4a463d; color: #a89f8a; }  /* dimmer: older */
+    RunsView .ongoing-run:hover, RunsView .past-run:hover { background: #20202b; }
     RunsView #runs_past_title { color: #7c745f; margin-top: 1; }
     """
 
@@ -119,12 +205,14 @@ class RunsView(VerticalScroll):
         super().__init__(**kw)
         self.add_class("panel")
         self._ongoing_ids: list[str] = []
+        self._past_ids: list[str] = []
 
     def compose(self) -> ComposeResult:
         yield Static(id="runs_ongoing_title")
-        yield Vertical(id="runs_ongoing")  # one focusable Button per ongoing run
-        yield Static("earlier sessions · summary only", id="runs_past_title")
-        yield Static(id="runs_past")
+        yield Vertical(id="runs_ongoing")  # one focusable Button per this-session run
+        yield Static("earlier sessions", id="runs_past_title")
+        yield Vertical(id="runs_past")     # one Button per past run (reopens a rebuilt monitor)
+        yield Static(id="runs_past_empty")
 
     def on_mount(self) -> None:
         self.border_title = "▶ Runs"
@@ -188,18 +276,39 @@ class RunsView(VerticalScroll):
             title = f"● {len(runs)} run(s) this session{flight} — enter to open"
         self.query_one("#runs_ongoing_title", Static).update(title)
 
-    def _refresh_past(self) -> None:
-        from nethackers.tui.screens.home import recent_runs_panel
+    def _past_label(self, r: dict) -> str:
+        dev = f"{r['best_dev']:.2f}" if r.get("best_dev") is not None else "—"
+        when = str(r.get("created_at") or "")[:10]
+        return (f"◷ {r['objective']}   {r.get('operator', '')}   "
+                f"w {r['wins']}/{r['iterations']}   dev {dev}   {when}")
 
-        # Older runs from earlier sessions -- read from disk, shown as a summary
-        # only (no in-memory Run to reopen). Exclude every run from THIS session
-        # (live or finished): those are the reopenable buttons above.
+    def _refresh_past(self) -> None:
+        # Runs from earlier sessions (on disk): clickable -> reopen a monitor
+        # rebuilt from run.json + metrics.jsonl + logs (per-seed detail / Progress
+        # scores weren't persisted, so those show "not recorded"). Exclude every
+        # run from THIS session -- those are the live-Run buttons above.
         session = set(self._app()._runs)
         past = [r for r in read_runs(load_stage().runs_dir) if r["run_id"] not in session]
-        self.query_one("#runs_past", Static).update(
-            recent_runs_panel(past) if past else "[dim]No runs from earlier sessions.[/]")
+        container = self.query_one("#runs_past", Vertical)
+        current = [r["run_id"] for r in past]
+        for rid in self._past_ids:
+            if rid not in current:  # a this-session run finished -> it moved up out of "past"
+                with contextlib.suppress(NoMatches):
+                    self.query_one(f"#past-{rid}", Button).remove()
+        for r in past:
+            if r["run_id"] in self._past_ids:
+                with contextlib.suppress(NoMatches):
+                    self.query_one(f"#past-{r['run_id']}", Button).label = self._past_label(r)
+            else:
+                container.mount(Button(self._past_label(r),
+                                       id=f"past-{r['run_id']}", classes="past-run"))
+        self._past_ids = current
+        self.query_one("#runs_past_empty", Static).update(
+            "" if past else "[dim]No runs from earlier sessions.[/]")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id or ""
-        if bid.startswith("ongoing-"):  # a single Enter/click jumps into the monitor
+        if bid.startswith("ongoing-"):     # this-session run -> its live monitor
             self._app().open_run(bid[len("ongoing-"):])
+        elif bid.startswith("past-"):      # earlier-session run -> a monitor rebuilt from disk
+            self._app().open_disk_run(load_stage().runs_dir / bid[len("past-"):])

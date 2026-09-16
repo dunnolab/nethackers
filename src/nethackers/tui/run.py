@@ -110,6 +110,12 @@ class Run:
         self.rid = rid
         self.cfg = cfg
         self.status = "running"  # running | done | failed | stopped
+        # True for a run rebuilt from disk (an earlier session's record) rather
+        # than driven live: its durable log has the iterations/outcomes/scores
+        # and the mutator transcript, but the per-seed detail and per-identity
+        # Progress scores were never persisted -- the monitor shows them as
+        # "not recorded" instead of the misleading AutoAscend fallback.
+        self.reopened = False
         self.results: object | None = None
         self.error: BaseException | None = None
         self.stop = stop if stop is not None else threading.Event()

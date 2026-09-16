@@ -382,6 +382,20 @@ class RunMonitor(Screen):
         self._row_map = []
         self._row_keys = {}
 
+        if self.run.reopened:
+            # A run rebuilt from disk: per-identity Progress scores were never
+            # persisted, so show an honest notice rather than the misleading
+            # AutoAscend fallback incumbent()/best_overall() would return. The
+            # iteration list and the Mutator Logs tab carry the real recovered
+            # detail. No clickable cells -> no per-seed DetailView to open.
+            # spread across the three columns so the message isn't truncated to
+            # the identity column's width.
+            t.add_row(Text.from_markup("[dim]— not recorded[/]"),
+                      Text.from_markup("[dim]per-identity scores weren't saved[/]"),
+                      Text.from_markup("[dim]see Mutator Logs ▸[/]"), key="norec")
+            self._row_map.append(("norec", None))
+            return
+
         # BEST OVERALL (the union cell) sits IN the table, first (openable)
         # row -- it UPDATES as the run finds a child with a better average.
         # I8: for a single-identity objective the harness never seeds/moves
@@ -455,6 +469,8 @@ class RunMonitor(Screen):
             Text.from_markup("\n".join(self._proclog_lines(self.sel_iter))))
 
     def _proclog_lines(self, k: int) -> list[str]:
+        if self.run.reopened:
+            return self._reopened_proclog(k)
         status = self.run.iteration_status(k)
         if k == 0:
             lines = ["[dim]cold-start · seeding identities from the hub[/]"]
@@ -501,6 +517,37 @@ class RunMonitor(Screen):
             lines.append("[dim]gate: rejected · no improvement[/]")
         return lines
 
+    def _reopened_proclog(self, k: int) -> list[str]:
+        """Process log for a run rebuilt from disk: the per-iteration facts the
+        durable log kept (dev fitness, improved cells, gate, death causes). The
+        per-seed detail is gone, so it points at the Mutator Logs instead."""
+        cfg = self.run.cfg
+        if k == 0:
+            return [f"[dim]reopened · {cfg.objective}[/]",
+                    "[dim]cold-start seeding wasn't recorded[/]"]
+        res = self.run.iter_results.get(k)
+        if res is None:
+            return ["[dim]this iteration wasn't recorded[/]"]
+        bits = [f"operator={cfg.backend}"]
+        if cfg.model:
+            bits.append(f"model={cfg.model}")
+        if cfg.effort:
+            bits.append(f"effort={cfg.effort}")
+        lines = [f"[dim]── iter {k} ──[/]", "invoke mutator   " + "  ".join(bits)]
+        if res.dev_fitness is not None:
+            lines.append(f"dev fitness   x̄ {res.dev_fitness:.2f}")
+        if res.improved:
+            lines.append(f"improved   {', '.join(res.improved)}")
+        lines.append("[green]gate: registered[/]" if res.registered
+                     else f"[dim]gate: rejected · {res.reason}[/]")
+        if res.causes:
+            top = ", ".join(f"{c}×{n}" for c, n in sorted(
+                res.causes.items(), key=lambda kv: kv[1], reverse=True)[:4])
+            lines.append(f"[dim]deaths: {top}[/]")
+        lines.append("[dim]per-seed detail not recorded — the mutator transcript is "
+                     "in the Mutator Logs tab[/]")
+        return lines
+
     def _render_topline(self) -> None:
         # tokens (in/out/cache-write/cache-read) + total wall time -- always
         # advancing, so it lives up top away from the per-iteration table.
@@ -508,6 +555,13 @@ class RunMonitor(Screen):
             S.token_subline(self.run.token_usage(), self.run.run_time()))
 
     def _render_statusline(self) -> None:
+        viewing = "init" if self.sel_iter == 0 else f"iter {self.sel_iter}"
+        if self.run.reopened:
+            # no persisted per-identity scores -> no honest "best overall" to show
+            self.query_one("#statusline", Static).update(
+                f" reopened from an earlier session · rebuilt from disk   "
+                f"·   viewing {viewing} ")
+            return
         bo = self.run.best_overall(self.sel_iter)
         run_k = next((k for k in range(1, self.run.cfg.iterations + 1)
                       if self.run.iteration_status(k) == "running"), None)
@@ -519,7 +573,6 @@ class RunMonitor(Screen):
             where = "all iterations done"
         else:
             where = f"{self.run.cfg.iterations} iterations"
-        viewing = "init" if self.sel_iter == 0 else f"iter {self.sel_iter}"
         self.query_one("#statusline", Static).update(
             f" best overall x̄ {bo[0]:.2f}   ·   {where}   ·   viewing {viewing} ")
 

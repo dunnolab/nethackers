@@ -28,6 +28,7 @@ import contextlib
 import re
 import subprocess
 from collections.abc import Callable
+from pathlib import Path
 
 from textual import events, work
 from textual.app import App, ComposeResult
@@ -358,13 +359,28 @@ class NetHackersApp(App):
 
     def open_run(self, rid: str) -> None:
         run = self._runs.get(rid)
+        if run is not None:
+            self._show_monitor(run)
+
+    def open_disk_run(self, run_dir: Path) -> None:
+        """Reopen a run from an EARLIER session: rebuild a Run from its on-disk
+        record (runs.reconstruct_run -- iterations, outcomes, scores and the
+        mutator transcript) and show its monitor. Per-seed detail and
+        per-identity Progress scores weren't persisted, so the monitor marks
+        those 'not recorded'."""
+        from nethackers.tui.screens.runs import reconstruct_run
+        run = reconstruct_run(run_dir)
         if run is None:
+            self.notify("couldn't read that run's saved record", severity="warning", timeout=4)
             return
+        self._show_monitor(run)
+
+    def _show_monitor(self, run: Run) -> None:
         scr = self.screen
         if isinstance(scr, RunMonitor):
             # a monitor is already up -> SWAP to this run's, never stack (else
-            # starting/opening a 2nd run buries the 1st and esc walks back through
-            # stale monitors instead of returning to the dashboard).
+            # opening a 2nd run buries the 1st and esc walks back through stale
+            # monitors instead of returning to the dashboard).
             if scr.run is run:
                 return  # already showing this run
             self.switch_screen(RunMonitor(run))
