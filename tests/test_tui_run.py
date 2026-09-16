@@ -499,3 +499,22 @@ def test_incumbent_shows_pulled_champion_during_cold_start_not_autoascend():
     r.apply_state({**r.state, "phase": "mutating", "iteration": 1})
     _, label3, kind3, _ = r.incumbent("sam-hum-law-fem", 1)
     assert kind3 == "aa" and label3 == "AutoAscend"
+
+
+def test_seed_row_translates_raw_nle_end_status_codes_to_words():
+    """A completed TrajectoryResult carries the raw NLE end_status code as a
+    string ("1"/"-1"); the detail row must show a word, not the number -- the
+    bug where completed rows read "1"/"-1" while live rows read "died"."""
+    from nethackers.tui.run import _seed_row
+
+    # 1 = DEATH, -1 = ABORTED (no death/ascension), 0 = still running.
+    assert _seed_row({"status": "completed", "end_status": "1"})["status"] == "died"
+    assert _seed_row({"status": "completed", "end_status": "-1"})["status"] == "aborted"
+    assert _seed_row({"status": "completed", "end_status": "0"})["status"] == "running"
+    # ascension wins over the engine code.
+    assert _seed_row({"status": "completed", "end_status": "1",
+                      "ascended": True})["status"] == "ascended"
+    # live rows (parsed from arena stderr) carry no end_status -> best guess.
+    assert _seed_row({"status": "completed"})["status"] == "died"
+    # a word-valued end_status (fixtures / future arena) passes straight through.
+    assert _seed_row({"status": "completed", "end_status": "died"})["status"] == "died"

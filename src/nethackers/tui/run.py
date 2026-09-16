@@ -65,14 +65,33 @@ class EvalView:
         return pstdev(s) if len(s) > 1 else 0.0
 
 
+# NLE engine end-of-episode codes (nle StepStatus), which the arena records
+# verbatim as a string (I4: no arena change -- so we translate here, not there):
+#   "1" = the character died in-game                                   -> died
+#  "-1" = the episode ended without a death or ascension              -> aborted
+#         (quit / escaped / ran out the step budget; no cause of death)
+#   "0" = still running (never terminal in a completed result)        -> running
+# Ascension is carried separately by the `ascended` flag (checked first), so an
+# ascension that also reports end_status "1" still reads as "ascended".
+_NLE_END_STATUS = {"1": "died", "-1": "aborted", "0": "running"}
+
+
 def _status_word(row: dict) -> str:
-    """Normalize a seed row's status to one of ascended | died | timed out."""
+    """Normalize a seed row's status to a word: ascended | died | aborted |
+    timed out (| running). Completed episodes carry the raw NLE ``end_status``
+    code, translated via ``_NLE_END_STATUS``; live rows (parsed from the arena's
+    stderr, which omits end_status) fall back to a best guess from the arena
+    ResultStatus. A word-valued end_status (test fixtures / a future arena that
+    emits words) passes straight through."""
     if row.get("ascended"):
         return "ascended"
     st = str(row.get("status") or "")
     if "timeout" in st or st == "timed out":
         return "timed out"
-    return row.get("end_status") or ("died" if st in ("", "completed") else st)
+    end = row.get("end_status")
+    if end is not None and str(end) != "":
+        return _NLE_END_STATUS.get(str(end), str(end))
+    return "died" if st in ("", "completed") else st
 
 
 def _seed_row(raw: dict) -> dict:

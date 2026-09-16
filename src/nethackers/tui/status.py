@@ -67,7 +67,7 @@ ROLE_FULL = {"arc": "Archeologist", "bar": "Barbarian", "cav": "Caveman",
              "ran": "Ranger", "rog": "Rogue", "sam": "Samurai", "tou": "Tourist",
              "val": "Valkyrie", "wiz": "Wizard"}
 _STATUS = {"ascended": ("★", _GOLD), "died": ("☠", _HP),
-           "timed out": ("⧗", _DIM)}
+           "timed out": ("⧗", _DIM), "aborted": ("⊘", _DIM), "running": ("⊙", _DIM)}
 _BACKEND_NAME = {"claude": "Claude Code", "codex": "Codex"}
 
 
