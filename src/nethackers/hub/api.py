@@ -301,7 +301,7 @@ def create_app(
         """The markdown representation, rendered from live store reads."""
         return render_brief(store, epoch=_epoch(), version=_pkg_version("nethackers"))
 
-    @app.api_route("/", methods=["GET", "HEAD"])
+    @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
     def index(request: Request) -> Response:
         """Two representations of one resource, chosen by Accept (design
         2026-09-16). HTML is the default for everyone who did not explicitly
@@ -332,8 +332,8 @@ def create_app(
         wants the data has /index.md and the JSON reads."""
         return _hacker_card(_served_page(), username)
 
-    @app.get("/index.md")
-    @app.get("/llms.txt")
+    @app.api_route("/index.md", methods=["GET", "HEAD"], include_in_schema=False)
+    @app.api_route("/llms.txt", methods=["GET", "HEAD"], include_in_schema=False)
     def brief_document() -> Response:
         """The same document at two conventional URLs (D9), as text/plain
         (D4). Stacked decorators register both paths against one handler.

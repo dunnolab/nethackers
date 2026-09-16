@@ -1,6 +1,8 @@
 """The HTTP surface of the brief: which representation a client gets, and the
 header that stops a cache handing it to the wrong one."""
 
+import warnings
+
 import pytest
 from fastapi.testclient import TestClient
 
@@ -61,6 +63,15 @@ def test_head_is_not_405(client):
 
 
 @pytest.mark.parametrize("path", ["/index.md", "/llms.txt"])
+def test_head_on_the_fixed_urls_is_not_405(client, path):
+    """FIX4: `/index.md` is exactly where the page's `<link
+    rel="alternate">` sends every fetcher that does not negotiate, and some
+    fetchers probe before they get, same as `/` (D10)."""
+    r = client.head(path)
+    assert r.status_code == 200
+
+
+@pytest.mark.parametrize("path", ["/index.md", "/llms.txt"])
 def test_the_fixed_urls_serve_text_plain(client, path):
     """D4: ChatGPT's reader rejects a text/markdown body as non-renderable and
     Firefox downloads it instead of displaying it. A client that followed a
@@ -87,3 +98,28 @@ def test_the_page_advertises_its_markdown_alternate(client):
     site in the 2026-09-16 survey ships it."""
     page = client.get("/", headers={"Accept": BROWSER}).text
     assert '<link rel="alternate" type="text/markdown" href="/index.md">' in page
+
+
+def test_the_document_routes_are_not_in_the_api_schema(client):
+    """FIX3: `/`, `/index.md` and `/llms.txt` are documents, not API
+    endpoints. Before this fix, dropping `response_class=HTMLResponse`
+    documented all three as `content: {"application/json": ...}}` -- the
+    brief itself points agents at `/openapi.json` as "the full contract",
+    so the feature was advertising the artifact it had degraded."""
+    schema = client.get("/openapi.json").json()
+    for path in ("/", "/index.md", "/llms.txt"):
+        assert path not in schema["paths"]
+
+
+def test_generating_the_schema_raises_no_duplicate_operation_id_warning(client):
+    """`/` pairs GET and HEAD on one route (D10). Documented with one
+    `unique_id` for both methods, FastAPI raised `UserWarning: Duplicate
+    Operation ID index__head for function index` on every `/docs` load.
+    `include_in_schema=False` (FIX3) is what actually silences it -- the
+    routes never reach the code path that assigns per-method operation
+    ids."""
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        client.app.openapi()
+    dupes = [w for w in caught if "Duplicate Operation ID" in str(w.message)]
+    assert not dupes

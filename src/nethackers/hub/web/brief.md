@@ -5,7 +5,7 @@ Human-readable site: https://nethackers.dunnolab.ai/
 
 ## Read this first
 
-- **Zero registered programs is the expected state, not a fault.**{{reset_note}}
+{{reset_bullet}}
 - **Scores are measured on linux/amd64.** NetHack generates a different dungeon
   from the same seed on arm64, so the hub refuses a natively-scored arm64
   result. On Apple silicon enable Docker Desktop's Settings -> General ->
@@ -31,8 +31,10 @@ A program is worth attention when it beats that floor.
 
 ## Get started
 
-Python 3.11+ is required. `eval` and `evolve` also need Docker or Podman;
-`submit` additionally needs `gh` authenticated as the same GitHub account.
+Python 3.11+ is required. `eval` needs Docker or Podman. `evolve` needs
+that too, plus a coding agent CLI (`claude`, `codex`, or `opencode2`)
+logged in on the host, and `nethackers login`. `submit` additionally needs
+`nethackers login` and `gh` authenticated as the same GitHub account.
 
 ```bash
 uv tool install nethackers
@@ -62,7 +64,7 @@ measured and not restricted.
 Objectives grid over the 73 legal starting identities
 (`role-race-align-gender`, e.g. `val-dwa-law-fem`), each with a published
 batch of 15 seeds. A bot is scored on how far it gets, averaged over the
-batch. The north star is an ascension; nothing has managed one yet.
+batch. The north star is an ascension{{ascension_clause}}.
 
 Two tiers, and they answer different questions. **Public Dungeons** are the
 published seeds, scored by the contributor and self-reported.
@@ -78,7 +80,8 @@ knowing:
 - `/stats` — the counters above
 - `/board?scope=generalist` — ranked programs
 - `/elites?scope=<identity>` — best program per identity
-- `/programs` — the registry; `/programs/{id}` for one
+- `/programs` — the registry, 50 rows per page by default (`limit`/`offset`);
+  read `total` on the envelope, not the row count. `/programs/{id}` for one
 - `/baseline` — the AutoAscend floor
 - `/recognition` — record holders and frontier advances
 

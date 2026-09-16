@@ -128,10 +128,13 @@ second request for the `.md` sibling.
   date. Rejected: adding a write to `genesis` (retroactively useless), and
   deriving a date from `MAX(created_at)` on `atoms_v1` (that is the last
   registration before the reset, not the reset).
-- **D8. Numbers are read per request; no cache.** `read_stats` is six `COUNT`s
-  and `read_baseline` is one table read — the same cost profile as the existing
-  `index()` handler, which already reads a file and the package version on every
-  request.
+- **D8. Numbers are read per request; no cache.** Not because the cost is the
+  same as `index()` -- it isn't. `render_brief` calls `read_baseline` for both
+  tiers, and each hydrates a full, un-pushed-down scan of its `baseline_atoms`
+  table into `Atom` dataclasses -- up to 2,250 of them in one request. Measured
+  at 5.4 ms against `index()`'s 0.14 ms: roughly 40x. No cache is needed anyway:
+  5.4 ms is still ~185 req/s per worker, and `/atoms` already does more work per
+  request than this does.
 - **D9. `/llms.txt` serves the same bytes as `/index.md`.** The convention is a
   link index, but this site is one page: the brief already *is* the index, and
   two documents would be two things to keep true. Honest expectation, recorded
