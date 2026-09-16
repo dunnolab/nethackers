@@ -103,7 +103,7 @@ rather than validated fields:
 }
 ```
 
-`roots/autoascend/` is a complete worked example: AutoAscend (the 2021 NetHack
+`src/nethackers/roots/autoascend/` (the tree `--seed autoascend` resolves to) is a complete worked example: AutoAscend (the 2021 NetHack
 Challenge winner) wrapped to the contract. `bot.py` is a 34-line shim, but the
 real work is `arena_adapter.py` (~140 lines), which inverts AutoAscend's blocking
 `env.step` loop into the pull-based `act()` the contract wants, using a thread and

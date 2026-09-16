@@ -16,6 +16,7 @@ def _seed(tmp_path):
     seed.mkdir()
     (seed / "nethackers.solution.json").write_text(
         '{"root": ".", "entrypoint": "bot.py"}')
+    (seed / "bot.py").write_text("def make_agent(): ...\n")
     return seed
 
 

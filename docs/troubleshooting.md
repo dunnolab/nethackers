@@ -89,7 +89,7 @@ readiness strip correctly reports podman.
 Workaround — use the CLI for evolve on podman-only machines:
 
 ```bash
-nethackers evolve <objective> --seed roots/autoascend --operator codex
+nethackers evolve <objective> --seed autoascend --operator codex
 ```
 
 ### Rootless podman: mutator fails with `EACCES` on `/workspace`

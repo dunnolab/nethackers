@@ -1,6 +1,6 @@
 [project]
 name = "nethackers"
-version = "0.27.0"
+version = "0.28.0"
 description = "Solve NetHack by evolving symbolic players — evaluation and registration core."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -73,7 +73,7 @@ warn_unused_ignores = true
 # tests/fixtures/bots/*/bot.py files (no __init__.py, by design -- they
 # mirror a real submission root) and fails collection with "Duplicate
 # module named 'bot'" before any type checking runs.
-exclude = ["^tests/fixtures/"]
+exclude = ["^tests/fixtures/", "^src/nethackers/roots/"]
 
 [[tool.mypy.overrides]]
 module = [
@@ -99,7 +99,7 @@ cache-keys = [{ file = "pyproject.toml" }, { file = "src/**/*.py" }]
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-extend-exclude = ["roots/autoascend/autoascend"]
+extend-exclude = ["src/nethackers/roots/autoascend/autoascend"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.ruff.lint.isort]
