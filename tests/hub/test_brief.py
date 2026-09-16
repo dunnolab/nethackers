@@ -227,11 +227,17 @@ def test_the_brief_fits_the_budget(worst_case_store):
     "rebuilding" bullet, not the empty-board one -- and a verified epoch, so
     the Private Dungeons floor line is present too. The empty-store/
     no-verifier fixture used before this could never fail the budget it was
-    meant to enforce."""
+    meant to enforce.
+
+    Raised 4096 -> 5120 on 2026-09-17 (D11): a behavioural test found four
+    content gaps (safety model, `uv` bootstrap, first-run image pull,
+    default hub) worth about 580 bytes, and the design ruled that worth
+    more than the margin -- nothing already in the brief was cut to pay
+    for it. Worst case was 3703/4096 before those additions."""
     epoch = Epoch(secret_fingerprint=secret_fingerprint(SECRET),
                   arena_major=ARENA_MAJOR, seeds=HIDDEN_SEEDS)
     brief = render_brief(worst_case_store, epoch=epoch, version="9.9.9")
-    assert len(brief.encode("utf-8")) <= 4096
+    assert len(brief.encode("utf-8")) <= 5120
 
 
 def test_programs_pagination_is_documented(populated_store):
@@ -264,6 +270,62 @@ def test_submit_requirements_are_complete(populated_store):
         brief.split("## Get started", 1)[1].split("```bash", 1)[0].split()
     )
     assert "`submit` additionally needs `nethackers login` and `gh`" in requirements
+
+
+def test_the_safety_model_is_stated(populated_store):
+    """GAP 1 (2026-09-17 behavioural test; the most important of the four):
+    the brief said nothing about `evolve` running a coding agent unattended
+    with permission prompts disabled, or that every evaluated candidate --
+    not only the improvements -- is pushed as public commits under the
+    user's account. This document is instructions an autonomous agent acts
+    on; a missing safety line causes real action on a real machine. Placed
+    as a fourth "Read this first" bullet (D6): that section is what a
+    truncating extraction model weights most."""
+    brief = render_brief(populated_store, version="9.9.9")
+    read_this_first = brief.split("## Read this first", 1)[1].split(
+        "## State of the board", 1)[0]
+    assert "permission prompts disabled" in read_this_first
+    assert "unattended" in read_this_first
+    assert "not only the improvements" in read_this_first
+    assert "`nethacker`" in read_this_first
+    assert "`--offline`" in read_this_first
+
+
+def test_uv_bootstrap_is_explained(populated_store):
+    """GAP 2: the brief's first command is `uv tool install nethackers` and
+    said nothing about obtaining `uv` on a machine that lacks it -- a test
+    agent went to Astral's docs and introduced a `curl | sh` this project
+    never sanctioned. README's other path, `pip install nethackers`, and a
+    pointer to Astral belong in "Get started" as prose near the command
+    they qualify -- not a new fenced command the README-drift tripwire
+    (test_every_command_in_the_brief_is_in_the_readme) would catch."""
+    brief = render_brief(populated_store, version="9.9.9")
+    get_started = brief.split("## Get started", 1)[1].split("## How scoring works", 1)[0]
+    assert "`pip install nethackers`" in get_started
+    assert "astral.sh/uv" in get_started
+
+
+def test_the_first_run_image_pull_is_flagged(populated_store):
+    """GAP 3: the sandbox images are several GB and pull on first use;
+    `nethackers doctor --pull` front-loads them. Both facts are in
+    README.md and docs/troubleshooting.md; a test agent called the missing
+    warning the single biggest first-run surprise, and not in the brief."""
+    brief = render_brief(populated_store, version="9.9.9")
+    get_started = brief.split("## Get started", 1)[1].split("## How scoring works", 1)[0]
+    assert "several GB" in get_started
+    assert "`nethackers doctor --pull`" in get_started
+
+
+def test_the_default_hub_is_stated(populated_store):
+    """GAP 4: the brief never said which hub the CLI talks to, so an agent
+    handed a different hub's URL installs a CLI pointed somewhere else and
+    does not notice. README states the default at the end of Quickstart;
+    the brief now does the same at the end of "Get started"."""
+    brief = render_brief(populated_store, version="9.9.9")
+    get_started = brief.split("## Get started", 1)[1].split("## How scoring works", 1)[0]
+    assert "https://nethackers.dunnolab.ai" in get_started
+    assert "`--hub`" in get_started
+    assert "`$NETHACKERS_HUB`" in get_started
 
 
 def _commands(text: str) -> list[str]:

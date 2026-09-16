@@ -13,6 +13,11 @@ Human-readable site: https://nethackers.dunnolab.ai/
   before evaluating anything.
 - **The source repository is private.** Install from PyPI; cloning
   github.com/dunnolab/nethackers fails with a 404 unless you have access.
+- **`evolve` publishes, and runs a coding agent unattended.** It drives
+  that agent in a container with permission prompts disabled for hours,
+  and pushes every evaluated candidate — not only the improvements — to a
+  public `nethacker` repo under your account. `--offline` runs the loop
+  without publishing or registering.
 
 ## State of the board
 
@@ -42,8 +47,11 @@ nethackers doctor
 nethackers
 ```
 
-`doctor` reports which of `browse`, `eval`, `evolve` and `publish` this machine
-can do, and what to fix for the rest. The last command opens the dashboard.
+`pip install nethackers` works too; `uv` itself installs from
+https://astral.sh/uv. `doctor` reports which of `browse`, `eval`, `evolve`
+and `publish` this machine can do, and what to fix for the rest. The last
+command opens the dashboard. The sandbox images are several GB and pull on
+first use; `nethackers doctor --pull` front-loads them.
 
 ```bash
 nethackers eval ./my-bot --objective val-dwa-law-fem
@@ -52,7 +60,9 @@ nethackers submit ./my-solution --objective val-dwa-law-fem
 ```
 
 `eval` scores a bot on an identity's published 15-seed batch. `submit`
-evaluates, pushes to `github.com/<you>/nethacker`, and registers the result.
+evaluates, pushes to `github.com/<you>/nethacker`, and registers the
+result. The CLI talks to https://nethackers.dunnolab.ai unless you pass
+`--hub` or set `$NETHACKERS_HUB`.
 
 ## How scoring works
 

@@ -144,9 +144,15 @@ second request for the `.md` sibling.
   targets — is the second-most-frequent fetcher of the ones that are read, behind
 only GPTBot among named AI tools.
 - **D10. `HEAD /` returns 200.** Some fetchers probe before they get.
-- **D11. The rendered brief is capped at 4 KB, enforced by a test.** Comparable
-  landing-page briefs measured today: Vercel 1,582 B, Cloudflare 2,998 B,
-  Mintlify 7,232 B, Expo 13,788 B.
+- **D11. The rendered brief is capped at 5,120 bytes, enforced by a test.**
+  Comparable landing-page briefs measured today: Vercel 1,582 B, Cloudflare
+  2,998 B, Mintlify 7,232 B, Expo 13,788 B — 5,120 B sits between Cloudflare
+  and Mintlify, and is still ~40x smaller than the 206,052-byte HTML page
+  (§1). Raised from the original 4,096 on 2026-09-17: a behavioural test of
+  the install path found four content gaps (the safety model; no `uv`
+  bootstrap; no first-run image-pull warning; no stated default hub) worth
+  about 580 bytes, and that is worth more than the margin — nothing already
+  in the brief was cut to pay for it.
 
 ## 5. Components
 
@@ -218,21 +224,26 @@ One line in `<head>`, next to the existing link-preview block:
 
 ## 6. The brief's content contract
 
-Order is part of the design (D6). Budget ≤ 4 KB.
+Order is part of the design (D6). Budget ≤ 5,120 bytes (D11).
 
 1. **Title and one sentence.** What NetHackers is, and the link to the human
    page.
-2. **Read this first** — the three corrections, as plain declarative sentences:
-   the board was reset for arena major 2 and an earlier epoch is archived, so
-   zero registered programs is the expected state, not a fault; scores are
-   measured on linux/amd64 and the hub refuses a native arm64 score; the source
-   repo is private, and the CLI installs from PyPI.
+2. **Read this first** — four corrections, as plain declarative sentences: the
+   board was reset for arena major 2 and an earlier epoch is archived, so zero
+   registered programs is the expected state, not a fault; scores are measured
+   on linux/amd64 and the hub refuses a native arm64 score; the source repo is
+   private, and the CLI installs from PyPI; and `evolve` publishes every
+   evaluated candidate — not only the improvements — and runs its coding agent
+   unattended with permission prompts disabled (2026-09-17 fix wave).
 3. **State of the board** — programs, hackers, ascensions, best progression,
    last registration, and both AutoAscend floors, each labelled with the tier it
    belongs to, plus the `generated_at` stamp.
 4. **Get started** — `uv tool install nethackers`, `nethackers doctor`, and the
    quickstart, with requirements inline (Python 3.11+, Docker or Podman,
-   Rosetta on Apple silicon).
+   Rosetta on Apple silicon). 2026-09-17 fix wave, as prose rather than new
+   fenced commands (§8): the `pip install` alternative and where `uv` itself
+   installs from; the several-GB first-run image pull and `doctor --pull`; the
+   default hub URL and its `--hub`/`$NETHACKERS_HUB` overrides.
 5. **How scoring works** — the program is the unit of evaluation; 73 identities
    × 15 seeds; Public vs Private Dungeons in two sentences.
 6. **For agents** — `/openapi.json` for the full contract, and one line each
@@ -266,7 +277,7 @@ for both. §8 describes the drift tripwire.
 - **I6.** Every non-`.py` file under `src/nethackers/hub/web/` is covered by a
   `force-include` entry in `pyproject.toml`. Breaking this ships a wheel whose
   hub 500s on first request.
-- **I7.** The rendered brief is ≤ 4 KB.
+- **I7.** The rendered brief is ≤ 5,120 bytes.
 
 ## 8. Known failure modes
 
@@ -310,10 +321,11 @@ strings rather than invented ones:
 
 **`tests/hub/test_brief.py`** — via `TestClient`: content type per route, `Vary:
 Accept` on both branches of `/`, `HEAD /` is 200, `/index.md` and `/llms.txt`
-are `text/plain` and byte-identical, the 4 KB budget, the README command-drift
-tripwire, the `force-include` coverage check, the hidden-seed assertion, and two
-data states — a populated fixture store (numbers appear) and an empty one with
-archive tables present (the reset sentence appears, no invented date).
+are `text/plain` and byte-identical, the 5,120-byte budget, the README
+command-drift tripwire, the `force-include` coverage check, the hidden-seed
+assertion, and two data states — a populated fixture store (numbers appear)
+and an empty one with archive tables present (the reset sentence appears, no
+invented date).
 
 **Behavioural re-run.** The in-scope scenario briefs (bare link, "install this",
 "what is this?", "who's winning?") are re-run against a
