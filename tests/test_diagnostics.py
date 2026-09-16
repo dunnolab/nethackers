@@ -34,6 +34,7 @@ from nethackers.diagnostics import (
     run_checks,
     to_json,
 )
+from nethackers.harness import sandbox_preflight
 from nethackers.hubclient.client import HubUnreachable
 from nethackers.hubclient.credentials import Credentials
 
@@ -83,9 +84,17 @@ def _healthy_kwargs(**overrides):
         # Dockerfile.mutator/Makefile, since the suite runs from a checkout).
         repo_root=lambda: None,
         preflight_operator=lambda operator: None,
+        opencode2_keyed=lambda: True,   # never read the real ~/.config/opencode
         hub_mode=lambda hub: "github",
         load_creds=lambda: Credentials("castiel", "tok"),
         gh_state=lambda: ("castiel", "authed"),
+        # Without this override, the real default reads the actual host's
+        # Docker Desktop settings file -- a real, uncontrolled probe that
+        # would break this file's "no real...call" hermeticity guarantee.
+        # Harmless to gating either way (the check is soft, and eval/evolve
+        # are gated purely by their own hard checks) -- but this file's whole
+        # premise is that every probe is faked.
+        rosetta=lambda: ("ok", "Rosetta is accelerating amd64 emulation"),
     )
     kwargs.update(overrides)
     return kwargs
@@ -96,7 +105,7 @@ def test_run_checks_returns_one_result_per_check_id():
     ids = {r.id for r in results}
     assert ids == {
         "container_runtime", "arena_image", "mutator_image",
-        "hub", "hub_login", "gh", "operator",
+        "hub", "hub_login", "gh", "operator", "rosetta",
     }
 
 
@@ -154,10 +163,10 @@ def test_only_filters_results_to_exactly_the_requested_check_ids():
     assert {r.id for r in results} == {"container_runtime", "arena_image"}
 
 
-def test_only_none_default_is_unchanged_and_runs_all_seven():
+def test_only_none_default_is_unchanged_and_runs_all_eight():
     # Backward compatibility is the whole point of `only`: every existing
     # caller (the `doctor` CLI, this file's own healthy-path tests above)
-    # omits it, and must see byte-for-byte the same 7-check behavior as
+    # omits it, and must see byte-for-byte the same 8-check behavior as
     # before `only` existed.
     results = run_checks(**_healthy_kwargs())
     assert {r.id for r in results} == set(CHECK_SPECS)
@@ -232,10 +241,10 @@ def test_a_raising_probe_becomes_a_failed_check_not_an_exception():
 # --- CHECK_SPECS: the single source for each check's (severity, capabilities)
 
 
-def test_check_specs_covers_exactly_the_seven_check_ids():
+def test_check_specs_covers_exactly_the_eight_check_ids():
     assert set(CHECK_SPECS) == {
         "container_runtime", "arena_image", "mutator_image",
-        "hub", "hub_login", "gh", "operator",
+        "hub", "hub_login", "gh", "operator", "rosetta",
     }
 
 
@@ -292,6 +301,19 @@ def test_operator_narrows_to_a_single_named_agent():
     op = next(r for r in results if r.id == "operator")
     assert seen == ["codex"]                           # ONLY codex probed
     assert "codex" in op.detail and "claude" not in op.detail
+
+
+def test_operator_labels_keyless_opencode2_as_free_models_only():
+    # opencode2 always passes (its free models need no key), but calling that
+    # "logged in" claimed a login that doesn't exist.
+    def check(keyed: bool) -> tuple[str, str]:
+        results = run_checks(**_healthy_kwargs(
+            operator="opencode2", opencode2_keyed=lambda: keyed))
+        op = next(r for r in results if r.id == "operator")
+        return op.status, op.items[0].detail
+
+    assert check(False) == ("ok", "free models only")
+    assert check(True) == ("ok", "logged in")
 
 
 def test_operator_items_are_per_agent_with_flat_detail_for_json():
@@ -357,24 +379,64 @@ def test_run_checks_explicit_hub_never_consults_load_stage(monkeypatch):
     run_checks(**_healthy_kwargs(hub="https://example.invalid"))  # must not raise
 
 
-# --- image "unreachable" fix text: branches on repo presence, not ref shape
+# --- image "unreachable" fix text: per-KIND, because the two kinds differ
 
 
 def test_image_unreachable_fix_suggests_make_inside_a_repo_checkout():
+    # Arena's real resolve_image never returns a digest inside a checkout --
+    # its local dev tag (sandbox_preflight.py's `nethackers/arena:dev`) --
+    # unlike the shared `_ref` fake (a digest shape, by design: see its own
+    # comment). Fix round 1 makes the fallback's fix-text selection care
+    # about that shape, so this fixture must reflect the real non-digest ref
+    # to exercise the checkout/`make` path rather than the digest/network one.
+    results = run_checks(**_healthy_kwargs(
+        resolve_image=lambda explicit, kind: "nethackers/arena:dev",
+        image_present=lambda ref: False, manifest_reachable=lambda ref: False,
+        repo_root=lambda: Path("/fake/repo"),
+    ))
+    mutator = next(r for r in results if r.id == "mutator_image")
+    assert mutator.status == "fail"
+    assert "make mutator" in mutator.fix
+    assert "NETHACKERS_" not in mutator.fix
+
+
+def test_image_unreachable_fix_never_suggests_make_for_a_digest_ref():
+    # A checkout whose mutator matches its pin resolves to the pinned digest
+    # (Task 5's resolve_image), and nethackers only ever pulls a digest
+    # (ensure_image) -- never builds it, even inside a checkout. `make
+    # mutator` can't fix an unreachable digest, so the fix must still name
+    # the network, exactly like outside a repo.
     results = run_checks(**_healthy_kwargs(
         image_present=lambda ref: False, manifest_reachable=lambda ref: False,
         repo_root=lambda: Path("/fake/repo"),
     ))
-    arena = next(r for r in results if r.id == "arena_image")
-    assert arena.status == "fail"
-    assert "make arena" in arena.fix
-    assert "NETHACKERS_" not in arena.fix
+    mutator = next(r for r in results if r.id == "mutator_image")
+    assert mutator.status == "fail"
+    assert "make" not in mutator.fix
+    assert "NETHACKERS_MUTATOR_IMAGE" in mutator.fix
 
 
 def test_image_unreachable_fix_suggests_network_override_outside_a_repo():
     results = run_checks(**_healthy_kwargs(
         image_present=lambda ref: False, manifest_reachable=lambda ref: False,
         repo_root=lambda: None,
+    ))
+    mutator = next(r for r in results if r.id == "mutator_image")
+    assert mutator.status == "fail"
+    assert "make" not in mutator.fix
+    assert "NETHACKERS_MUTATOR_IMAGE" in mutator.fix
+
+
+@pytest.mark.parametrize("repo_root", [lambda: Path("/fake/repo"), lambda: None])
+def test_arena_unreachable_fix_never_suggests_a_build_even_in_a_checkout(repo_root):
+    """The arena resolves to the pinned digest everywhere (spec D6) and
+    ``ensure_image`` pulls a digest ref rather than building it (INV11), so
+    `make arena` would build a tag this run is not going to use. doctor must
+    not print advice its own acquisition path will not follow -- which is also
+    what docs/troubleshooting.md's "unreachable" entry tells the reader."""
+    results = run_checks(**_healthy_kwargs(
+        image_present=lambda ref: False, manifest_reachable=lambda ref: False,
+        repo_root=repo_root,
     ))
     arena = next(r for r in results if r.id == "arena_image")
     assert arena.status == "fail"
@@ -499,7 +561,7 @@ def test_to_json_shape():
 # Independent of run_checks -- hand-built CheckResult lists, exercising the
 # hard-vs-soft contract directly: a HARD check gates every capability it's
 # tagged with, full stop. A capability with NO hard checks of its own
-# (publish/browse, in the real 7-check table) falls back to its own soft
+# (publish/browse, in the real 8-check table) falls back to its own soft
 # checks, where only "fail" gates it -- "warn" never gates ANY capability,
 # hard- or soft-only alike (INV6: "soft warnings never flip it").
 #
@@ -605,3 +667,68 @@ def test_fold_probe_crash_matches_an_authored_hard_fail():
     _, expected_by_cap = _SCENARIOS["one_hard_fail"]
     for cap, expected in expected_by_cap.items():
         assert exit_code(results, cap) == expected, cap
+
+
+# --- a checkout's mutator fingerprint ref (spec 2026-09-15 §5.6) ------------
+
+_FP = "nethackers/mutator:h-" + "e" * 64
+_FP_REMOTE = "ghcr.io/dunnolab/nethackers-mutator:h-" + "e" * 64
+
+
+def _fingerprint_resolver(explicit, kind):
+    return _FP if kind == "mutator" else _ref(explicit, kind)
+
+
+def test_fingerprint_mutator_present_is_ok():
+    results = run_checks(**_healthy_kwargs(resolve_image=_fingerprint_resolver))
+    mutator = next(r for r in results if r.id == "mutator_image")
+    assert mutator.status == "ok" and _FP in mutator.detail
+
+
+def test_fingerprint_mutator_published_by_ci_is_pullable():
+    probed = []
+    results = run_checks(**_healthy_kwargs(
+        resolve_image=_fingerprint_resolver,
+        image_present=lambda ref: ref != _FP,
+        manifest_reachable=lambda ref: probed.append(ref) or ref == _FP_REMOTE,
+    ))
+    mutator = next(r for r in results if r.id == "mutator_image")
+    assert mutator.status == "warn" and "pullable" in mutator.detail
+    assert _FP_REMOTE in probed                          # asks GHCR under its published name
+
+
+def test_fingerprint_mutator_nobody_built_says_it_builds_on_first_use():
+    results = run_checks(**_healthy_kwargs(
+        resolve_image=_fingerprint_resolver,
+        image_present=lambda ref: ref != _FP,
+        manifest_reachable=lambda ref: False,
+    ))
+    mutator = next(r for r in results if r.id == "mutator_image")
+    assert mutator.status == "warn"
+    assert "doctor --pull" in mutator.fix and "make" not in mutator.fix
+
+
+def test_short_digest_also_shortens_fingerprint_tags():
+    shortened = _short_digest(f"present — {_FP}")
+    assert shortened == "present — nethackers/mutator:h-" + "e" * 19 + "…"
+
+
+# --- the registry probe: doctor must not be stricter than acquisition -------
+
+
+def test_doctor_probe_is_not_stricter_than_the_acquisition_probe():
+    # A slow registry made doctor report `unreachable` for an image ensure_image
+    # pulls without complaint: `docker manifest inspect` walks every sub-manifest
+    # of a multi-arch index, which measured 7-16s against GHCR on a laptop --
+    # over doctor's old 10s budget, inside acquisition's. Both probes now share
+    # one budget, so the two can't disagree about the same image.
+    seen: dict = {}
+
+    def _run(argv, **kw):
+        seen[argv[1]] = kw.get("timeout")
+        return SimpleNamespace(returncode=0)
+
+    ref = "ghcr.io/dunnolab/nethackers-mutator@sha256:" + "a" * 64
+    assert diagnostics._manifest_reachable(ref, run=_run) is True
+    assert sandbox_preflight._remote_image_exists(ref, runtime="docker", run=_run) is True
+    assert seen["manifest"] == sandbox_preflight.MANIFEST_PROBE_TIMEOUT >= 30

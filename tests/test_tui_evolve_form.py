@@ -11,6 +11,8 @@ this suite must never do."""
 from __future__ import annotations
 
 import pytest
+from rich.markup import escape
+from rich.text import Text
 from textual.app import App, ComposeResult
 from textual.widgets import Button, Input, Select, Static
 
@@ -267,14 +269,15 @@ async def test_operator_version_line_shows_not_found_when_missing(monkeypatch):
 
 async def test_effort_options_follow_selected_model(monkeypatch):
     # The Reasoning-effort picker is driven by the selected model's discovered
-    # efforts (not a hardcoded list); a model with no reasoning falls back to
-    # the shared static EFFORTS.
+    # efforts (not a hardcoded list). Unknown metadata falls back to the shared
+    # list, while a catalog-confirmed empty set must remain default-only.
     monkeypatch.setattr(
         ef, "probe_operator",
         lambda backend, **k: (
             CliInfo(backend, True, f"{backend} x", True),
             [ModelInfo("m-rich", "Rich", ("low", "high", "ultra"), False),
-             ModelInfo("m-bare", "Bare", (), False)]
+             ModelInfo("m-bare", "Bare", (), False),
+             ModelInfo("m-no-variants", "No variants", (), False, True)]
             if backend == "claude" else None,
         ),
     )
@@ -288,11 +291,58 @@ async def test_effort_options_follow_selected_model(monkeypatch):
             ("Harness default", ""), ("low", "low"), ("high", "high"), ("ultra", "ultra")]
         assert form._effort_options("m-bare") == [
             ("Harness default", ""), *((e, e) for e in ef.EFFORTS)]   # fallback
+        assert form._effort_options("m-no-variants") == [
+            ("Harness default", "")]
         form.query_one("#f_model", Select).value = "m-rich"
         await pilot.pause()
         eff = form.query_one("#f_effort", Select)
         eff.value = "ultra"                # a live-only level absent from static EFFORTS
         assert eff.value == "ultra"        # picker was repopulated from live reasoning
+
+
+async def _switch_operator(app, pilot, backend: str):
+    form = app.query_one(ef.EvolveForm)
+    form.query_one("#f_op", Select).value = backend
+    await pilot.pause()
+    await app.workers.wait_for_complete()
+    await pilot.pause()
+    return form
+
+
+async def test_opencode2_offers_no_effort_without_a_pinned_model(monkeypatch):
+    # OpenCode 2 applies effort only as `provider/model#variant`: under
+    # "Harness default" a picked effort was silently dropped from the run.
+    monkeypatch.setattr(ef, "probe_operator", lambda backend, **k: (
+        CliInfo(backend, True, f"{backend} x", True), None))
+    app = _Host(None)
+    async with app.run_test(size=(100, 50)) as pilot:
+        await pilot.pause()
+        form = app.query_one(ef.EvolveForm)
+        assert len(form._effort_options("")) > 1            # claude applies it model-less
+        form = await _switch_operator(app, pilot, "opencode2")
+        assert form._effort_options("") == [("Harness default", "")]
+        assert form._effort_options("__custom__") == [
+            ("Harness default", ""), *((e, e) for e in ef.EFFORTS)]
+
+
+async def test_opencode2_version_line_names_free_models_without_a_key(monkeypatch):
+    keyed = {"value": False}
+    monkeypatch.setattr(ef, "probe_operator", lambda backend, **k: (
+        CliInfo(backend, True, "opencode2 v0.0.0-beta-19271", keyed["value"]), None))
+    app = _Host(None)
+    async with app.run_test(size=(100, 50)) as pilot:
+        await pilot.pause()
+        await _switch_operator(app, pilot, "opencode2")
+        line = str(app.query_one("#f_op_version", Static).render())
+        assert "free models only" in line
+
+    keyed["value"] = True
+    app = _Host(None)
+    async with app.run_test(size=(100, 50)) as pilot:
+        await pilot.pause()
+        await _switch_operator(app, pilot, "opencode2")
+        line = str(app.query_one("#f_op_version", Static).render())
+        assert "free models only" not in line and "0.0.0-beta-19271" in line
 
 
 async def test_missing_image_builds_then_launches(monkeypatch):
@@ -453,6 +503,70 @@ async def test_pull_error_phase_writes_to_f_err_not_f_pull(monkeypatch):
         err_text = str(app.query_one("#f_err", Static).render())
         assert "couldn't reach the registry" in err_text   # the mapped, authoritative message
         assert app.started is None   # provisioning failed -- the run never launched
+
+
+async def test_pull_error_detail_shows_its_brackets_literally(monkeypatch):
+    """An error event's detail is raw build or pull output, which routinely holds
+    bracketed text. Parsed as markup, `[internal]` would vanish and `[/nope]`
+    would raise; #f_err must show both as written."""
+    monkeypatch.setattr(ef, "prepare_evolve", lambda *a, **k: _Plan())
+    monkeypatch.setattr(ef, "image_present", lambda *a, **k: False)
+    detail = "#5 [internal] load metadata for x\n[/nope]"
+
+    def _ensure(ref, kind, on_event=None, **k):
+        if kind == "mutator":
+            if on_event is not None:
+                on_event(PullEvent(kind="mutator", ref=ref, phase="error",
+                                   layers_total=None, layers_complete=None, detail=detail))
+            return "[red]sandbox setup failed[/]"
+        return None
+
+    monkeypatch.setattr(ef, "ensure_image", _ensure)
+    app = _Host(None)
+    async with app.run_test(size=(100, 40)) as pilot:
+        form = app.query_one(ef.EvolveForm)
+        shown: list[str] = []
+        real_apply = form._apply_pull
+
+        def _spy(event):
+            real_apply(event)   # on the UI thread (via call_from_thread), like production
+            shown.append(str(form.query_one("#f_err", Static).render()))
+
+        form._apply_pull = _spy
+        form._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+
+    assert shown == [detail]
+
+
+async def test_provisioning_error_renders_its_build_lines_as_the_cli_prints_them(monkeypatch):
+    """`ensure_image`'s message is Rich markup with the build's raw lines escaped
+    for Rich, and the CLI prints it through Rich. Textual's own parser reads some
+    brackets Rich's escape leaves alone (`[ 45%]`, `[Warning]`) as tags, so #f_err
+    must read the message with Rich's parser too."""
+    monkeypatch.setattr(ef, "prepare_evolve", lambda *a, **k: _Plan())
+    monkeypatch.setattr(ef, "image_present", lambda *a, **k: False)
+    raw = ("#5 [internal] load metadata for x\n[/nope]\n"
+           "[ 45%] Building C object\n[Warning] low disk space")
+    message = ("[red]sandbox setup failed[/] — the mutator image build did not complete. "
+               f"Its last lines:\n{escape(raw)}")
+    monkeypatch.setattr(ef, "ensure_image",
+                        lambda ref, kind, **k: message if kind == "mutator" else None)
+    app = _Host(None)
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        shown = str(app.query_one("#f_err", Static).render())
+
+    assert raw in shown
+    assert shown == Text.from_markup(message).plain
+    assert app.started is None
 
 
 async def test_operator_switch_uses_cache_second_time(monkeypatch):

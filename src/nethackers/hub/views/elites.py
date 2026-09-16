@@ -39,18 +39,22 @@ from typing import Any
 from nethackers.hub.ids import program_id
 from nethackers.hub.store import Store
 from nethackers.hub.views.boards import resolve_scope
+from nethackers.hub.views.source import Epoch, source_for
 
 # Per identity: mean progression (score) across every atom at ``tier``, total
 # ascensions, and the earliest atom -- ranked score desc, ascensions desc,
 # earliest asc, all in one windowed query (no materialized table, nothing to
 # recompute). Capped to the top ``k`` per identity, emitted rank-major (every
 # identity's rank-1 first, identity-sorted; then every rank-2; ...) so one
-# identity's elites can never crowd out another's.
+# identity's elites can never crowd out another's. ``{table}``/``{tier_where}``
+# are filled in by ``source_for``'s ``Source`` (self-reported -> ``atoms``;
+# verified -> ``verified_atoms``, epoch-scoped) so the same ranking runs over
+# either regime without duplicating the query.
 _LIVE_ELITES_SQL = """
 WITH agg AS (
   SELECT identity, solution_digest,
          AVG(progression) AS score, SUM(ascended) AS ascensions, MIN(created_at) AS first_at
-  FROM atoms WHERE tier = ? AND identity IN ({placeholders})
+  FROM {table} WHERE {tier_where} AND identity IN ({placeholders})
   GROUP BY identity, solution_digest
 ), ranked AS (
   SELECT *, ROW_NUMBER() OVER (
@@ -64,24 +68,38 @@ WHERE r.rank <= ? ORDER BY r.rank, r.identity
 
 
 def read_elites(
-    store: Store, *, scope: str, tier: str = "self-reported", k: int = 8
+    store: Store, *, scope: str, tier: str = "self-reported", k: int = 8,
+    epoch: Epoch | None = None,
 ) -> list[dict[str, Any]]:
     """Top-``k`` solutions per identity in ``scope``'s identity set, computed
-    live over ``atoms`` -- always current, nothing stored or recomputed.
-    Raises ``ValueError`` for an unknown ``scope`` (``resolve_scope`` --
-    mapping that to a 404 is the caller's job, same as ``/board``).
+    live over the tier's atoms table (``atoms`` for self-reported,
+    ``verified_atoms`` for verified) -- always current, nothing stored or
+    recomputed. Raises ``ValueError`` for an unknown ``scope``
+    (``resolve_scope`` -- mapping that to a 404 is the caller's job, same as
+    ``/board``).
 
     Each row: ``{rank, identity, program_id, owner, score, reference}``.
     ``owner`` and ``reference`` (``{repo, commit}``) both come from the same
-    ``LEFT JOIN`` onto the registered ``solutions`` row (the FK
-    ``insert_atoms`` enforces means this always resolves in practice), and
-    ``program_id`` (``nethackers.hub.ids.program_id``) replaces the old
-    ``solution_digest``.
+    ``LEFT JOIN`` onto the registered ``solutions`` row. Only ``atoms``
+    carries an FK to ``solutions`` -- ``verified_atoms`` does not -- but the
+    join still resolves in practice on both, because ``register_verified``
+    looks up ``get_solution`` first and refuses to write verified atoms for
+    a solution that isn't registered. ``program_id``
+    (``nethackers.hub.ids.program_id``) replaces the old ``solution_digest``.
+
+    ``tier`` selects the rows via ``views.source.source_for``: the
+    self-reported tier ranks over ``atoms``, the verified tier over
+    ``verified_atoms`` scoped to ``epoch``. Raises ``VerificationUnavailable``
+    when a verified read is asked for with no ``epoch``.
     """
+    source = source_for(tier, epoch)
     _kind, ids = resolve_scope(scope)
+    tier_where, tier_params = source.where()
     placeholders = ", ".join(["?"] * len(ids))
-    sql = _LIVE_ELITES_SQL.format(placeholders=placeholders)
-    rows = store.conn.execute(sql, (tier, *ids, k)).fetchall()
+    sql = _LIVE_ELITES_SQL.format(
+        table=source.atoms_table, tier_where=tier_where, placeholders=placeholders
+    )
+    rows = store.conn.execute(sql, (*tier_params, *ids, k)).fetchall()
     return [
         {
             "rank": row[3],

@@ -1,16 +1,22 @@
-# The image only COPYs pyproject.toml + src/. Keep the build context tiny.
+# The images only COPY pyproject.toml + src/. Keep the build context tiny.
 .git
 .venv
 .superpowers
 **/__pycache__/
-*.pyc
+**/*.pyc
 .pytest_cache
 .ruff_cache
 .mypy_cache
-.DS_Store
+**/.DS_Store
 docs
-roots
 tests
 dist
 build
 *.egg-info
+
+# AutoAscend ships in the wheel (src/nethackers/roots/), but no image needs it:
+# the arena runs the bot mounted at /sol and the hub never scores anything. Kept
+# out of the context so neither image grows by the vendored tree. Safe because
+# `[tool.hatch.build.targets.wheel] packages` simply includes whatever is
+# present -- unlike force-include, an absent subdirectory is not a build error.
+src/nethackers/roots

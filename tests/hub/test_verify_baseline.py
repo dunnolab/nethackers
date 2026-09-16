@@ -13,6 +13,7 @@ import pytest
 
 from nethackers._image_pins import ARENA_IMAGE
 from nethackers.arena.seeds import secret_fingerprint
+from nethackers.arena_version import ARENA_MAJOR
 from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
 from nethackers.hub.objectives import IDENTITIES
 from nethackers.hub.store import Store
@@ -46,11 +47,11 @@ def _evidence(identity="val-dwa-law-fem", seeds=SEEDS, image=ARENA_IMAGE, progre
         evaluator_image=image, results=results, created_at="t")
 
 
-def _register(store, evidence, *, fp=None, image=ARENA_IMAGE, seeds=SEEDS):
+def _register(store, evidence, *, fp=None, current_major=ARENA_MAJOR, seeds=SEEDS):
     return register_verified_baseline(
         store, evidence=evidence,
         secret_fingerprint=fp if fp is not None else secret_fingerprint(SECRET),
-        verifier_token_fingerprint=TOKFP, expected_image=image,
+        verifier_token_fingerprint=TOKFP, current_major=current_major,
         hub_secret=SECRET, seeds=seeds)
 
 
@@ -89,7 +90,9 @@ def test_resubmitting_the_same_batch_is_idempotent(tmp_path):
     assert len(s.iter_verified_baseline_atoms()) == 2
 
 
-def test_rejects_evidence_from_an_unpinned_arena_image(tmp_path):
+def test_rejects_evidence_from_an_unclassified_arena_image(tmp_path):
+    """A tag (no ``@sha256:...``) can never classify -- only content-addressed
+    bytes can be declared comparable (``arena_version.major_for``)."""
     s = _store(tmp_path)
     with pytest.raises(ParityMismatch):
         _register(s, _evidence(image="somebody/arena:local"))

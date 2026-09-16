@@ -11,7 +11,7 @@ set can never again drift between an argparse ``choices=`` list, a TUI picker,
 and a readiness check the way it did before it was centralized here."""
 from __future__ import annotations
 
-OPERATORS: tuple[str, ...] = ("codex", "claude")
+OPERATORS: tuple[str, ...] = ("codex", "claude", "opencode2")
 
 # The single interactive default (evolve's operator, the TUI picker's initial
 # value). Not every command shares it -- e.g. `models` defaults to codex -- but

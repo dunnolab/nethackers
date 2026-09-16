@@ -1,12 +1,13 @@
 """Durable, achievement-based hacker recognition for the website.
 
 Served at ``GET /recognition`` (the UI still heads the section "Wall of
-Fame"). Two ledgers over the self-reported tier: the current identity
-record-holders grouped by hacker ("keepers"), and every all-time one-step
-frontier advance ("breakthroughs"). Breakthrough rows are program-bearing --
-the opaque ``program_id`` + ``reference {repo, commit}``, never
-``solution_digest`` -- per the hub API redesign, and the response carries the
-envelope's ``generated_at`` as-of.
+Fame"). Two ledgers, computed for whichever tier is requested and each
+measured against the floor that pairs with that tier (``views.source``):
+the current identity record-holders grouped by hacker ("keepers"), and
+every all-time one-step frontier advance ("breakthroughs"). Breakthrough
+rows are program-bearing -- the opaque ``program_id`` + ``reference {repo,
+commit}``, never ``solution_digest`` -- per the hub API redesign, and the
+response carries the envelope's ``generated_at`` as-of.
 """
 
 from __future__ import annotations
@@ -17,6 +18,7 @@ from typing import Any
 
 from nethackers.hub.ids import program_id
 from nethackers.hub.store import Store
+from nethackers.hub.views.source import Epoch, source_for
 
 _MIN_LIFT = 0.0005
 
@@ -28,14 +30,25 @@ def _timestamp(value: str) -> datetime:
     return parsed.astimezone(UTC)
 
 
-def read_recognition(store: Store, *, limit: int = 100) -> dict[str, Any]:
-    """Return current keepers and all-time one-step frontier breakthroughs.
+def read_recognition(
+    store: Store, *, limit: int = 100, tier: str = "self-reported",
+    epoch: Epoch | None = None,
+) -> dict[str, Any]:
+    """Return current keepers and all-time one-step frontier breakthroughs for
+    ``tier``. Both ledgers are measured against the floor that PAIRS with the
+    tier (``views.source``), so a hidden-seed lift is never taken over the
+    published-seed floor.
 
-    Recognition is deliberately based on the self-reported competition tier,
-    independently of whichever tier a visitor is viewing in the Frontier UI.
+    An identity with no floor in this tier is skipped entirely, in both
+    ledgers -- keepers and breakthroughs. A lift with no floor is not a
+    small lift; it is not a measurement, and crediting it against 0.0 would
+    hand the hacker the program's entire score. The check
+    (``baseline.get(identity) is None``) is applied inline at the top of
+    each loop, before that identity's candidates are considered.
     """
+    source = source_for(tier, epoch)
     baseline_groups: dict[str, list[float]] = {}
-    for atom in store.iter_baseline_atoms():
+    for atom in source.iter_baseline_atoms(store):
         baseline_groups.setdefault(atom.identity, []).append(float(atom.progression))
     baseline = {
         identity: statistics.mean(values)
@@ -45,11 +58,13 @@ def read_recognition(store: Store, *, limit: int = 100) -> dict[str, Any]:
     # The LEFT JOIN carries each program's git pointer (repo, commit) alongside
     # its atoms so breakthrough rows can be program-bearing without an N+1 of
     # per-digest solution lookups; repo/commit are constant per solution_digest.
+    tier_where, tier_params = source.where("a")
     rows = store.conn.execute(
         "SELECT a.solution_digest, a.owner, a.identity, a.progression, a.ascended, "
         "a.created_at, s.repo, s.commit_sha "
-        "FROM atoms a LEFT JOIN solutions s ON a.solution_digest = s.digest "
-        "WHERE a.tier = 'self-reported'"
+        f"FROM {source.atoms_table} a LEFT JOIN solutions s ON a.solution_digest = s.digest "
+        f"WHERE {tier_where}",
+        tier_params,
     ).fetchall()
     grouped: dict[tuple[str, str], dict[str, Any]] = {}
     for digest, owner, identity, progression, ascended, created_at, repo, commit in rows:
@@ -86,13 +101,18 @@ def read_recognition(store: Store, *, limit: int = 100) -> dict[str, Any]:
 
     keepers_by_owner: dict[str, dict[str, Any]] = {}
     for identity, candidates in by_identity.items():
+        floor = baseline.get(identity)
+        if floor is None:
+            # No floor in this tier means no lift can be computed. A lift with
+            # no floor is not a small lift -- it is not a measurement. Crediting
+            # it against 0.0 would hand this hacker the program's entire score.
+            continue
         winner = sorted(
             candidates,
             key=lambda row: (
                 -row["score"], -row["ascensions"], row["earliest"], row["digest"]
             ),
         )[0]
-        floor = baseline.get(identity, 0.0)
         if winner["score"] <= floor + _MIN_LIFT:
             continue
         keeper = keepers_by_owner.setdefault(
@@ -120,7 +140,9 @@ def read_recognition(store: Store, *, limit: int = 100) -> dict[str, Any]:
     # beyond the best result that existed immediately before it.
     breakthroughs: list[dict[str, Any]] = []
     for identity, candidates in by_identity.items():
-        frontier = baseline.get(identity, 0.0)
+        frontier = baseline.get(identity)
+        if frontier is None:
+            continue        # same rule: no floor, no claim of an advance
         for result in sorted(candidates, key=lambda row: (row["at"], row["digest"])):
             if result["score"] <= frontier + _MIN_LIFT:
                 continue

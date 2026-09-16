@@ -33,7 +33,8 @@ inspect`. A missing image reads as a clean skip, not a wall of docker
 
 Excluded from the routine run via the `docker` marker (`uv run pytest -m
 "not nle and not docker and not claude_live"`); run directly with `uv run
-pytest tests/test_mutator_image.py -v -m docker` after `make mutator`.
+pytest tests/test_mutator_image.py -v -m docker` after `nethackers doctor
+--pull`, which pulls or builds the mutator this checkout needs.
 """
 
 from __future__ import annotations
@@ -43,7 +44,10 @@ import subprocess
 
 import pytest
 
-IMAGE = "nethackers/mutator:latest"
+from nethackers.harness.sandbox_preflight import resolve_image
+
+# The mutator this checkout resolves to: its fingerprint image, or the pin.
+IMAGE = resolve_image(None, "mutator")
 
 pytestmark = [
     pytest.mark.docker,
@@ -64,7 +68,7 @@ def _image_built(image: str) -> bool:
 @pytest.fixture(autouse=True)
 def _require_image() -> None:
     if not _image_built(IMAGE):
-        pytest.skip(f"{IMAGE} not built locally -- run `make mutator` (needs `make arena` first)")
+        pytest.skip(f"{IMAGE} not built locally -- run `nethackers doctor --pull`")
 
 
 def _run(args: list[str]) -> subprocess.CompletedProcess[str]:
@@ -136,6 +140,21 @@ def test_default_entrypoint_drops_root_to_agent() -> None:
     assert "1000" in r.stdout
 
 
+def test_opencode_xdg_dirs_are_writable_after_uid_remap() -> None:
+    # The entrypoint remaps agent to the workspace owner's uid/gid. Directory
+    # ownership baked as 1000:1000 must follow that remap without recursively
+    # touching any bind-mounted config/auth files.
+    r = _run([
+        "-e", "PUID=12345", "-e", "PGID=12345", IMAGE, "sh", "-c",
+        "mkdir -p ~/.local/state/opencode ~/.local/share/opencode "
+        "~/.cache/opencode ~/.config/opencode && "
+        "touch ~/.local/state/opencode/write-test "
+        "~/.local/share/opencode/write-test ~/.cache/opencode/write-test && echo WRITABLE",
+    ])
+    assert r.returncode == 0, r.stderr
+    assert "WRITABLE" in r.stdout
+
+
 def test_no_host_secrets_reachable() -> None:
     # No --entrypoint override here either, deliberately: the real runtime
     # identity is `agent` (home /home/agent -- confirmed by the previous
@@ -149,7 +168,7 @@ def test_no_host_secrets_reachable() -> None:
 
 
 def test_harness_clis_present() -> None:
-    for cli in ("claude", "codex"):
+    for cli in ("claude", "codex", "opencode2"):
         r = _run(["--entrypoint", cli, IMAGE, "--version"])
         assert r.returncode == 0
 

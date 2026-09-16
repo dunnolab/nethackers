@@ -89,6 +89,7 @@ def test_prepare_evolve_builds_one_authed_hub_client_for_the_run(tmp_path, monke
     monkeypatch.setattr(launch._credentials, "load", lambda: None)
     seed = tmp_path / "seed"
     seed.mkdir()
+    (seed / "bot.py").write_text("def make_agent(): ...\n")
     captured = {}
     monkeypatch.setattr(launch, "run_loop", lambda **kw: captured.update(kw) or [])
     monkeypatch.setattr(launch, "_now", lambda: "2026-08-26T00:00:00+00:00")
@@ -130,6 +131,7 @@ def test_run_config_records_run_schema_version(tmp_path):
     seed.mkdir()
     (seed / "nethackers.solution.json").write_text(
         '{"root": ".", "entrypoint": "bot.py"}')
+    (seed / "bot.py").write_text("def make_agent(): ...\n")
     plan = prepare_evolve(
         EvolveParams(objective="val-dwa-law-fem", seed=str(seed),
                      workdir=str(tmp_path / "wd"), owner="dev", from_seed=True),

@@ -29,6 +29,7 @@ import warnings
 from collections.abc import Callable
 from pathlib import Path
 
+from nethackers.arena.lifetime import die_with_parent
 from nethackers.arena.seeds import trajectory_spec
 from nethackers.arena.trajectory import run_trajectory
 from nethackers.contracts.models import (
@@ -65,7 +66,10 @@ def run_batch(
     """Run every (seed, character) in ``batch`` concurrently across worker
     processes, capped at ``min(max_parallel_evals, len(batch))``. Results come
     back in batch order; ``on_episode(index, result)`` fires as each finishes
-    (out of order). ``run_one``/``executor_factory`` are injected for tests."""
+    (out of order). ``run_one``/``executor_factory`` are injected for tests; an
+    injected factory must accept ``initializer``/``initargs``. A thread-based
+    one is safe: ``die_with_parent`` no-ops when it finds itself running in the
+    parent rather than in a child process."""
     n = len(batch)
     results: list[TrajectoryResult | None] = [None] * n
     if n == 0:
@@ -78,7 +82,12 @@ def run_batch(
             None if char == "-" else char, max_steps, no_progress_timeout,
             action_timeout, "runtime")
         prepared.append((i, char, spec, objective))
-    with executor_factory(max_workers=workers) as ex:
+    # Every worker adopts the parent-death guarantee before it runs an episode:
+    # a worker killed mid-episode cannot be reaped by with executor:, which
+    # only runs if this process exits cleanly (see arena/lifetime.py).
+    with executor_factory(
+        max_workers=workers, initializer=die_with_parent, initargs=(os.getpid(),)
+    ) as ex:
         fut_to_job = {
             ex.submit(run_one, submission_path, spec, objective, char): (i, char, spec)
             for (i, char, spec, objective) in prepared

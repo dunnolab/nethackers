@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from nethackers.config import OFFLINE_OWNER, OFFLINE_TOKEN, Stage
+from nethackers.hub.fixtures import DEV_HIDDEN_SECRET, DEV_HIDDEN_SEEDS
 
 
 def _read(name):
@@ -10,6 +11,19 @@ def _read(name):
 def test_override_stub_map_matches_constants():
     text = _read("compose.override.yaml")
     assert f'"{OFFLINE_TOKEN}":"{OFFLINE_OWNER}"' in text.replace(" ", "")
+
+
+def test_override_hidden_epoch_matches_fixtures():
+    # fixtures.DEV_HIDDEN_SECRET/DEV_HIDDEN_SEEDS and this file's
+    # NETHACKERS_HIDDEN_SECRET/NETHACKERS_HIDDEN_SEEDS must never drift apart --
+    # a mismatch here isn't a loud failure, it's a SILENT one: the offline
+    # fixture atoms would land under an epoch the hub never reads, so
+    # ?tier=verified would just 503 or render empty with nothing pointing at
+    # the cause.
+    text = _read("compose.override.yaml")
+    assert DEV_HIDDEN_SECRET in text
+    for seed in DEV_HIDDEN_SEEDS:
+        assert str(seed) in text
 
 
 def test_github_overlay_default_client_id_matches_stage():

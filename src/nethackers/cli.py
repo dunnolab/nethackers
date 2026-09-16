@@ -80,6 +80,7 @@ from typing import Any
 
 import httpx
 from rich.live import Live
+from rich.markup import escape
 from rich.panel import Panel
 from rich.text import Text
 from rich_argparse import RichHelpFormatter
@@ -137,6 +138,7 @@ from nethackers.hubclient.render import (
     render_show as rich_show,
 )
 from nethackers.operators import DEFAULT_OPERATOR, OPERATORS
+from nethackers.solution_root import SolutionRootError
 from nethackers.tui.app import NetHackersApp
 
 # Time seam: tests monkeypatch ``cli._time_now`` to make credential
@@ -874,6 +876,12 @@ def _run(argv: list[str] | None) -> int:
         except ValueError:
             err.print(_unknown_objective(args.objective))   # "unknown objective 'X'. Use <forms>"
             return 2
+        if args.operator == "opencode2" and args.effort and not args.model:
+            # OpenCode 2 has no effort flag: effort is a variant of a named
+            # model (`provider/model#variant`), so there is nothing to attach it to.
+            err.print("[red]opencode2 applies --effort as a model variant[/] — "
+                      "pin a model with `--model provider/model`, or drop --effort.")
+            return 2
 
         # The mutator ALWAYS runs sandboxed -- there is no host-execution path.
         # Fail fast, before any hub SELECT call / run-dir creation, rather than a
@@ -1178,6 +1186,14 @@ def main(argv: list[str] | None = None) -> int:
         where = f" ({target})" if target else ""
         err.print(f"[red]cannot reach the hub[/]{where} — is it running? (docker compose up -d)")
         return 1
+    except SolutionRootError as exc:
+        # A solution root that can't be scored: absent, a file, or missing its
+        # bot.py. That is a usage error -- it must never take the red
+        # "unexpected error" path below, which also writes a crash report and
+        # tells the user to file it. The message is already a finished
+        # sentence (solution_root.check_solution_root).
+        err.print(f"[red]{escape(str(exc))}[/]")
+        return 2
     except Exception as exc:  # never surface a raw traceback to a user
         if os.environ.get("NETHACKERS_DEBUG"):
             raise

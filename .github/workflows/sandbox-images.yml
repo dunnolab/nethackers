@@ -1,11 +1,14 @@
 name: Sandbox images
 
+# The mutator alone is rebuilt and re-pinned automatically by mutator-image.yml;
+# run this workflow when the arena or the shared nle-base changes.
+#
 # Manual bootstrap / re-pin workflow (design doc
 # docs/superpowers/specs/2026-08-28-sandbox-image-distribution-design.md,
 # sections 5.3/5.4/8, decision D11). Builds+pushes `nle-base` once, multi-arch
-# (an unpinned GHCR intermediate -- a registry ref, so buildx's isolated
-# docker-container driver can resolve it as a FROM base on both arches; never
-# referenced outside this workflow, never pulled by users), then builds and
+# (a GHCR registry ref, so buildx's isolated docker-container driver can
+# resolve it as a FROM base on both arches; its digest is pinned as
+# NLE_BASE_IMAGE, which every mutator build uses), then builds and
 # pushes BOTH `arena` and `mutator` multi-arch FROM that exact nle-base ref --
 # section 5.3's "pull both, fetch the base once" precondition -- to GHCR,
 # public, each under a permanent `sha-<gitsha>` tag (GHCR's GC deletes
@@ -54,9 +57,9 @@ jobs:
       # registry ref resolves for either arch, so nle-base is pushed here,
       # multi-arch, purely so the two legs below share the exact same
       # compiled-NLE layer (section 5.3: "CI builds nle-base once and both
-      # images build FROM that exact digest"). It is never pinned in
-      # _image_pins.py and never pulled directly by users -- this tag exists
-      # only for this workflow's own FROM references.
+      # images build FROM that exact digest"). Its digest is pinned in
+      # _image_pins.py as NLE_BASE_IMAGE: mutator-image.yml and repo checkouts
+      # build the mutator FROM it.
       - id: meta-nle-base
         uses: docker/metadata-action@8e5442c4ef9f78752691e2d8f8d19755c6f78e81      # v5.5.1
         with:
@@ -86,11 +89,26 @@ jobs:
         with:
           context: .
           file: arena/Dockerfile
-          build-args: NLE_BASE=${{ steps.meta-nle-base.outputs.tags }}
+          build-args: NLE_BASE=ghcr.io/dunnolab/nethackers-nle-base@${{ steps.build-nle-base.outputs.digest }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta-arena.outputs.tags }}
           labels: ${{ steps.meta-arena.outputs.labels }}
+
+      # Spec 2026-09-14 D2/I7: the arena is pinned to ONE platform's bytes,
+      # because NetHack's level generation is architecture-dependent and
+      # linux/amd64 is the declared reference. buildx reports the manifest-LIST
+      # digest, so resolve its linux/amd64 leg here. The mutator keeps the list
+      # digest: it runs the coding agent, not scoring (D10).
+      - id: arena-amd64
+        name: Resolve the arena's linux/amd64 manifest digest
+        run: |
+          set -euo pipefail
+          ref="ghcr.io/dunnolab/nethackers-arena@${{ steps.build-arena.outputs.digest }}"
+          digest=$(docker buildx imagetools inspect --raw "$ref" \
+            | jq -r '.manifests[] | select(.platform.architecture=="amd64" and .platform.os=="linux") | .digest')
+          test -n "$digest"
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
       - id: meta-mutator
         uses: docker/metadata-action@8e5442c4ef9f78752691e2d8f8d19755c6f78e81      # v5.5.1
@@ -104,26 +122,49 @@ jobs:
         with:
           context: .
           file: Dockerfile.mutator
-          build-args: NLE_BASE=${{ steps.meta-nle-base.outputs.tags }}
+          build-args: NLE_BASE=ghcr.io/dunnolab/nethackers-nle-base@${{ steps.build-nle-base.outputs.digest }}
           platforms: linux/amd64,linux/arm64
           push: true
           tags: ${{ steps.meta-mutator.outputs.tags }}
           labels: ${{ steps.meta-mutator.outputs.labels }}
 
-      # Manifest-list digests (D4 glossary) -- the correct thing to pin: a
-      # client pulling `...@<this digest>` gets Docker/OCI to auto-select the
-      # right platform image. Surfaced in the job summary for visibility, and
-      # (next step) fed to scripts/repin_images.py, which regenerates
-      # _image_pins.py and opens a PR -- the D11 ceremony as a generated,
-      # reviewed PR rather than a hand-paste.
+      # Same fingerprint mutator-image.yml computes, on the base just built, so a
+      # later automatic run finds this image instead of rebuilding it.
+      - name: Fingerprint the mutator and tag it by its inputs
+        id: fingerprint
+        env:
+          NLE_BASE_REF: ghcr.io/dunnolab/nethackers-nle-base@${{ steps.build-nle-base.outputs.digest }}
+          MUTATOR_REF: ghcr.io/dunnolab/nethackers-mutator@${{ steps.build-mutator.outputs.digest }}
+        run: |
+          inputs=$(PYTHONPATH=src python3 -m nethackers.image_inputs mutator --base "$NLE_BASE_REF")
+          docker buildx imagetools create -t "ghcr.io/dunnolab/nethackers-mutator:h-${inputs#sha256:}" "$MUTATOR_REF"
+          echo "inputs=$inputs" >> "$GITHUB_OUTPUT"
+
+      # The two images pin DIFFERENT kinds of digest, deliberately.
+      # MUTATOR_IMAGE keeps the manifest-LIST (index) digest (D4 glossary) --
+      # still the correct thing to pin there: a client pulling `...@<this
+      # digest>` gets Docker/OCI to auto-select the right platform image, and
+      # the mutator runs the coding agent, not scoring, so its architecture
+      # cannot move a score (D10). ARENA_IMAGE instead takes the linux/amd64
+      # LEG resolved by the arena-amd64 step above, never the index digest:
+      # NetHack's level generation is architecture-dependent and linux/amd64
+      # is the declared reference architecture (spec 2026-09-14 D2/I7). An
+      # index digest is unclassified in arena_version.py, and
+      # scripts/repin_images.py now refuses to emit one for the arena.
+      # Surfaced in the job summary for visibility, and (next step) fed to
+      # scripts/repin_images.py, which regenerates _image_pins.py and opens a
+      # PR -- the D11 ceremony as a generated, reviewed PR rather than a
+      # hand-paste.
       - name: Write digests to the job summary
         run: |
           {
             echo "### Sandbox image digests"
             echo
             echo '```python'
-            echo "ARENA_IMAGE   = \"ghcr.io/dunnolab/nethackers-arena@${{ steps.build-arena.outputs.digest }}\""
+            echo "ARENA_IMAGE   = \"ghcr.io/dunnolab/nethackers-arena@${{ steps.arena-amd64.outputs.digest }}\""
             echo "MUTATOR_IMAGE = \"ghcr.io/dunnolab/nethackers-mutator@${{ steps.build-mutator.outputs.digest }}\""
+            echo "NLE_BASE_IMAGE = \"ghcr.io/dunnolab/nethackers-nle-base@${{ steps.build-nle-base.outputs.digest }}\""
+            echo "MUTATOR_INPUTS = \"${{ steps.fingerprint.outputs.inputs }}\""
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
 
@@ -134,13 +175,21 @@ jobs:
       # PRs, `main` isn't branch-protected, and this is a deterministic,
       # generated, drift-guarded change (tests/test_repin_images.py) that
       # publish-pypi.yml independently re-verifies against GHCR before any
-      # release -- so nothing ships on an unverified pin.
+      # release -- so nothing ships on an unverified pin. ARENA_REF is the
+      # amd64 leg from the arena-amd64 step, not steps.build-arena's index
+      # digest (spec I7). PYTHONPATH=src: repin_images.py now classifies the
+      # arena digest via nethackers.arena_version (dependency-free, so this
+      # stays a bare python3, no uv/install -- see that script's docstring).
       - name: Re-pin _image_pins.py (commit to this ref)
         env:
-          ARENA_REF: ghcr.io/dunnolab/nethackers-arena@${{ steps.build-arena.outputs.digest }}
+          PYTHONPATH: src
+          ARENA_REF: ghcr.io/dunnolab/nethackers-arena@${{ steps.arena-amd64.outputs.digest }}
           MUTATOR_REF: ghcr.io/dunnolab/nethackers-mutator@${{ steps.build-mutator.outputs.digest }}
+          NLE_BASE_REF: ghcr.io/dunnolab/nethackers-nle-base@${{ steps.build-nle-base.outputs.digest }}
+          MUTATOR_INPUTS: ${{ steps.fingerprint.outputs.inputs }}
         run: |
-          python3 scripts/repin_images.py --arena "$ARENA_REF" --mutator "$MUTATOR_REF"
+          python3 scripts/repin_images.py --arena "$ARENA_REF" --mutator "$MUTATOR_REF" \
+            --nle-base "$NLE_BASE_REF" --mutator-inputs "$MUTATOR_INPUTS"
           if git diff --quiet -- src/nethackers/_image_pins.py; then
             echo "digests unchanged -- nothing to re-pin"
             exit 0
@@ -152,3 +201,76 @@ jobs:
           # If someone pushed to this ref during the ~12-min build the push
           # fails non-fast-forward -- just re-run the workflow.
           git push origin "HEAD:${GITHUB_REF_NAME}"
+
+      # The arena major forcing function, CI half (arena-major design doc
+      # section 5.4 / D8). ARENA_MAJOR_BY_DIGEST is hand-edited and lives
+      # OUTSIDE the generated _image_pins.py, so the step above always leaves
+      # it stale: the freshly pushed arena digest is not classified until a
+      # human adds a line saying whether it scores like the current major.
+      # A unit test (tests/test_arena_version.py) asserts exactly that, which
+      # is enough when this workflow is dispatched from a feature branch --
+      # the re-pin commit rides a PR and the red suite blocks it. Dispatched
+      # from `main` there is no PR: the commit lands directly, `main` is not
+      # branch-protected, and a red `main` can still be tagged and released.
+      # That ships a hub on an unclassified pin, where EVERY worker submission
+      # 400s and verification silently stops accumulating. So fail the job
+      # that created the unclassified pin, right where the digest is fresh.
+      # Unconditional (not gated on the re-pin step having committed), so a
+      # pin left unclassified by an earlier run is caught too. PYTHONPATH=src
+      # rather than an install: both modules are dependency-free literals.
+      #
+      # It fails on a mismatch too, not only on `None`. `major_for` answers
+      # "which major", not "which architecture", and a digest classified at an
+      # OLD major passes an is-it-classified check while being exactly the
+      # regression I7 exists to stop -- `d18bff83…` (major 1) is an INDEX
+      # digest, so a re-pin that re-emitted it would slip through a
+      # `major is None` gate and silently revert the reference architecture.
+      # Requiring `major == ARENA_MAJOR` is the check that actually holds:
+      # only the current major's digests are admitted by the hub, so a pin at
+      # any other major breaks registration just as completely as no pin.
+      - name: Fail if the pinned arena image is not at the current arena major
+        run: |
+          PYTHONPATH=src python3 - <<'PY'
+          import sys
+
+          from nethackers._image_pins import ARENA_IMAGE
+          from nethackers.arena_version import ARENA_MAJOR, major_for
+
+          major = major_for(ARENA_IMAGE)
+          if major is None:
+              sys.exit(
+                  f"\nThe pinned arena image is UNCLASSIFIED:\n\n"
+                  f"    {ARENA_IMAGE}\n\n"
+                  f"Add it to ARENA_MAJOR_BY_DIGEST in "
+                  f"src/nethackers/arena_version.py, with a comment saying "
+                  f"what this rebuild changed.\n\n"
+                  f"The judgment you have to make is whether this rebuild "
+                  f"CHANGES SCORES:\n"
+                  f"  - it does not (a process-lifetime, logging or packaging "
+                  f"change): classify it at the current major, "
+                  f"ARENA_MAJOR = {ARENA_MAJOR}, and the verified corpus "
+                  f"carries over;\n"
+                  f"  - it does (anything that can move an episode's outcome): "
+                  f"classify it at {ARENA_MAJOR + 1} and bump ARENA_MAJOR to "
+                  f"match, which retires the current verified corpus from "
+                  f"every board (nothing is deleted -- see docs/verification.md).\n\n"
+                  f"Until then the hub rejects every submission from a node "
+                  f"running this image, and verification stops accumulating."
+              )
+          if major != ARENA_MAJOR:
+              sys.exit(
+                  f"\nThe pinned arena image is at arena major {major}, but "
+                  f"ARENA_MAJOR is {ARENA_MAJOR}:\n\n"
+                  f"    {ARENA_IMAGE}\n\n"
+                  f"The hub admits evidence ONLY from digests classified at "
+                  f"the current major, so shipping this pin makes every "
+                  f"submission 400 -- the same outage as an unclassified pin.\n\n"
+                  f"Either the re-pin emitted the wrong digest (a stale one, "
+                  f"or the multi-arch INDEX digest rather than the linux/amd64 "
+                  f"manifest -- spec 2026-09-14 I7), or ARENA_MAJOR was bumped "
+                  f"without re-pinning. Fix whichever it is; do not classify "
+                  f"this digest at the current major just to get past this "
+                  f"step."
+              )
+          print(f"arena pin classified at major {major} (current: {ARENA_MAJOR})")
+          PY

@@ -32,8 +32,10 @@ from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 
+from nethackers import _image_pins
 from nethackers.containers import container_name, container_runtime, label_args
 from nethackers.contracts.models import Evidence, Objective, ObjectiveSpec, TrajectoryResult
+from nethackers.solution_root import require_solution_root
 
 _ARENA_EPISODE = re.compile(
     r"episode (\d+)/(\d+) \((.*?)\): progress=([0-9.]+) (\S+) turns=(\d+) depth=(\d+)"
@@ -94,8 +96,19 @@ def _solution_digest(solution_path: Path) -> str:
 def _default_image_digest(image: str, *, runtime: str | None = None) -> str:
     """Resolve ``image`` to a content digest via ``<runtime> image inspect``.
 
-    Prefers the first RepoDigest (``repo@sha256:...``, present once an image
-    has been pushed to/pulled from a registry); falls back to the image Id
+    A ref that is ALREADY digest-pinned (``repo@sha256:...`` -- what
+    ``resolve_image`` returns for the arena) is returned VERBATIM, without
+    consulting the runtime at all. It already names exactly the bytes that
+    ran, and this string now gates hub admission (spec 2026-09-14 D5, via
+    ``arena_version.major_for``), so it must not depend on how a runtime
+    happens to order its metadata: ``RepoDigests`` is a list, its order is an
+    implementation detail, and podman (issue #50) need not put the same entry
+    first that docker does. A mirrored or renamed repo entry winning index 0
+    would turn a correctly pinned run into an unclassified one at register.
+
+    Otherwise (a tag -- a local dev build, or an ``--image`` override) it
+    shells out: prefers the first RepoDigest (present once an image has been
+    pushed to/pulled from a registry); falls back to the image Id
     (``sha256:...``) for locally-built images that have no RepoDigests yet.
     Only ever invoked as the default digest resolver -- tests always inject a
     fake resolver instead, so this shells out to a real runtime binary only
@@ -103,6 +116,8 @@ def _default_image_digest(image: str, *, runtime: str | None = None) -> str:
     (docker OR podman -- issue #50) when not given, so ``launch.py``'s
     provenance use is podman-aware too without threading a name through.
     """
+    if "@sha256:" in image:
+        return image
     rt = runtime or container_runtime() or "docker"
     out = subprocess.run(
         [
@@ -126,6 +141,25 @@ def _default_image_digest(image: str, *, runtime: str | None = None) -> str:
 # cut normal actions and depress the score -- see the ACTION_TIMEOUT_SECONDS
 # note in ``hub/objectives.py`` for the time this corrupted the hub baseline.
 DEFAULT_MAX_PARALLEL_EVALS = 8
+
+
+def _eval_temp_dir() -> tempfile.TemporaryDirectory:
+    """Create a Docker Desktop-shareable temporary arena output directory.
+
+    Docker Desktop does not necessarily share the host's system ``/tmp``.
+    The user's home directory is shared by default, so keep disposable arena
+    output beneath nethackers' own home-backed data directory instead. Both
+    creating the root *and* creating a child can fail in a sandbox/read-only
+    home, so the fallback covers the complete allocation rather than only the
+    root ``mkdir``. The fallback is the system temp dir, which is what every
+    eval used before this preference existed.
+    """
+    preferred = Path.home() / ".nethackers" / "tmp"
+    try:
+        preferred.mkdir(parents=True, exist_ok=True)
+        return tempfile.TemporaryDirectory(prefix="arena-", dir=preferred)
+    except OSError:
+        return tempfile.TemporaryDirectory(prefix="arena-")
 
 
 def eval_batch(
@@ -158,6 +192,10 @@ def eval_batch(
     one per batch entry in batch order regardless of completion order) and
     wraps it into an ``Evidence``.
 
+    ``--platform linux/amd64`` is added only when ``image`` is the arena pin
+    (``_image_pins.ARENA_IMAGE``), where it is cosmetic. On any other ref it
+    would be fatal rather than cosmetic -- see the comment at the call site.
+
     ``evaluator_image`` is set to ``image_digest_resolver(image)`` -- the
     image's resolved content digest, not the (mutable) ``image`` tag passed
     in -- so evidence records exactly which image bytes produced it.
@@ -174,21 +212,44 @@ def eval_batch(
     it how the objective is later re-derived (register/store tooling does
     that from the published catalog by ``spec.name``).
     """
+    # Refuse a root that cannot be scored BEFORE the -v mount, because the
+    # mount is what hid the failure: docker CREATES an absent bind-mount
+    # source, so a missing or typo'd path used to run the whole batch against
+    # an empty directory and report a clean mean_progress of 0.0 at exit code
+    # 0. Every scoring path funnels through here -- cli eval/submit, the evolve
+    # loop, the public baseline, the hidden-seed verifier -- so this one call
+    # is what makes that number unreachable. It also resolves AutoAscend's
+    # canonical names to the packaged tree, so `roots/autoascend` works for a
+    # pip install that has no checkout to resolve it against.
+    solution_path = require_solution_root(solution_path)
     # Absolutize before the -v mount: docker rejects a relative bind-mount
     # source (it reads it as an invalid named volume). Callers in the evolve
     # loop pass absolute worktree paths, but the AutoAscend baseline passes a
     # repo-relative tree. .absolute() only prefixes the cwd -- it never resolves
     # symlinks, so the content digest below (relative-path based) is unchanged.
-    solution_path = Path(solution_path).absolute()
+    solution_path = solution_path.absolute()
     # Bind the default digest resolver to the SAME resolved runtime the run
     # uses (docker/podman -- issue #50); an injected resolver (tests) wins.
     resolve_digest = image_digest_resolver or (
         lambda img: _default_image_digest(img, runtime=runtime)
     )
-    with tempfile.TemporaryDirectory() as td:
+    with _eval_temp_dir() as td:
         out = Path(td) / "results.json"
+        # --platform is cosmetic FOR THE PIN and only for it: ARENA_IMAGE is an
+        # amd64 MANIFEST digest, so the architecture is already decided (spec
+        # 2026-09-14 D2) and the flag merely suppresses the mismatch warning
+        # Docker prints on every emulated run.
+        #
+        # It is NOT harmless on any other ref. `docker run --platform
+        # linux/amd64` against a locally built arm64-only image FAILS ("pull
+        # access denied" -- the daemon finds no amd64 variant and falls through
+        # to a registry pull), which would break both paths D6 deliberately
+        # keeps open: `--image`/NETHACKERS_ARENA_IMAGE for arena development,
+        # and the per-worktree `arena:<slug>` of docs/local-stack.md. So it is
+        # passed only when the resolved ref IS the pin.
+        platform = ["--platform", "linux/amd64"] if image == _image_pins.ARENA_IMAGE else []
         cmd = [
-            runtime, "run", "--rm", "--network", "none",
+            runtime, "run", *platform, "--rm", "--network", "none",
             "--name", container_name("arena"), *label_args(),
             # Silence AutoAscend's numpy RuntimeWarning flood at interpreter
             # startup, for every process in the container (a plain in-arena

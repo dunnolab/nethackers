@@ -39,6 +39,9 @@ def test_discovery_probe_names_and_labels():
 
 
 def test_arena_run_named_and_labeled(tmp_path):
+    # eval_batch refuses a directory that is not a solution root, so give it
+    # the one file the arena loads a bot from before checking the argv.
+    (tmp_path / "bot.py").write_text("def make_agent(): ...\n")
     captured = {}
 
     def fake_runner(cmd, **kw):

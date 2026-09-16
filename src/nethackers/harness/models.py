@@ -7,10 +7,9 @@ anything not listed here). Sourced from the vendors' own docs:
   (dateless IDs are pinned snapshots from the 4.6 generation on).
 - codex:  https://learn.chatgpt.com/docs/models
 
-Both harnesses take a reasoning-effort level -- claude via ``--effort``,
-codex via ``-c model_reasoning_effort=`` -- over the same names (codex also
-has ``ultra``; reach it via Custom). Keep this the single edit point when a
-vendor ships a new model.
+All three harnesses take a reasoning-effort level: Claude via ``--effort``,
+Codex via ``-c model_reasoning_effort=``, and OpenCode 2 as the model variant
+suffix. Keep this the single edit point when a vendor ships a new model.
 """
 from __future__ import annotations
 
@@ -30,9 +29,12 @@ MODELS: dict[str, list[tuple[str, str]]] = {
         ("gpt-5.3-codex-spark", "gpt-5.3-codex-spark"),
         ("gpt-5.5", "gpt-5.5"),
     ],
+    # OpenCode 2 is provider-agnostic and discovers provider/model pairs live via
+    # `opencode2 models`; a static catalogue would become stale immediately.
+    "opencode2": [],
 }
 
-# shared across both harnesses (low..max). codex-only "ultra" / claude-only
+# shared across all harnesses (low..max). codex-only "ultra" / claude-only
 # "ultracode" are reachable via a Custom effort string if ever needed.
 EFFORTS: list[str] = ["low", "medium", "high", "xhigh", "max"]
 

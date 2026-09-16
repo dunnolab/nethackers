@@ -28,7 +28,7 @@
 ARG NLE_BASE=nethackers/nle-base:dev
 FROM ${NLE_BASE}
 
-# Node.js (the two harness CLIs below are npm packages) + gosu (drops
+# Node.js (the three harness CLIs below are npm packages) + gosu (drops
 # root->agent in the entrypoint shim without a setuid binary). Node's version
 # is pinned via NodeSource's version-specific setup script -- the same "pinned,
 # deterministic" spirit as nle-base's uv:0.11.2 pin.
@@ -39,9 +39,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Headless coding-agent CLIs the ContainerOperator can wrap
-# (harness/operator.py's _claude_cmd/_codex_cmd choose the harness at runtime).
-# Pi + opencode are deferred to Plan B -- not yet wired into operator.py.
-RUN npm install -g @anthropic-ai/claude-code @openai/codex \
+# (harness/operator.py's command builders choose the harness at runtime), at
+# exact versions: a bump is an edit here, which moves the mutator's input
+# fingerprint (src/nethackers/image_inputs.py) so CI rebuilds and re-pins it.
+# Pi remains deferred to Plan B.
+RUN npm install -g @anthropic-ai/claude-code@2.1.270 @openai/codex@0.154.0 \
+        @opencode-ai/cli@0.0.0-beta-19271 \
     && npm cache clean --force
 
 # Seed-free experimentation kit onto PYTHONPATH: ONLY nethackers.arena (the
@@ -68,8 +71,12 @@ RUN printf 'export PATH=/opt/nethackers/.venv/bin:$PATH\n' > /etc/profile.d/10-n
 # Non-root `agent` user -- Claude Code refuses --dangerously-skip-permissions as
 # root. UID/GID 1000 is only the baked default; docker-entrypoint.sh remaps both
 # at start to match /workspace's real owner. The home dir matches what
-# harness/auth_inject.py mounts credentials into (/home/agent/.codex, .claude).
-RUN useradd --create-home --home-dir /home/agent --uid 1000 --shell /bin/bash agent
+# harness/auth_inject.py mounts credentials into (/home/agent/.codex, .claude,
+# .local/share/opencode, and .config/opencode).
+RUN useradd --create-home --home-dir /home/agent --uid 1000 --shell /bin/bash agent \
+    && install -d -o agent -g agent /home/agent/.local/share/opencode \
+        /home/agent/.local/state/opencode /home/agent/.cache/opencode \
+        /home/agent/.config/opencode
 
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 RUN chmod +x /usr/local/bin/docker-entrypoint.sh

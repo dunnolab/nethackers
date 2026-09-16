@@ -16,10 +16,12 @@ sandboxed command, including a plain ``eval``/``submit``; ``preflight_operator``
 the arena has no operator, so eval/submit must never call it. ``preflight``
 stays as a thin backward-compatible wrapper over both, for evolve's use.
 
-``ensure_image`` makes a ``resolve_image``-produced ref actually present:
-builds the local ``:dev``/``:latest`` tag via ``make`` inside a repo checkout,
-or ``docker pull``s a GHCR digest pin otherwise -- never the reverse (INV11:
-a digest ref can't be `-t`-tagged by a build, so it is only ever pulled).
+``ensure_image`` makes a ``resolve_image``-produced ref actually present: a
+GHCR digest pin is always ``docker pull``ed -- that now includes the arena
+even inside a repo checkout (spec 2026-09-14 D6) -- and only a non-digest tag
+reachable from a checkout (the mutator's content-fingerprint tag) is built via
+``make`` -- never the reverse (INV11: a digest ref can't be `-t`-tagged by a
+build, so it is only ever pulled).
 
 Kept a leaf module (stdlib + containers + auth_inject + pull_events only, all
 themselves leaves too) so both ``cli`` and the Textual form can import it
@@ -28,12 +30,16 @@ without a cycle.
 from __future__ import annotations
 
 import platform
+import re
 import subprocess
 import threading
+from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 
-from nethackers import _image_pins
+from rich.markup import escape
+
+from nethackers import _image_pins, image_inputs
 from nethackers.containers import container_runtime
 from nethackers.harness.auth_inject import AuthUnavailable, auth_docker_args
 from nethackers.harness.pull_events import PullEvent, PullParseState, parse_pull_line
@@ -64,7 +70,7 @@ def docker_available(*, run=subprocess.run) -> bool:
 
 def image_present(image: str, *, runtime: str = "docker", run=subprocess.run) -> bool:
     """Is the image available locally? Cheap ``<runtime> image inspect`` (no
-    pull). Used to decide whether to auto-build it (``build_mutator_image``) and
+    pull). Used to decide whether to acquire it (``ensure_image``) and
     by discovery, so an unbuilt image degrades quietly instead of silently
     reporting the host CLI's models. ``runtime`` is the resolved container CLI
     (``container_runtime()``); callers thread it through rather than re-probing,
@@ -87,22 +93,62 @@ def _repo_root() -> Path | None:
     return None
 
 
-_LOCAL_DEV_REF = {"arena": "nethackers/arena:dev", "mutator": "nethackers/mutator:latest"}
 _PIN = {"arena": _image_pins.ARENA_IMAGE, "mutator": _image_pins.MUTATOR_IMAGE}
+
+# A checkout's own mutator builds (spec 2026-09-15 §5.5): content-addressed tags
+# in this local repository, never pushed; CI publishes the same tags under the
+# pinned image's GHCR repository.
+LOCAL_MUTATOR_REPO = "nethackers/mutator"
+_GHCR_MUTATOR_REPO = _image_pins.MUTATOR_IMAGE.partition("@")[0]
+_MUTATOR_BUILD_LABEL = "org.dunnolab.nethackers.image=mutator"
+_FINGERPRINT_REF_RE = re.compile(rf"{re.escape(LOCAL_MUTATOR_REPO)}:h-[0-9a-f]{{64}}")
 
 
 def resolve_image(explicit: str | None, kind: str, *, repo_root=_repo_root) -> str:
     """The image ref to use for ``kind`` (``"arena"``/``"mutator"``). Ladder
-    (spec §5.1): an explicit value (flag / env / .env.stack — anything that made
-    the layered Stage field non-None) wins verbatim; else a repo checkout uses the
-    locally-built dev tag; else the pinned GHCR digest. NO side effects — never
-    builds or pulls (safe in EvolveParams default factories); building/pulling
-    happens at the acquisition points. ``repo_root`` injectable for tests."""
+    (spec §5.1; for the mutator, spec 2026-09-15 §5.5; for the arena, spec
+    2026-09-14 D6): an explicit value (flag / env -- anything that made the
+    layered Stage field non-None) wins verbatim; otherwise the ARENA always
+    resolves to its pinned GHCR digest, checkout or not, because that pin is
+    what declares the reference architecture. The mutator resolves to the image
+    matching the checkout's own files: the pinned digest when they are the
+    pinned build's inputs, else the fingerprint tag
+    ``nethackers/mutator:h-<64 hex>``; outside a checkout, its pinned digest.
+    NO side effects -- it only reads files, never builds or pulls (safe in
+    EvolveParams default factories). ``repo_root`` injectable for tests."""
     if explicit is not None:
         return explicit
-    if repo_root() is not None:
-        return _LOCAL_DEV_REF[kind]
+    root = repo_root()
+    if root is None:
+        return _PIN[kind]
+    if kind == "mutator":
+        return _checkout_mutator_ref(root)
+    # The arena pin names ONE platform's bytes and is what declares the
+    # reference architecture (spec 2026-09-14 D2/D6). A locally built tag is
+    # unclassified by construction and the hub refuses evidence from it, so a
+    # repo checkout must NOT silently substitute one. Reach a local build
+    # deliberately: --image, or NETHACKERS_ARENA_IMAGE.
     return _PIN[kind]
+
+
+def _checkout_mutator_ref(root: Path) -> str:
+    try:
+        inputs = image_inputs.mutator_inputs_hash(root, _image_pins.NLE_BASE_IMAGE)
+    except OSError:
+        return _PIN["mutator"]    # an incomplete checkout: the released image still works
+    if inputs == _image_pins.MUTATOR_INPUTS:
+        return _image_pins.MUTATOR_IMAGE
+    return f"{LOCAL_MUTATOR_REPO}:{image_inputs.image_tag(inputs)}"
+
+
+def is_local_mutator_fingerprint(ref: str) -> bool:
+    """``nethackers/mutator:h-<64 hex>``: a checkout's content-addressed mutator."""
+    return _FINGERPRINT_REF_RE.fullmatch(ref) is not None
+
+
+def ghcr_mutator_ref(local_ref: str) -> str:
+    """The name CI publishes a local fingerprint ref under."""
+    return f"{_GHCR_MUTATOR_REPO}:{local_ref.partition(':')[2]}"
 
 
 _MAKE_VAR = {"arena": "ARENA_IMAGE", "mutator": "MUTATOR_IMAGE"}
@@ -114,32 +160,46 @@ def _build_image(image: str, kind: str, *, on_line=None,
                  on_event: Callable[[PullEvent], None] | None = None,
                  popen=subprocess.Popen, repo_root=_repo_root) -> str | None:
     """``make {kind} {KIND}_IMAGE={image}`` from the repo root, streaming each
-    build line to ``on_line``. ``None`` on success, else a styled error. Never
-    called on a digest ref (INV11) -- ``ensure_image`` guards that; this helper
-    just runs the build it's told to. ``repo_root`` injectable so a caller that
-    already decided "we're in a repo" (``ensure_image``) builds from the exact
-    root it checked, rather than re-deriving it from a second, independent
-    ``_repo_root()`` call.
-
-    ``on_event``, when given, gets exactly two ``PullEvent``s bracketing the
-    build -- ``phase="start"`` before, ``phase="done"``/``phase="error"``
-    after, matching the outcome ``on_line``'s caller also sees below.
-    ``layers_total``/``layers_complete`` are always ``None`` here: a
-    ``make`` build has no layer concept at all (that vocabulary is
-    ``docker pull``-only -- see ``_pull_image``)."""
+    build line to ``on_line`` (see ``_run_build``). ``None`` on success, else a
+    styled error. Never called on a digest ref (INV11) -- ``ensure_image``
+    guards that. ``repo_root`` injectable so a caller that already decided
+    "we're in a repo" builds from the exact root it checked."""
     root = repo_root()
     if root is None:
         return (f"[red]can't set up the sandbox[/]: run nethackers from its repo "
                 f"(the {kind} image builds from {_DOCKERFILE[kind]} there)")
+    return _run_build(["make", kind, f"{_MAKE_VAR[kind]}={image}"], cwd=root, image=image,
+                      kind=kind, on_line=on_line, on_event=on_event, popen=popen)
+
+
+_BUILD_TAIL_LINES = 15
+
+
+def _run_build(argv: list[str], *, cwd: Path, image: str, kind: str, on_line=None,
+               on_event: Callable[[PullEvent], None] | None = None,
+               popen=subprocess.Popen) -> str | None:
+    """Run a build command in ``cwd``, streaming each line to ``on_line``.
+    ``on_event``, when given, gets exactly two ``PullEvent``s bracketing the
+    build -- ``phase="start"`` before, ``phase="done"``/``phase="error"`` after.
+    ``layers_total``/``layers_complete`` are always ``None``: a build has no
+    layer concept (that vocabulary is ``docker pull``-only).
+
+    A failed build's error event (raw) and message (escaped for Rich markup)
+    carry its last non-empty output lines: callers that pass only ``on_event``
+    show no build output, so this is the only place the cause can surface."""
     if on_event is not None:
         on_event(PullEvent(kind=kind, ref=image, phase="start",
                            layers_total=None, layers_complete=None, detail=""))
+    tail: deque[str] = deque(maxlen=_BUILD_TAIL_LINES)
     try:
-        proc = popen(["make", kind, f"{_MAKE_VAR[kind]}={image}"], cwd=str(root),
+        proc = popen(argv, cwd=str(cwd),
                      stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         for line in proc.stdout:
+            stripped = line.rstrip()
+            if stripped:
+                tail.append(stripped)
             if on_line is not None:
-                on_line(line.rstrip())
+                on_line(stripped)
         rc = proc.wait()
     except (OSError, subprocess.SubprocessError) as exc:
         if on_event is not None:
@@ -147,25 +207,88 @@ def _build_image(image: str, kind: str, *, on_line=None,
                                layers_total=None, layers_complete=None, detail=str(exc)))
         return f"[red]sandbox setup failed[/]: {exc}"
     if rc != 0:
+        last_lines = "\n".join(tail)
         if on_event is not None:
             on_event(PullEvent(kind=kind, ref=image, phase="error",
-                               layers_total=None, layers_complete=None, detail=""))
-        return "[red]sandbox setup failed[/] — the build did not complete (see the log above)"
+                               layers_total=None, layers_complete=None, detail=last_lines))
+        if not last_lines:
+            return (f"[red]sandbox setup failed[/] — the {kind} image build did not complete "
+                    f"(exit code {rc})")
+        return (f"[red]sandbox setup failed[/] — the {kind} image build did not complete. "
+                f"Its last lines:\n{escape(last_lines)}")
     if on_event is not None:
         on_event(PullEvent(kind=kind, ref=image, phase="done",
                            layers_total=None, layers_complete=None, detail=""))
     return None
 
 
-def build_mutator_image(image: str, *, on_line=None, popen=subprocess.Popen) -> str | None:
-    """Build the mutator sandbox image (``make mutator`` -> nle-base + mutator),
-    streaming each build line to ``on_line``. ``None`` on success, else a styled
-    error. The mutator ALWAYS runs sandboxed, so the very first run auto-provisions
-    the image here (users never run ``make`` themselves) -- the only cost is the
-    one-time NLE compile. A thin back-compat wrapper over ``_build_image``; new
-    code should call ``ensure_image(image, "mutator", ...)`` instead, which also
-    covers the pulled/pinned case."""
-    return _build_image(image, "mutator", on_line=on_line, popen=popen)
+def _acquire_mutator_fingerprint(ref: str, *, runtime: str, on_line, on_event, popen, run,
+                                 repo_root) -> str | None:
+    """Fill a checkout's fingerprint ref: pull CI's image for the same files and
+    tag it locally when GHCR has it. Otherwise -- or if that pull or tag fails --
+    build it locally on the pinned base instead. The pull's ``error`` event never
+    reaches ``on_event``: a build follows, and its outcome is the one to report.
+    No cleanup of older fingerprint images (spec 2026-09-15 D9): a run starts a
+    fresh container every iteration, so nothing holds an image between
+    iterations, and removing "old" fingerprints from one worktree could break an
+    evolve running in another."""
+    remote = ghcr_mutator_ref(ref)
+    if _remote_image_exists(remote, runtime=runtime, run=run):
+        err = _pull_image(remote, "mutator", runtime=runtime, on_line=on_line,
+                          on_event=_without_errors(on_event), popen=popen)
+        if err is None:
+            err = _tag_image(remote, ref, runtime=runtime, run=run)
+        if err is None:
+            return None
+    root = repo_root()
+    if root is None:
+        return ("[red]can't set up the sandbox[/]: run nethackers from its repo "
+                "(the mutator image builds from Dockerfile.mutator there)")
+    return _run_build(
+        [runtime, "build", "-f", "Dockerfile.mutator",
+         "--build-arg", f"NLE_BASE={_image_pins.NLE_BASE_IMAGE}",
+         "--label", _MUTATOR_BUILD_LABEL, "-t", ref, "."],
+        cwd=root, image=ref, kind="mutator", on_line=on_line, on_event=on_event,
+        popen=popen)
+
+
+def _without_errors(on_event: Callable[[PullEvent], None] | None
+                    ) -> Callable[[PullEvent], None] | None:
+    """``on_event`` with every ``phase="error"`` event dropped."""
+    if on_event is None:
+        return None
+
+    def forward(event: PullEvent) -> None:
+        if event.phase != "error":
+            on_event(event)
+    return forward
+
+
+# How long a registry reachability probe may take. `manifest inspect` walks every
+# sub-manifest of a multi-arch index, which measured 7-16s against GHCR on a laptop
+# (and longer for an index with many platforms), so a tighter budget makes a
+# reachable image look gone. `diagnostics._manifest_reachable` shares this number:
+# doctor must never call an image unreachable that acquisition would pull happily.
+MANIFEST_PROBE_TIMEOUT = 30
+
+
+def _remote_image_exists(ref: str, *, runtime: str, run) -> bool:
+    try:
+        result = run([runtime, "manifest", "inspect", ref], capture_output=True,
+                     timeout=MANIFEST_PROBE_TIMEOUT)
+        return bool(result.returncode == 0)
+    except (OSError, subprocess.SubprocessError):
+        return False
+
+
+def _tag_image(source: str, target: str, *, runtime: str, run) -> str | None:
+    try:
+        result = run([runtime, "tag", source, target], capture_output=True, timeout=30)
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"[red]sandbox setup failed[/]: {exc}"
+    if result.returncode != 0:
+        return f"[red]sandbox setup failed[/] — couldn't tag {source} as {target}"
+    return None
 
 
 def _final_pull_event(kind: str, ref: str, state: PullParseState, phase: str,
@@ -256,8 +379,9 @@ def _pull_error_message(kind: str, text: str) -> str:
 # concurrent `ensure_image(ref)` call for the SAME ref must not start a second
 # `docker pull`/`make` build -- it waits for the in-flight one, then re-checks
 # rather than assuming success. Keyed on the resolved `ref` string alone (an
-# arena ref and a mutator ref are never textually identical -- `_LOCAL_DEV_REF`
-# / `_PIN` always bake the kind into the name -- so `ref` alone is already a
+# arena ref and a mutator ref are never textually identical -- `_PIN` and the
+# mutator's fingerprint tag always bake the kind into the name -- so `ref`
+# alone is already a
 # unique key, no need for a compound `(kind, ref)` one). Process-local only:
 # a SECOND `nethackers` process racing this one is not covered (cross-process
 # locking, e.g. a lockfile, is explicitly out of scope for this seam) -- only
@@ -285,9 +409,13 @@ def ensure_image(ref: str, kind: str, *, runtime: str = "docker", on_line=None,
          unreachable via ``resolve_image``'s own ladder, but not impossible if
          someone hand-sets an env override) case of a repo checkout with an
          explicit pinned ref.
-      3. else, inside a nethackers checkout (``_repo_root``) -> ``make {kind}``
+      3. a checkout's mutator fingerprint (``nethackers/mutator:h-<hash>``) ->
+         pull CI's image for the same files and tag it locally; if GHCR has no
+         such image, or that pull or tag fails, build it on the pinned base
+         instead.
+      4. else, inside a nethackers checkout (``_repo_root``) -> ``make {kind}``
          builds it -- the local dev tag, or any other non-digest tag asked for.
-      4. else (a custom non-digest ref with no repo to build it from) ->
+      5. else (a custom non-digest ref with no repo to build it from) ->
          best-effort ``docker pull`` -- it's the caller's own registry ref.
 
     Concurrent calls for the SAME ``ref`` (within this process) are deduped:
@@ -320,6 +448,10 @@ def ensure_image(ref: str, kind: str, *, runtime: str = "docker", on_line=None,
             if "@sha256:" in ref:
                 return _pull_image(ref, kind, runtime=runtime, on_line=on_line,
                                    on_event=on_event, popen=popen)
+            if is_local_mutator_fingerprint(ref):
+                return _acquire_mutator_fingerprint(ref, runtime=runtime, on_line=on_line,
+                                                    on_event=on_event, popen=popen, run=run,
+                                                    repo_root=repo_root)
             if repo_root() is not None:
                 return _build_image(ref, kind, on_line=on_line, on_event=on_event, popen=popen,
                                     repo_root=repo_root)
@@ -353,7 +485,13 @@ def preflight_operator(operator: str, *, system: str | None = None,
     in" message. ``evolve``-only: the arena has no operator, so a plain
     ``eval``/``submit`` must NEVER call this (spec S5.5's "two separate
     gates" -- fusing them back together is exactly the bug this split
-    fixes)."""
+    fixes).
+
+    OpenCode 2 is always usable: without a provider key it runs OpenCode's
+    free models. Returning early also keeps this check from writing the
+    sandbox's provider-config copy (``auth_inject``), since doctor calls it."""
+    if operator == "opencode2":
+        return None
     try:
         auth_docker_args(operator, system=system or platform.system(),
                          home=home or Path.home(), _require_exists=True)

@@ -23,9 +23,20 @@
  *     three click-through popups -- identity leaderboard (/board?scope=), a
  *     breakthrough submission (/programs/{id} + /identities), and a hacker's
  *     contributions (/programs?owner= + /identities).
- *   pass 2 (verified tier): recognition stays visible (it is self-reported), the
- *     frontier blanks.
+ *   pass 2 (private tier): the frontier POPULATES from the verified
+ *     side-tables, using a distinct canned fixture from pass 1's public one
+ *     (so "painted the private numbers" can't be confused with "still
+ *     showing a stale public fetch"); the tier toggle is ROUND-TRIPPED
+ *     Public then back to Private, since curTier now defaults to "verified"
+ *     and a single click would be a same-value no-op; recognition stays
+ *     visible on the private tier too, and the frontier/keepers/
+ *     breakthroughs tier switches are asserted INDEPENDENT of each other.
  *   pass 3 (every fetch rejects): friendly empty states, console clean.
+ *   pass 5 (loading shimmer): with every fetch parked on a gate, the frontier
+ *     grid + both fame tables are already in the FIRST paint -- real labels,
+ *     churning NetHack glyphs in the cells whose values are still in flight --
+ *     and every placeholder is gone once the data lands. Also covers the
+ *     re-shimmer on an unfetched tier and the no-flash on a cached one.
  * /hackers/random's consumer sits behind a canvas getContext("2d") gate that jsdom
  * can't pass without the native `canvas` package (not installed here), so the
  * passes never reach it; a source-level check guards its .rows unwrap instead.
@@ -269,20 +280,167 @@ async function pass1() {
 }
 
 async function pass2() {
-  console.log("\n== pass 2: verified tier keeps recognition, blanks the frontier ==");
+  console.log("\n== pass 2: private tier populates the frontier, recognition stays visible ==");
   const errors = [];
-  const dom = makeDom((p) => Promise.resolve({ ok: true, status: 200, json: async () => router(p) }), errors);
+  // The private ("verified") tier needs its own canned data, distinct from
+  // router()'s public fixtures -- otherwise this pass could not tell "the grid
+  // painted the private tier's own numbers" apart from "the grid is still
+  // showing a leftover public fetch". These shapes mirror what the page's own
+  // fetch calls read -- that is what a frontend-only file can vouch for, not
+  // a claim about the live API: /elites and /board enveloped ({rows:[...]})
+  // with program_id + reference{repo,commit} rows; /baseline a bare
+  // {owner, per_identity, overall} object.
+  const PRIVATE_PER_IDENTITY = {};
+  for (const id of IDENTITIES) PRIVATE_PER_IDENTITY[id] = { progression: 0.09, deepest: "Dlvl:6", episodes: 15 };
+  // Strip the floor from EVERY Monk identity, not just mon-hum-neu-mal, so
+  // the Monk role ends up with exactly one measured cell: a program leading
+  // mon-hum-neu-mal with NO floor to compare against (mirrors fixtures.py's
+  // IDENTITY_C -- a verified RESULT with no verified FLOOR); its other 5
+  // identities are fully unmeasured, matching production (round 2's live
+  // repro: Monk had exactly one cell with any data at all). This
+  // single-cell-role shape is a regression guard for two separate bugs:
+  //  - C1 (the lift-accumulator bug): with every OTHER identity floored,
+  //    the floorless cell's raw score used to leak into the role header's
+  //    numerator uncancelled, fabricating a positive "lift" -- see the
+  //    dpos-class assertion below.
+  //  - the header-marker bug (round 2): a role with a program leading but
+  //    no floor anywhere in it has roleLift genuinely undefined (not the
+  //    degenerate 0 a floor-only role gives) -- the header must show an em
+  //    dash, not the 'aa' chip that means "sits at the floor" -- see the
+  //    Monk-header assertion below.
+  for (const v of ["hum-cha-fem", "hum-cha-mal", "hum-law-fem", "hum-law-mal", "hum-neu-fem", "hum-neu-mal"]) {
+    delete PRIVATE_PER_IDENTITY["mon-" + v];
+  }
+  const PRIVATE_BASELINE = { owner: "autoascend", per_identity: PRIVATE_PER_IDENTITY, overall: 0.091 };
+  // Shifted from slice(30,38) so mon-hum-neu-mal is the ONLY touched Monk
+  // identity -- otherwise Monk's other genuinely-beaten cells would
+  // contribute their own real lift and mask the bugs above. Still distinct
+  // from router()'s public TOUCHED (0..10); still 8 identities (pri picks
+  // up the 3 this displaces from mon).
+  const PRIVATE_TOUCHED = IDENTITIES.slice(33, 41);
+  const REF_PRIVATE = { repo: "github.com/riv/bot", commit: "priv0000abc" };
+  const PRIVATE_ELITES = { rows: PRIVATE_TOUCHED.map((id, i) => ({
+    rank: 1, identity: id, program_id: "prog_priv", owner: "riv", score: 0.4 + i * 0.01, reference: REF_PRIVATE,
+  })) };
+  const PRIVATE_BOARD = { rows: [
+    { rank: 1, program_id: "prog_priv", owner: "riv", reference: REF_PRIVATE,
+      registered_at: "2026-08-29T09:30:00+00:00",
+      mean_progression: 0.42, median_progression: 0.42, ascensions: 0, deepest: "Sokoban" },
+  ] };
+  // Distinct from RECOGNITION (router()'s default, used for the "verified"
+  // tier below) so a bug that dropped the ?tier= param, or reused the cached
+  // private rows for every tier, would show up as wrong row content -- not
+  // just a caption, which is computed from local state (`keepersTier`)
+  // rather than from the response body either way.
+  const RECOGNITION_PUBLIC = {
+    generated_at: "2026-08-27T09:30:00+00:00",
+    keepers: [{ owner: "pubkeeper1", records: 3, identities: [TOUCHED[0]], roles: ["arc"], total_lift: 0.5 }],
+    breakthroughs: [{ owner: "pubbreaker1", identity: TOUCHED[0], gain: 0.1, score: 0.2, previous: 0.1,
+      program_id: "prog_aaa", reference: REF_AAA, at: "2026-08-20T09:30:00+00:00" }],
+  };
+  const fetchImpl = (p) => Promise.resolve({ ok: true, status: 200, json: async () => {
+    const route = p.split("?")[0];
+    const tier = new URLSearchParams(p.split("?")[1] || "").get("tier");
+    if (tier === "verified") {
+      if (route === "/elites") return PRIVATE_ELITES;
+      if (route === "/baseline") return PRIVATE_BASELINE;
+      if (route === "/board") return PRIVATE_BOARD;
+    }
+    if (route === "/recognition" && tier === "self-reported") return RECOGNITION_PUBLIC;
+    return router(p);
+  } });
+  const dom = makeDom(fetchImpl, errors);
   const { document } = dom.window;
   await sleep(200);
   const q = (s) => document.querySelector(s), qa = (s) => [...document.querySelectorAll(s)];
 
-  const verifiedBtn = qa("[data-tier]").find((b) => b.dataset.tier === "verified");
+  // B2 (permanent, controller ruling): TIERS is the single source of truth for
+  // the toggle buttons' text -- the markup's own text is only a pre-JS
+  // fallback, overwritten on parse. Assert the overwrite actually happened, so
+  // a refactor can't silently turn it into a no-op.
+  const frontierBtns = qa("[data-tier-group='frontier']");
+  const publicBtn = frontierBtns.find((b) => b.dataset.tier === "self-reported");
+  const verifiedBtn = frontierBtns.find((b) => b.dataset.tier === "verified");
+  ok(publicBtn && publicBtn.textContent === "Public Dungeons (15)", "public frontier toggle reads its TIERS label exactly");
+  ok(verifiedBtn && verifiedBtn.textContent === "Private Dungeons (15)", "private frontier toggle reads its TIERS label exactly");
+
+  // Tier round trip (controller ruling, not the B2 above): curTier now
+  // DEFAULTS to "verified", so a single verifiedBtn.click() here would
+  // re-press an already-pressed button -- a same-value no-op that exercises
+  // no transition at all. Concretely: if the click handler's
+  // `curTier=b.dataset.tier` (index.html) were mis-refactored to a hardcoded
+  // `curTier="verified"`, that click would still "pass". Round-trip it
+  // instead -- Public first (a genuine change away from the boot default),
+  // then back to Private -- and check the grid follows a fixture value
+  // (the AutoAscend baseline: 6.8% public vs 9.1% private) rather than
+  // something the page could satisfy from local state alone.
+  publicBtn.click();
+  await sleep(60);
+  ok(publicBtn.getAttribute("aria-pressed") === "true" && verifiedBtn.getAttribute("aria-pressed") === "false",
+     "clicking Public presses the public frontier button and releases Private");
+  ok(/6\.8%/.test(q("#gridnote").textContent), "gridnote's AutoAscend overall switches to the public baseline (6.8%)");
+  ok(q("#tierhelp-frontier").dataset.k === "dungeons-public", "frontier ? marker points at the public tier's explanation");
+  const publicProgCells = qa("#rolegrid td.vv:not(.hval):not(.floor):not(.empty)").length;
+  ok(publicProgCells > 0, `public tier paints program cells (${publicProgCells}), not a blanked grid`);
+
   verifiedBtn.click();
   await sleep(60);
-  ok(qa("#recordholders tbody tr").length >= 5, "recognition keepers stay visible on the verified tier");
-  ok(qa("#breakthroughs tbody tr").length >= 5, "recognition breakthroughs stay visible on the verified tier");
+  ok(verifiedBtn.getAttribute("aria-pressed") === "true" && publicBtn.getAttribute("aria-pressed") === "false",
+     "clicking Private re-presses the private frontier button and releases Public");
+  ok(/9\.1%/.test(q("#gridnote").textContent), "gridnote's AutoAscend overall returns to the private baseline (9.1%) -- a real transition, not a same-value no-op");
+  ok(q("#tierhelp-frontier").dataset.k === "dungeons-private", "frontier ? marker returns to the private tier's explanation");
+  ok(qa("#recordholders tbody tr").length >= 5, "recognition keepers stay visible on the private tier");
+  ok(qa("#breakthroughs tbody tr").length >= 5, "recognition breakthroughs stay visible on the private tier");
   const progCells = qa("#rolegrid td.vv:not(.hval):not(.floor):not(.empty)").length;
-  ok(progCells === 0, "frontier shows no program cells on the verified tier (M2b not live)");
+  ok(progCells > 0, `private tier paints program cells (${progCells}), not a blanked grid`);
+  ok(/not yet measured/.test(q("#gridnote").textContent), "the grid note states private coverage honestly");
+
+  // C1 regression guard: mon-hum-neu-mal has a private RESULT but no private
+  // FLOOR (deleted from PRIVATE_PER_IDENTITY above) -- datum() correctly
+  // reports aa:null for it, so its own row's delta must be an undefined em
+  // dash, never a number computed against an implicit 0.0. The bug summed
+  // AutoAscend only over cells that HAD a floor while averaging lift over
+  // every SHOWN cell, so this cell's raw score leaked into the numerator
+  // with nothing subtracted -- inflating the Monk role header into a false
+  // positive "lift" it never earned. This is the regression guard for that
+  // bug: it fails against the pre-fix accumulator (tSum/tAA/tN), which would
+  // show the Monk header's delta cell as class="dpos" (green, "+6.7%") here.
+  const monkRow = q('#rolegrid tr.frontierrow[data-identity="mon-hum-neu-mal"]');
+  ok(monkRow.querySelector("td.vv").textContent.trim() === "40.0%",
+     "mon-hum-neu-mal shows its real private-tier score (40.0%)");
+  const monkRowDelta = monkRow.querySelector("td.dcol");
+  ok(monkRowDelta.textContent.trim() === "\u2014",
+     `mon-hum-neu-mal's own delta cell reads an em dash, not a fabricated number (got "${monkRowDelta.textContent.trim()}")`);
+  const monkHeadDelta = monkRow.closest("table.fr").querySelector("tr.frhead td.dcol");
+  ok(!monkHeadDelta.classList.contains("dpos"),
+     `Monk's role header must not show a positive lift fabricated from mon-hum-neu-mal's unfloored score (class="${monkHeadDelta.className}", text="${monkHeadDelta.textContent.trim()}")`);
+
+  // Header-marker regression guard (round 2): 'aa' means "sits at the
+  // AutoAscend floor" and an em dash means "no floor to compare against" --
+  // renderFrontier's fallback used to hand these out backwards for two role
+  // shapes. Monk (constructed above with zero floors anywhere in the role)
+  // is program-led but has nothing to measure against: it must show the em
+  // dash, not 'aa' (which would falsely claim the role sits at the floor).
+  ok(monkHeadDelta.textContent.trim() === "\u2014" && !monkHeadDelta.querySelector(".aachip"),
+     `Monk's role header (program-led, no floor anywhere in the role) must show an em dash, not the 'aa' floor chip (class="${monkHeadDelta.className}", text="${monkHeadDelta.textContent.trim()}")`);
+  // kni (Knight) has no touched identity at all -- both its cells sit at
+  // the blanket 0.09 floor, so roleLift is the degenerate 0 those floor
+  // cells contribute. It must show 'aa' (a real role average, but nothing
+  // beats AutoAscend anywhere in it), never a fake-precise "+0.0%".
+  const kniHeadDelta = q('#rolegrid tr.frontierrow[data-identity="kni-hum-law-fem"]').closest("table.fr").querySelector("tr.frhead td.dcol");
+  ok(!!kniHeadDelta.querySelector(".aachip"),
+     `Knight's role header (every cell at the floor) must show the 'aa' chip, not a fabricated "+0.0%" (class="${kniHeadDelta.className}", text="${kniHeadDelta.textContent.trim()}")`);
+
+  // The three dungeon switches are independent: flipping Keepers to Public
+  // must not move Breakthroughs or the Frontier. RECOGNITION_PUBLIC (stubbed
+  // above) is distinct from RECOGNITION, so this also confirms the tier
+  // actually reached the fetch instead of reusing a cached/leftover response.
+  q("[data-tier-group='keepers'][data-tier='self-reported']").click();
+  await sleep(60);
+  ok(/pubkeeper1/.test(q("#recordholders").textContent), "keepers table loads the distinct public-tier fixture, not a leftover private fetch");
+  ok(/PUBLIC DUNGEONS/.test(q("#recordholders caption").textContent), "keepers caption switches to PUBLIC DUNGEONS");
+  ok(/PRIVATE DUNGEONS/.test(q("#breakthroughs caption").textContent), "breakthroughs caption is untouched by the keepers switch: still PRIVATE DUNGEONS");
+  ok(verifiedBtn.getAttribute("aria-pressed") === "true", "the frontier's Private button is still pressed after flipping Keepers alone");
 
   ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
   dom.window.close();
@@ -295,7 +453,7 @@ async function pass3() {
   const { document } = dom.window;
   await sleep(200);
   const q = (s) => document.querySelector(s);
-  ok(/No participant is above AutoAscend/i.test(q("#recordholders").textContent), "keepers show the empty recognition state offline");
+  ok(/No hacker is above AutoAscend/i.test(q("#recordholders").textContent), "keepers show the empty recognition state offline");
   ok(/No breakthroughs above AutoAscend/i.test(q("#breakthroughs").textContent), "breakthroughs show the empty recognition state offline");
   // honesty: /stats failed -> the marquee omits the count line and the freshness stamp stays a neutral dash
   ok(!/programs registered/.test(q("#mq").textContent), "marquee omits the stats line when /stats fails");
@@ -341,10 +499,199 @@ async function pass4() {
   dom.window.close();
 }
 
+
+async function pass5() {
+  console.log("\n== pass 5: loading shimmer (skeleton -> real data) ==");
+  const errors = [];
+  // Every fetch parks on a gate we control, so the LOADING state is observable
+  // instead of being a microtask wide. Re-armable, to cover the tier toggle too.
+  let gate, release;
+  const arm = () => { gate = new Promise((r) => { release = r; }); };
+  arm();
+  const dom = makeDom((p) => gate.then(() => ({ ok: true, status: 200, json: async () => router(p) })), errors);
+  const { document } = dom.window;
+  const q = (s) => document.querySelector(s), qa = (s) => [...document.querySelectorAll(s)];
+  const glyphs = (sel) => qa(sel).map((e) => e.textContent).join("");
+
+  // (a) FIRST PAINT -- we have not awaited once, so no fetch has resolved yet.
+  ok(qa("#rolegrid table.fr").length === 13, "frontier skeleton is in the first paint: 13 role tables");
+  ok(qa("#rolegrid tr:not(.frhead)").length === 73, "frontier skeleton draws all 73 identity rows before any data");
+  ok(qa("#rolegrid td.vv .shim").length === 86 && qa("#rolegrid td.dcol .shim").length === 86,
+     "frontier value + delta cells shimmer (73 identities + 13 role headers each)");
+
+  // the whole point of shimmering CELLS only: the labels are page constants, so
+  // they are real text from the first frame and must never churn.
+  ok(qa("#rolegrid td.vn .shim").length === 0, "frontier identity/role labels are real text, never shimmered");
+  ok(/Valkyrie/.test(q("#rolegrid").textContent) && /dwa-law-fem/.test(q("#rolegrid").textContent),
+     "skeleton labels carry the real role + variant names");
+  ok(qa("#rolegrid tr.frontierrow").length === 0, "skeleton rows are inert -- no leaderboard to open yet");
+
+  ok(qa("#recordholders tbody tr").length === 5 && qa("#breakthroughs tbody tr").length === 5,
+     "both fame tables show FAME_PAGE_SIZE (5) placeholder rows");
+  ok(qa("#recordholders tbody td").length === qa("#recordholders tbody td .shim").length &&
+     qa("#breakthroughs tbody td").length === qa("#breakthroughs tbody td .shim").length,
+     "every fame placeholder cell shimmers -- the row COUNT is unknown, unlike the frontier's");
+  ok(/PRIVATE DUNGEONS/.test(q("#recordholders caption").textContent) &&
+     /hacker/.test(q("#recordholders thead").textContent),
+     "fame skeleton keeps the real caption + column headers");
+  ok(!/Loading frontier keepers/.test(document.body.textContent), "the pre-JS 'Loading...' block is replaced");
+  ok(!qa("#recordholders .more, #breakthroughs .more").length, "no [ --More-- ] control on a skeleton");
+
+  // 227 cells of random glyphs would be read out as noise, so they are hidden
+  // from assistive tech and the three regions announce themselves as busy.
+  ok(qa(".shim").every((e) => e.getAttribute("aria-hidden") === "true"), "placeholder glyphs are aria-hidden");
+  ok(["#rolegrid", "#recordholders", "#breakthroughs"].every((sel) => q(sel).getAttribute("aria-busy") === "true"),
+     "all three loading regions are marked aria-busy");
+
+  // (b) the glyphs actually churn, and come from the avatar's NetHack pool
+  const before = glyphs(".shim");
+  await sleep(300);
+  ok(glyphs(".shim") !== before, "the shared ticker re-rolls the placeholder glyphs");
+  // A placeholder churns the KIND of value its cell will hold: percentages
+  // flicker through percentages, names through NetHack glyphs.
+  const POOL = new Set("@dfx&;:eFD)[(!?/=\"*$%.#|-<>^{}".split(""));
+  const kind = (k) => qa(`.shim[data-t="${k}"]`).map((e) => e.textContent);
+  ok(kind("text").length > 0 && kind("text").every((t) => [...t].every((c) => POOL.has(c))),
+     "text/name cells churn NetHack glyphs, same pool as the avatar");
+  ok(qa('#rolegrid .shim[data-t="pct"]').length === 86 && kind("pct").every((t) => /^\d\d\.\d%$/.test(t)),
+     "frontier value cells churn well-formed percentages, not glyphs");
+  ok(qa('#breakthroughs .shim[data-t="pct"]').length === 10, "the log's before/result columns churn percentages too");
+  ok(kind("spct").length === 86 && kind("spct").every((t) => /^[+-]\d\.\d%$/.test(t)),
+     "frontier delta cells churn SIGNED percentages");
+  // lift and advance are gains by construction (both renders hardcode "+"), so a
+  // placeholder that flickered negative would promise a value the column cannot hold
+  ok(kind("pp").length > 0 && kind("pp").every((t) => /^\+\d\.\d pp$/.test(t)), "lift/advance cells churn positive pp only");
+  ok(kind("date").length === 5 && kind("date").every((t) => /^\d\d [A-Z][a-z]{2} 2026, \d\d:\d\d UTC$/.test(t)),
+     "the breakthrough log's date column churns well-formed dates");
+  ok(kind("int").length > 0 && kind("int").every((t) => /^\d$/.test(t)), "count columns churn single digits");
+  // a placeholder that changed LENGTH between frames would jitter the text under it
+  const widths = (sel) => qa(sel).map((e) => e.textContent.length).join(",");
+  const w1 = widths(".shim");
+  await sleep(200);
+  ok(widths(".shim") === w1, "every placeholder kind is fixed-width -- no jitter as it churns");
+  // the shimmer must never wear the clothing of a real value
+  ok(!qa("#rolegrid .shim").some((e) => /dpos|dneg|asc|floor/.test(e.closest("td").className)),
+     "a churning number never carries the heat/delta styling a real standing earns");
+
+  // (c) data lands -> every placeholder is gone, replaced by the real render
+  release();
+  await sleep(200);
+  ok(qa(".shim").length === 0, "no placeholder survives the real render");
+  ok(qa("#rolegrid td.vv:not(.hval)").length === 73, "frontier renders its 73 real cells after boot");
+  ok(qa("#rolegrid tr.frontierrow").length === 73, "rows become clickable once there is a leaderboard behind them");
+  ok(qa("#recordholders tbody tr").length === 5 && /@keeper1/.test(q("#recordholders").textContent),
+     "fame tables show real rows");
+  ok(dom.window.eval("SHIM_TIMER") === 0, "the ticker stops itself once the last placeholder is gone");
+  ok(["#rolegrid", "#recordholders", "#breakthroughs"].every((sel) => !q(sel).hasAttribute("aria-busy")),
+     "aria-busy is cleared once the real values are in -- never left asserting a finished load is pending");
+
+  // shimmer -> real dissolves rather than pops, staggered so the table develops
+  ok(["#rolegrid", "#recordholders", "#breakthroughs"].every((sel) => q(sel).classList.contains("settle")),
+     "the regions that were shimmering animate their new values in");
+  ok(/--d:\s*\d+ms/.test(q("#rolegrid table.fr").getAttribute("style") || ""),
+     "real role tables carry the stagger offset the fade reads");
+  ok(/--d:\s*\d+ms/.test(q("#recordholders tbody tr").getAttribute("style") || ""),
+     "real fame rows carry the stagger offset too");
+
+  // (d) an UNCACHED tier flips back to the skeleton; a cached one must not flash
+  arm();
+  [...document.querySelectorAll("[data-tier-group='frontier']")].find((b) => b.dataset.tier === "self-reported").click();
+  await sleep(0);
+  ok(qa("#rolegrid td.vv .shim").length === 86, "switching to an unfetched tier shimmers the values again");
+  ok(qa("#rolegrid td.vn .shim").length === 0, "... and still only the values");
+  release();
+  await sleep(150);
+  ok(qa(".shim").length === 0, "the new tier's data clears the shimmer");
+
+  await sleep(950);                                  // let the previous flip's fade class expire
+  [...document.querySelectorAll("[data-tier-group='frontier']")].find((b) => b.dataset.tier === "verified").click();
+  ok(qa(".shim").length === 0, "returning to a CACHED tier does not flash a skeleton");
+  ok(!q("#rolegrid").classList.contains("settle"), "...and does not animate values that were never shimmering");
+
+  // the last tier click leaves a render pending on a cached fetch; let it land
+  // before tearing the window down, so it is checked here rather than throwing
+  // into whatever pass runs next
+  await sleep(60);
+  ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
+  dom.window.close();
+}
+
+// ---- pass 6: the scratch card --------------------------------------------
+// The chart is painted onto a canvas over the opening block's body text, so a
+// drag covers the page's own words with the drawing. jsdom has no 2d context
+// and no pointer, so what is checked here is the state machine and the guards;
+// the compositing itself is verified by driving Chromium and WebKit.
+async function pass6() {
+  console.log("\n== pass 6: the scratch card ==");
+  const errors = [];
+  const dom = makeDom(() => Promise.reject(new Error("offline")), errors);
+  const { document, window } = dom.window;
+  await sleep(120);
+  const q = (s) => document.querySelector(s);
+  const key = (k, target) => (target || document).dispatchEvent(
+    new window.KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true }));
+  const type = (s, t) => [...s].forEach((c) => key(c, t));
+  const click = (el) => el.dispatchEvent(new window.MouseEvent("click", { bubbles: true }));
+
+  const about = q("#about"), chart = q("#agichart"), btn = q("#agiBtn");
+  ok(about && chart && btn, "the block, the chart and the button are all on the page");
+  ok(chart.tagName === "CANVAS", "the chart is a canvas -- overlapping strokes have to union");
+  ok(about.contains(chart), "the chart is positioned against the block it covers");
+  ok(chart.getAttribute("role") === "img" && /is it AGI/i.test(chart.getAttribute("aria-label")),
+     "the drawing carries a described alternative for screen readers");
+  ok(!chart.classList.contains("on") && !about.classList.contains("scratching"),
+     "at rest: nothing is armed");
+  ok(btn.textContent.trim() === "solving = AGI?" && btn.getAttribute("aria-pressed") === "false",
+     "at rest: the button asks the question");
+
+  click(btn);
+  ok(chart.classList.contains("on") && about.classList.contains("scratching"), "the button arms it");
+  ok(btn.textContent.trim() === "put it back" && btn.getAttribute("aria-pressed") === "true",
+     "...and becomes the way back out");
+  ok(q("#about .lead"), "the real text is untouched in the document -- it is covered, not removed");
+
+  click(btn);
+  ok(!chart.classList.contains("on") && !about.classList.contains("scratching"),
+     "the button is a toggle and puts the page back");
+  ok(btn.textContent.trim() === "solving = AGI?", "...and asks the question again");
+
+  // the extended-command prompt is the other way in
+  ok(q("#xcmd").hidden, "at rest: the prompt is hidden");
+  key("#"); ok(!q("#xcmd").hidden, "# opens the extended-command prompt");
+  type("pray"); key("Enter");
+  ok(/^#pray: unknown extended command\.$/.test(q("#xcmd .xc-msg").textContent),
+     "#pray is refused in NetHack's own words");
+  ok(!about.classList.contains("scratching"), "a refused command arms nothing");
+  await sleep(1800);
+  ok(q("#xcmd").hidden, "the prompt closes itself after the refusal");
+
+  const probe = document.createElement("input");
+  document.body.appendChild(probe); probe.focus();
+  key("#", probe);
+  ok(q("#xcmd").hidden, "# typed into a form field is ignored");
+  probe.remove();
+
+  key("#"); type("agi"); key("Enter");
+  ok(about.classList.contains("scratching"), "#agi arms the card too");
+  key("Escape");
+  ok(!about.classList.contains("scratching"), "escape puts the page back");
+
+  // the tuning panel is a dev tool: it must never appear for a plain visitor
+  ok(!q("#agitune"), "no ?tune=1 -> the tuning panel is not built at all");
+  const t = window.__egg.tune;
+  ok(t && typeof t.r === "number" && typeof t.soft === "number" && typeof t.paper === "string",
+     "the scratch parameters are exposed as live values");
+
+  ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
+  dom.window.close();
+}
+
 await pass1();
 await pass2();
 await pass3();
 await pass4();
+await pass5();
+await pass6();
 checkDictvizRandomWiring();
 console.log("\n" + (failures === 0 ? "ALL PASSED" : failures + " CHECK(S) FAILED"));
 process.exit(failures === 0 ? 0 : 1);

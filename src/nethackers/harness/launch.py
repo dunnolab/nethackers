@@ -28,6 +28,7 @@ from nethackers.hubclient import credentials as _credentials
 from nethackers.hubclient.auth import TokenSource
 from nethackers.hubclient.client import HubClient
 from nethackers.hubclient.output import err
+from nethackers.solution_root import require_solution_root
 from nethackers.tui.status import EvolveConfig
 
 
@@ -191,7 +192,12 @@ def prepare_evolve(
     # per-identity elites itself (harness.loop cold start), so launch just
     # hands the cold-start seed straight through. --from-seed additionally
     # tells the loop to ignore the hub for that cell seeding.
-    parent_tree = Path(params.seed)
+    # Validated here, not at first evaluation: the loop copytree's this tree
+    # before anything is scored, so an absent seed would surface as a
+    # FileNotFoundError from deep inside the run rather than as the plain
+    # sentence a mistyped path deserves. Also resolves AutoAscend's canonical
+    # names, so `--seed roots/autoascend` works off a checkout.
+    parent_tree = require_solution_root(params.seed)
 
     # Per-run provenance (design 5.9): the resolved *platform* digests of the
     # images this run actually launches, plus the in-container operator

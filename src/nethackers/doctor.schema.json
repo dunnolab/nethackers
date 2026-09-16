@@ -23,7 +23,8 @@
               "hub",
               "hub_login",
               "mutator_image",
-              "operator"
+              "operator",
+              "rosetta"
             ]
           },
           "status": { "type": "string", "enum": ["ok", "warn", "fail"] },

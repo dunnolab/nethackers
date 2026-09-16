@@ -16,6 +16,7 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 
+from nethackers._image_pins import ARENA_IMAGE
 from nethackers.contracts.models import Atom, Evidence, Objective, TrajectoryResult
 from nethackers.hub.api import create_app
 from nethackers.hub.auth import LocalStubAuth
@@ -51,7 +52,7 @@ def _evidence_dict(objective_name: str = IDENTITY) -> dict[str, Any]:
     return Evidence.from_results(
         solution_digest="sha256:" + "ab" * 32,
         objective=Objective(character=None, seed_set=objective_name),
-        evaluator_image="img", results=results, created_at="t",
+        evaluator_image=ARENA_IMAGE, results=results, created_at="t",
     ).to_dict()
 
 

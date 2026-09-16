@@ -22,6 +22,7 @@ for "am I logged in" / "is the hub reachable", without this module ever
 importing ``cli`` itself (which imports FROM here -- that would cycle)."""
 from __future__ import annotations
 
+import json
 import platform
 import re
 import subprocess
@@ -34,6 +35,7 @@ from nethackers import _image_pins
 from nethackers.config import load_stage
 from nethackers.containers import RuntimeReport, container_runtime, probe_container_runtime
 from nethackers.harness import sandbox_preflight
+from nethackers.harness.auth_inject import opencode2_has_provider_key
 from nethackers.harness.version import RUN_SCHEMA_VERSION
 from nethackers.hubclient.client import HubClient, HubUnreachable
 from nethackers.hubclient.credentials import Credentials, load as _default_load_creds
@@ -67,7 +69,7 @@ CAPABILITIES = ("eval", "evolve", "publish", "browse")
 # so neither can drift out of sync with the other (previously each was a
 # separately hand-written literal at two call sites). Also the constant a
 # future exhaustive fold-table test reads, rather than re-deriving the same
-# 7-row table a third time.
+# 8-row table a third time.
 CHECK_SPECS: dict[str, tuple[str, tuple[str, ...]]] = {
     "container_runtime": ("hard", ("eval", "evolve")),
     "arena_image": ("hard", ("eval", "evolve")),
@@ -76,6 +78,19 @@ CHECK_SPECS: dict[str, tuple[str, tuple[str, ...]]] = {
     "hub_login": ("soft", ("publish",)),
     "gh": ("soft", ("publish",)),
     "operator": ("hard", ("evolve",)),
+    # Soft severity, tagged to eval/evolve -- exactly where amd64 emulation
+    # cost is actually paid (an earlier version tagged this with an empty
+    # capability tuple; that made it un-gating but also unrenderable, since
+    # render_human/render_plain group rows by `cap in r.capabilities` --
+    # capability-less rows can never appear there). Spec I9 (never moves
+    # doctor's exit code) now rests on two things instead: rosetta_state/
+    # _check_rosetta never emit "fail" (only "ok"/"warn" -- see
+    # test_check_rosetta_never_emits_fail_for_any_rosetta_state), and
+    # capability_ready's own fold -- eval/evolve both carry hard checks of
+    # their own, so they're gated PURELY by those; a soft check tagged onto
+    # a capability that has hard checks (this one, on both) never enters
+    # into the verdict at all, "ok" or "warn" alike.
+    "rosetta": ("soft", ("eval", "evolve")),
 }
 
 
@@ -134,9 +149,12 @@ def _manifest_reachable(ref: str, *, runtime: str = "docker", run=subprocess.run
     missing): distinguishing *why* isn't doctor's job here -- ``ensure_
     image``'s own error mapping already covers that at actual-pull time.
     ``runtime`` is threaded in from ``run_checks`` (``container_runtime()``) so
-    a podman-only host probes with podman, not a missing ``docker``."""
+    a podman-only host probes with podman, not a missing ``docker``. The budget
+    is ``sandbox_preflight``'s, so a registry slow enough to outlast it can't
+    make doctor report "unreachable" for an image ``ensure_image`` then pulls."""
     try:
-        result = run([runtime, "manifest", "inspect", ref], capture_output=True, timeout=10)
+        result = run([runtime, "manifest", "inspect", ref], capture_output=True,
+                     timeout=sandbox_preflight.MANIFEST_PROBE_TIMEOUT)
         return bool(result.returncode == 0)
     except (OSError, subprocess.SubprocessError):
         return False
@@ -148,6 +166,12 @@ def _default_hub_mode(hub: str) -> str | None:
     of truth with it (INV5). May raise ``HubUnreachable``; ``_check_hub`` is
     the only place that catches it."""
     return HubClient(hub).hub_mode()
+
+
+def _default_opencode2_keyed() -> bool:
+    """Whether a global OpenCode provider carries a key the sandbox can use
+    (``auth_inject``, the same rule a run applies)."""
+    return opencode2_has_provider_key(home=Path.home())
 
 
 _RUNTIME_ITEM_STATUS = {"usable": "ok", "absent": "warn", "broken": "fail"}
@@ -202,25 +226,40 @@ def _check_image(
     """``present`` (already local) / ``warn``-``pullable`` (not local, but
     the registry has it -- ``nethackers doctor --pull`` fetches it) /
     ``fail``-``unreachable`` (neither) -- spec S5.6. The "unreachable" fix
-    text branches on whether this is actually a repo checkout
-    (``repo_root() is not None``) -- mirroring ``ensure_image``'s own real
-    branch order -- rather than inferring that from the ref's shape: a repo
-    checkout can build locally (``make``, which ``eval``/``evolve`` also run
-    automatically) regardless of what ref happens to be resolved; outside a
-    repo (the installed-user path, or a hand-set ``NETHACKERS_*_IMAGE``
-    override with no checkout to build from) the only path is the
-    network/registry, so the fix names that instead."""
+    text mirrors ``ensure_image``'s own real branch order (spec 2026-09-15
+    §5.5), keyed off the ref's shape, not just the checkout: a digest ref
+    (``"@sha256:" in ref``) is only ever pulled, checkout or not, so its fix
+    always names the network; a checkout's fingerprint mutator ref is
+    pulled-or-built (the branch above, before this one ever runs); any other
+    ref inside a checkout (the arena's local dev tag) is built locally, so
+    its fix names ``make``; outside a checkout the only path left, for
+    anything else, is the network/registry."""
     check_id = f"{kind}_image"
     ref = resolve_image(None, kind)
     if image_present(ref):
         return CheckResult(id=check_id, status="ok", severity=severity,
                            detail=f"present — {ref}", fix=None, capabilities=caps)
+    if sandbox_preflight.is_local_mutator_fingerprint(ref):
+        # A checkout whose mutator files differ from the pinned build. CI may have
+        # published an image for exactly these files; otherwise nethackers builds it.
+        remote = sandbox_preflight.ghcr_mutator_ref(ref)
+        if manifest_reachable(remote):
+            return CheckResult(id=check_id, status="warn", severity=severity,
+                               detail=f"not local yet, but pullable — {remote}",
+                               fix="run `nethackers doctor --pull` to fetch it now",
+                               capabilities=caps)
+        return CheckResult(id=check_id, status="warn", severity=severity,
+                           detail=(f"not built yet — {ref} (this checkout's mutator files "
+                                   "differ from the pinned build)"),
+                           fix=("run `nethackers doctor --pull` to build it now, "
+                                "or just start evolve, which builds it"),
+                           capabilities=caps)
     if manifest_reachable(ref):
         return CheckResult(id=check_id, status="warn", severity=severity,
                            detail=f"not local yet, but pullable — {ref}",
                            fix="run `nethackers doctor --pull` to fetch it now",
                            capabilities=caps)
-    if repo_root() is not None:
+    if repo_root() is not None and "@sha256:" not in ref:
         fix = f"run `make {kind}` (or just `nethackers eval`/`evolve`, which auto-builds it)"
     else:
         fix = (f"check your network connection, or set NETHACKERS_{kind.upper()}_IMAGE "
@@ -275,17 +314,28 @@ def _check_gh(
 def _check_operator(
     operators: tuple[str, ...], *, severity: str, caps: tuple[str, ...],
     mutator_present: bool, preflight_operator: Callable[[str], str | None],
+    opencode2_keyed: Callable[[], bool],
 ) -> CheckResult:
     """Host-login readiness across the registered coding agents. Probes EVERY
     agent the caller asked about (``run_checks(operator=None)`` -> all of
     ``operators.OPERATORS``; a single name -> just that one) rather than one
     agent plus a "note the other": evolve drives ONE operator chosen at Start,
     so this is ready as long as AT LEAST ONE agent is logged in, and the detail
-    lists each agent's status so the options are visible."""
+    lists each agent's status so the options are visible.
+
+    OpenCode 2 is always usable (free models need no key), so it always
+    counts as ready -- but without a provider key it says "free models only"
+    rather than claiming a login."""
     status = {op: preflight_operator(op) for op in operators}  # None == logged in
+
+    def ready_detail(op: str) -> str:
+        if op == "opencode2" and not opencode2_keyed():
+            return "free models only"
+        return "logged in"
+
     items = tuple(
         CheckItem(label=op, status="ok" if status[op] is None else "fail",
-                  detail="logged in" if status[op] is None else "not logged in")
+                  detail=ready_detail(op) if status[op] is None else "not logged in")
         for op in operators)
     flat = ", ".join(f"{it.label}: {it.detail}" for it in items)  # flattened for -o json
     if any(status[op] is None for op in operators):
@@ -301,6 +351,89 @@ def _check_operator(
         fix += " — or `nethackers doctor --pull` to pull the sandbox and verify inside it"
     return CheckResult(id="operator", status="fail", severity=severity, detail=flat,
                        fix=fix, capabilities=caps, items=items)
+
+
+DOCKER_DESKTOP_SETTINGS = (
+    Path.home()
+    / "Library"
+    / "Group Containers"
+    / "group.com.docker"
+    / "settings-store.json"
+)
+
+# Measured on one machine, one 15-episode identity batch, same games both
+# sides: QEMU 823s vs Rosetta 224s (spec 2026-09-14 section 8).
+_ROSETTA_COST = "same batch: 823s under QEMU vs 224s with Rosetta"
+
+
+def rosetta_state(
+    system: str, machine: str, settings_path: Path
+) -> tuple[str, str]:
+    """``(status, detail)`` for the amd64-emulation advisory.
+
+    ``"unknown"`` whenever we cannot tell -- a non-macOS host, an Intel Mac
+    (which emulates nothing), a runtime that is not Docker Desktop, or an
+    unreadable OR malformed settings file (present, valid JSON, but not the
+    object shape Docker Desktop actually writes -- e.g. a list or ``null``).
+    NEVER report "disabled" on a guess: Colima and podman machine carry their
+    own Rosetta switches.
+
+    Detection is host-side on purpose. Probing inside the container does not
+    work: the Rosetta mount is absent there even when Rosetta is active, so an
+    in-container probe reports the wrong answer silently.
+    """
+    if system != "Darwin" or machine not in {"arm64", "aarch64"}:
+        return "unknown", "not an Apple Silicon Mac; amd64 emulation does not apply"
+    unreadable = (
+        "could not read Docker Desktop settings; if you use Colima, start it "
+        "with --vz --vz-rosetta"
+    )
+    try:
+        settings = json.loads(settings_path.read_text())
+    except (OSError, ValueError):
+        return "unknown", unreadable
+    # Present and valid JSON, but not an object (a list, a bare string/number,
+    # `null`...) -- `.get()` below would raise AttributeError, which `_safe`'s
+    # generic crash net would turn into status="fail". That's exactly the
+    # outcome an advisory must never produce, so this is checked explicitly
+    # rather than folded into the except clause above (which would silently
+    # also swallow bugs in this function itself, not just bad input).
+    if not isinstance(settings, dict):
+        return "unknown", unreadable
+    vz = bool(settings.get("UseVirtualizationFramework"))
+    rosetta = bool(settings.get("UseVirtualizationFrameworkRosetta"))
+    if vz and rosetta:
+        return "ok", "Rosetta is accelerating amd64 emulation"
+    return "warn", (
+        f"amd64 evaluation is running under QEMU, not Rosetta ({_ROSETTA_COST})"
+    )
+
+
+def _check_rosetta(
+    *,
+    severity: str,
+    caps: tuple[str, ...],
+    rosetta: Callable[[], tuple[str, str]],
+) -> CheckResult:
+    state, detail = rosetta()
+    # CheckResult.status admits only ok/warn/fail. "unknown" means the advisory
+    # does not apply or could not be determined, which must not read as a
+    # problem -- so it surfaces as "ok" and the detail carries the nuance.
+    status = "warn" if state == "warn" else "ok"
+    fix = None
+    if state == "warn":
+        fix = (
+            "Docker Desktop > Settings > General: choose Apple Virtualization "
+            "framework, then tick 'Use Rosetta for x86_64/amd64 emulation'"
+        )
+    return CheckResult(
+        id="rosetta",
+        status=status,
+        severity=severity,
+        detail=detail,
+        fix=fix,
+        capabilities=caps,
+    )
 
 
 def _safe(
@@ -329,12 +462,16 @@ def run_checks(
     manifest_reachable: Callable[[str], bool] | None = None,
     repo_root: Callable[[], Path | None] = sandbox_preflight._repo_root,
     preflight_operator: Callable[[str], str | None] = sandbox_preflight.preflight_operator,
+    opencode2_keyed: Callable[[], bool] = _default_opencode2_keyed,
     hub_mode: Callable[[str], str | None] = _default_hub_mode,
     load_creds: Callable[[], Credentials | None] = _default_load_creds,
     gh_state: Callable[[], tuple[str | None, str]] = _default_gh_state,
+    rosetta: Callable[[], tuple[str, str]] = lambda: rosetta_state(
+        platform.system(), platform.machine(), DOCKER_DESKTOP_SETTINGS
+    ),
     only: Collection[str] | None = None,
 ) -> list[CheckResult]:
-    """The 7 checks behind ``nethackers doctor`` (spec S5.6). NEVER raises,
+    """The 8 checks behind ``nethackers doctor`` (spec S5.6). NEVER raises,
     regardless of what any injected probe does (each check runs under its
     own ``_safe``). Every dependency is injectable with a real, working
     default, so a bare call is a genuine (if possibly slow/networked)
@@ -353,15 +490,15 @@ def run_checks(
     ``only``, when given, restricts execution to just the named check ids
     (keys of ``CHECK_SPECS``) -- every other check is skipped ENTIRELY: its
     probe is never called, not merely hidden from the returned list. ``None``
-    (the default) runs all 7, byte-for-byte unchanged for every existing
+    (the default) runs all 8, byte-for-byte unchanged for every existing
     caller (the ``doctor`` CLI, the schema/conformance tests). This exists
     for a targeted, DISPLAY-ONLY caller that only ever shows a subset of the
-    7 checks and must not trigger the others' network/subprocess calls just
+    8 checks and must not trigger the others' network/subprocess calls just
     to throw the results away -- e.g. the TUI's evolve-readiness strip, which
     must never make a hub HTTPS round-trip / ``gh`` subprocess / creds-file
     read just because the user opened that tab (spec S5.8). A filtered
     result must NEVER be passed to ``to_json``: its ``capabilities`` map
-    assumes all 7 checks ran, so an un-run capability's tagged checks would
+    assumes all 8 checks ran, so an un-run capability's tagged checks would
     simply be absent from ``results`` and ``capability_ready`` would read it
     as vacuously ready (INV6's fold has nothing to gate on).
     """
@@ -444,7 +581,14 @@ def run_checks(
         results.append(_safe("operator", severity, caps,
                              lambda: _check_operator(ops, severity=severity, caps=caps,
                                                      mutator_present=mutator_present,
-                                                     preflight_operator=preflight_operator)))
+                                                     preflight_operator=preflight_operator,
+                                                     opencode2_keyed=opencode2_keyed)))
+
+    if _wanted("rosetta"):
+        severity, caps = CHECK_SPECS["rosetta"]
+        results.append(_safe("rosetta", severity, caps,
+                             lambda: _check_rosetta(severity=severity, caps=caps,
+                                                    rosetta=rosetta)))
     return results
 
 
@@ -455,7 +599,7 @@ def capability_ready(results: list[CheckResult], cap: str) -> bool:
     (every one must be ``"ok"``) -- a soft check tagged onto the same
     capability, if any, never enters into it: "a soft check failing does
     not make a hard-gated capability unready" (spec S5.6/INV6). A
-    capability with NO hard checks at all (``publish``, in the real 7-check
+    capability with NO hard checks at all (``publish``, in the real 8-check
     table) falls back to its own soft checks instead, where only a
     ``"fail"`` gates it -- a soft ``"warn"`` never gates anything, for any
     capability (INV6's "soft warnings never flip it")."""
@@ -494,6 +638,7 @@ def to_json(results: list[CheckResult]) -> dict:
 
 
 _SHA256_RE = re.compile(r"@sha256:[0-9a-f]{64}")
+_FINGERPRINT_TAG_RE = re.compile(r":h-[0-9a-f]{64}")
 _DIGEST_PREFIX_LEN = 19  # matches cli.py:_short_pin's prefix length exactly
 
 
@@ -505,15 +650,18 @@ def _short_digest(text: str) -> str:
     in ``CheckResult.detail``, breaking column alignment on any normal
     terminal; that's the DEFAULT experience for every installed (non-repo)
     user, since a repo checkout's local dev tags are short and never trigger
-    this. Applied ONLY at render time (``render_human``/``render_plain``
-    below) -- never to ``CheckResult.detail`` itself and never to
-    ``to_json``, which must always carry the full, unmodified digest
+    this. A checkout's mutator fingerprint tag (``:h-<64 hex>``) is shortened
+    the same way. Applied ONLY at render time (``render_human``/
+    ``render_plain`` below) -- never to ``CheckResult.detail`` itself and
+    never to ``to_json``, which must always carry the full, unmodified digest
     (``hubclient/output.py``'s own "never a stringified table" rule).
     ``cli.py:_short_pin`` (``--version``'s equivalent truncation) reuses this
     as its single source of the 19-char prefix length, so the two can never
     drift apart."""
     keep = len("@sha256:") + _DIGEST_PREFIX_LEN
-    return _SHA256_RE.sub(lambda m: m.group()[:keep] + "…", text)
+    text = _SHA256_RE.sub(lambda m: m.group()[:keep] + "…", text)
+    keep_tag = len(":h-") + _DIGEST_PREFIX_LEN
+    return _FINGERPRINT_TAG_RE.sub(lambda m: m.group()[:keep_tag] + "…", text)
 
 
 _GLYPH = {"ok": "[green]✓[/]", "warn": "[yellow]⚠[/]", "fail": "[red]✗[/]"}

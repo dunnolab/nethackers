@@ -5,72 +5,50 @@ helper to report per-solution verification progress."""
 
 from __future__ import annotations
 
-import statistics
 from typing import Any
 
 from nethackers.hub.objectives import IDENTITIES
 from nethackers.hub.store import Store
-from nethackers.hub.views.milestones import deepest_milestone
+from nethackers.hub.views.baseline import per_identity_fold
 
 
 def _aggregate(atoms, seeds) -> dict[str, Any]:
     """Fold hidden-seed atoms into ``{per_identity, overall}``, keeping only
-    seeds still in the current hidden list. ``overall`` is the mean OF THE
-    PER-IDENTITY MEANS (not of raw episodes), so an identity with more
-    episodes recorded doesn't weigh more heavily than the rest.
-
-    ``overall`` is ``None``, never ``0.0``, when nothing has been measured --
-    "not computed yet" and "scored zero" are different claims, and conflating
-    them would show every program beating an uncomputed floor."""
-    seed_set = frozenset(seeds)
-    per: dict[str, list] = {}
-    for a in atoms:
-        if a.seed in seed_set:
-            per.setdefault(a.identity, []).append(a)
-    per_identity = {
-        ident: {
-            "progression": round(statistics.mean(x.progression for x in g), 3),
-            "deepest": deepest_milestone([x.milestone for x in g]),
-            "episodes": len(g),
-        }
-        for ident, g in per.items()
-    }
-    overall: float | None = None
-    if per_identity:
-        progressions = [c["progression"] for c in per_identity.values()]
-        overall = round(statistics.mean(progressions), 3)
-    return {"per_identity": per_identity, "overall": overall}
+    seeds still in the current hidden list. The fold itself is
+    ``views.baseline.per_identity_fold`` -- one implementation, two tables."""
+    live = frozenset(seeds)
+    return per_identity_fold([a for a in atoms if a.seed in live])
 
 
 def read_verified(
-    store: Store, *, secret_fingerprint: str, seeds, evaluator_image: str
+    store: Store, *, secret_fingerprint: str, seeds, arena_major: int
 ) -> dict[str, Any]:
     """Read verified-tier aggregates filtered to current secret fingerprint,
-    evaluator image, and seed set. Returns per-identity aggregates (progression
+    arena major, and seed set. Returns per-identity aggregates (progression
     mean, deepest milestone, episode count) and overall progression mean."""
     return _aggregate(
         store.iter_verified_atoms(
-            secret_fingerprint=secret_fingerprint, evaluator_image=evaluator_image
+            secret_fingerprint=secret_fingerprint, arena_major=arena_major
         ),
         seeds,
     )
 
 
 def read_verified_baseline(
-    store: Store, *, secret_fingerprint: str, seeds, evaluator_image: str
+    store: Store, *, secret_fingerprint: str, seeds, arena_major: int
 ) -> dict[str, Any]:
     """Read AutoAscend's hidden-seed floor, scoped to the same epoch as
     ``read_verified`` and returned in the same shape -- so a board can put a
     program's verified number next to the floor's without reshaping either,
     and can never compute a Delta across two different measurements (a rotated
-    secret, a re-pinned arena, or a retired seed all drop out here).
+    secret, a bumped arena major, or a retired seed all drop out here).
 
     Reads the isolated ``verified_baseline_atoms`` table, so the floor is
     structurally incapable of appearing in ``read_verified``'s participant
     aggregate and vice versa."""
     return _aggregate(
         store.iter_verified_baseline_atoms(
-            secret_fingerprint=secret_fingerprint, evaluator_image=evaluator_image
+            secret_fingerprint=secret_fingerprint, arena_major=arena_major
         ),
         seeds,
     )
@@ -81,7 +59,7 @@ def verification_status(
     solution_digest: str,
     *,
     secret_fingerprint: str,
-    evaluator_image: str,
+    arena_major: int,
     seeds,
 ) -> dict[str, Any]:
     """Report verification progress for a solution: state machine
@@ -94,7 +72,7 @@ def verification_status(
             for a in store.iter_verified_atoms(
                 solution_digest=solution_digest,
                 secret_fingerprint=secret_fingerprint,
-                evaluator_image=evaluator_image,
+                arena_major=arena_major,
             )
             if a.seed in seed_set
         ]
@@ -104,7 +82,7 @@ def verification_status(
     latest = store.latest_verified_attempt(
         solution_digest,
         secret_fingerprint=secret_fingerprint,
-        evaluator_image=evaluator_image,
+        arena_major=arena_major,
     )
     if latest is not None:
         return {

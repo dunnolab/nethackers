@@ -27,9 +27,9 @@ NLE_BASE_IMAGE ?= nethackers/nle-base:dev
 # (nethackers/arena:<slug>) when allocated, else the shared dev fallback;
 # explicit override always wins: `make up ARENA_IMAGE=you/arena:tag`.
 ARENA_IMAGE   ?= $(or $(NETHACKERS_ARENA_IMAGE),nethackers/arena:dev)
-# Mutator sandbox image tag: SHARED :latest by design, even across worktrees
-# (no nethackers source in it -- no collision to isolate); override:
-# `make mutator MUTATOR_IMAGE=you/mutator:tag`.
+# Mutator image tag for a manual `make mutator` only -- experiments on the base,
+# used together with NETHACKERS_MUTATOR_IMAGE. nethackers itself runs a checkout on
+# nethackers/mutator:h-<fingerprint>, which it pulls or builds on its own.
 MUTATOR_IMAGE ?= $(or $(NETHACKERS_MUTATOR_IMAGE),nethackers/mutator:latest)
 # Local hub auth provider (see "Real-auth local hub mode",
 # docs/local-stack.md): `stub` (default) runs bare `docker compose up`,

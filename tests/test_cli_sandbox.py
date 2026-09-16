@@ -75,17 +75,20 @@ def test_evolve_always_builds_container_operator(tmp_path, monkeypatch):
     assert op._run_id == run_dir.name
 
 
-def test_mutator_image_defaults(tmp_path, monkeypatch):
+def test_mutator_image_defaults_to_the_pin_outside_a_checkout(tmp_path, monkeypatch):
+    from nethackers import _image_pins
     seed = _seed(tmp_path)
     captured = {}
     monkeypatch.setattr(launch, "run_loop", lambda **kw: captured.update(kw) or [],
                         raising=False)
     _stub_preflight_ok(monkeypatch)
+    monkeypatch.chdir(tmp_path)     # not a repo checkout: every user's path
+    monkeypatch.delenv("NETHACKERS_MUTATOR_IMAGE", raising=False)
 
     rc = cli._run(_evolve_argv(seed, tmp_path))
 
     assert rc == 0
-    assert captured["operator"].image == "nethackers/mutator:latest"
+    assert captured["operator"].image == _image_pins.MUTATOR_IMAGE
 
 
 def test_model_and_effort_thread_through(tmp_path, monkeypatch):

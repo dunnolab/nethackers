@@ -12,12 +12,12 @@ than ``register``'s because identity/ownership is already settled -- a
 solution only reaches ``/verify`` after it was already ``/register``-ed, so
 ``register_verified`` just looks up that row's ``owner`` rather than
 re-resolving a caller token against GitHub. What it checks instead is
-specific to hidden-eval trust: the evidence was produced under the pinned
-arena image (parity), the submitted secret fingerprint is the hub's CURRENT
-hidden secret (not a stale one from before a rotation), and every result
-sits inside the hidden identity x seed spec. Atoms are always forced to
-``tier="verified"`` via ``dataclasses.replace`` -- the caller's own
-``evidence.tier`` is never trusted -- the same pattern
+specific to hidden-eval trust: the evidence ran under an arena image
+classified at the hub's current arena major (parity), the submitted secret
+fingerprint is the hub's CURRENT hidden secret (not a stale one from before
+a rotation), and every result sits inside the hidden identity x seed spec.
+Atoms are always forced to ``tier="verified"`` via ``dataclasses.replace``
+-- the caller's own ``evidence.tier`` is never trusted -- the same pattern
 ``baseline_compute.compute_baseline`` uses to force ``tier="baseline"``.
 
 ``register_verified_baseline`` is the third writer here: AutoAscend's
@@ -34,16 +34,26 @@ bookkeeping, batching) on top of this write path.
 from __future__ import annotations
 
 import hashlib
+import logging
 import math
 from dataclasses import dataclass, replace
+from typing import Any
 
 from nethackers.arena.seeds import secret_fingerprint as _fingerprint
+from nethackers.arena_version import major_for
 from nethackers.contracts.models import Evidence
 from nethackers.hub.atoms import evidence_to_atoms
 from nethackers.hub.ids import AUTOASCEND_ID, program_id as _program_id
 from nethackers.hub.objectives import IDENTITIES
 from nethackers.hub.store import Store
-from nethackers.hub.validate import SolutionReference
+from nethackers.hub.validate import (
+    SolutionReference,
+    UnclassifiedArena,
+    WrongArenaMajor,
+    classified_major,
+)
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -80,8 +90,10 @@ class UnknownSolution(VerifyError):
 
 
 class ParityMismatch(VerifyError):
-    """``evidence.evaluator_image`` isn't the pinned arena image -- the
-    evidence wasn't produced under the parity-enforced sandbox."""
+    """``evidence.evaluator_image`` doesn't resolve to the hub's current
+    arena major -- either the digest is unclassified (``arena_version`` has
+    no entry for it) or it classifies to a different, older major than the
+    one this hub currently accepts."""
 
 
 class StaleSecret(VerifyError):
@@ -128,19 +140,30 @@ class BaselineVerifyResult:
 
 
 def _check_hidden_evidence(evidence: Evidence, *, secret_fingerprint: str,
-                           expected_image: str, hub_secret: str,
+                           current_major: int, hub_secret: str,
                            seeds: tuple[int, ...]) -> None:
     """The trust ladder every hidden-seed submission must clear, participant
-    or floor, in order: the evidence ran under the pinned arena image
-    (``ParityMismatch``); it was produced under the hub's CURRENT hidden
-    secret, not a stale one from before a rotation (``StaleSecret``); every
-    result sits inside the hidden identity x seed spec (``BadBatch``); every
-    result's progress is finite (``NonFiniteMetrics``). Raises before the
-    caller writes anything -- a rejected submission stores nothing."""
-    if evidence.evaluator_image != expected_image:
-        raise ParityMismatch(
-            f"evaluator_image {evidence.evaluator_image!r} != pinned arena image {expected_image!r}"
-        )
+    or floor, in order: the evidence ran under an arena image classified at
+    this hub's current major (``ParityMismatch``); it was produced under the
+    hub's CURRENT hidden secret, not a stale one from before a rotation
+    (``StaleSecret``); every result sits inside the hidden identity x seed spec
+    (``BadBatch``); every result's progress is finite (``NonFiniteMetrics``).
+    Raises before the caller writes anything -- a rejected submission stores
+    nothing.
+
+    The parity rung maps the submitted digest through
+    ``arena_version.major_for`` rather than comparing it to the hub's own pin.
+    A node one release behind, running a different digest of the same major,
+    is therefore still admitted -- which is the point: it removes the lockstep
+    requirement between the hub and the evaluator node, and it is what stops a
+    quality-of-life rebuild from orphaning the corpus (design D6).
+    """
+    # One admission rule for both tiers (spec 2026-09-14 D5). Re-raised as
+    # ParityMismatch so this module's callers keep their exception contract.
+    try:
+        classified_major(evidence.evaluator_image, current_major)
+    except (UnclassifiedArena, WrongArenaMajor) as error:
+        raise ParityMismatch(str(error)) from error
 
     if secret_fingerprint != _fingerprint(hub_secret):
         raise StaleSecret("secret_fingerprint does not match the current hidden secret")
@@ -162,7 +185,7 @@ def register_verified_baseline(
     evidence: Evidence,
     secret_fingerprint: str,
     verifier_token_fingerprint: str,
-    expected_image: str,
+    current_major: int,
     hub_secret: str,
     seeds: tuple[int, ...],
 ) -> BaselineVerifyResult:
@@ -180,16 +203,17 @@ def register_verified_baseline(
 
     Everything trust-bearing about hidden-seed evidence is still enforced,
     via the shared ``_check_hidden_evidence`` ladder: parity, secret epoch,
-    batch membership, finite metrics. A floor submitted from an unpinned
-    image or off-spec seeds would silently corrupt every Delta-vs-AA on the
-    board, so it is rejected exactly as a participant's would be.
+    batch membership, finite metrics. A floor submitted from an unclassified
+    image or the wrong arena major or off-spec seeds would silently corrupt
+    every Delta-vs-AA on the board, so it is rejected exactly as a
+    participant's would be.
 
     Idempotent: ``insert_verified_baseline_atoms`` dedups on its own unique
     key, so a re-run under the same epoch reports ``inserted == 0`` while
     ``done`` still reports true coverage.
     """
     _check_hidden_evidence(evidence, secret_fingerprint=secret_fingerprint,
-                           expected_image=expected_image, hub_secret=hub_secret, seeds=seeds)
+                           current_major=current_major, hub_secret=hub_secret, seeds=seeds)
 
     atoms = [
         replace(atom, tier="baseline")
@@ -199,13 +223,14 @@ def register_verified_baseline(
     inserted = store.insert_verified_baseline_atoms(
         atoms, secret_fingerprint=secret_fingerprint,
         verifier_token_fingerprint=verifier_token_fingerprint,
+        arena_major=current_major,
     )
 
     seed_set = frozenset(seeds)
     covered = [
         atom
         for atom in store.iter_verified_baseline_atoms(
-            secret_fingerprint=secret_fingerprint, evaluator_image=expected_image
+            secret_fingerprint=secret_fingerprint, arena_major=current_major
         )
         if atom.seed in seed_set
     ]
@@ -214,14 +239,64 @@ def register_verified_baseline(
     )
 
 
-def record_attempt(store, *, reference, secret_fingerprint, evaluator_image,
-                   verifier_token_fingerprint, status, failure_kind, message,
-                   identities_done, now):
-    """Record a program-level verification attempt (success or failure)."""
+def record_attempt(
+    store: Store, *, reference: SolutionReference, secret_fingerprint: str,
+    evaluator_image: str, verifier_token_fingerprint: str, status: str,
+    failure_kind: str | None, message: str | None, identities_done: int,
+    now: str,
+) -> None:
+    """Record a program-level verification attempt (success or failure).
+
+    The major is derived from the reported image rather than taken from the
+    caller, so an attempt row lands in the same scope the evidence would have.
+    An UNCLASSIFIED image raises: a row stored under a guessed major would make
+    ``verify_candidates`` skip a program on the strength of a failure that
+    never happened in this scope (design invariant I2).
+
+    A WRONG-MAJOR image -- classified, but not at the hub's current major --
+    is deliberately NOT rejected here, even though ``_check_hidden_evidence``
+    rejects the evidence for that same submission. The asymmetry is the point,
+    because the two rows do different jobs:
+
+    - Evidence is scored data. Admitting it at the wrong major would put
+      incomparable episodes on the live board, so it must fail loudly and the
+      node operator must see the 400 and upgrade.
+    - An attempt is an audit record of what actually happened on whichever node
+      ran it. Storing it at the major it genuinely ran under is the truthful
+      thing to do, and it is also self-limiting: ``verify_candidates`` reads
+      the hub's own major, so an attempt filed at an older one can never
+      suppress a candidate on the live board. It is inert rather than wrong.
+
+    So a wrong-major attempt is a write into a scope nothing currently reads --
+    which is exactly what an audit trail for a stale node should be. An
+    unclassified image has no truthful scope to be filed under at all, which is
+    why that one is the rejection.
+
+    The rejection is logged before it is raised. The only production caller is
+    ``POST /verify/attempts``, whose 400 the worker daemon swallows in its
+    per-candidate ``except Exception: continue`` -- so without this line the
+    operator loses both the attempt row they used to get AND any trace that a
+    submission was refused.
+    """
+    arena_major = major_for(evaluator_image)
+    if arena_major is None:
+        logger.warning(
+            "refusing a verification attempt for %s@%s: evaluator_image %r is "
+            "not classified in ARENA_MAJOR_BY_DIGEST, so it has no arena major "
+            "to file the attempt under. The reported attempt was %s (%s). "
+            "Classify the digest in src/nethackers/arena_version.py or point "
+            "the node at a classified arena image.",
+            reference.repo, reference.commit, evaluator_image, status,
+            failure_kind or "no failure_kind",
+        )
+        raise ParityMismatch(
+            f"evaluator_image {evaluator_image!r} is not a classified arena image"
+        )
     store.insert_verified_attempt(
         solution_digest=f"{reference.repo}@{reference.commit}",
         secret_fingerprint=secret_fingerprint,
         evaluator_image=evaluator_image,
+        arena_major=arena_major,
         verifier_token_fingerprint=verifier_token_fingerprint,
         status=status, failure_kind=failure_kind, message=message,
         identities_done=identities_done, at=now)
@@ -235,17 +310,17 @@ def register_verified(
     secret_fingerprint: str,
     verifier_token_fingerprint: str,
     now: str,
-    expected_image: str,
+    current_major: int,
     hub_secret: str,
     seeds: tuple[int, ...],
 ) -> VerifyResult:
     """Run the verified-tier ladder and, only on full success, write
     ``verified_atoms``. Each rejection raises its own ``VerifyError``
     subclass before anything is written, in order: solution exists
-    (``UnknownSolution``); evidence ran under the pinned arena image
-    (``ParityMismatch``); the submitted secret fingerprint matches the
-    hub's current hidden secret (``StaleSecret``); every result's
-    ``(character, trajectory_id)`` is inside the hidden spec
+    (``UnknownSolution``); evidence ran under an arena image classified at
+    this hub's current major (``ParityMismatch``); the submitted secret
+    fingerprint matches the hub's current hidden secret (``StaleSecret``);
+    every result's ``(character, trajectory_id)`` is inside the hidden spec
     (``BadBatch``); every result's progress is finite
     (``NonFiniteMetrics``).
 
@@ -263,7 +338,7 @@ def register_verified(
         raise UnknownSolution(f"{solution_id} is not registered")
 
     _check_hidden_evidence(evidence, secret_fingerprint=secret_fingerprint,
-                           expected_image=expected_image, hub_secret=hub_secret, seeds=seeds)
+                           current_major=current_major, hub_secret=hub_secret, seeds=seeds)
     seed_set = frozenset(seeds)
 
     owner = row["owner"]
@@ -274,13 +349,14 @@ def register_verified(
     inserted = store.insert_verified_atoms(
         atoms, secret_fingerprint=secret_fingerprint,
         verifier_token_fingerprint=verifier_token_fingerprint,
+        arena_major=current_major,
     )
 
     covered = [
         atom
         for atom in store.iter_verified_atoms(
             solution_digest=solution_id, secret_fingerprint=secret_fingerprint,
-            evaluator_image=expected_image,
+            arena_major=current_major,
         )
         if atom.seed in seed_set
     ]
@@ -299,9 +375,9 @@ def register_verified(
 _DETERMINISTIC = frozenset({"build_failed", "crashed", "hung"})
 
 
-def verify_candidates(store, *, secret_fingerprint, evaluator_image, seeds, limit):
+def verify_candidates(store, *, secret_fingerprint, arena_major: int, seeds, limit):
     """Programs still needing verified coverage under this secret epoch and
-    evaluator image, least-covered first -- the verifier node's work queue
+    arena major, least-covered first -- the verifier node's work queue
     (``GET /verify/candidates``, Tasks 10/11's polling loop).
 
     Skips a solution whose ``latest_verified_attempt`` failed
@@ -315,17 +391,17 @@ def verify_candidates(store, *, secret_fingerprint, evaluator_image, seeds, limi
     """
     seed_set = frozenset(seeds)
     total = len(IDENTITIES) * len(seeds)
-    out = []
+    out: list[dict[str, Any]] = []
     for sol in store.iter_solutions():
         digest = sol["digest"]
         latest = store.latest_verified_attempt(
-            digest, secret_fingerprint=secret_fingerprint, evaluator_image=evaluator_image
+            digest, secret_fingerprint=secret_fingerprint, arena_major=arena_major
         )
         if latest and latest["status"] == "failed" and latest["failure_kind"] in _DETERMINISTIC:
             continue
         atoms = store.iter_verified_atoms(
             solution_digest=digest, secret_fingerprint=secret_fingerprint,
-            evaluator_image=evaluator_image,
+            arena_major=arena_major,
         )
         done = len([a for a in atoms if a.seed in seed_set])
         if done >= total:

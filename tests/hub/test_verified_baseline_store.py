@@ -3,8 +3,10 @@ hidden-seed reference atoms live in their own table, isolated from BOTH the
 participant ``atoms`` table and the participant ``verified_atoms`` table, so
 the floor can never rank as a participant. Unlike ``baseline_atoms`` (public
 seeds, no epoch), these rows are scoped by ``secret_fingerprint`` +
-``evaluator_image`` -- rotate the secret or re-pin the arena and the old floor
-stops counting instead of silently comparing across epochs."""
+``arena_major`` -- rotate the secret or move to a new major and the old floor
+stops counting instead of silently comparing across epochs. ``evaluator_image``
+is retained on every row as provenance, but two images sharing a major are
+declared to score alike and are expected to pool rather than stay distinct."""
 
 from __future__ import annotations
 
@@ -29,9 +31,10 @@ def _store(tmp_path):
     return s
 
 
-def _insert(store, atoms, *, fp=FP, tokfp=TOKFP):
+def _insert(store, atoms, *, fp=FP, tokfp=TOKFP, major=1):
     return store.insert_verified_baseline_atoms(
-        atoms, secret_fingerprint=fp, verifier_token_fingerprint=tokfp
+        atoms, secret_fingerprint=fp, verifier_token_fingerprint=tokfp,
+        arena_major=major,
     )
 
 
@@ -64,12 +67,26 @@ def test_rotation_new_secret_fingerprint_does_not_collide(tmp_path):
     assert len(store.iter_verified_baseline_atoms(secret_fingerprint=FP)) == 1
 
 
-def test_re_pinned_arena_image_does_not_collide(tmp_path):
-    """Same reasoning for the other epoch axis: a re-pinned arena image is a
-    different measurement, not a replacement of the old one."""
+def test_re_pinned_arena_image_under_the_same_major_pools(tmp_path):
+    """Two ``evaluator_image``s sharing an ``arena_major`` are declared to
+    score alike (design D7): a rebuild that keeps the major is a
+    resubmission of the same measurement, not a new one -- the second
+    submission dedups against the first exactly as
+    test_reinserting_the_same_cell_under_a_second_digest_is_a_no_op
+    (test_arena_major_store.py) exercises for ``verified_atoms``."""
+    store = _store(tmp_path)
+    assert _insert(store, [_atom(seed=1)]) == 1
+    assert _insert(store, [_atom(seed=1, image="img@sha256:new")]) == 0
+    assert len(store.iter_verified_baseline_atoms()) == 1
+
+
+def test_re_pinned_arena_image_under_a_new_major_does_not_collide(tmp_path):
+    """Same reasoning as the secret-rotation test above, for the other
+    epoch axis: only a MAJOR bump (a rebuild that actually moves scores)
+    makes a re-pinned image a genuinely different measurement."""
     store = _store(tmp_path)
     _insert(store, [_atom(seed=1)])
-    _insert(store, [_atom(seed=1, image="img@sha256:new")])
+    _insert(store, [_atom(seed=1, image="img@sha256:new")], major=2)
     assert len(store.iter_verified_baseline_atoms(evaluator_image=IMG)) == 1
     assert len(store.iter_verified_baseline_atoms()) == 2
 

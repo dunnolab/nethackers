@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 from collections.abc import Callable
@@ -25,7 +26,12 @@ from pathlib import Path
 import httpx
 
 from nethackers.containers import container_name, label_args
-from nethackers.harness.auth_inject import AuthUnavailable, auth_docker_args
+from nethackers.harness.auth_inject import (
+    AuthUnavailable,
+    auth_docker_args,
+    opencode2_global_providers,
+    opencode2_has_provider_key,
+)
 from nethackers.harness.sandbox_preflight import image_present
 
 _ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models?limit=100"
@@ -40,7 +46,7 @@ def _image_which(name: str) -> str:
     return name
 
 
-def _container_run(image: str, *, docker: str = "docker",
+def _container_run(image: str, *, docker: str = "docker", home: Path | None = None,
                    run: Callable = subprocess.run) -> Callable:
     """A ``run`` adapter that executes the coding-agent CLIs INSIDE the mutator
     image -- so the version + (version-filtered) catalog reflect exactly what a
@@ -50,9 +56,11 @@ def _container_run(image: str, *, docker: str = "docker",
     runs unauthenticated and returns fewer/no models -- warn, never block."""
     def _run(argv, **kw):
         binary = argv[0] if argv else ""
-        if binary in ("codex", "claude"):
+        if binary in ("codex", "claude", "opencode2"):
             try:
-                auth = auth_docker_args(binary, system=platform.system(), home=Path.home())
+                auth = auth_docker_args(
+                    binary, system=platform.system(), home=home or Path.home(),
+                )
             except AuthUnavailable:
                 auth = []
             return run([docker, "run", "--rm", "--name", container_name("probe"),
@@ -67,13 +75,19 @@ class ModelInfo:
     label: str                    # display name for the picker
     reasoning: tuple[str, ...] = ()   # supported effort levels (may be empty)
     deprecated: bool = False
+    # Empty ``reasoning`` has two meanings: older catalogs did not report the
+    # metadata, while OpenCode's config can positively say a model has no
+    # variants.  The picker must distinguish those cases or it offers generic
+    # efforts that OpenCode rejects with ``Variant unavailable``.
+    reasoning_known: bool = False
 
 
 _PROBE_SEP = "@@nh-probe@@"
 
 
 def _run_image_script(image: str, binary: str, script: str, *,
-                      docker: str = "docker", run: Callable) -> str | None:
+                      docker: str = "docker", run: Callable,
+                      home: Path | None = None) -> str | None:
     """ONE ``<docker> run`` of ``bash -lc <script>`` in the mutator image, with
     the same auth a real run gets. Returns stdout (whatever was captured, even
     on a non-zero last command -- earlier echoes still printed), or ``None`` if
@@ -81,7 +95,7 @@ def _run_image_script(image: str, binary: str, script: str, *,
     probe. ``docker`` is the resolved container CLI (docker/podman -- issue
     #50), threaded from the caller; defaults to ``"docker"``."""
     try:
-        auth = auth_docker_args(binary, system=platform.system(), home=Path.home())
+        auth = auth_docker_args(binary, system=platform.system(), home=home or Path.home())
     except AuthUnavailable:
         auth = []
     try:
@@ -106,19 +120,24 @@ def probe_operator(
     each of separate ``detect_cli``/``list_models`` probes) -- for the TUI model
     picker, which refreshes on every operator switch. Codex gets version + login
     + catalog from a single combined command; claude's catalog stays the HTTP
-    ``/v1/models`` (account-gated, version-independent). Never raises; an unbuilt
-    image / unparseable output degrades to (not-installed / no-version, None)."""
-    binary = {"codex": "codex", "claude": "claude"}[backend]
+    ``/v1/models`` (account-gated, version-independent). OpenCode 2's "logged
+    in" means a global provider has a key, read on the host: the container
+    never sees OpenCode's own login store. Never raises; an unbuilt image /
+    unparseable output degrades to (not-installed / no-version, None)."""
+    binary = {"codex": "codex", "claude": "claude", "opencode2": "opencode2"}[backend]
     if not image_present(image, runtime=docker, run=run):
         return CliInfo(backend, False, None, None), None
     if backend == "codex":
         script = (f"codex --version; echo {_PROBE_SEP}; "
                   f"(codex login status >/dev/null 2>&1 && echo OK || echo NO); "
                   f"echo {_PROBE_SEP}; codex debug models")
-    else:
+    elif backend == "claude":
         script = f"claude --version; echo {_PROBE_SEP}; claude auth status --json 2>/dev/null"
-    parts = (_run_image_script(image, binary, script, docker=docker, run=run) or "").split(
-        _PROBE_SEP)
+    else:
+        script = f"opencode2 --version; echo {_PROBE_SEP}; {_OPENCODE2_SETTLED_MODELS}"
+    parts = (_run_image_script(
+        image, binary, script, docker=docker, run=run, home=home,
+    ) or "").split(_PROBE_SEP)
     version = parts[0].strip() or None if parts else None
     if backend == "codex":
         logged_in = ("OK" in parts[1]) if len(parts) > 1 else None
@@ -129,6 +148,12 @@ def probe_operator(
             except Exception:
                 models = None
         return CliInfo("codex", True, version, logged_in), models
+    if backend == "opencode2":
+        host_home = home or Path.home()
+        variants = _opencode2_config_variants(home=host_home)
+        models = _opencode2_parse(parts[1], variants=variants) if len(parts) > 1 else None
+        return (CliInfo("opencode2", True, version, opencode2_has_provider_key(home=host_home)),
+                models)
     logged_in = None
     if len(parts) > 1:
         try:
@@ -153,13 +178,105 @@ def list_models(
     if image is not None:
         if not image_present(image, runtime=docker, run=run):
             return None   # image not built -> unknown; never the host CLI's cache
+        if backend == "opencode2":
+            # The settling loop has to run inside ONE container: a fresh
+            # container per `opencode2 models` call never gets past the empty
+            # snapshot.
+            output = _run_image_script(image, "opencode2", _OPENCODE2_SETTLED_MODELS,
+                                       docker=docker, run=run, home=home)
+            return _opencode2_parse(
+                output or "", variants=_opencode2_config_variants(home=home or Path.home()),
+            )
         # probe the mutator container (via the resolved runtime), not the host
-        run = _container_run(image, docker=docker, run=run)
+        run = _container_run(image, docker=docker, home=home, run=run)
     if backend == "codex":
         return _codex_models(run=run, home=home, allow_cache=image is None)
     if backend == "claude":
         return _claude_models(run=run, http=http, home=home)
+    if backend == "opencode2":
+        return _opencode2_models(
+            run=run, variants=_opencode2_config_variants(home=home or Path.home()),
+        )
     return None
+
+
+_ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+
+
+def _opencode2_parse(
+    output: str, *, variants: dict[str, tuple[str, ...]] | None = None,
+) -> list[ModelInfo] | None:
+    """Parse ``opencode2 models`` and attach config-declared variants.
+
+    OpenCode's models command deliberately prints only ``provider/model`` IDs;
+    variants live in the resolved config.  When ``variants`` is supplied we
+    know that absence means "this model has no named variant", rather than
+    "discovery did not provide metadata".
+    """
+    models: list[ModelInfo] = []
+    for raw in output.splitlines():
+        model_id = _ANSI.sub("", raw).strip()
+        if not model_id or "/" not in model_id or model_id.startswith("Error:"):
+            continue
+        models.append(ModelInfo(
+            id=model_id,
+            label=model_id,
+            reasoning=variants.get(model_id, ()) if variants is not None else (),
+            reasoning_known=variants is not None,
+        ))
+    return models or None
+
+
+# `opencode2 models` prints the background service's current model snapshot,
+# which is empty until the service has loaded its catalog -- always the case on
+# the first call in a fresh container, where it settled in ~3s when measured.
+# Poll until two non-empty readings agree (max ~15s), then print the last one.
+_OPENCODE2_SETTLED_MODELS = (
+    "prev=; i=0; while [ $i -lt 15 ]; do out=$(opencode2 models 2>/dev/null); "
+    'if [ -n "$out" ] && [ "$out" = "$prev" ]; then break; fi; '
+    "prev=$out; i=$((i + 1)); sleep 1; done; "
+    "printf '%s\\n' \"$out\""
+)
+
+
+def _opencode2_models(
+    *, run: Callable, variants: dict[str, tuple[str, ...]] | None = None,
+) -> list[ModelInfo] | None:
+    try:
+        proc = run(["sh", "-c", _OPENCODE2_SETTLED_MODELS],
+                   capture_output=True, text=True, timeout=40)
+        if proc.returncode == 0:
+            return _opencode2_parse(proc.stdout or "", variants=variants)
+    except Exception:
+        pass
+    return None
+
+
+def _opencode2_config_variants(*, home: Path) -> dict[str, tuple[str, ...]]:
+    """Named OpenCode variants per ``provider/model``, from the global config
+    only -- the same providers a run gets (``auth_inject``).
+
+    Both OpenCode 2's list form (``[{"id": "high"}]``) and the mapping form
+    (``{"high": {...}}``) are accepted. Like OpenCode, later files add to a
+    model's variants instead of replacing them, so a file that only renames a
+    model keeps the variants declared elsewhere.
+    """
+    found: dict[str, tuple[str, ...]] = {}
+    for _name, providers in opencode2_global_providers(home=home):
+        for provider_id, provider in providers.items():
+            if not isinstance(provider, dict) or not isinstance(provider.get("models"), dict):
+                continue
+            for model_id, model in provider["models"].items():
+                raw = model.get("variants") if isinstance(model, dict) else None
+                names: list[str] = []
+                if isinstance(raw, dict):
+                    names = [str(name) for name in raw]
+                elif isinstance(raw, list):
+                    names = [str(item["id"]) for item in raw
+                             if isinstance(item, dict) and item.get("id")]
+                key = f"{provider_id}/{model_id}"
+                found[key] = tuple(dict.fromkeys([*found.get(key, ()), *names]))
+    return found
 
 
 def _codex_reasoning(levels: object) -> tuple[str, ...]:
@@ -312,6 +429,13 @@ def is_model_available(
     check = model
     if backend == "claude" and check.endswith("[1m]"):
         check = check[:-4]
+    if backend == "opencode2" and "#" in check:
+        # OpenCode 2 selects a variant as `provider/model#variant`.
+        check, variant = check.split("#", 1)
+        served = next((m for m in models if m.id == check), None)
+        if served is None:
+            return False
+        return (variant in served.reasoning) if served.reasoning_known else True
     return check in {m.id for m in models}
 
 
@@ -328,6 +452,10 @@ def _logged_in(backend: str, *, run: Callable) -> bool | None:
         if backend == "codex":
             return run(["codex", "login", "status"], capture_output=True,
                        text=True, timeout=10).returncode == 0
+        if backend == "opencode2":
+            # A global provider key, read on the host: the sandbox never sees
+            # OpenCode's own login store, so `auth list` would mislead.
+            return opencode2_has_provider_key(home=Path.home())
         proc = run(["claude", "auth", "status", "--json"], capture_output=True,
                    text=True, timeout=10)
         if proc.returncode != 0:
@@ -343,7 +471,7 @@ def detect_cli(backend: str, *, image: str | None = None, docker: str = "docker"
         if not image_present(image, runtime=docker, run=run):
             return CliInfo(backend, False, None, None)   # image not built
         run, which = _container_run(image, docker=docker, run=run), _image_which
-    binary = {"codex": "codex", "claude": "claude"}[backend]
+    binary = {"codex": "codex", "claude": "claude", "opencode2": "opencode2"}[backend]
     if which(binary) is None:
         return CliInfo(backend, False, None, None)
     version: str | None = None
@@ -378,8 +506,10 @@ def preflight_model(
     cli = detect_cli(backend, image=image, docker=docker, run=run, which=which)
     if not cli.installed:
         return Preflight("refuse", f"{backend} is not installed / not on PATH.", cli, None)
-    if cli.logged_in is False:
-        login_cmd = "codex login" if backend == "codex" else "claude auth"
+    # OpenCode 2 without a provider key still serves OpenCode's free models,
+    # so only a pinned model it can't serve (checked below) refuses.
+    if cli.logged_in is False and backend != "opencode2":
+        login_cmd = {"codex": "codex login", "claude": "claude auth"}[backend]
         return Preflight("refuse", f"{backend} is not logged in — run `{login_cmd}`.", cli, None)
     if not model:
         return Preflight("proceed", "", cli, None)   # harness default: nothing pinned to check
@@ -397,7 +527,11 @@ def preflight_model(
     if avail is True:
         return Preflight("proceed", "", cli, models)
     served = ", ".join(m.id for m in models) or "(none)"
-    hint = "run `codex update`" if backend == "codex" else "check your account access"
+    hint = {
+        "codex": "run `codex update`",
+        "claude": "check your account access",
+        "opencode2": "check the providers in your global opencode.json",
+    }[backend]
     return Preflight(
         "refuse",
         f"{backend}{ver} can't serve '{model}'. Available: {served}. {hint} or pick one of those.",
