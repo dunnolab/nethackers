@@ -37,9 +37,9 @@ async def test_shell_shows_identity_and_switches_sections():
         assert "@castiel" in str(app.query_one(".idbar").render())
         assert app.query_one("#body", ContentSwitcher).current == "home"  # default start
 
-        await pilot.press("2")  # -> runs
+        await pilot.press("2")  # -> evolve
         await pilot.pause()
-        assert app.query_one("#body", ContentSwitcher).current == "runs"
+        assert app.query_one("#body", ContentSwitcher).current == "evolve"
 
 
 async def test_shell_guest_when_logged_out():
@@ -177,7 +177,7 @@ async def test_escape_leaves_a_focused_field_so_q_can_quit():
     keys -- the way out of the field a stuck user needs."""
     app = NetHackersApp(hub=_DEAD_HUB, creds=Credentials("castiel", "t"))
     async with app.run_test() as pilot:
-        await pilot.press("3")  # -> Evolve
+        await pilot.press("2")  # -> Evolve
         await pilot.pause()
         app.query_one("#f_iters", Input).focus()
         await pilot.pause()
@@ -286,8 +286,8 @@ async def test_leaving_a_run_monitor_reclaims_navigate_mode():
         assert app.focused is None                             # navigate mode reclaimed
         assert len(app.screen.query(".-cursor")) == 1          # exactly one gold cursor
         before = app._nav_cursor.id
-        await pilot.press("right")                             # arrows move ONE tab...
-        await pilot.pause()
+        await pilot.press("left")                              # arrows move ONE tab...
+        await pilot.pause()                                    # (runs is rightmost -> left)
         after = app._nav_cursor.id
         assert before != after
         assert app.query_one("#nav", Tabs).active == after     # ...and stay in sync
@@ -311,6 +311,31 @@ async def test_activating_a_tab_externally_syncs_the_keyboard_cursor():
         assert app._nav_cursor is not None and app._nav_cursor.id == "tab-evolve"
         golds = [t.id for t in app.screen.query("#nav Tab.-cursor")]
         assert golds == ["tab-evolve"]  # exactly one highlighted tab, matching the section
+
+
+async def test_mouse_clicking_a_tab_keeps_the_keyboard_arrows_in_sync():
+    # regression: clicking a tab with the MOUSE focuses #nav, and a focused
+    # Textual Tabs eats ←/→ itself (moving its own active tab) instead of our
+    # _nav_move -- so the gold cursor desynced from the section: you'd "skip a
+    # tab" and could never arrow back to the tab you clicked. After a click,
+    # focus must be cleared so the App's modal nav drives the arrows, with the
+    # cursor on the clicked tab (section order: home, evolve, runs).
+    app = NetHackersApp(hub=_DEAD_HUB, creds=Credentials("castiel", "t"), start="home")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        await pilot.click("#tab-runs")   # select Runs with the MOUSE, not the keyboard
+        await pilot.pause()
+        assert app.query_one("#body", ContentSwitcher).current == "runs"
+        assert app._nav_cursor is not None and app._nav_cursor.id == "tab-runs"
+        assert app.focused is None       # blurred, so ←/→ reach _nav_move, not Tabs
+        await pilot.press("left")        # left of runs -> evolve
+        await pilot.pause()
+        assert app._nav_cursor.id == "tab-evolve"
+        assert app.query_one("#body", ContentSwitcher).current == "evolve"
+        await pilot.press("right")       # ...and right returns to runs (never "stuck")
+        await pilot.pause()
+        assert app._nav_cursor.id == "tab-runs"
+        assert app.query_one("#body", ContentSwitcher).current == "runs"
 
 
 async def test_home_is_arrow_navigable():

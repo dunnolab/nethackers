@@ -58,7 +58,7 @@ from nethackers.tui.screens.runs import RunsView
 from nethackers.tui.theme import CSS
 
 _SECTIONS = [
-    ("home", "⌂ Home"), ("runs", "▶ Runs"), ("evolve", "⚔ Evolve"),
+    ("home", "⌂ Home"), ("evolve", "⚔ Evolve"), ("runs", "▶ Runs"),
 ]
 
 # Give up on the hub-mode probe fast so the idbar never lingers on it; the
@@ -120,7 +120,7 @@ def failure_detail(error: BaseException) -> str:
 class NetHackersApp(App):
     """The dashboard shell. Three sections switched by ``1``..``3`` (or the
     matching tab) over a ``ContentSwitcher``, including the ``⚔ Evolve``
-    launch form (``e``/key ``3``); ``l`` opens the in-app GitHub device-flow
+    launch form (``e``/key ``2``); ``l`` opens the in-app GitHub device-flow
     login (``LoginModal``), and Home's own button logs in or out."""
 
     CSS = CSS
@@ -170,8 +170,8 @@ class NetHackersApp(App):
         login = self._creds.login if self._creds else None
         with ContentSwitcher(initial=self._start, id="body"):
             yield HomeView(self._hub, login, id="home")
-            yield RunsView(id="runs")
             yield EvolveForm(self._hub, self._creds, id="evolve")
+            yield RunsView(id="runs")
 
     def on_mount(self) -> None:
         self.query_one("#nav", Tabs).active = f"tab-{self._start}"
@@ -220,12 +220,18 @@ class NetHackersApp(App):
         except Exception:
             return
         body.current = event.tab.id.removeprefix("tab-")
-        # keep the keyboard cursor on the active tab -- however the tab was
-        # activated (a mouse click, or Textual's own ←/→ when #nav holds focus),
-        # so the gold cursor never sits on a different tab than the shown
-        # section (the "two tabs highlighted" glitch).
-        if self._nav_mode == "navigate" and self._nav_cursor is not None:
-            self._nav_set_cursor(event.tab)
+        if self._nav_mode == "navigate":
+            # A MOUSE click on a tab focuses #nav -- and a focused Textual Tabs
+            # eats ←/→ itself (moving its own active tab) instead of letting our
+            # _nav_move drive them, so the gold cursor desynced from the section:
+            # you'd "skip a tab" and could never arrow back to the clicked one.
+            # Blur so the App's modal nav owns the arrows again. (Keyboard-driven
+            # activation already runs with focus cleared, so this is a no-op
+            # there.) Then keep the cursor on the tab that was actually activated,
+            # so it never sits on a different tab than the shown section.
+            self.set_focus(None)
+            if self._nav_cursor is not None:
+                self._nav_set_cursor(event.tab)
 
     def action_show(self, key: str) -> None:
         # drive the tab bar; its TabActivated switches the ContentSwitcher (and
