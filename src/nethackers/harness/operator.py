@@ -128,8 +128,7 @@ def _claude_cmd(cli: str, brief: str, model: str | None, effort: str | None) -> 
     # tree, brief). Claude Code otherwise persists + recalls per-directory
     # memory under ~/.claude/projects/<cwd-slug>/memory across runs that
     # reuse a worktree path -- the confirmed cause of the operator recalling
-    # and re-applying its own prior mutation instead of exploring (see
-    # docs/superpowers/specs/2026-08-11-hermetic-operator-design.md).
+    # and re-applying its own prior mutation instead of exploring.
     # --setting-sources drops only the *user* settings layer; auth lives in
     # ~/.claude.json, which is not a setting source, so it still works.
     cmd = [cli, "-p", brief, "--output-format", "stream-json", "--verbose",

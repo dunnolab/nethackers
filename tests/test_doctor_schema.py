@@ -1,5 +1,4 @@
-"""Locks the `nethackers doctor -o json` contract (spec docs/superpowers/specs/
-2026-08-28-sandbox-image-distribution-design.md S5.6/INV6) against the
+"""Locks the `nethackers doctor -o json` contract against the
 committed ``src/nethackers/doctor.schema.json``.
 
 Two independent guarantees, deliberately kept apart:
@@ -72,8 +71,7 @@ def _expected_schema() -> dict:
         "$id": "https://nethackers.dunnolab.ai/schemas/doctor.schema.json",
         "title": "nethackers doctor -o json",
         "description": (
-            "Complete bug-report shape for `nethackers doctor -o json` (design spec "
-            "docs/superpowers/specs/2026-08-28-sandbox-image-distribution-design.md S5.6). "
+            "Complete bug-report shape for `nethackers doctor -o json`. "
             "checks[].id / checks[].severity / checks[].capabilities are a closed enum "
             "derived from nethackers.diagnostics.CHECK_SPECS -- any change to that table "
             "must be mirrored here, or tests/test_doctor_schema.py's drift gate fails."

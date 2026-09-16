@@ -118,10 +118,9 @@ name that is actually dereferenced at call time.
 
 - Branch off `main`; PRs target `main`.
 - Keep the diff scoped to one change. CI must be green.
-- Changes with a design behind them get a spec in
-  [`superpowers/specs/`](superpowers/specs/), dated `YYYY-MM-DD-<topic>-design.md`.
-  Those are working documents — dated, sometimes superseded — not reference
-  material. Reference material is the top-level docs in this directory.
+- Changes with a design behind them say so in the PR description: what you
+  considered, what you chose, and why. Reference material is the top-level
+  docs in this directory — keep it current in the same PR.
 - If you change user-facing behavior, update the docs in the same PR.
 
 ## Releasing

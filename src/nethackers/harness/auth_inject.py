@@ -7,8 +7,7 @@ on this machine. No new accounts, no API keys, no ``setup-token`` chore.
 **Codex** bind-mounts the host's canonical ``~/.codex`` (rw) -- the *same*
 file the host CLI already refreshes, never a copy. OpenAI's OAuth refresh
 tokens are single-use/rotating, so sharing one canonical file is what keeps
-the serial mutator loop's refreshes from ever colliding with a stale copy
-(see ``docs/superpowers/research/2026-08-20-account-auth-in-sandbox.md``).
+the serial mutator loop's refreshes from ever colliding with a stale copy.
 
 **OpenCode 2** gets only the ``provider`` section of the host's global
 ``opencode.json`` / ``opencode.jsonc``, copied to an owner-only file under

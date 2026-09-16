@@ -208,8 +208,7 @@ def _claude_project_slug(cwd: Path) -> str:
 
 @pytest.mark.claude_live
 def test_claude_operator_does_not_recall_memory_across_runs(tmp_path):
-    """Regression for the confirmed root cause (see
-    docs/superpowers/specs/2026-08-11-hermetic-operator-design.md): before the
+    """Regression for the confirmed root cause: before the
     hermeticity flags, a second `claude -p` run in the same reused worktree cwd
     recalled an earlier run's auto-written memory. Needs the real `claude` CLI +
     network -- gated behind `claude_live`."""

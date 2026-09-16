@@ -4,8 +4,7 @@ A digest answers "which exact bytes ran". It is the wrong key for "are these
 two runs comparable", because a rebuild that only changes process lifetime,
 logging or an error message produces new bytes and identical scores. Keying the
 verified tier on the digest therefore discarded the entire verified corpus on
-every quality-of-life rebuild (design doc
-``docs/superpowers/specs/2026-09-13-arena-major-version-design.md`` section 1).
+every quality-of-life rebuild.
 
 ``ARENA_MAJOR`` is the missing key: an integer naming a set of digests declared
 to score alike. It is HAND-ASSERTED. A human decides whether a rebuild moved

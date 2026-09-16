@@ -40,10 +40,7 @@ roles. Crossing ``VALID`` with ``ROLE_GENDERS`` and formatting gives
 ``IDENTITIES``: 35 gender-unlocked triples x 2 genders = 70, plus
 Valkyrie's 3 triples x 1 gender (female only) = 3, for exactly **73** --
 matching TNNT's canonical "73 valid role/race/alignment/gender starting
-combos" figure that motivated this design
-(``docs/superpowers/research/2026-08-08-nethack-community-insights.md:68``).
-See ``task-4-report.md`` for the full adjudication writeup (exact count,
-sources, gender lock applied).
+combos" figure that motivated this design.
 
 ## Published batches
 

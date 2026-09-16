@@ -3,9 +3,8 @@ name: Sandbox images
 # The mutator alone is rebuilt and re-pinned automatically by mutator-image.yml;
 # run this workflow when the arena or the shared nle-base changes.
 #
-# Manual bootstrap / re-pin workflow (design doc
-# docs/superpowers/specs/2026-08-28-sandbox-image-distribution-design.md,
-# sections 5.3/5.4/8, decision D11). Builds+pushes `nle-base` once, multi-arch
+# Manual bootstrap / re-pin workflow (decision D11). Builds+pushes `nle-base`
+# once, multi-arch
 # (a GHCR registry ref, so buildx's isolated docker-container driver can
 # resolve it as a FROM base on both arches; its digest is pinned as
 # NLE_BASE_IMAGE, which every mutator build uses), then builds and

@@ -1,7 +1,6 @@
 """The mutator image's content fingerprint: one hash over everything its build
 reads, so CI, the release gate and a repo checkout agree on which image a set of
-files needs (docs/superpowers/specs/2026-09-15-mutator-image-automation-design.md,
-section 5.1).
+files needs.
 
 Stdlib only -- CI runs it with a bare ``python3``::
 

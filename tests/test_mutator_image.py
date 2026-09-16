@@ -1,6 +1,5 @@
 """Docker-gated acceptance tests for the mutator sandbox image
-(Dockerfile.mutator) -- the kill-switch acceptance criteria from
-docs/superpowers/specs/2026-08-16-mutator-sandbox-design.md §4: a fork bomb
+(Dockerfile.mutator) -- the kill-switch acceptance criteria: a fork bomb
 dies at the container's ``--pids-limit`` with the host unharmed, ``rm -rf /``
 is scoped to the (disposable, ``--rm``) container, no host secret is
 reachable (nothing sensitive is ever mounted), both harness CLIs the
