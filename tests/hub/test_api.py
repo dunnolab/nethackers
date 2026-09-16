@@ -122,6 +122,33 @@ def test_root_serves_the_page(tmp_path: Any) -> None:
     assert 'id="updated"' in resp.text
 
 
+def test_root_serves_the_nh_monogram_as_an_inline_favicon(tmp_path: Any) -> None:
+    # The site icon ships inline in the head, the same way the badge logos and
+    # the dunnolab hat do -- nothing extra for the hub to route, and the page
+    # keeps drawing every one of its own assets.
+    import base64
+    import re
+
+    client, _store = _app(tmp_path)
+    body = client.get("/").text
+
+    match = re.search(
+        r'<link rel="icon" type="image/png" href="data:image/png;base64,([A-Za-z0-9+/=]+)">',
+        body,
+    )
+    assert match is not None, "the page declares no inline PNG favicon"
+
+    icon = base64.b64decode(match.group(1))
+    assert icon[:8] == b"\x89PNG\r\n\x1a\n"
+    # 32x32: a nearest-neighbour double of the 16x16 grid the mark is drawn on,
+    # so a 1x tab halves it back exactly and a retina tab gets native pixels.
+    assert int.from_bytes(icon[16:20], "big") == 32
+    assert int.from_bytes(icon[20:24], "big") == 32
+    # Two flat colours on a 32px grid -- kilobytes would mean someone swapped in
+    # a photograph.
+    assert len(icon) < 1024
+
+
 def test_site_uses_identity_boards_and_concrete_contributor_recognition(tmp_path: Any) -> None:
     client, _store = _app(tmp_path)
     body = client.get("/").text
