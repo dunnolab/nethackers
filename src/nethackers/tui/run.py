@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass, field
 from statistics import pstdev
 
-from nethackers.contracts.models import end_status_word
+from nethackers.harness.aggregate import end_status_word
 from nethackers.harness.loop import IterationResult
 from nethackers.harness.metering import Meter, TokenUsage
 from nethackers.tui.prettify import prettify

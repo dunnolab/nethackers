@@ -4,7 +4,7 @@ import pytest
 
 from nethackers.contracts.models import TrajectoryResult
 from nethackers.harness import aggregate as A
-from nethackers.harness.aggregate import outcome_summary
+from nethackers.harness.aggregate import end_status_word, outcome_summary
 
 
 @dataclass
@@ -68,3 +68,17 @@ def test_outcome_summary_translates_raw_nle_codes_and_is_ascension_aware():
                          _r(1.0, "1", asc=True)])
     assert "died×2" in s and "aborted×1" in s and "ascended×1" in s
     assert "1×" not in s and "-1×" not in s   # no raw codes leak to the brief
+
+
+def test_end_status_word_translates_nle_codes_and_passes_words_through():
+    # arena stores the raw NLE StepStatus code as a string; the shared helper
+    # the monitor and the mutator brief both use maps it to a human word. Lives
+    # in the harness (not contracts) so it stays out of the mutator image inputs.
+    assert end_status_word("1") == "died"
+    assert end_status_word("-1") == "aborted"
+    assert end_status_word("0") == "running"
+    assert end_status_word(1) == "died"              # tolerant of an int code
+    assert end_status_word(None) is None             # no outcome recorded
+    assert end_status_word("") is None
+    assert end_status_word("died") == "died"         # already a word -> passthrough
+    assert end_status_word("7") == "7"               # unknown code -> as-is, never crash

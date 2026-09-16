@@ -16,27 +16,6 @@ ResultStatus = Literal[
     "infrastructure_error",
 ]
 
-# NLE engine end-of-episode codes (nle StepStatus), recorded verbatim into a
-# TrajectoryResult's `end_status` (as a string) by the arena:
-#   "1" = the character died in-game                                    -> died
-#  "-1" = the episode ended without a death or ascension               -> aborted
-#         (quit / escaped / ran out the step budget; no cause of death)
-#   "0" = still running (never terminal in a stored result)            -> running
-# Ascension is tracked separately (the `ascended` flag), so a caller that has it
-# should prefer it -- an ascension can still report end_status "1".
-_NLE_END_STATUS = {"1": "died", "-1": "aborted", "0": "running"}
-
-
-def end_status_word(end_status: str | int | None) -> str | None:
-    """Translate a raw NLE ``end_status`` code to a human word (died / aborted /
-    running) for display and briefs. Returns ``None`` for a ``None``/empty code;
-    a value that is already a word (test fixtures, or a future arena that emits
-    words) passes straight through unchanged."""
-    if end_status is None or str(end_status) == "":
-        return None
-    code = str(end_status)
-    return _NLE_END_STATUS.get(code, code)
-
 
 @dataclass(frozen=True)
 class TrajectorySpec:
