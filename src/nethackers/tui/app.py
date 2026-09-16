@@ -125,6 +125,10 @@ class NetHackersApp(App):
     login (``LoginModal``), and Home's own button logs in or out."""
 
     CSS = CSS
+    # Keep a pushed screen's footer minimal (a run monitor shows only its own
+    # esc/s/q): drop Textual's built-in "⌃p palette" hint, and check_action
+    # hides the dashboard's own 1/2/3 · e · l there too.
+    ENABLE_COMMAND_PALETTE = False
     BINDINGS = [
         ("q", "quit", "Quit"),
         *[(str(i + 1), f"show('{key}')", label) for i, (key, label) in enumerate(_SECTIONS)],
@@ -233,6 +237,16 @@ class NetHackersApp(App):
             self.set_focus(None)
             if self._nav_cursor is not None:
                 self._nav_set_cursor(event.tab)
+
+    def check_action(self, action: str, parameters: tuple[object, ...]) -> bool | None:
+        # The section-nav shortcuts (1/2/3 · e Evolve · l Login) belong to the
+        # dashboard. While a screen is pushed on top (a run monitor, the login
+        # modal), hide AND disable them -- they'd otherwise clutter that screen's
+        # footer and, pressed there, silently switch the hidden dashboard section
+        # underneath. The pushed screen keeps its own bindings (esc/s/q). `quit`
+        # stays live everywhere. Returning False hides+disables; True shows.
+        pushed = len(self.screen_stack) > 1
+        return not (pushed and action in ("show", "evolve", "login"))
 
     def action_show(self, key: str) -> None:
         # drive the tab bar; its TabActivated switches the ContentSwitcher (and

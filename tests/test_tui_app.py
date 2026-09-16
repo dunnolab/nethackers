@@ -356,6 +356,32 @@ async def test_home_is_arrow_navigable():
         assert app._nav_cursor.id == "tab-home"  # up out of the card, back to the tab
 
 
+async def test_section_shortcuts_are_hidden_while_a_screen_is_pushed():
+    # the 1/2/3 · e · l shortcuts belong to the dashboard; on a pushed monitor
+    # they must be hidden AND disabled (check_action False) so they don't clutter
+    # its footer or silently switch the hidden section. esc/s/q are the monitor's
+    # own; quit stays live everywhere.
+    app = NetHackersApp(hub=_DEAD_HUB, creds=Credentials("castiel", "t"), start="runs")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # on the dashboard (nothing pushed): section shortcuts are live
+        assert app.check_action("show", ("home",)) is True
+        assert app.check_action("evolve", ()) is True
+        assert app.check_action("login", ()) is True
+        assert app.check_action("quit", ()) is True
+
+        run = Run("r-x", EvolveConfig("val-dwa-law-fem", "claude", 1))
+        app._runs["r-x"] = run
+        app.open_run("r-x")                        # push its monitor
+        await pilot.pause()
+        assert isinstance(app.screen, RunMonitor)
+        # on the pushed screen: section shortcuts hidden+disabled, quit unaffected
+        assert app.check_action("show", ("home",)) is False
+        assert app.check_action("evolve", ()) is False
+        assert app.check_action("login", ()) is False
+        assert app.check_action("quit", ()) is True
+
+
 # --- .error/.results delegate to the pushed EvolveScreen -------------------
 #
 # cli.py's evolve TTY branch reads `app.error`/`app.results` straight off
