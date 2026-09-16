@@ -242,14 +242,15 @@ result. This is the Public Dungeons number.
 ```bash
 nethackers login                                     # GitHub device flow, once
 nethackers evolve val-dwa-law-fem \
-    --seed roots/autoascend \
+    --seed autoascend \
     --operator codex \
     --iterations 20
 ```
 
-The objective is positional; `--seed` points at the starting solution (this repo
-ships AutoAscend at `roots/autoascend`). Each iteration picks a cell, mutates its
-elite with the coding agent in its container, and evaluates the result.
+The objective is positional; `--seed` points at the starting solution. AutoAscend
+ships inside nethackers, so `autoascend` works from anywhere — in a checkout it is
+also the tree at `roots/autoascend`. Each iteration picks a cell, mutates its elite
+with the coding agent in its container, and evaluates the result.
 
 **Every candidate that survives the smoke check and gets evaluated is then pushed
 to your public `nethacker` repo and registered** — not only the ones that improve
@@ -337,5 +338,6 @@ good at NetHack for any of them. Start with
 ## License
 
 Apache-2.0. See [`LICENSE`](LICENSE). AutoAscend, vendored at
-`roots/autoascend/`, carries its own license — see
-[`roots/autoascend/LICENSE`](roots/autoascend/LICENSE).
+`roots/autoascend/` and redistributed inside the wheel, carries its own MIT
+license — see [`roots/autoascend/LICENSE`](roots/autoascend/LICENSE), which
+travels with the tree in both places.

@@ -35,6 +35,7 @@ from pathlib import Path
 from nethackers import _image_pins
 from nethackers.containers import container_name, container_runtime, label_args
 from nethackers.contracts.models import Evidence, Objective, ObjectiveSpec, TrajectoryResult
+from nethackers.solution_root import require_solution_root
 
 _ARENA_EPISODE = re.compile(
     r"episode (\d+)/(\d+) \((.*?)\): progress=([0-9.]+) (\S+) turns=(\d+) depth=(\d+)"
@@ -211,12 +212,22 @@ def eval_batch(
     it how the objective is later re-derived (register/store tooling does
     that from the published catalog by ``spec.name``).
     """
+    # Refuse a root that cannot be scored BEFORE the -v mount, because the
+    # mount is what hid the failure: docker CREATES an absent bind-mount
+    # source, so a missing or typo'd path used to run the whole batch against
+    # an empty directory and report a clean mean_progress of 0.0 at exit code
+    # 0. Every scoring path funnels through here -- cli eval/submit, the evolve
+    # loop, the public baseline, the hidden-seed verifier -- so this one call
+    # is what makes that number unreachable. It also resolves AutoAscend's
+    # canonical names to the packaged tree, so `roots/autoascend` works for a
+    # pip install that has no checkout to resolve it against.
+    solution_path = require_solution_root(solution_path)
     # Absolutize before the -v mount: docker rejects a relative bind-mount
     # source (it reads it as an invalid named volume). Callers in the evolve
     # loop pass absolute worktree paths, but the AutoAscend baseline passes a
     # repo-relative tree. .absolute() only prefixes the cwd -- it never resolves
     # symlinks, so the content digest below (relative-path based) is unchanged.
-    solution_path = Path(solution_path).absolute()
+    solution_path = solution_path.absolute()
     # Bind the default digest resolver to the SAME resolved runtime the run
     # uses (docker/podman -- issue #50); an injected resolver (tests) wins.
     resolve_digest = image_digest_resolver or (

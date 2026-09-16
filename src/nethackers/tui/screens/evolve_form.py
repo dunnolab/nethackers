@@ -40,10 +40,12 @@ from nethackers.harness.sandbox_preflight import (
     preflight as sandbox_preflight,
     resolve_image,
 )
+from nethackers.hub.ids import AUTOASCEND_TREE
 from nethackers.hub.selector import resolve
 from nethackers.hubclient.credentials import Credentials
 from nethackers.hubclient.publish import gh_state
 from nethackers.operators import DEFAULT_OPERATOR, OPERATORS
+from nethackers.solution_root import resolve_solution_root
 from nethackers.tui.identity_grid import IdentityGrid
 from nethackers.tui.status import _bar
 
@@ -63,7 +65,13 @@ def _seed_roots() -> list[str]:
         for child in sorted(base.iterdir()):
             if child.is_dir() and (child / "nethackers.solution.json").exists():
                 found.append(child.as_posix())
-    return found or ["roots/autoascend"]
+    if found:
+        return found
+    # Nothing under ./roots -- off a checkout, that is every pip user. Offer
+    # the tree that actually exists (the wheel's own copy) rather than the
+    # canonical path we just failed to find.
+    autoascend = resolve_solution_root(AUTOASCEND_TREE)
+    return [autoascend.as_posix() if autoascend.is_dir() else AUTOASCEND_TREE]
 
 
 def _publish_warning(owner: str) -> str:
