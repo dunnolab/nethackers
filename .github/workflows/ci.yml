@@ -18,6 +18,19 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39  # v3
 
+      # MUST stay above every `uv run` below: `uv run` silently refreshes
+      # uv.lock, so the same check placed after one always passes and the drift
+      # stays invisible. That is exactly how the lock came to describe the
+      # project as 0.17.0 while pyproject said 0.31.0 -- fourteen releases, and
+      # every contributor seeing an unexplained uv.lock in `git status`.
+      #
+      # Not cosmetic: uv.lock is an arena build input (image-pins-tripwire
+      # below, and nle-base/Dockerfile COPYs it), so an accidental refresh
+      # obliges the whole re-pin ceremony -- rebuild the sandbox images,
+      # classify the new arena digest, re-pin. Catching it here is the cheap end.
+      - name: Lockfile in sync with pyproject (uv lock --check)
+        run: uv lock --check
+
       - name: Run fast test suite
         run: uv run pytest -m "not nle and not docker and not claude_live and not codex_live and not github_live" -q
 
