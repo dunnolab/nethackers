@@ -171,13 +171,17 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 let failures = 0;
 function ok(cond, msg) { console.log((cond ? "  ok   " : "  FAIL ") + msg); if (!cond) failures++; }
 
-function makeDom(fetchImpl, errors) {
+function makeDom(fetchImpl, errors, url = "https://hub.test/") {
   const vc = new VirtualConsole();
   // jsdom emits "Not implemented" notices for canvas getContext / media play; the
   // page guards those paths (if(!g) return), so they are jsdom limits, not page bugs.
   vc.on("jsdomError", (e) => { if (!/Not implemented/.test(e.message)) errors.push("jsdomError: " + e.message); });
   vc.on("error", (...a) => errors.push("console.error: " + a.join(" ")));
   return new JSDOM(html, {
+    // A real origin, not the default about:blank: the page rewrites its own
+    // path for hacker deep links, and history.pushState cannot resolve a
+    // relative URL against about:blank.
+    url,
     runScripts: "dangerously", pretendToBeVisual: true, virtualConsole: vc,
     beforeParse(window) {
       window.fetch = fetchImpl;
@@ -246,7 +250,7 @@ async function pass1() {
   ok(/27 Aug 2026/.test(idBody.textContent), "the registered cell reads the row's own registered_at");
   ok(!/date unknown/.test(idBody.textContent), "...and never falls back to 'date unknown'");
   // clicking an @owner INSIDE the popup stacks a SECOND popup on top
-  top().querySelector(".ownerlink").click();
+  if (top()) top().querySelector(".ownerlink").click();
   await sleep(40);
   ok(nDetail() === 2, "clicking @owner inside a popup stacks a second popup on top");
   ok(/^@dun/.test(top().querySelector(".win__title span").textContent.trim()), "the stacked popup is the hacker (@owner title)");
@@ -686,12 +690,81 @@ async function pass6() {
   dom.window.close();
 }
 
+async function pass7() {
+  console.log("\n== pass 7: hacker deep links (/h/<username>) ==");
+  const errors = [];
+  const dom = makeDom(
+    (p) => Promise.resolve({ ok: true, status: 200, json: async () => router(p) }),
+    errors, "https://hub.test/h/keeper1");
+  const { document, history, location } = dom.window;
+  await sleep(250);
+  const q = (s) => document.querySelector(s);
+  const modals = () => [...document.querySelectorAll(".detailmodal")];
+  const top = () => modals().pop();
+  const title = () => (top() ? top().querySelector(".win__title span").textContent.trim() : "");
+  const bodyText = () => (top() ? top().querySelector(".win__body").textContent : "");
+
+  // 1. the shared link opens the popup by itself, on the entry it arrived on
+  ok(modals().length === 1, "/h/keeper1 opens the hacker popup on load");
+  ok(title() === "@keeper1", "...for the handle in the path");
+  ok(/registered programs/i.test(bodyText()), "...and it is the real popup, not an empty shell");
+  ok(location.pathname === "/h/keeper1", "a deep link does not push a duplicate entry");
+  ok(document.title === "@keeper1 \u2014 NetHackers", "the tab says whose page this is");
+
+  // 2. closing a deep-linked popup walks the path back to the front page
+  if (top()) top().querySelector(".x").click();
+  await sleep(20);
+  ok(modals().length === 0, "closing the deep-linked popup dismisses it");
+  ok(location.pathname === "/", "...and the path returns to the front page");
+  ok(document.title === "NetHackers", "...and the tab goes back to the site title");
+
+  // 3. opening one by click writes the shareable path
+  document.querySelectorAll("#recordholders tbody tr")[1].click();
+  await sleep(40);
+  ok(title() === "@keeper2", "clicking a keeper row opens that hacker");
+  ok(location.pathname === "/h/keeper2", "...and the URL becomes its deep link");
+  ok(document.title === "@keeper2 \u2014 NetHackers", "...and the tab follows it");
+
+  // 4. Back closes it; Forward brings it back -- the popup IS the history entry
+  history.back();
+  await sleep(40);
+  ok(modals().length === 0 && location.pathname === "/", "Back closes the popup");
+  history.forward();
+  await sleep(60);
+  ok(location.pathname === "/h/keeper2", "Forward returns to the hacker path");
+  ok(modals().length === 1 && title() === "@keeper2", "...and reopens that popup");
+
+  // 5. Escape closes through the same door the x does
+  dom.window.document.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  await sleep(40);
+  ok(modals().length === 0 && location.pathname === "/", "Escape closes and restores the path");
+
+  // 6. stacking: only the hacker layer owns the URL. An identity popup leaves
+  //    the path alone; the hacker stacked on top of it deep-links, and Back
+  //    peels just that layer off.
+  q("#rolegrid tr.frontierrow").click();
+  await sleep(40);
+  ok(modals().length === 1 && location.pathname === "/", "an identity popup does not touch the URL");
+  top().querySelector(".ownerlink").click();
+  await sleep(40);
+  ok(modals().length === 2 && location.pathname === "/h/dun", "a hacker stacked on it still deep-links");
+  history.back();
+  await sleep(40);
+  ok(modals().length === 1 && /^Frontier:/.test(title()),
+     "Back peels off the hacker and leaves the identity popup beneath");
+  ok(location.pathname === "/", "...and the path is the front page again");
+
+  ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
+  dom.window.close();
+}
+
 await pass1();
 await pass2();
 await pass3();
 await pass4();
 await pass5();
 await pass6();
+await pass7();
 checkDictvizRandomWiring();
 console.log("\n" + (failures === 0 ? "ALL PASSED" : failures + " CHECK(S) FAILED"));
 process.exit(failures === 0 ? 0 : 1);
