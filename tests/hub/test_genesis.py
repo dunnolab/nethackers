@@ -322,3 +322,18 @@ def test_genesis_missing_path_names_the_real_container_path(tmp_path, capsys):
     err = capsys.readouterr().err
     assert "/data/hub.sqlite3" in err
     assert "Traceback" not in err
+
+
+def test_has_archive_is_false_before_genesis(tmp_path):
+    store = Store(str(tmp_path / "hub.db"))
+    store.init_schema()
+    assert store.has_archive() is False
+
+
+def test_has_archive_is_true_after_genesis(tmp_path):
+    """The brief states the reset from this fact, because genesis records no
+    timestamp and has already run in production (design D7)."""
+    store = Store(str(tmp_path / "hub.db"))
+    store.init_schema()
+    store.genesis()
+    assert store.has_archive() is True
