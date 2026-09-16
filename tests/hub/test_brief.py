@@ -231,9 +231,9 @@ def test_the_brief_fits_the_budget(worst_case_store):
 
     Raised 4096 -> 5120 on 2026-09-17 (D11): a behavioural test found four
     content gaps (safety model, `uv` bootstrap, first-run image pull,
-    default hub) worth about 580 bytes, and the design ruled that worth
-    more than the margin -- nothing already in the brief was cut to pay
-    for it. Worst case was 3703/4096 before those additions."""
+    default hub) worth 616 bytes, and the design ruled that worth more
+    than the margin -- nothing already in the brief was cut to pay for
+    it. Worst case was 3703/4096 before those additions."""
     epoch = Epoch(secret_fingerprint=secret_fingerprint(SECRET),
                   arena_major=ARENA_MAJOR, seeds=HIDDEN_SEEDS)
     brief = render_brief(worst_case_store, epoch=epoch, version="9.9.9")

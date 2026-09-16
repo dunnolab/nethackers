@@ -117,9 +117,11 @@ second request for the `.md` sibling.
   open their agent markdown with what models get wrong; the supporting evidence
   is that relevant facts are retrieved best at the beginning or end of a context
   and that Claude Code truncates a page and passes it through a small extraction
-  model. Our three corrections are each a mistake a real agent made today: the
+  model. Our four corrections are each a mistake a real agent made today: the
   board was reset and zeros are not failure; scoring is amd64 and a native arm64
-  score is refused; the repo is private, so install from PyPI.
+  score is refused; the repo is private, so install from PyPI; and `evolve`
+  publishes unattended, pushing every evaluated candidate, not only the
+  improvements.
 - **D7. The reset is stated from the presence of the archive tables, not from a
   stored timestamp.** `genesis` records no time and has already run in
   production, so any timestamp column would be `NULL` exactly where it matters.
@@ -151,8 +153,8 @@ only GPTBot among named AI tools.
   (§1). Raised from the original 4,096 on 2026-09-17: a behavioural test of
   the install path found four content gaps (the safety model; no `uv`
   bootstrap; no first-run image-pull warning; no stated default hub) worth
-  about 580 bytes, and that is worth more than the margin — nothing already
-  in the brief was cut to pay for it.
+  616 bytes, and that is worth more than the margin — nothing already in
+  the brief was cut to pay for it.
 
 ## 5. Components
 

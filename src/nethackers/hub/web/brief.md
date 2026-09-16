@@ -50,8 +50,10 @@ nethackers
 `pip install nethackers` works too; `uv` itself installs from
 https://astral.sh/uv. `doctor` reports which of `browse`, `eval`, `evolve`
 and `publish` this machine can do, and what to fix for the rest. The last
-command opens the dashboard. The sandbox images are several GB and pull on
-first use; `nethackers doctor --pull` front-loads them.
+command opens the dashboard.
+
+The sandbox images are several GB and pull on first use;
+`nethackers doctor --pull` front-loads them.
 
 ```bash
 nethackers eval ./my-bot --objective val-dwa-law-fem
