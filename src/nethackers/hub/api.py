@@ -43,8 +43,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from fastapi import FastAPI, Header, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel
 
 from nethackers.arena.seeds import secret_fingerprint as _fp
@@ -54,6 +54,7 @@ from nethackers.hub.auth import AuthError, AuthProvider, GitHubAppAuth, LocalStu
 from nethackers.hub.envelope import envelope
 from nethackers.hub.github import GitHubRead, GitHubReadError
 from nethackers.hub.ids import program_id
+from nethackers.hub.negotiate import prefers_markdown
 from nethackers.hub.objectives import CATALOG
 from nethackers.hub.poll import PollValidationError, clean_vote
 from nethackers.hub.store import Store
@@ -82,6 +83,7 @@ from nethackers.hub.views.achievements import (
 )
 from nethackers.hub.views.baseline import read_baseline
 from nethackers.hub.views.boards import aggregate_board, board, resolve_scope
+from nethackers.hub.views.brief import render_brief
 from nethackers.hub.views.elites import read_elites
 from nethackers.hub.views.hackers import hacker_board, leaders as hackers_leaders
 from nethackers.hub.views.programs import count_programs, get_program, list_programs
@@ -295,9 +297,28 @@ def create_app(
         # on register with no hint why (see hubclient.client.HubClient.hub_mode).
         return {"status": "ok", "auth": auth.mode}
 
-    @app.get("/", response_class=HTMLResponse)
-    def index() -> str:
-        return _served_page()
+    def _brief() -> str:
+        """The markdown representation, rendered from live store reads."""
+        return render_brief(store, epoch=_epoch(), version=_pkg_version("nethackers"))
+
+    @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
+    def index(request: Request) -> Response:
+        """Two representations of one resource, chosen by Accept (design
+        2026-09-16). HTML is the default for everyone who did not explicitly
+        ask for markdown, including `*/*` (I1).
+
+        `Vary: Accept` goes on BOTH branches (I2). Caddy runs no response
+        cache today, so the immediate exposure is the clients' own -- Claude
+        Code holds a fetched URL for 15 minutes -- but this is the header that
+        makes putting a CDN in front safe later.
+        """
+        if prefers_markdown(request.headers.get("accept")):
+            return Response(content=_brief(),
+                            media_type="text/markdown; charset=utf-8",
+                            headers={"Vary": "Accept"})
+        return Response(content=_served_page(),
+                        media_type="text/html; charset=utf-8",
+                        headers={"Vary": "Accept"})
 
     @app.get("/h/{username}", response_class=HTMLResponse)
     def hacker_page(username: str) -> str:
@@ -305,8 +326,24 @@ def create_app(
         which reads the handle back off the path and opens the popup itself.
         Deliberately no DB lookup -- an unregistered handle still gets the
         page, and the popup renders its own "no registered programs" state
-        rather than a 404 that would cost a query on every page load."""
+        rather than a 404 that would cost a query on every page load.
+
+        Not content-negotiated: it is a human deep link, and an agent that
+        wants the data has /index.md and the JSON reads."""
         return _hacker_card(_served_page(), username)
+
+    @app.api_route("/index.md", methods=["GET", "HEAD"], include_in_schema=False)
+    @app.api_route("/llms.txt", methods=["GET", "HEAD"], include_in_schema=False)
+    def brief_document() -> Response:
+        """The same document at two conventional URLs (D9), as text/plain
+        (D4). Stacked decorators register both paths against one handler.
+
+        Honest expectation for /llms.txt: Ahrefs' May 2026 logs over 137,210
+        domains found 97% of published llms.txt files were never fetched at
+        all. It is here because Claude Code -- the client this design targets
+        -- is the second-most-frequent fetcher of the ones that are read.
+        """
+        return Response(content=_brief(), media_type="text/plain; charset=utf-8")
 
     @app.get("/poll")
     def poll() -> dict[str, Any]:

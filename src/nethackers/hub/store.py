@@ -674,6 +674,21 @@ class Store:
         logger.info("genesis: archived %s", counts)
         return counts
 
+    def has_archive(self) -> bool:
+        """Whether ``genesis`` has run on this database -- that is, whether an
+        earlier epoch's public rows are parked in the ``*_v1`` tables.
+
+        The agent brief states the reset from this rather than from a
+        timestamp: ``genesis`` records no time and has already run in
+        production, so a column added now would be NULL exactly where it
+        matters (design 2026-09-16, D7). Probes ``solutions_v1``, the archive
+        of the table whose emptiness is the thing needing an explanation.
+        """
+        row = self._conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name='solutions_v1'"
+        ).fetchone()
+        return row is not None
+
     def upsert_solution(
         self,
         digest: str,

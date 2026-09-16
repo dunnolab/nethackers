@@ -5,6 +5,10 @@
      retina tab gets native pixels. Inlined like the badge logos further down, so
      the page still carries every asset it draws. -->
 <link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAVUlEQVR42mMQFBT8P5CYYdQBg8YB/+fqYcW4NBKrjpD6UQeMOmDwOgBdfNQBhAwkFY86YOg4AJdD6JYIRx0w6oBB4wByK61RBwwdB4z2C0YdMGIdAAC3eOTnHl+PUwAAAABJRU5ErkJggg==">
+<!-- Agents that negotiate get markdown from `/` itself (hub/negotiate.py).
+     This is for the ones that do not: OpenAI's fetcher sends a browser Accept
+     and is reported to follow this hint to the .md sibling instead. -->
+<link rel="alternate" type="text/markdown" href="/index.md">
 <!-- Link preview (Twitter/X, Telegram, Slack, Discord). Text only, on purpose:
      no og:image, because a card image would be the one asset on this page that
      isn't drawn by the page itself. -->
