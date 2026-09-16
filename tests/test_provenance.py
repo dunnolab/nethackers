@@ -122,3 +122,17 @@ def test_default_operator_version_resolver_uses_discovery_detect_cli(monkeypatch
 
     assert result == "claude 9.9.9"
     assert calls == {"backend": "claude", "image": "repo/mutator:tag"}
+
+
+def test_prepare_evolve_puts_operator_version_on_cfg(tmp_path):
+    seed = tmp_path / "seed"
+    seed.mkdir()
+    (seed / "bot.py").write_text("x")
+    (seed / "nethackers.solution.json").write_text('{"root":".","entrypoint":"bot.py"}')
+    plan = prepare_evolve(
+        EvolveParams(objective="val-dwa-law-fem", seed=str(seed), operator="claude",
+                     from_seed=True, workdir=str(tmp_path / "wd"), owner="dev"),
+        tree_store=LocalTreeStore(tmp_path / "store"),
+        operator_version_resolver=lambda op, img: f"{op}-9.9.9",
+    )
+    assert plan.cfg.operator_version == "claude-9.9.9"

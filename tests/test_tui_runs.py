@@ -250,6 +250,48 @@ def test_run_totals_over_read_runs_sums_tokens(tmp_path):
     assert totals["iterations"] == 3
 
 
+def test_reconstruct_run_rebuilds_from_disk_and_flags_no_seed_detail(tmp_path):
+    from nethackers.tui.screens.runs import reconstruct_run
+
+    run_dir = tmp_path / "20260916-abc-sam"
+    _mk(run_dir, {
+        "run_id": "20260916-abc-sam", "objective": "sam-hum-law-fem,val-dwa-law-fem",
+        "operator": "claude", "iterations": 3, "model": "sonnet", "effort": "high",
+        "operator_version": "claude-code 1.0", "created_at": "2026-09-16T13:00:00",
+    }, [
+        {"iteration": 0, "outcome": "baseline", "dev_fitness": 0.07},
+        {"iteration": 1, "outcome": "rejected", "reason": "no dev gain", "dev_fitness": 0.06,
+         "tokens": 1000, "causes": {"killed by a jackal": 2}},
+        {"iteration": 2, "outcome": "registered", "reason": "registered", "dev_fitness": 0.12,
+         "improved": ["sam-hum-law-fem", "union"], "tokens": 3000, "child_digest": "sha256:dead"},
+    ])
+    logs = run_dir / "logs"
+    logs.mkdir()
+    (logs / "iter-2-3.log").write_text(  # run.tag(2) == "iter 2/3" -> _slug -> iter-2-3.log
+        '{"type":"assistant","message":{"content":[{"type":"text","text":"try altars"}]}}\n')
+
+    run = reconstruct_run(run_dir)
+    assert run is not None
+    assert run.reopened is True and run.status == "done"
+    assert run.cfg.backend == "claude" and run.cfg.iterations == 3
+    assert run.cfg.model == "sonnet" and run.cfg.effort == "high"
+    assert run.identities() == ["sam-hum-law-fem", "val-dwa-law-fem"]   # from the objective
+    # baseline (iter 0) skipped; iters 1 (rejected) + 2 (registered) rebuilt
+    assert run.iteration_status(1) == "rejected"
+    assert run.iteration_status(2) == "registered"
+    assert run.iter_results[2].dev_fitness == 0.12
+    assert run.iter_results[2].improved == ["sam-hum-law-fem", "union"]
+    assert run.iter_results[2].results is None                 # per-seed detail not on disk
+    assert run.iter_results[1].causes == {"killed by a jackal": 2}
+    assert run.ledger_rows == [(1, False, "no dev gain"), (2, True, "registered")]
+    assert run.logs.get(run.tag(2))                                     # transcript replayed
+
+
+def test_reconstruct_run_missing_record_returns_none(tmp_path):
+    from nethackers.tui.screens.runs import reconstruct_run
+    assert reconstruct_run(tmp_path / "does-not-exist") is None
+
+
 class _Plan:
     def __init__(self, run):
         self.rid = "r-abc"
@@ -333,3 +375,40 @@ async def test_ongoing_reconciles_when_set_changes_without_duplicate_ids():
             if not (ra.running or rb.running):
                 break
             await asyncio.sleep(0.01)
+
+
+async def test_finished_this_session_run_stays_listed_and_reopens_its_monitor():
+    # feature: a run that finished THIS session keeps its full Run in memory, so
+    # it must stay in the Runs list as a clickable button (not drop to the
+    # read-only "earlier sessions" summary) and reopen its complete monitor.
+    def quick_run(cb):
+        cb["on_state"]({
+            "phase": "mutating", "iteration": 1, "baseline_dev": 0.0, "baseline_held": 0.0,
+            "best_dev": 0.0, "best_held": 0.0, "wins": 1, "tokens": 0, "detail": "",
+            "parent_digest": "seed0", "parent_dev": 0.0, "parent_held": 0.0, "generation": 1})
+        return []  # returns immediately -> the run finishes ("done")
+
+    app = NetHackersApp(hub="http://127.0.0.1:1", creds=None, start="runs")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        run = app.start_run(_Plan(quick_run))
+        for _ in range(200):  # wait for the worker to finish
+            if not run.running:
+                break
+            await asyncio.sleep(0.01)
+        await pilot.pause()
+        if isinstance(app.screen, RunMonitor):  # start_run opened it -> back to Runs
+            await pilot.press("escape")
+            await pilot.pause()
+
+        app.query_one(RunsView)._refresh()
+        await pilot.pause()
+        buttons = list(app.query(".ongoing-run").results(Button))
+        assert len(buttons) == 1                       # the finished run is still listed
+        assert buttons[0].id == f"ongoing-{run.rid}"
+        assert not run.running                         # ...and it really did finish
+        assert "done" in str(buttons[0].label)         # shows a finished-status head
+
+        buttons[0].press()                             # reopen its full monitor
+        await pilot.pause()
+        assert isinstance(app.screen, RunMonitor) and app.screen.run is run

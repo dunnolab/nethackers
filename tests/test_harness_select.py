@@ -78,6 +78,39 @@ def test_pull_fetch_pulls_the_reference_repo_at_commit(tmp_path, monkeypatch):
     assert out == dest
 
 
+# -- overall_champion: /board rank-1 read for MAP-Elites UNION cold-start
+# seeding (Task 4) -----------------------------------------------------------
+
+def test_overall_champion_returns_board_rank1_with_tree(tmp_path):
+    from nethackers.harness import select
+    from nethackers.harness.store import LocalTreeStore
+    top = {"program_id": "prog_" + "a" * 32, "owner": "clyde", "mean_progression": 0.5,
+           "reference": {"repo": "github.com/x/repo", "commit": "a" * 40}}
+    lo = {"program_id": "prog_" + "b" * 32, "owner": "bob", "mean_progression": 0.1,
+          "reference": {"repo": "github.com/x/repo", "commit": "b" * 40}}
+    class _Hub:
+        def board(self, scope, tier="self-reported"):
+            assert tier == "self-reported"
+            return [top, lo]                 # board is already rank-ordered
+    def fetch(entry, dest):
+        dest = Path(dest)
+        (dest / "bot.py").write_text("x")
+        (dest / "nethackers.solution.json").write_text('{"root":".","entrypoint":"bot.py"}')
+        return dest
+    got = select.overall_champion(_Hub(), "wiz", store=LocalTreeStore(tmp_path / "s"), fetch=fetch)
+    assert got is not None
+    entry, tree = got
+    assert entry["program_id"] == top["program_id"] and (tree / "bot.py").exists()
+
+def test_overall_champion_none_on_empty_board(tmp_path):
+    from nethackers.harness import select
+    from nethackers.harness.store import LocalTreeStore
+    class _Hub:
+        def board(self, scope, tier="self-reported"):
+            return []
+    assert select.overall_champion(_Hub(), "wiz", store=LocalTreeStore(tmp_path / "s")) is None
+
+
 # -- B5: dead island SELECT machinery removed --------------------------------
 
 def test_dead_select_machinery_removed():

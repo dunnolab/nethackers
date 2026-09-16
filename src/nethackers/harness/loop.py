@@ -57,6 +57,11 @@ class IterationResult:
     # signal. None for a non-improving/rejected iteration; a non-empty list
     # for a registered win.
     improved: list[str] | None = None
+    # Per-seed TrajectoryResult dicts for this child's dev eval -- the detail
+    # view's full breakdown (cause/depth/time). Kept off metrics.jsonl (lean
+    # durable log); it rides the live on_iteration callback only. None for
+    # baseline / gate-reject / error iterations (no dev eval ran).
+    results: list[dict] | None = None
 
 
 def _causes(results) -> dict[str, int]:
@@ -165,6 +170,37 @@ def run_loop(
     workdir = Path(workdir)
     workdir.mkdir(parents=True, exist_ok=True)
     archive = CellArchive(identities)
+
+    origins: dict[str, dict] = {}
+    # identity -> its pulled hub champion {program_id, score}, known from the
+    # /elites read BEFORE the (long) cold-start eval. Lets the monitor show each
+    # identity's champion label + hub score the moment cold-start starts, instead
+    # of falsely showing AutoAscend until the champion's local eval finishes.
+    elite_of: dict[str, dict] = {}
+
+    def _origin(kind, *, handle=None, sha=None, repo=None, iteration=None) -> dict:
+        return {"kind": kind, "handle": handle, "sha": sha,
+                "repo": repo, "iteration": iteration}
+
+    def _baseline_floor() -> dict[str, float]:
+        # AutoAscend's per-identity /baseline floor (the `progression` field of
+        # each per_identity entry), sliced to this objective's identities.
+        # `hub.baseline()` returns the dict {"owner", "per_identity":
+        # {ident: {"progression", "deepest", "episodes"}}, "overall"} -- see
+        # hub/views/baseline.py:15-32 (NOT a list of rows). Best-effort (hub
+        # read): any error / missing shape -> {} (the cell still renders, just
+        # without an AutoAscend number).
+        try:
+            data = hub.baseline() or {}
+            per = data.get("per_identity") or {}
+            want = set(identities)
+            return {ident: float(entry["progression"])
+                    for ident, entry in per.items()
+                    if ident in want and "progression" in entry}
+        except Exception:
+            return {}
+
+    aa_baseline = {} if from_seed else _baseline_floor()
     wins = 0
     base_dev = 0.0
     # Run-global attempt history (capped at _ATTEMPT_REFS_CAP, NOT per-cell,
@@ -199,6 +235,16 @@ def run_loop(
             return
         filled, total = archive.coverage()
         best_dev = max((c.score for c in archive.cells.values()), default=base_dev)
+        # Per-cell TrajectoryResult dicts (detail-view breakdown), one entry per
+        # identity with a filled cell whose elite has dev evidence. Built as an
+        # explicit loop (not a one-shot comprehension) so a plain local narrows
+        # cleanly under mypy across the `dev_evidence is not None` check and the
+        # `.dev_evidence.results` read that follows it.
+        cell_results: dict[str, list[dict]] = {}
+        for i in identities:
+            filled_cell = archive.cells.get(i)
+            if filled_cell is not None and filled_cell.dev_evidence is not None:
+                cell_results[i] = [r.to_dict() for r in filled_cell.dev_evidence.results]
         payload = {
             "phase": phase, "iteration": iteration, "generation": iteration,
             "baseline_dev": base_dev, "baseline_held": 0.0,
@@ -212,6 +258,7 @@ def run_loop(
             "cells": [{"identity": i, "score": archive.cells[i].score,
                        "digest": archive.cells[i].digest}
                       for i in identities if i in archive.cells],
+            "cell_results": cell_results,
             "coverage": (filled, total),
             # Parent snapshot: defaults keep the (pre-C1) parent_panel from
             # KeyError-ing before a cell is active; overwritten with the
@@ -228,6 +275,15 @@ def run_loop(
             payload["parent_dev"] = c.score
             if c.dev_evidence is not None:
                 payload["parent_means"] = aggregate.per_identity_means(c.dev_evidence.results)
+        payload["origins"] = dict(origins)
+        payload["elite_of"] = dict(elite_of)
+        payload["aa_baseline"] = aa_baseline
+        u = archive.union
+        payload["union"] = (
+            {"score": u.score, "digest": u.digest,
+             "results": [r.to_dict() for r in u.dev_evidence.results]
+                        if u.dev_evidence is not None else []}
+            if u is not None else None)
         on_state(payload)
 
     # Cold start: seed each cell on ITS OWN identity's batch. The champions
@@ -239,6 +295,7 @@ def run_loop(
     # keeps the hub out: the seed owns all of S.
     seed_digest = tree_store.save(seed_tree)
     archive.mark_seed(seed_digest)
+    origins[seed_digest] = _origin("seed")
     elites: dict[str, tuple[dict, Path]] = (
         {} if from_seed
         else select.per_identity_elites(hub, tuple(identities),
@@ -249,6 +306,18 @@ def run_loop(
         # see harness/select.py) -- opaque, but stable per distinct champion,
         # which is all this grouping key needs.
         owned.setdefault(entry["program_id"], (tree_path, []))[1].append(ident)
+        elite_of[ident] = {"program_id": entry["program_id"],
+                           "score": float(entry.get("score", 0.0))}
+        ref = entry.get("reference") or {}
+        origins[entry["program_id"]] = _origin(
+            "hub", handle=entry.get("owner"), sha=ref.get("commit"), repo=ref.get("repo"))
+
+    # Emit the cold-start frame BEFORE the (potentially long, 2*N*b-episode)
+    # evals so the monitor shows the identities, their champion labels, and the
+    # AutoAscend floor immediately -- then each cell fills in as it's scored
+    # below. Without this the first frame lands only after the WHOLE cold-start
+    # finishes, leaving the user staring at an empty Progress table.
+    _emit("cold-start", 0)
 
     frontier_results: list[TrajectoryResult] = []   # every cold-start episode -> baseline tally
     for d, (tree_path, idents) in owned.items():
@@ -260,6 +329,7 @@ def run_loop(
             max_parallel_evals=max_parallel_evals)
         archive.insert(d, tree_path, ev)
         frontier_results.extend(ev.results)
+        _emit("cold-start", 0)   # this champion's cell(s) now scored -> fill them in live
 
     seed_idents = [i for i in identities if i not in elites]
     if seed_idents:
@@ -271,6 +341,29 @@ def run_loop(
             max_parallel_evals=max_parallel_evals)
         archive.insert(seed_digest, tree_store.path(seed_digest), seed_ev)
         frontier_results.extend(seed_ev.results)
+        _emit("cold-start", 0)   # seed-owned cells now scored
+
+    # Seed the UNION cell from the hub's best-on-average champion (spec §5.1):
+    # one full-union eval so BEST OVERALL is a real, full-detail incumbent from
+    # the start and a samplable parent from iteration 1. Skipped for --from-seed,
+    # a single-identity objective (no union cell), or an empty board.
+    if not from_seed and len(identities) > 1:
+        champ = select.overall_champion(
+            hub, objective, store=tree_store, fetch=fetch)
+        if champ is not None:
+            entry, tree_path = champ
+            report(f"cold-start · scoring union champion {entry['program_id'][:8]} "
+                   f"on {len(identities)} cell(s) …")
+            spec = build_union_spec(sorted(identities), name="coldstart:union")
+            _f, uev = evaluate(tree_path, spec, image, now=now_fn(), runtime=runtime,
+                               runner=runner, on_episode=_episode_cb("cold-start · dev [union]"),
+                               max_parallel_evals=max_parallel_evals)
+            archive.insert(entry["program_id"], tree_path, uev)   # full coverage -> seeds union
+            frontier_results.extend(uev.results)
+            ref = entry.get("reference") or {}
+            origins[entry["program_id"]] = _origin(
+                "hub", handle=entry.get("owner"), sha=ref.get("commit"), repo=ref.get("repo"))
+            _emit("cold-start", 0)   # BEST OVERALL union cell now seeded -> show it
 
     # base_dev is the frontier the run departs from -- the mean of the cells'
     # starting elite scores -- NOT a separate full-union seed eval (dropped). The
@@ -417,6 +510,11 @@ def run_loop(
             _remember(str(k + 1), worktree, note_hyp, child_means, child_overall,
                       json.dumps([r.to_dict() for r in dev_ev.results]))
             if improved:
+                origins[digest] = _origin(
+                    "run", handle=owner,
+                    sha=(reference or {}).get("commit"),
+                    repo=(reference or {}).get("repo"),
+                    iteration=k + 1)
                 wins += 1
                 _emit("registered", k + 1, cell=cell_label, tokens=op.spend,
                       detail=(f"⚠{len(regs)}" if regs else ""), hub_reason=hub_reason)
@@ -429,7 +527,8 @@ def run_loop(
                 _record(k + 1, IterationResult(
                     True, "registered", dev_fitness=dev_fit, tokens=op.spend, usage=op.usage,
                     digest=digest, stopped_reason=op.stopped_reason, regressions=regs or None,
-                    causes=_causes(dev_ev.results), hub_reason=hub_reason, improved=improved))
+                    causes=_causes(dev_ev.results), hub_reason=hub_reason, improved=improved,
+                    results=[r.to_dict() for r in dev_ev.results]))
             else:
                 _emit("rejected", k + 1, cell=cell_label, tokens=op.spend,
                       detail="no cell improved", hub_reason=hub_reason)
@@ -437,7 +536,8 @@ def run_loop(
                 _record(k + 1, IterationResult(
                     False, "no-cell-improved", dev_fitness=dev_fit, tokens=op.spend,
                     usage=op.usage, stopped_reason=op.stopped_reason,
-                    causes=_causes(dev_ev.results), hub_reason=hub_reason))
+                    causes=_causes(dev_ev.results), hub_reason=hub_reason,
+                    results=[r.to_dict() for r in dev_ev.results]))
         except Exception as e:
             _emit("error", k + 1, detail=str(e))
             report(f"{tag} · ✗ error: {e}")

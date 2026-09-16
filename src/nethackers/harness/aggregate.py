@@ -9,6 +9,34 @@ from collections.abc import Sequence
 from statistics import mean
 from typing import Protocol
 
+# NLE engine end-of-episode codes (nle StepStatus), recorded verbatim into a
+# TrajectoryResult's `end_status` (as a string) by the arena:
+#   "1" = the character died in-game                                    -> died
+#  "-1" = the episode ended without a death or ascension               -> aborted
+#         (quit / escaped / ran out the step budget; no cause of death)
+#   "0" = still running (never terminal in a stored result)            -> running
+# Ascension is tracked separately (the `ascended` flag), so a caller that has it
+# should prefer it -- an ascension can still report end_status "1".
+#
+# This lives here (host-side harness), deliberately NOT in contracts.models
+# where `end_status` is defined: contracts/ is COPYd into the mutator image
+# (image_inputs.MUTATOR_INPUT_PATHS), so any edit there churns the mutator's
+# content fingerprint and invalidates its pinned build. This is a pure
+# display/brief helper the sandbox never runs -- keeping it out of contracts
+# leaves the pinned mutator image valid. The TUI (tui.run) imports it from here.
+_NLE_END_STATUS = {"1": "died", "-1": "aborted", "0": "running"}
+
+
+def end_status_word(end_status: str | int | None) -> str | None:
+    """Translate a raw NLE ``end_status`` code to a human word (died / aborted /
+    running) for display and briefs. Returns ``None`` for a ``None``/empty code;
+    a value that is already a word (test fixtures, or a future arena that emits
+    words) passes straight through unchanged."""
+    if end_status is None or str(end_status) == "":
+        return None
+    code = str(end_status)
+    return _NLE_END_STATUS.get(code, code)
+
 
 class _HasCharProgress(Protocol):
     # read-only properties (not bare attrs) so a frozen dataclass like
@@ -27,6 +55,8 @@ class _HasOutcome(Protocol):
     # a crash on missing fields (spec §7).
     @property
     def progress(self) -> float: ...
+    @property
+    def ascended(self) -> bool: ...
     @property
     def end_status(self) -> str | None: ...
     @property
@@ -73,15 +103,24 @@ def regressions(
 
 def outcome_summary(results: Sequence[_HasOutcome]) -> str:
     """Best-effort text rollup of an eval's outcomes for `/refs/CONTEXT.md` /
-    the brief, e.g. ``"died×4, starved×1; deepest milestone: <m>; mean
-    0.11"``. The end_status tally and progress mean are always computed; the
+    the brief, e.g. ``"died×4, aborted×1; deepest milestone: <m>; mean
+    0.11"``. The outcome tally and progress mean are always computed; the
     deepest-milestone clause is appended only when at least one episode
     reports one. Never raises on missing/older-evidence fields (design §7) --
     an empty `results`, or every `milestone`/`end_status` being None, still
-    renders, just without that clause."""
+    renders, just without that clause.
+
+    Outcomes are word-form and ascension-aware, matching the monitor's status
+    column: an ascension reads "ascended" regardless of its raw engine code;
+    otherwise the NLE ``end_status`` code is translated to a word
+    (1->died, -1->aborted). Episodes with no recorded outcome are skipped."""
     if not results:
         return "no results"
-    tally = Counter(r.end_status for r in results if r.end_status is not None)
+
+    def _outcome(r: _HasOutcome) -> str | None:
+        return "ascended" if r.ascended else end_status_word(r.end_status)
+
+    tally = Counter(w for r in results if (w := _outcome(r)) is not None)
     parts = [f"{status}×{count}" for status, count in tally.most_common()]
     pieces = [", ".join(parts)] if parts else ["no outcome data"]
     milestoned = [r for r in results if r.milestone]

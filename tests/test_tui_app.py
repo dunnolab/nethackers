@@ -1,15 +1,15 @@
 """Widget-level tests for ``NetHackersApp`` -- the dashboard shell (Task
 10): a ``.tabbar`` header showing identity + hub over a ``ContentSwitcher``
-hosting the five section views, switched by number-key bindings, plus an
-optional pushed ``EvolveScreen`` whose ``.error``/``.results`` this shell
-delegates through its own ``.error``/``.results`` properties (what
+hosting the three section views (Home/Runs/Evolve), switched by number-key
+bindings, plus an optional pushed ``EvolveScreen`` whose ``.error``/``.results``
+this shell delegates through its own ``.error``/``.results`` properties (what
 ``cli.py``'s evolve TTY branch reads after ``app.run()``).
 
 Mounted against a dead loopback hub (nothing listens on port 1, so every
-hub-backed section view's real httpx call fails near-instantly with
-``ConnectError`` and degrades to its own friendly "unreachable" message --
-the same hermeticity trick ``test_tui_home.py``/``test_tui_hub_views.py``
-already use) rather than a plausible real address like
+hub-backed call -- Home's program count, the idbar's mode probe -- fails
+near-instantly with ``ConnectError`` and degrades to its own friendly
+"unreachable" message -- the same hermeticity trick ``test_tui_home.py``
+already uses) rather than a plausible real address like
 ``http://localhost:8000``: a real hub dev server can genuinely be listening
 there on a developer's machine (e.g. via ``docker compose up``), and this
 suite must never depend on -- or accidentally talk to -- one.
@@ -37,9 +37,9 @@ async def test_shell_shows_identity_and_switches_sections():
         assert "@castiel" in str(app.query_one(".idbar").render())
         assert app.query_one("#body", ContentSwitcher).current == "home"  # default start
 
-        await pilot.press("2")  # -> boards
+        await pilot.press("2")  # -> evolve
         await pilot.pause()
-        assert app.query_one("#body", ContentSwitcher).current == "boards"
+        assert app.query_one("#body", ContentSwitcher).current == "evolve"
 
 
 async def test_shell_guest_when_logged_out():
@@ -173,11 +173,11 @@ async def test_escape_leaves_a_focused_field_so_q_can_quit():
     is dead while you're typing in one of the Evolve form's text fields (e.g.
     iterations; Textual ``Input`` consumes printable keys before any binding,
     ``priority`` or not). ``escape`` hands control back to the modal nav
-    (navigate mode, nothing focused), restoring the global ``q`` / ``1–6``
+    (navigate mode, nothing focused), restoring the global ``q`` / ``1–3``
     keys -- the way out of the field a stuck user needs."""
     app = NetHackersApp(hub=_DEAD_HUB, creds=Credentials("castiel", "t"))
     async with app.run_test() as pilot:
-        await pilot.press("6")  # -> Evolve
+        await pilot.press("2")  # -> Evolve
         await pilot.pause()
         app.query_one("#f_iters", Input).focus()
         await pilot.pause()
@@ -286,8 +286,8 @@ async def test_leaving_a_run_monitor_reclaims_navigate_mode():
         assert app.focused is None                             # navigate mode reclaimed
         assert len(app.screen.query(".-cursor")) == 1          # exactly one gold cursor
         before = app._nav_cursor.id
-        await pilot.press("right")                             # arrows move ONE tab...
-        await pilot.pause()
+        await pilot.press("left")                              # arrows move ONE tab...
+        await pilot.pause()                                    # (runs is rightmost -> left)
         after = app._nav_cursor.id
         assert before != after
         assert app.query_one("#nav", Tabs).active == after     # ...and stay in sync
@@ -306,32 +306,36 @@ async def test_activating_a_tab_externally_syncs_the_keyboard_cursor():
     app = NetHackersApp(hub=_DEAD_HUB, creds=Credentials("castiel", "t"), start="runs")
     async with app.run_test() as pilot:
         await pilot.pause()  # _nav_start -> cursor on tab-runs
-        app.query_one("#nav", Tabs).active = "tab-map"  # simulate an external activation
+        app.query_one("#nav", Tabs).active = "tab-evolve"  # simulate an external activation
         await pilot.pause()
-        assert app._nav_cursor is not None and app._nav_cursor.id == "tab-map"
+        assert app._nav_cursor is not None and app._nav_cursor.id == "tab-evolve"
         golds = [t.id for t in app.screen.query("#nav Tab.-cursor")]
-        assert golds == ["tab-map"]  # exactly one highlighted tab, matching the section
+        assert golds == ["tab-evolve"]  # exactly one highlighted tab, matching the section
 
 
-async def test_frontier_up_from_body_returns_to_active_subtab_not_the_other():
-    # regression: up from the Frontier grid landed on the geometrically-nearest
-    # subtab (ft-program), silently flipping the regime Universe->Program --
-    # the "rejump tabs by one" glitch. It must return to the ACTIVE subtab.
+async def test_mouse_clicking_a_tab_keeps_the_keyboard_arrows_in_sync():
+    # regression: clicking a tab with the MOUSE focuses #nav, and a focused
+    # Textual Tabs eats ←/→ itself (moving its own active tab) instead of our
+    # _nav_move -- so the gold cursor desynced from the section: you'd "skip a
+    # tab" and could never arrow back to the tab you clicked. After a click,
+    # focus must be cleared so the App's modal nav drives the arrows, with the
+    # cursor on the clicked tab (section order: home, evolve, runs).
     app = NetHackersApp(hub=_DEAD_HUB, creds=Credentials("castiel", "t"), start="home")
-    async with app.run_test(size=(120, 42)) as pilot:
+    async with app.run_test() as pilot:
         await pilot.pause()
-        await pilot.press("3")     # -> Frontier
-        await pilot.press("down")  # onto the Universe subtab
+        await pilot.click("#tab-runs")   # select Runs with the MOUSE, not the keyboard
         await pilot.pause()
-        assert app._nav_cursor is not None and app._nav_cursor.id == "ft-universe"
-        await pilot.press("down")  # into the grid body
+        assert app.query_one("#body", ContentSwitcher).current == "runs"
+        assert app._nav_cursor is not None and app._nav_cursor.id == "tab-runs"
+        assert app.focused is None       # blurred, so ←/→ reach _nav_move, not Tabs
+        await pilot.press("left")        # left of runs -> evolve
         await pilot.pause()
-        assert app._nav_cursor is not None
-        assert not (app._nav_cursor.id or "").startswith("ft-")
-        await pilot.press("up")    # back up -> the ACTIVE subtab, regime unchanged
+        assert app._nav_cursor.id == "tab-evolve"
+        assert app.query_one("#body", ContentSwitcher).current == "evolve"
+        await pilot.press("right")       # ...and right returns to runs (never "stuck")
         await pilot.pause()
-        assert app._nav_cursor.id == "ft-universe"
-        assert app.query_one("#ftabs", Tabs).active == "ft-universe"
+        assert app._nav_cursor.id == "tab-runs"
+        assert app.query_one("#body", ContentSwitcher).current == "runs"
 
 
 async def test_home_is_arrow_navigable():
@@ -350,6 +354,32 @@ async def test_home_is_arrow_navigable():
         await pilot.press("up")
         await pilot.pause()
         assert app._nav_cursor.id == "tab-home"  # up out of the card, back to the tab
+
+
+async def test_section_shortcuts_are_hidden_while_a_screen_is_pushed():
+    # the 1/2/3 · e · l shortcuts belong to the dashboard; on a pushed monitor
+    # they must be hidden AND disabled (check_action False) so they don't clutter
+    # its footer or silently switch the hidden section. esc/s/q are the monitor's
+    # own; quit stays live everywhere.
+    app = NetHackersApp(hub=_DEAD_HUB, creds=Credentials("castiel", "t"), start="runs")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        # on the dashboard (nothing pushed): section shortcuts are live
+        assert app.check_action("show", ("home",)) is True
+        assert app.check_action("evolve", ()) is True
+        assert app.check_action("login", ()) is True
+        assert app.check_action("quit", ()) is True
+
+        run = Run("r-x", EvolveConfig("val-dwa-law-fem", "claude", 1))
+        app._runs["r-x"] = run
+        app.open_run("r-x")                        # push its monitor
+        await pilot.pause()
+        assert isinstance(app.screen, RunMonitor)
+        # on the pushed screen: section shortcuts hidden+disabled, quit unaffected
+        assert app.check_action("show", ("home",)) is False
+        assert app.check_action("evolve", ()) is False
+        assert app.check_action("login", ()) is False
+        assert app.check_action("quit", ()) is True
 
 
 # --- .error/.results delegate to the pushed EvolveScreen -------------------

@@ -1,6 +1,6 @@
 [project]
 name = "nethackers"
-version = "0.30.0"
+version = "0.31.0"
 description = "Solve NetHack by evolving symbolic players — evaluation and registration core."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -11,7 +11,7 @@ dependencies = [
     "httpx>=0.27",
     "rich>=13",
     "rich-argparse>=1.5",
-    "textual>=0.60",
+    "textual>=8.2.8",
 ]
 
 [project.urls]

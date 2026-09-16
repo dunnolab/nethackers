@@ -55,6 +55,26 @@ def _resolve(entry: dict, store: LocalTreeStore,
     return store.path(digest), digest
 
 
+def overall_champion(
+    hub, scope: str, *, store: LocalTreeStore,
+    fetch: Callable[[dict, Path], Path | None] = pull_fetch,
+    tier: str = "self-reported",
+) -> tuple[dict, Path] | None:
+    """The scope's best-on-average program: the /board leaderboard's rank-1 row
+    (best-covering, best-mean) plus its resolved tree on disk -- what the
+    MAP-Elites cold start seeds the UNION cell from. None when the board is
+    empty or the top row won't resolve. Any hub error -> None (never raises)."""
+    try:
+        rows = list(hub.board(scope, tier))
+    except Exception:
+        return None
+    if not rows:
+        return None
+    top = rows[0]                      # /board is already rank-ordered
+    resolved = _resolve(top, store, fetch)
+    return (top, resolved[0]) if resolved is not None else None
+
+
 def per_identity_elites(
     hub, identities: tuple[str, ...], *,
     store: LocalTreeStore,

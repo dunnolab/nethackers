@@ -3,9 +3,10 @@ wordmark over a one-line description, your ``@``-hero identity with a clear
 login/logout control, and -- once you're logged in -- your standing rendered as
 a NetHack status line (Programs / Runs / Wins / Evolved-tokens).
 
-Score-based boards (leaderboard, frontier, elites) live in their own tabs; Home
-is the identity-and-standing hero, so it stays legible even before any scores
-exist. ``recent_runs_panel`` stays here because the Runs tab reuses it.
+Score-based boards (leaderboard, frontier, elites) live in the CLI and the
+website, not this dashboard; Home is the identity-and-standing hero, so it stays
+legible even before any scores exist. ``recent_runs_panel`` stays here because
+the Runs tab reuses it.
 """
 from __future__ import annotations
 

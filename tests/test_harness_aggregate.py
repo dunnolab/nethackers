@@ -4,7 +4,7 @@ import pytest
 
 from nethackers.contracts.models import TrajectoryResult
 from nethackers.harness import aggregate as A
-from nethackers.harness.aggregate import outcome_summary
+from nethackers.harness.aggregate import end_status_word, outcome_summary
 
 
 @dataclass
@@ -48,9 +48,9 @@ def test_regressions_eps_tolerance():
     assert A.regressions({"a": 0.50}, {"a": 0.49}, eps=0.02) == []
 
 
-def _r(progress, end="died", milestone=None, depth=1):
+def _r(progress, end="died", milestone=None, depth=1, asc=False):
     return TrajectoryResult(trajectory_id=0, status="completed", progress=progress,
-        ascended=False, steps=1, turns=1, max_depth=depth, end_status=end, error=None,
+        ascended=asc, steps=1, turns=1, max_depth=depth, end_status=end, error=None,
         wall_seconds=0.1, character="c", milestone=milestone)
 
 
@@ -58,3 +58,27 @@ def test_outcome_summary_tallies_and_is_best_effort():
     s = outcome_summary([_r(0.1, "died"), _r(0.1, "died"), _r(0.2, "starved")])
     # mean-ish present, no crash on missing milestone
     assert "died×2" in s and "starved×1" in s and "0.1" in s
+
+
+def test_outcome_summary_translates_raw_nle_codes_and_is_ascension_aware():
+    # real arena results carry the raw NLE end_status CODE (1=death, -1=aborted),
+    # not a word -- the rollup the mutator reads must show words, and an ascension
+    # must read "ascended", not "died" (its engine code can still be "1").
+    s = outcome_summary([_r(0.1, "1"), _r(0.1, "1"), _r(0.3, "-1"),
+                         _r(1.0, "1", asc=True)])
+    assert "died×2" in s and "aborted×1" in s and "ascended×1" in s
+    assert "1×" not in s and "-1×" not in s   # no raw codes leak to the brief
+
+
+def test_end_status_word_translates_nle_codes_and_passes_words_through():
+    # arena stores the raw NLE StepStatus code as a string; the shared helper
+    # the monitor and the mutator brief both use maps it to a human word. Lives
+    # in the harness (not contracts) so it stays out of the mutator image inputs.
+    assert end_status_word("1") == "died"
+    assert end_status_word("-1") == "aborted"
+    assert end_status_word("0") == "running"
+    assert end_status_word(1) == "died"              # tolerant of an int code
+    assert end_status_word(None) is None             # no outcome recorded
+    assert end_status_word("") is None
+    assert end_status_word("died") == "died"         # already a word -> passthrough
+    assert end_status_word("7") == "7"               # unknown code -> as-is, never crash

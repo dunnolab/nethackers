@@ -531,6 +531,21 @@ def test_iteration_result_stopped_reason_defaults_to_none():
     assert IterationResult(False, "baseline").stopped_reason is None
 
 
+def test_iteration_result_carries_per_seed_results(tmp_path):
+    a = "wiz-elf-cha-mal"
+    results = []
+    run_loop(objective=a, seed_tree=_seed_tree(tmp_path / "seed"),
+             tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+             hub=_FakeHub(), image="img:dev", token="t", owner="dev", iterations=1,
+             now_fn=lambda: "2026-09-06T00:00:00Z", rng=random.Random(0),
+             runner=_fitness_runner(lambda v: {0: 0.2, 1: 0.8}[v]),
+             workdir=tmp_path / "work",
+             on_iteration=lambda it, res: results.append(res))
+    child = next(r for r in results if r.reason != "baseline")
+    assert child.results and "progress" in child.results[0]
+    assert "cause_of_death" in child.results[0]   # completed detail, from TrajectoryResult
+
+
 def test_on_iteration_fires_for_baseline_and_each_iteration(tmp_path):
     seen: list[tuple[int, str]] = []
     run_loop(
@@ -923,7 +938,7 @@ def test_coldstart_fills_each_cell_with_its_own_champion(tmp_path):
         runner=_fitness_runner(lambda v: {0: 0.2, 5: 0.7, 9: 0.9}[v]),
         fetch=_champion_fetch({"github.com/t/a@11": 5, "github.com/t/b@22": 9}),
         workdir=tmp_path / "work", on_state=states.append)
-    cold = next(s for s in states if s["phase"] == "cold-start")
+    cold = [s for s in states if s["phase"] == "cold-start"][-1]  # final (complete) frame
     cells = {cell["identity"]: cell["digest"] for cell in cold["cells"]}
     assert cells[a] == "github.com/t/a@11"   # champion A owns its cell
     assert cells[b] == "github.com/t/b@22"   # champion B owns its cell
@@ -1019,6 +1034,158 @@ def test_coldstart_warm_cell_mutates_without_error(tmp_path):
     assert results[0].registered is True               # the warm cell mutated and improved a cell
 
 
+# -- Task 3: per-cell origin labels ("hub"/"seed"/"run") + the AutoAscend
+# per-identity baseline floor, both emitted on the cold-start (and later
+# registered) on_state payload so the monitor can label each cell's elite.
+
+def test_coldstart_emits_origins_and_baseline(tmp_path):
+    a = "wiz-elf-cha-mal"
+    b = "wiz-orc-cha-mal"
+    champ_a = {"program_id": "github.com/t/a@11", "score": 0.9, "owner": "clyde",
+               "reference": {"repo": "github.com/t/a", "commit": "11"}}
+    class _Hub(_ElitesHub):
+        def baseline(self):   # real /baseline shape: dict, per_identity -> {"progression"}
+            return {"owner": "autoascend", "overall": 0.22,
+                    "per_identity": {a: {"progression": 0.20, "episodes": 1},
+                                     b: {"progression": 0.25, "episodes": 1}}}
+    states = []
+    run_loop(objective=f"{a},{b}", seed_tree=_seed_tree(tmp_path / "seed"),
+             tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+             hub=_Hub({a: champ_a}),  # only A has a champion; B falls to the seed
+             image="img:dev", token="t", owner="dev", iterations=0,
+             now_fn=lambda: "2026-09-06T00:00:00Z",
+             runner=_fitness_runner(lambda v: {0: 0.2, 5: 0.7}[v]),
+             fetch=_champion_fetch({"github.com/t/a@11": 5}),
+             workdir=tmp_path / "work", on_state=states.append)
+    cold = [s for s in states if s["phase"] == "cold-start"][-1]  # final (complete) frame
+    assert cold["origins"]["github.com/t/a@11"] == {
+        "kind": "hub", "handle": "clyde", "sha": "11",
+        "repo": "github.com/t/a", "iteration": None}
+    assert cold["aa_baseline"][b] == 0.25   # AutoAscend floor for the championless cell
+
+
+def test_registered_child_gets_run_origin(tmp_path):
+    a = "wiz-elf-cha-mal"
+    states = []
+    run_loop(objective=a, seed_tree=_seed_tree(tmp_path / "seed"),
+             tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+             hub=_FakeHub(), image="img:dev", token="t", owner="dev", iterations=1,
+             now_fn=lambda: "2026-09-06T00:00:00Z", rng=random.Random(0),
+             runner=_fitness_runner(lambda v: {0: 0.2, 1: 0.8}[v]),
+             workdir=tmp_path / "work", on_state=states.append)
+    reg = next(s for s in states if s["phase"] == "registered")
+    run_origins = {d: o for d, o in reg["origins"].items() if o["kind"] == "run"}
+    assert run_origins and next(iter(run_origins.values()))["iteration"] == 1
+
+
+def test_coldstart_baseline_read_survives_a_malformed_shape(tmp_path):
+    # hub.baseline() can succeed (raise nothing) but still return a malformed
+    # shape -- a None per-identity entry, or an entry whose "progression" is
+    # None rather than a number. _baseline_floor's best-effort try/except must
+    # cover the WHOLE parse (not just the hub.baseline() call itself), so a
+    # malformed shape degrades to {} instead of crashing run_loop.
+    a, b = "wiz-elf-cha-mal", "wiz-orc-cha-mal"
+    class _Hub(_ElitesHub):
+        def baseline(self):
+            return {"per_identity": {a: None, b: {"progression": None}}}
+    states = []
+    run_loop(objective=f"{a},{b}", seed_tree=_seed_tree(tmp_path / "seed"),
+             tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+             hub=_Hub({}), image="img:dev", token="t", owner="dev", iterations=0,
+             now_fn=lambda: "2026-09-07T00:00:00Z",
+             runner=_fitness_runner(lambda v: 0.2),
+             workdir=tmp_path / "work", on_state=states.append)
+    cold = [s for s in states if s["phase"] == "cold-start"][-1]  # final (complete) frame
+    assert cold["aa_baseline"] == {}   # malformed entries dropped, not a crash
+
+
+# -- Task 4: seed the UNION cell at cold-start from the hub's /board rank-1
+# champion (best-on-average), so BEST OVERALL is a real incumbent from the
+# start rather than only filling later from a lucky local mutation.
+
+def test_coldstart_seeds_union_from_board_champion(tmp_path):
+    a, b = "wiz-elf-cha-mal", "wiz-orc-cha-mal"
+    champ_a = {"program_id": "github.com/t/a@11", "score": 0.9, "owner": "clyde",
+               "reference": {"repo": "github.com/t/a", "commit": "11"}}
+    champ_b = {"program_id": "github.com/t/b@22", "score": 0.9, "owner": "bob",
+               "reference": {"repo": "github.com/t/b", "commit": "22"}}
+    board_top = {"program_id": "github.com/t/u@33", "owner": "mikhail", "mean_progression": 0.7,
+                 "reference": {"repo": "github.com/t/u", "commit": "33"}}
+    class _Hub(_ElitesHub):
+        def board(self, scope, tier="self-reported"):
+            return [board_top]
+        def baseline(self):
+            return []
+    states = []
+    run_loop(objective=f"{a},{b}", seed_tree=_seed_tree(tmp_path / "seed"),
+             tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+             hub=_Hub({a: champ_a, b: champ_b}), image="img:dev", token="t", owner="dev",
+             iterations=0, now_fn=lambda: "2026-09-06T00:00:00Z",
+             runner=_fitness_runner(lambda v: {5: 0.5, 7: 0.6}[v]),  # union champ (v=7) scores 0.6
+             fetch=_champion_fetch({"github.com/t/a@11": 5, "github.com/t/b@22": 5,
+                                    "github.com/t/u@33": 7}),
+             workdir=tmp_path / "work", on_state=states.append)
+    cold = [s for s in states if s["phase"] == "cold-start"][-1]  # final (complete) frame
+    assert cold["union"] is not None
+    assert cold["union"]["digest"] == "github.com/t/u@33"
+    assert cold["origins"]["github.com/t/u@33"]["handle"] == "mikhail"
+    # Regression: the union champion's OWN cold-start union eval (full
+    # coverage -- every identity) must ride along, not just its score/digest
+    # -- the monitor's BEST OVERALL detail has nothing else to render it from.
+    assert cold["union"]["results"]
+    assert {r["character"] for r in cold["union"]["results"]} == {a, b}
+    assert all(r["progress"] == 0.6 for r in cold["union"]["results"])
+
+
+def test_union_seed_skipped_for_single_identity(tmp_path):
+    called = []
+    class _Hub(_FakeHub):
+        def board(self, scope, tier="self-reported"):
+            called.append(scope)
+            return []
+        def baseline(self): return []
+    run_loop(objective="wiz-elf-cha-mal", seed_tree=_seed_tree(tmp_path / "seed"),
+             tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+             hub=_Hub(), image="img:dev", token="t", owner="dev", iterations=0,
+             now_fn=lambda: "2026-09-06T00:00:00Z",
+             runner=_fitness_runner(lambda v: 0.2), workdir=tmp_path / "work")
+    assert called == []   # N=1: no board call, no union eval
+
+def test_union_seed_skipped_from_seed(tmp_path):
+    called = []
+    class _Hub(_FakeHub):
+        def board(self, scope, tier="self-reported"):
+            called.append(scope)
+            return []
+        def baseline(self): return []
+    run_loop(objective="wiz-elf-cha-mal,wiz-orc-cha-mal", from_seed=True,
+             seed_tree=_seed_tree(tmp_path / "seed"),
+             tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+             hub=_Hub(), image="img:dev", token="t", owner="dev", iterations=0,
+             now_fn=lambda: "2026-09-06T00:00:00Z",
+             runner=_fitness_runner(lambda v: 0.2), workdir=tmp_path / "work")
+    assert called == []   # --from-seed keeps the hub out
+
+
+# -- Task 5: hand per-seed TrajectoryResult dicts to the monitor -- the detail
+# view's full per-seed cause/depth/time breakdown. metrics.jsonl stays lean
+# (see test_harness_runlog.py); this rides the live on_iteration/on_state
+# callbacks only.
+
+def test_coldstart_emits_cell_results(tmp_path):
+    a = "wiz-elf-cha-mal"
+    b = "wiz-orc-cha-mal"
+    states = []
+    run_loop(objective=f"{a},{b}", from_seed=True, seed_tree=_seed_tree(tmp_path / "seed"),
+             tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+             hub=_FakeHub(), image="img:dev", token="t", owner="dev", iterations=0,
+             now_fn=lambda: "2026-09-06T00:00:00Z",
+             runner=_fitness_runner(lambda v: 0.2), workdir=tmp_path / "work",
+             on_state=states.append)
+    cold = [s for s in states if s["phase"] == "cold-start"][-1]  # final (complete) frame
+    assert a in cold["cell_results"] and "progress" in cold["cell_results"][a][0]
+
+
 # -- _pick_cell: weighted parent draw over the archive's cells. Each identity
 # weight 1, the union cell weight 2 -- but only once a full-coverage program
 # has filled it; before that the draw stays uniform over identities.
@@ -1053,3 +1220,28 @@ def test_pick_cell_weights_union_2x(tmp_path):
     # weights: a=1, b=1, union=2  -> union share 2/4 = 0.5
     assert 0.45 < counts[UNION] / 6000 < 0.55
     assert _pick_cell(random.Random(0), arc)  # returns without error
+
+
+def test_coldstart_emits_progressively_so_the_monitor_isnt_empty(tmp_path):
+    # Cold-start emits a state BEFORE the (long) evals + one after each champion
+    # is scored, so the monitor shows the identities immediately and fills each
+    # cell in live -- instead of the first frame landing only once the whole
+    # cold-start is over, leaving the Progress table empty until then.
+    a, b = "wiz-elf-cha-mal", "wiz-orc-cha-mal"
+    champ_a = {"program_id": "github.com/t/a@11", "score": 0.9, "owner": "dev",
+               "reference": {"repo": "github.com/t/a", "commit": "11"}}
+    champ_b = {"program_id": "github.com/t/b@22", "score": 0.9, "owner": "dev",
+               "reference": {"repo": "github.com/t/b", "commit": "22"}}
+    states = []
+    run_loop(objective=f"{a},{b}", seed_tree=_seed_tree(tmp_path / "seed"),
+             tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+             hub=_ElitesHub({a: champ_a, b: champ_b}), image="img:dev", token="t",
+             owner="dev", iterations=0, now_fn=lambda: "2026-09-07T00:00:00Z",
+             runner=_fitness_runner(lambda v: {5: 0.5, 9: 0.9}[v]),
+             fetch=_champion_fetch({"github.com/t/a@11": 5, "github.com/t/b@22": 9}),
+             workdir=tmp_path / "work", on_state=states.append)
+    cold = [s for s in states if s["phase"] == "cold-start"]
+    assert len(cold) >= 2                              # early frame + a per-champion frame
+    assert cold[0]["identities"] == sorted([a, b])     # identities known from the first frame
+    assert cold[0]["cells"] == []                      # ...but nothing scored yet
+    assert {c["identity"] for c in cold[-1]["cells"]} == {a, b}   # both cells filled by the end
