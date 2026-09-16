@@ -57,6 +57,19 @@ ARENA_MAJOR_BY_DIGEST: dict[str, int] = {
     # design was written against (862434c5...), so PR #67's "not measured"
     # equivalence claim above holds for amd64.
     "sha256:5c8c0cee2f28d2a0de5e9b78170a01ec0991a18a9802de0a43e8e312590d151c": 2,
+    # The pre-release docs cleanup, rebuilt because uv.lock is an arena input.
+    # The lock change is METADATA ONLY: it had drifted to describing the project
+    # as 0.17.0 with `textual >=0.60` while pyproject said 0.31.0 / >=8.2.8, but
+    # it already RESOLVED textual at 8.2.8, so not one package version moves and
+    # the installed environment is identical. Everything else that reaches this
+    # image -- README.md and a handful of modules under src/ -- is docstrings and
+    # comments, with one JSON `description` string in doctor.schema.json.
+    # arena/ and contracts/ are untouched since v0.31.0 (`git diff v0.31.0...HEAD
+    # -- src/nethackers/arena src/nethackers/contracts` is empty), so nothing on
+    # the path that seeds, steps or scores an episode differs from the digest
+    # above. Also the linux/amd64 LEG, not an index, so the reference
+    # architecture is preserved (I7). Read from the diff, not measured.
+    "sha256:865eb2033dd31892418915fe44a15e78e2beefc88fe358f89864b0ffce6d3e42": 2,
 }
 
 
