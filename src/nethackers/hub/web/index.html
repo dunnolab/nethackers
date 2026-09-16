@@ -1,5 +1,14 @@
 <title>NetHackers</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Site icon: NH as a pixel monogram -- the N and the H share a stem -- drawn
+     on a 16x16 grid and doubled to 32, so a 1x tab halves it back exactly and a
+     retina tab gets native pixels. Inlined like the badge logos further down, so
+     the page still carries every asset it draws. -->
+<link rel="icon" type="image/png" href="data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAACAAAAAgCAYAAABzenr0AAAAVUlEQVR42mMQFBT8P5CYYdQBg8YB/+fqYcW4NBKrjpD6UQeMOmDwOgBdfNQBhAwkFY86YOg4AJdD6JYIRx0w6oBB4wByK61RBwwdB4z2C0YdMGIdAAC3eOTnHl+PUwAAAABJRU5ErkJggg==">
+<!-- Agents that negotiate get markdown from `/` itself (hub/negotiate.py).
+     This is for the ones that do not: OpenAI's fetcher sends a browser Accept
+     and is reported to follow this hint to the .md sibling instead. -->
+<link rel="alternate" type="text/markdown" href="/index.md">
 <!-- Link preview (Twitter/X, Telegram, Slack, Discord). Text only, on purpose:
      no og:image, because a card image would be the one asset on this page that
      isn't drawn by the page itself. -->
@@ -1637,16 +1646,23 @@ function renderRecognition(){
 /* Stacked detail popups: each open pushes a fresh cascading window on top;
    closing it (x / backdrop / Esc) reveals the one beneath. */
 let _detailZ=60;
-function pushDetail(title, wide){
+/* `opts.onClose` (optional) runs just before the popup is torn down, for a
+   layer with state outside the DOM to settle -- the hacker layer walks the
+   history back. `mo.closeNow()` is the same teardown WITHOUT that hook, for a
+   caller that is already acting on the layer's behalf (the popstate handler). */
+function pushDetail(title, wide, opts){
+  opts=opts||{};
   const depth=document.querySelectorAll(".detailmodal").length;
   const mo=document.createElement("div");
   mo.className="modal detailmodal"; mo.style.zIndex=String(++_detailZ); mo.setAttribute("open","");
+  if(opts.hacker!=null) mo.dataset.hacker=opts.hacker;
   if(depth) mo.style.background="transparent";   // only the first popup dims the page; the rest cascade clean
   mo.innerHTML=`<div class="win${wide?' identitydetail':''}" role="dialog" aria-modal="true" style="transform:translate(${depth*26}px,${depth*26}px)">`
     +`<div class="win__title"><span>${esc(title)}</span><span class="x" role="button" tabindex="0" aria-label="Close">x</span></div>`
     +`<div class="win__body"></div></div>`;
   const pbody=mo.querySelector(".win__body"), x=mo.querySelector(".x");
-  const close=()=>{ mo.remove(); _detailZ=Math.max(60,_detailZ-1); };
+  mo.closeNow=()=>{ mo.remove(); _detailZ=Math.max(60,_detailZ-1); };
+  const close=()=>{ if(opts.onClose) opts.onClose(); mo.closeNow(); };
   x.addEventListener("click",close);
   x.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); close(); } });
   mo.addEventListener("click",e=>{ if(e.target===mo) close(); });
@@ -1654,6 +1670,43 @@ function pushDetail(title, wide){
   return pbody;
 }
 document.addEventListener("keydown",e=>{ if(e.key==="Escape"){ const a=document.querySelectorAll(".detailmodal"); if(a.length) a[a.length-1].querySelector(".x").click(); } });
+
+/* ---------- hacker deep links: /h/<username> ----------
+   A hacker popup IS a history entry. Opening one by click pushes /h/<username>
+   -- the shareable address the hub serves this same page from -- so the link in
+   the address bar always names what is on screen; Back closes the popup and
+   Forward reopens it; and a link opened cold reopens it after boot. Only this
+   layer touches the URL: an identity popup stacked underneath leaves the path
+   alone.
+   Which way a close goes is read off `history.state`, not off a flag we keep:
+   an entry we pushed (or came Forward into) carries {hacker}, so its close is a
+   history.back(); a cold deep link's entry carries null state and has nothing
+   behind it to go back to, so its close rewrites the path in place. Either way
+   the popup comes down at once and the popstate that follows finds the page
+   already reconciled -- closing stays instant, and the handler stays the one
+   place that decides what a path should have open. */
+const HACKER_PATH=/^\/h\/([^/]+)\/?$/;
+const SITE_TITLE=(document.querySelector('meta[property="og:site_name"]')||{}).content||"NetHackers";
+const withQuery=path=>path+location.search+location.hash;
+function linkedOwner(){
+  const m=HACKER_PATH.exec(location.pathname);
+  if(!m) return null;
+  try{ return decodeURIComponent(m[1]); }catch(e){ return m[1]; }
+}
+function hackerModals(){ return [...document.querySelectorAll(".detailmodal")].filter(m=>m.dataset.hacker!=null); }
+function setPageTitle(owner){ document.title=owner?`@${owner} \u2014 ${SITE_TITLE}`:SITE_TITLE; }
+function closeHackerLink(){
+  if(history.state&&history.state.hacker!=null) history.back();
+  else history.replaceState(null,"",withQuery("/"));
+  setPageTitle(null);
+}
+window.addEventListener("popstate",()=>{
+  const owner=linkedOwner(), open=hackerModals(), showing=open[open.length-1];
+  if(owner&&showing&&showing.dataset.hacker===owner) return;   // already up (a fragment nav, say)
+  open.forEach(m=>m.closeNow());
+  setPageTitle(owner);
+  if(owner) openHacker(owner,{linked:true});
+});
 function identityDelta(v,aa){
   if(v==null||aa==null) return {text:"—",cls:"dz"};
   const d=v-aa; return {text:(d>0?"+":"")+d.toFixed(3),cls:d>0.0005?"dpos":(d<-0.0005?"dneg":"dz")};
@@ -1762,8 +1815,13 @@ async function openBreakthrough(event){
     pbody.innerHTML=`<div class="popupstatus">Could not load this breakthrough submission.</div>`;
   }
 }
-async function openHacker(owner){
-  const pbody=pushDetail(`@${owner}`, true);
+async function openHacker(owner, opts){
+  // `opts.linked`: this popup is being restored FOR an existing history entry
+  // (a cold deep link, or Back/Forward) -- the path is already right, so
+  // pushing here would duplicate the entry.
+  if(!(opts&&opts.linked)) history.pushState({hacker:owner},"",withQuery("/h/"+encodeURIComponent(owner)));
+  setPageTitle(owner);
+  const pbody=pushDetail(`@${owner}`, true, {hacker:owner, onClose:closeHackerLink});
   pbody.innerHTML=`<div class="popupstatus">Loading registered programs and per-identity results&hellip;</div>`;
   try{
     // One page of the newest programs. The header count comes from the envelope's
@@ -1864,7 +1922,15 @@ async function boot(){
    -- claiming "still loading" when nothing is -- so it falls back to the same
    honest empty states a failed fetch produces. */
 renderFrontierSkeleton(); showFameSkeleton("keepers"); showFameSkeleton("breakthroughs");
-boot().catch(()=>{ renderFrontier(); renderRecognition(); });
+/* The deep-linked popup opens once boot has settled (either way): it reads the
+   honors universe for its records column, and an empty one would quietly print
+   a dash against every program. */
+boot().catch(()=>{ renderFrontier(); renderRecognition(); })
+      .then(()=>{ const owner=linkedOwner();
+                  // ...unless the visitor got there first: the fame tables are
+                  // live before boot settles, so a click during the wait has
+                  // already opened (and re-addressed) a popup of its own.
+                  if(owner&&!hackerModals().length) openHacker(owner,{linked:true}); });
 /* ===== The Nethack Dictionary: audio-reactive dungeon wall around the .page frame ===== */
 (function(){
   const page=document.querySelector(".page"), cv=document.getElementById("dictviz"), bar=document.getElementById("dictbar");

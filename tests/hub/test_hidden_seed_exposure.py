@@ -61,3 +61,12 @@ def test_atoms_tier_verified_stays_empty(client):
     # Not "returns verified rows without seeds" -- returns NOTHING. /atoms reads
     # the `atoms` table, which verified rows never enter.
     assert client.get("/atoms?tier=verified").json()["rows"] == []
+
+
+def test_the_brief_routes_never_carry_a_hidden_seed(client):
+    """The brief reads the verified tier for its floor. Aggregates only."""
+    for path, headers in (("/", {"Accept": "text/markdown, text/html, */*"}),
+                          ("/index.md", {}), ("/llms.txt", {})):
+        body = client.get(path, headers=headers).text
+        for seed in HIDDEN_SEEDS:
+            assert str(seed) not in body

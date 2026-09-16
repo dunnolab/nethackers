@@ -122,6 +122,33 @@ def test_root_serves_the_page(tmp_path: Any) -> None:
     assert 'id="updated"' in resp.text
 
 
+def test_root_serves_the_nh_monogram_as_an_inline_favicon(tmp_path: Any) -> None:
+    # The site icon ships inline in the head, the same way the badge logos and
+    # the dunnolab hat do -- nothing extra for the hub to route, and the page
+    # keeps drawing every one of its own assets.
+    import base64
+    import re
+
+    client, _store = _app(tmp_path)
+    body = client.get("/").text
+
+    match = re.search(
+        r'<link rel="icon" type="image/png" href="data:image/png;base64,([A-Za-z0-9+/=]+)">',
+        body,
+    )
+    assert match is not None, "the page declares no inline PNG favicon"
+
+    icon = base64.b64decode(match.group(1))
+    assert icon[:8] == b"\x89PNG\r\n\x1a\n"
+    # 32x32: a nearest-neighbour double of the 16x16 grid the mark is drawn on,
+    # so a 1x tab halves it back exactly and a retina tab gets native pixels.
+    assert int.from_bytes(icon[16:20], "big") == 32
+    assert int.from_bytes(icon[20:24], "big") == 32
+    # Two flat colours on a 32px grid -- kilobytes would mean someone swapped in
+    # a photograph.
+    assert len(icon) < 1024
+
+
 def test_site_uses_identity_boards_and_concrete_contributor_recognition(tmp_path: Any) -> None:
     client, _store = _app(tmp_path)
     body = client.get("/").text
@@ -137,7 +164,7 @@ def test_site_uses_identity_boards_and_concrete_contributor_recognition(tmp_path
     assert 'id="activityfeed"' not in body
     assert 'class="frontierrow"' in body
     assert "async function openIdentity(identity)" in body
-    assert "async function openHacker(owner)" in body
+    assert "async function openHacker(owner, opts)" in body
     assert "async function openBreakthrough(event)" in body
     assert 'data-breakthrough="${i}"' in body
     for detail in (
@@ -623,3 +650,60 @@ def test_hackers_random_empty_when_no_scored_hackers(tmp_path: Any) -> None:
     client, store = _app(tmp_path)
     _seed_root(store, "rootbot", "r")
     assert client.get("/hackers/random").json()["rows"] == []
+
+
+def test_hacker_deep_link_serves_the_same_page(tmp_path: Any) -> None:
+    """``/h/<handle>`` is the same single-page app as ``/`` -- the page opens
+    the hacker popup client-side from the path, so the route must hand back
+    the whole document, not a fragment or a redirect."""
+    client, _store = _app(tmp_path)
+    resp = client.get("/h/sam")
+    assert resp.status_code == 200
+    assert "text/html" in resp.headers["content-type"]
+    assert 'id="rolegrid"' in resp.text
+    assert 'id="recordholders"' in resp.text
+
+
+def test_hacker_deep_link_serves_an_unregistered_handle(tmp_path: Any) -> None:
+    """No DB lookup gates the route: a handle nobody registered still gets the
+    page, and the popup renders its own "no registered programs" state."""
+    client, _store = _app(tmp_path)
+    assert client.get("/h/nobody-has-this-handle").status_code == 200
+
+
+def test_hacker_deep_link_card_names_the_handle(tmp_path: Any) -> None:
+    """The link preview (Twitter/X, Telegram, Slack, Discord) is personalized
+    for a shared hacker link -- otherwise every /h/ link shows the generic site
+    card. Text only, like the rest of the head: no og:image."""
+    body = _app(tmp_path)[0].get("/h/sam").text
+    assert '<title>@sam &mdash; NetHackers</title>' in body
+    assert '<meta property="og:title" content="@sam on NetHackers">' in body
+    assert '<meta name="twitter:title" content="@sam on NetHackers">' in body
+    assert '<meta property="og:url" content="https://nethackers.dunnolab.ai/h/sam">' in body
+    assert "@sam" in body.split("<style>")[0].split('property="og:description"')[1]
+
+
+def test_hacker_deep_link_card_escapes_the_handle(tmp_path: Any) -> None:
+    """The handle is the one piece of caller-controlled text in the head, so
+    it is HTML-escaped before it is stamped into an attribute."""
+    body = _app(tmp_path)[0].get('/h/a"><b>x').text
+    assert '"><b>x' not in body
+    assert "&quot;&gt;&lt;b&gt;x" in body
+
+
+def test_root_card_stays_generic(tmp_path: Any) -> None:
+    """Stamping the hacker card must not leak into the front page."""
+    body = _app(tmp_path)[0].get("/").text
+    assert "<title>NetHackers</title>" in body
+    assert '<meta property="og:title" content="NetHackers">' in body
+    assert '<meta property="og:url" content="https://nethackers.dunnolab.ai/">' in body
+
+
+def test_page_head_carries_the_stampable_card_tags(tmp_path: Any) -> None:
+    """The stamper rewrites the ``content`` of these exact tags. If the head is
+    re-worded without them, personalization silently no-ops -- so pin them."""
+    body = _app(tmp_path)[0].get("/").text
+    for marker in ('property="og:title"', 'property="og:description"',
+                   'property="og:url"', 'name="twitter:title"',
+                   'name="twitter:description"', 'name="description"'):
+        assert body.count(marker) == 1, marker

@@ -31,17 +31,20 @@ needs. ``GET /elites`` resolves its own ``?scope=`` purely via
 
 from __future__ import annotations
 
+import html as _html
 import json
 import os
+import re
 from collections.abc import Callable
 from dataclasses import asdict
 from datetime import UTC, datetime
 from importlib.metadata import version as _pkg_version
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
-from fastapi import FastAPI, Header, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import FileResponse, HTMLResponse, Response
 from pydantic import BaseModel
 
 from nethackers.arena.seeds import secret_fingerprint as _fp
@@ -51,6 +54,7 @@ from nethackers.hub.auth import AuthError, AuthProvider, GitHubAppAuth, LocalStu
 from nethackers.hub.envelope import envelope
 from nethackers.hub.github import GitHubRead, GitHubReadError
 from nethackers.hub.ids import program_id
+from nethackers.hub.negotiate import prefers_markdown
 from nethackers.hub.objectives import CATALOG
 from nethackers.hub.poll import PollValidationError, clean_vote
 from nethackers.hub.store import Store
@@ -79,6 +83,7 @@ from nethackers.hub.views.achievements import (
 )
 from nethackers.hub.views.baseline import read_baseline
 from nethackers.hub.views.boards import aggregate_board, board, resolve_scope
+from nethackers.hub.views.brief import render_brief
 from nethackers.hub.views.elites import read_elites
 from nethackers.hub.views.hackers import hacker_board, leaders as hackers_leaders
 from nethackers.hub.views.programs import count_programs, get_program, list_programs
@@ -91,6 +96,60 @@ from nethackers.hub.views.verified import read_verified, read_verified_baseline
 
 # The index.html file shipped in the wheel package data.
 _INDEX = Path(__file__).parent / "web" / "index.html"
+
+# The canonical public origin, used to build the absolute og:url a share card
+# needs. It is the same literal the page's own head already carries; keeping it
+# here means a hacker link previews as itself rather than as the front page.
+_SITE_URL = "https://nethackers.dunnolab.ai"
+
+
+def _served_page() -> str:
+    """The page as it goes out on the wire. Stamps the masthead {{version}}
+    from the installed package at serve time, so it can never drift from
+    pyproject the way a hardcoded string does. Read per-request (like
+    ``_dict_audio_path``) -- cheap, and a pure function of the file + package
+    metadata."""
+    return _INDEX.read_text(encoding="utf-8").replace("{{version}}", _pkg_version("nethackers"))
+
+
+def _retitle(page: str, title: str) -> str:
+    """Rewrite the head's one ``<title>``."""
+    return re.sub(r"(<title>)[^<]*(</title>)", lambda m: m[1] + title + m[2], page, count=1)
+
+
+def _restamp(page: str, attr: str, value: str) -> str:
+    """Rewrite the ``content`` of the one ``<meta {attr} ...>`` tag in the head.
+    Keyed on the attribute (``property="og:title"``), never on the copy, so
+    re-wording the card does not silently switch personalization off; a test
+    pins the tags themselves."""
+    return re.sub(
+        rf'(<meta {re.escape(attr)} content=")[^"]*(">)',
+        lambda m: m[1] + value + m[2], page, count=1,
+    )
+
+
+def _hacker_card(page: str, username: str) -> str:
+    """Personalize the text-only link preview (Twitter/X, Telegram, Slack,
+    Discord) of a ``/h/<username>`` page. ``username`` is the one piece of
+    caller-controlled text in the head, so every stamped copy of it is
+    HTML-escaped, and the og:url path segment is percent-encoded first."""
+    who = _html.escape("@" + username, quote=True)
+    desc = _html.escape(
+        f"Registered programs and per-identity results for @{username} "
+        "on the NetHackers frontier.", quote=True,
+    )
+    url = _html.escape(f"{_SITE_URL}/h/{quote(username, safe='')}", quote=True)
+    page = _retitle(page, f"{who} &mdash; NetHackers")
+    for attr, value in (
+        ('name="description"', desc),
+        ('property="og:title"', f"{who} on NetHackers"),
+        ('property="og:description"', desc),
+        ('property="og:url"', url),
+        ('name="twitter:title"', f"{who} on NetHackers"),
+        ('name="twitter:description"', desc),
+    ):
+        page = _restamp(page, attr, value)
+    return page
 
 
 def _dict_audio_path() -> Path:
@@ -238,15 +297,53 @@ def create_app(
         # on register with no hint why (see hubclient.client.HubClient.hub_mode).
         return {"status": "ok", "auth": auth.mode}
 
-    @app.get("/", response_class=HTMLResponse)
-    def index() -> str:
-        # Stamp the masthead {{version}} from the installed package at serve
-        # time, so it can never drift from pyproject the way a hardcoded
-        # string does. Read per-request (like _dict_audio_path) -- cheap, and
-        # keeps the handler a pure function of the file + package metadata.
-        return _INDEX.read_text(encoding="utf-8").replace(
-            "{{version}}", _pkg_version("nethackers")
-        )
+    def _brief() -> str:
+        """The markdown representation, rendered from live store reads."""
+        return render_brief(store, epoch=_epoch(), version=_pkg_version("nethackers"))
+
+    @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
+    def index(request: Request) -> Response:
+        """Two representations of one resource, chosen by Accept (design
+        2026-09-16). HTML is the default for everyone who did not explicitly
+        ask for markdown, including `*/*` (I1).
+
+        `Vary: Accept` goes on BOTH branches (I2). Caddy runs no response
+        cache today, so the immediate exposure is the clients' own -- Claude
+        Code holds a fetched URL for 15 minutes -- but this is the header that
+        makes putting a CDN in front safe later.
+        """
+        if prefers_markdown(request.headers.get("accept")):
+            return Response(content=_brief(),
+                            media_type="text/markdown; charset=utf-8",
+                            headers={"Vary": "Accept"})
+        return Response(content=_served_page(),
+                        media_type="text/html; charset=utf-8",
+                        headers={"Vary": "Accept"})
+
+    @app.get("/h/{username}", response_class=HTMLResponse)
+    def hacker_page(username: str) -> str:
+        """The deep link behind a hacker popup: the same single page as ``/``,
+        which reads the handle back off the path and opens the popup itself.
+        Deliberately no DB lookup -- an unregistered handle still gets the
+        page, and the popup renders its own "no registered programs" state
+        rather than a 404 that would cost a query on every page load.
+
+        Not content-negotiated: it is a human deep link, and an agent that
+        wants the data has /index.md and the JSON reads."""
+        return _hacker_card(_served_page(), username)
+
+    @app.api_route("/index.md", methods=["GET", "HEAD"], include_in_schema=False)
+    @app.api_route("/llms.txt", methods=["GET", "HEAD"], include_in_schema=False)
+    def brief_document() -> Response:
+        """The same document at two conventional URLs (D9), as text/plain
+        (D4). Stacked decorators register both paths against one handler.
+
+        Honest expectation for /llms.txt: Ahrefs' May 2026 logs over 137,210
+        domains found 97% of published llms.txt files were never fetched at
+        all. It is here because Claude Code -- the client this design targets
+        -- is the second-most-frequent fetcher of the ones that are read.
+        """
+        return Response(content=_brief(), media_type="text/plain; charset=utf-8")
 
     @app.get("/poll")
     def poll() -> dict[str, Any]:

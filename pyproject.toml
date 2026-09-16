@@ -1,6 +1,6 @@
 [project]
 name = "nethackers"
-version = "0.28.0"
+version = "0.30.0"
 description = "Solve NetHack by evolving symbolic players — evaluation and registration core."
 readme = "README.md"
 requires-python = ">=3.11"
@@ -49,6 +49,7 @@ packages = ["src/nethackers"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/nethackers/hub/web/index.html" = "nethackers/hub/web/index.html"
+"src/nethackers/hub/web/brief.md" = "nethackers/hub/web/brief.md"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

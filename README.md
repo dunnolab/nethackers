@@ -191,6 +191,8 @@ pip install nethackers
 uv tool install nethackers
 ```
 
+Don't have `uv`? It installs from https://astral.sh/uv.
+
 **Check your machine**
 
 ```bash
