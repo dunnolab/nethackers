@@ -9,6 +9,7 @@ import time
 from dataclasses import dataclass, field
 from statistics import pstdev
 
+from nethackers.contracts.models import end_status_word
 from nethackers.harness.loop import IterationResult
 from nethackers.harness.metering import Meter, TokenUsage
 from nethackers.tui.prettify import prettify
@@ -65,32 +66,20 @@ class EvalView:
         return pstdev(s) if len(s) > 1 else 0.0
 
 
-# NLE engine end-of-episode codes (nle StepStatus), which the arena records
-# verbatim as a string (I4: no arena change -- so we translate here, not there):
-#   "1" = the character died in-game                                   -> died
-#  "-1" = the episode ended without a death or ascension              -> aborted
-#         (quit / escaped / ran out the step budget; no cause of death)
-#   "0" = still running (never terminal in a completed result)        -> running
-# Ascension is carried separately by the `ascended` flag (checked first), so an
-# ascension that also reports end_status "1" still reads as "ascended".
-_NLE_END_STATUS = {"1": "died", "-1": "aborted", "0": "running"}
-
-
 def _status_word(row: dict) -> str:
     """Normalize a seed row's status to a word: ascended | died | aborted |
     timed out (| running). Completed episodes carry the raw NLE ``end_status``
-    code, translated via ``_NLE_END_STATUS``; live rows (parsed from the arena's
-    stderr, which omits end_status) fall back to a best guess from the arena
-    ResultStatus. A word-valued end_status (test fixtures / a future arena that
-    emits words) passes straight through."""
+    code, translated via ``end_status_word`` (shared with the mutator brief);
+    live rows (parsed from the arena's stderr, which omits end_status) fall back
+    to a best guess from the arena ResultStatus."""
     if row.get("ascended"):
         return "ascended"
     st = str(row.get("status") or "")
     if "timeout" in st or st == "timed out":
         return "timed out"
-    end = row.get("end_status")
-    if end is not None and str(end) != "":
-        return _NLE_END_STATUS.get(str(end), str(end))
+    word = end_status_word(row.get("end_status"))
+    if word is not None:
+        return word
     return "died" if st in ("", "completed") else st
 
 

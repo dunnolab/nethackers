@@ -5,7 +5,20 @@ per-episode ``character``/``milestone`` -- defaulted so M1's existing
 positional/keyword construction sites and ``from_dict(old_dict)`` still work
 unchanged (Task 2 will populate the new fields for real)."""
 
-from nethackers.contracts.models import Atom, Objective, TrajectoryResult
+from nethackers.contracts.models import Atom, Objective, TrajectoryResult, end_status_word
+
+
+def test_end_status_word_translates_nle_codes_and_passes_words_through():
+    # arena stores the raw NLE StepStatus code as a string; the shared helper
+    # both the monitor and the mutator brief use maps it to a human word.
+    assert end_status_word("1") == "died"
+    assert end_status_word("-1") == "aborted"
+    assert end_status_word("0") == "running"
+    assert end_status_word(1) == "died"              # tolerant of an int code
+    assert end_status_word(None) is None             # no outcome recorded
+    assert end_status_word("") is None
+    assert end_status_word("died") == "died"         # already a word -> passthrough
+    assert end_status_word("7") == "7"               # unknown code -> as-is, never crash
 
 
 def test_objective_action_timeout_default_is_the_local_hang_guard():

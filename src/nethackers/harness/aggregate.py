@@ -9,6 +9,8 @@ from collections.abc import Sequence
 from statistics import mean
 from typing import Protocol
 
+from nethackers.contracts.models import end_status_word
+
 
 class _HasCharProgress(Protocol):
     # read-only properties (not bare attrs) so a frozen dataclass like
@@ -27,6 +29,8 @@ class _HasOutcome(Protocol):
     # a crash on missing fields (spec §7).
     @property
     def progress(self) -> float: ...
+    @property
+    def ascended(self) -> bool: ...
     @property
     def end_status(self) -> str | None: ...
     @property
@@ -73,15 +77,24 @@ def regressions(
 
 def outcome_summary(results: Sequence[_HasOutcome]) -> str:
     """Best-effort text rollup of an eval's outcomes for `/refs/CONTEXT.md` /
-    the brief, e.g. ``"died×4, starved×1; deepest milestone: <m>; mean
-    0.11"``. The end_status tally and progress mean are always computed; the
+    the brief, e.g. ``"died×4, aborted×1; deepest milestone: <m>; mean
+    0.11"``. The outcome tally and progress mean are always computed; the
     deepest-milestone clause is appended only when at least one episode
     reports one. Never raises on missing/older-evidence fields (design §7) --
     an empty `results`, or every `milestone`/`end_status` being None, still
-    renders, just without that clause."""
+    renders, just without that clause.
+
+    Outcomes are word-form and ascension-aware, matching the monitor's status
+    column: an ascension reads "ascended" regardless of its raw engine code;
+    otherwise the NLE ``end_status`` code is translated to a word
+    (1->died, -1->aborted). Episodes with no recorded outcome are skipped."""
     if not results:
         return "no results"
-    tally = Counter(r.end_status for r in results if r.end_status is not None)
+
+    def _outcome(r: _HasOutcome) -> str | None:
+        return "ascended" if r.ascended else end_status_word(r.end_status)
+
+    tally = Counter(w for r in results if (w := _outcome(r)) is not None)
     parts = [f"{status}×{count}" for status, count in tally.most_common()]
     pieces = [", ".join(parts)] if parts else ["no outcome data"]
     milestoned = [r for r in results if r.milestone]

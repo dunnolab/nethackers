@@ -48,9 +48,9 @@ def test_regressions_eps_tolerance():
     assert A.regressions({"a": 0.50}, {"a": 0.49}, eps=0.02) == []
 
 
-def _r(progress, end="died", milestone=None, depth=1):
+def _r(progress, end="died", milestone=None, depth=1, asc=False):
     return TrajectoryResult(trajectory_id=0, status="completed", progress=progress,
-        ascended=False, steps=1, turns=1, max_depth=depth, end_status=end, error=None,
+        ascended=asc, steps=1, turns=1, max_depth=depth, end_status=end, error=None,
         wall_seconds=0.1, character="c", milestone=milestone)
 
 
@@ -58,3 +58,13 @@ def test_outcome_summary_tallies_and_is_best_effort():
     s = outcome_summary([_r(0.1, "died"), _r(0.1, "died"), _r(0.2, "starved")])
     # mean-ish present, no crash on missing milestone
     assert "died×2" in s and "starved×1" in s and "0.1" in s
+
+
+def test_outcome_summary_translates_raw_nle_codes_and_is_ascension_aware():
+    # real arena results carry the raw NLE end_status CODE (1=death, -1=aborted),
+    # not a word -- the rollup the mutator reads must show words, and an ascension
+    # must read "ascended", not "died" (its engine code can still be "1").
+    s = outcome_summary([_r(0.1, "1"), _r(0.1, "1"), _r(0.3, "-1"),
+                         _r(1.0, "1", asc=True)])
+    assert "died×2" in s and "aborted×1" in s and "ascended×1" in s
+    assert "1×" not in s and "-1×" not in s   # no raw codes leak to the brief
