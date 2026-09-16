@@ -1,7 +1,9 @@
 """``NetHackersApp``: the dashboard shell -- a ``.tabbar`` header (identity +
 hub + section labels) over a ``ContentSwitcher`` hosting the section views
-(Home/Boards/Map/Elites/Runs/Evolve), plus an optional pushed
-``EvolveScreen`` for ``nethackers evolve``'s TTY path.
+(Home/Runs/Evolve), plus an optional pushed ``EvolveScreen`` for
+``nethackers evolve``'s TTY path. Hub-browsing views (leaderboard / frontier /
+elites) live in the CLI (``nethackers frontier`` etc.) and the website, not
+this local run-focused dashboard.
 
 Replaces the old single-purpose ``EvolveApp``, which owned its own status
 bar and mutation-log tabs directly. That live-monitor UI now lives in
@@ -50,15 +52,13 @@ from nethackers.tui.nav import dedup_visible, nearest_in_direction
 from nethackers.tui.run import Run
 from nethackers.tui.screens.evolve_form import EvolveForm
 from nethackers.tui.screens.home import HomeView
-from nethackers.tui.screens.hub import BoardsView, ElitesView, MapView
 from nethackers.tui.screens.login import LoginModal
 from nethackers.tui.screens.monitor import RunMonitor
 from nethackers.tui.screens.runs import RunsView
 from nethackers.tui.theme import CSS
 
 _SECTIONS = [
-    ("home", "⌂ Home"), ("boards", "♛ Leaderboard"), ("map", "⇩ Frontier"),
-    ("elites", "⚑ Elites"), ("runs", "▶ Runs"), ("evolve", "⚔ Evolve"),
+    ("home", "⌂ Home"), ("runs", "▶ Runs"), ("evolve", "⚔ Evolve"),
 ]
 
 # Give up on the hub-mode probe fast so the idbar never lingers on it; the
@@ -118,9 +118,9 @@ def failure_detail(error: BaseException) -> str:
 
 
 class NetHackersApp(App):
-    """The dashboard shell. Six sections switched by ``1``..``6`` (or the
+    """The dashboard shell. Three sections switched by ``1``..``3`` (or the
     matching tab) over a ``ContentSwitcher``, including the ``⚔ Evolve``
-    launch form (``e``/key ``6``); ``l`` opens the in-app GitHub device-flow
+    launch form (``e``/key ``3``); ``l`` opens the in-app GitHub device-flow
     login (``LoginModal``), and Home's own button logs in or out."""
 
     CSS = CSS
@@ -164,15 +164,12 @@ class NetHackersApp(App):
 
     def compose(self) -> ComposeResult:
         self._idbar_prefix = self._idbar_text()
-        yield Static(f"{self._idbar_prefix}   —   ↑↓←→ move · enter use · 1–6 jump · q quit",
+        yield Static(f"{self._idbar_prefix}   —   ↑↓←→ move · enter use · 1–3 jump · q quit",
                      id="idbar", classes="idbar")
         yield Tabs(*(Tab(label, id=f"tab-{key}") for key, label in _SECTIONS), id="nav")
         login = self._creds.login if self._creds else None
         with ContentSwitcher(initial=self._start, id="body"):
             yield HomeView(self._hub, login, id="home")
-            yield BoardsView(self._hub, login, id="boards")
-            yield MapView(self._hub, login, id="map")
-            yield ElitesView(self._hub, login, id="elites")
             yield RunsView(id="runs")
             yield EvolveForm(self._hub, self._creds, id="evolve")
 
@@ -210,29 +207,10 @@ class NetHackersApp(App):
 
     def on_tabs_tab_activated(self, event: Tabs.TabActivated) -> None:
         """Clicking a tab or moving with ← → (Textual's Tabs) switches the
-        section; a guard skips the burst of activations Tabs fires before the
-        ContentSwitcher has mounted.
-
-        ``MapView`` (the Frontier section) hosts its own subtab bar
-        (``Tabs(id="ftabs")``, for its Universe/Program regimes) nested
-        inside the ContentSwitcher. Its ``TabActivated`` bubbles up through
-        the ContentSwitcher to this same handler, since Textual messages
-        bubble to every ancestor regardless of which ``Tabs`` posted them --
-        and a ``Tabs`` widget auto-activates its first tab as soon as it
-        mounts, so this fires the moment the app starts (all six sections,
-        ``MapView`` included, are composed into the ContentSwitcher up
-        front, not lazily on first visit), not just when a user actually
-        clicks a Frontier subtab. Confirmed by temporarily removing the
-        guard below: ``body.current`` got set to ``"ft-universe"``, which
-        doesn't exist as a ContentSwitcher child, raising ``NoMatches`` and
-        crashing the app on mount -- before any test even switched to the
-        Frontier section. Guard on the event's *originating* ``Tabs``
-        widget -- ``event.tabs`` (confirmed present on installed Textual
-        8.2.8's ``Tabs.TabMessage.__init__``, which every ``TabActivated``
-        carries) -- so only the main nav (``id="nav"``) ever drives
-        ``body.current``; MapView's own handler switches its internal
-        regime itself and never touches this ContentSwitcher.
-        """
+        section. Guard on the event's *originating* ``Tabs`` -- only the main
+        nav (``id="nav"``) may drive ``body.current`` -- so that any future
+        nested ``Tabs`` inside a section can't misroute the ContentSwitcher to
+        a child id that doesn't exist (which would raise ``NoMatches``)."""
         if event.tabs.id != "nav":
             return
         if not event.tab.id:
@@ -416,7 +394,7 @@ class NetHackersApp(App):
 
     def _nav_update_hint(self) -> None:
         legend = (
-            "↑↓←→ move · enter use · 1–6 jump · q quit"
+            "↑↓←→ move · enter use · 1–3 jump · q quit"
             if self._nav_mode == "navigate"
             else "▸ editing — esc back to navigation"
         )
@@ -433,7 +411,7 @@ class NetHackersApp(App):
 
     def _nav_targets(self) -> list[Widget]:
         """Every navigable element on the dashboard right now: the section
-        tabs, plus the visible pane's subtabs / controls / focusable cards."""
+        tabs, plus the visible pane's controls / focusable cards."""
         targets: list[Widget] = list(self.query("#nav Tab"))
         try:
             body = self.query_one("#body", ContentSwitcher)
@@ -442,7 +420,6 @@ class NetHackersApp(App):
         current = body.current
         if current:
             pane = body.get_child_by_id(current)
-            targets += list(pane.query("#ftabs Tab"))
             for kind in (Input, Select, OptionList, Button):
                 targets += list(pane.query(kind))
             if getattr(pane, "can_focus", False):
@@ -453,20 +430,6 @@ class NetHackersApp(App):
     @staticmethod
     def _is_nav_tab(widget: Widget) -> bool:
         return isinstance(widget, Tab) and (widget.id or "").startswith("tab-")
-
-    @staticmethod
-    def _is_subtab(widget: Widget) -> bool:
-        # a section's own subtab (Frontier's Universe/Program: id "ft-…")
-        return isinstance(widget, Tab) and (widget.id or "").startswith("ft-")
-
-    def _active_subtab(self) -> Widget | None:
-        """The currently-active subtab widget (Frontier's #ftabs), or None."""
-        try:
-            active = self.query_one("#ftabs", Tabs).active
-        except Exception:
-            return None
-        return next((w for w in self._nav_targets()
-                     if self._is_subtab(w) and w.id == active), None)
 
     def _active_section_tab(self) -> Widget | None:
         body = self.query_one("#body", ContentSwitcher)
@@ -484,46 +447,29 @@ class NetHackersApp(App):
             return
         others = [w for w in self._nav_targets() if w is not cur]
         nav_tabs = [w for w in others if self._is_nav_tab(w)]
-        subtabs = [w for w in others if self._is_subtab(w)]
-        content = [w for w in others
-                   if not self._is_nav_tab(w) and not self._is_subtab(w)]
+        content = [w for w in others if not self._is_nav_tab(w)]
         if self._is_nav_tab(cur):
             # the main tab row: left/right along the tabs, down dives in
             if direction in ("left", "right"):
                 nxt = nearest_in_direction(cur, nav_tabs, direction)
-            elif direction == "down":  # to the active subtab if any, else first control
-                nxt = self._active_subtab() or (content[0] if content else None)
+            elif direction == "down":  # into the section body
+                nxt = content[0] if content else None
             else:
                 nxt = None  # already at the top
-        elif self._is_subtab(cur):
-            # a section's own subtab row (Frontier Universe/Program)
-            if direction in ("left", "right"):
-                nxt = nearest_in_direction(cur, subtabs, direction)
-            elif direction == "down":
-                nxt = content[0] if content else None  # into the section body
-            elif direction == "up":
-                nxt = self._active_section_tab()       # back up to the main tab
-            else:
-                nxt = None
         else:
             nxt = nearest_in_direction(cur, content, direction)
-            if nxt is None and direction == "up":  # leaving the top of the body:
-                # land on the ACTIVE subtab (never the geometric nearest, which
-                # would silently flip the regime), else the section's main tab
-                nxt = self._active_subtab() or self._active_section_tab()
+            if nxt is None and direction == "up":  # leaving the top of the body
+                nxt = self._active_section_tab()   # back up to the main tab
         if nxt is None:
             return
         self._nav_set_cursor(nxt)
         self._nav_switch_tab_live(nxt)
 
     def _nav_switch_tab_live(self, widget: Widget) -> None:
-        """Moving the cursor onto a section/subtab switches to it live."""
+        """Moving the cursor onto a section tab switches to it live."""
         wid = widget.id or ""
         if wid.startswith("tab-"):
             self.query_one("#nav", Tabs).active = wid
-        elif wid.startswith("ft-"):
-            with contextlib.suppress(Exception):
-                self.query_one("#ftabs", Tabs).active = wid
 
     def _nav_activate(self) -> None:
         w = self._nav_cursor

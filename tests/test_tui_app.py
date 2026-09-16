@@ -1,15 +1,15 @@
 """Widget-level tests for ``NetHackersApp`` -- the dashboard shell (Task
 10): a ``.tabbar`` header showing identity + hub over a ``ContentSwitcher``
-hosting the five section views, switched by number-key bindings, plus an
-optional pushed ``EvolveScreen`` whose ``.error``/``.results`` this shell
-delegates through its own ``.error``/``.results`` properties (what
+hosting the three section views (Home/Runs/Evolve), switched by number-key
+bindings, plus an optional pushed ``EvolveScreen`` whose ``.error``/``.results``
+this shell delegates through its own ``.error``/``.results`` properties (what
 ``cli.py``'s evolve TTY branch reads after ``app.run()``).
 
 Mounted against a dead loopback hub (nothing listens on port 1, so every
-hub-backed section view's real httpx call fails near-instantly with
-``ConnectError`` and degrades to its own friendly "unreachable" message --
-the same hermeticity trick ``test_tui_home.py``/``test_tui_hub_views.py``
-already use) rather than a plausible real address like
+hub-backed call -- Home's program count, the idbar's mode probe -- fails
+near-instantly with ``ConnectError`` and degrades to its own friendly
+"unreachable" message -- the same hermeticity trick ``test_tui_home.py``
+already uses) rather than a plausible real address like
 ``http://localhost:8000``: a real hub dev server can genuinely be listening
 there on a developer's machine (e.g. via ``docker compose up``), and this
 suite must never depend on -- or accidentally talk to -- one.
@@ -37,9 +37,9 @@ async def test_shell_shows_identity_and_switches_sections():
         assert "@castiel" in str(app.query_one(".idbar").render())
         assert app.query_one("#body", ContentSwitcher).current == "home"  # default start
 
-        await pilot.press("2")  # -> boards
+        await pilot.press("2")  # -> runs
         await pilot.pause()
-        assert app.query_one("#body", ContentSwitcher).current == "boards"
+        assert app.query_one("#body", ContentSwitcher).current == "runs"
 
 
 async def test_shell_guest_when_logged_out():
@@ -173,11 +173,11 @@ async def test_escape_leaves_a_focused_field_so_q_can_quit():
     is dead while you're typing in one of the Evolve form's text fields (e.g.
     iterations; Textual ``Input`` consumes printable keys before any binding,
     ``priority`` or not). ``escape`` hands control back to the modal nav
-    (navigate mode, nothing focused), restoring the global ``q`` / ``1–6``
+    (navigate mode, nothing focused), restoring the global ``q`` / ``1–3``
     keys -- the way out of the field a stuck user needs."""
     app = NetHackersApp(hub=_DEAD_HUB, creds=Credentials("castiel", "t"))
     async with app.run_test() as pilot:
-        await pilot.press("6")  # -> Evolve
+        await pilot.press("3")  # -> Evolve
         await pilot.pause()
         app.query_one("#f_iters", Input).focus()
         await pilot.pause()
@@ -306,32 +306,11 @@ async def test_activating_a_tab_externally_syncs_the_keyboard_cursor():
     app = NetHackersApp(hub=_DEAD_HUB, creds=Credentials("castiel", "t"), start="runs")
     async with app.run_test() as pilot:
         await pilot.pause()  # _nav_start -> cursor on tab-runs
-        app.query_one("#nav", Tabs).active = "tab-map"  # simulate an external activation
+        app.query_one("#nav", Tabs).active = "tab-evolve"  # simulate an external activation
         await pilot.pause()
-        assert app._nav_cursor is not None and app._nav_cursor.id == "tab-map"
+        assert app._nav_cursor is not None and app._nav_cursor.id == "tab-evolve"
         golds = [t.id for t in app.screen.query("#nav Tab.-cursor")]
-        assert golds == ["tab-map"]  # exactly one highlighted tab, matching the section
-
-
-async def test_frontier_up_from_body_returns_to_active_subtab_not_the_other():
-    # regression: up from the Frontier grid landed on the geometrically-nearest
-    # subtab (ft-program), silently flipping the regime Universe->Program --
-    # the "rejump tabs by one" glitch. It must return to the ACTIVE subtab.
-    app = NetHackersApp(hub=_DEAD_HUB, creds=Credentials("castiel", "t"), start="home")
-    async with app.run_test(size=(120, 42)) as pilot:
-        await pilot.pause()
-        await pilot.press("3")     # -> Frontier
-        await pilot.press("down")  # onto the Universe subtab
-        await pilot.pause()
-        assert app._nav_cursor is not None and app._nav_cursor.id == "ft-universe"
-        await pilot.press("down")  # into the grid body
-        await pilot.pause()
-        assert app._nav_cursor is not None
-        assert not (app._nav_cursor.id or "").startswith("ft-")
-        await pilot.press("up")    # back up -> the ACTIVE subtab, regime unchanged
-        await pilot.pause()
-        assert app._nav_cursor.id == "ft-universe"
-        assert app.query_one("#ftabs", Tabs).active == "ft-universe"
+        assert golds == ["tab-evolve"]  # exactly one highlighted tab, matching the section
 
 
 async def test_home_is_arrow_navigable():

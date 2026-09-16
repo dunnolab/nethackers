@@ -1,5 +1,5 @@
 """Frontier data adapters: assemble the two regimes' {identity: value} maps
-from hub reads, shared by the TUI MapView and the CLI frontier command."""
+from hub reads, used by the CLI frontier command."""
 from __future__ import annotations
 
 from collections.abc import Mapping

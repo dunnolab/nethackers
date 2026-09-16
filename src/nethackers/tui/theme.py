@@ -89,21 +89,6 @@ Screen {{
 }}
 #body {{ height: 1fr; }}
 
-/* MapView's own Frontier subtab bar (Universe/Program) -- same amber-active,
-   dim-inactive language as #nav, never Textual's blue default. */
-#ftabs {{
-    background: {_PANEL};
-    color: {_DIM};
-}}
-#ftabs Tab.-active {{
-    background: {_PANEL};
-    color: {_AMBER};
-    text-style: bold;
-}}
-#ftabs Underline > .underline--bar {{
-    color: {_AMBER};
-}}
-
 /* the signature framed, titled "tty window" */
 .panel {{
     background: {_PANEL};
@@ -132,22 +117,21 @@ Input:focus, Select:focus, OptionList:focus, Button:focus,
 Input.-cursor, Select.-cursor, OptionList.-cursor, Button.-cursor {{
     border: heavy {_FOCUS};
 }}
-/* the navigate-mode cursor on a section/subtab: a solid gold chip. Scoped to
-   #nav/#ftabs so it matches `.-active`'s (id-level) specificity and, coming
-   later, wins -- otherwise a cursor tab (which is also the active tab, since
-   landing on it switches sections) would render as a plain active tab with
-   no focus highlight at all. */
-#nav Tab.-cursor, #ftabs Tab.-cursor {{
+/* the navigate-mode cursor on a section tab: a solid gold chip. Scoped to
+   #nav so it matches `.-active`'s (id-level) specificity and, coming later,
+   wins -- otherwise a cursor tab (which is also the active tab, since landing
+   on it switches sections) would render as a plain active tab with no focus
+   highlight at all. */
+#nav Tab.-cursor {{
     background: {_FOCUS};
     color: {_DUNGEON};
     text-style: bold;
 }}
-#nav:focus Tab.-active, #ftabs:focus Tab.-active {{
+#nav:focus Tab.-active {{
     color: {_FOCUS};
     text-style: bold;
 }}
-#nav:focus Underline > .underline--bar,
-#ftabs:focus Underline > .underline--bar {{
+#nav:focus Underline > .underline--bar {{
     color: {_FOCUS};
 }}
 
