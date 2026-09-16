@@ -78,3 +78,12 @@ def test_the_two_fixed_urls_are_the_same_document(client):
 def test_no_406_is_ever_returned(client):
     r = client.get("/", headers={"Accept": "application/vnd.made-up"})
     assert r.status_code == 200
+
+
+def test_the_page_advertises_its_markdown_alternate(client):
+    """The only lever that reaches the OpenAI fetch path: ChatGPT-User and
+    Codex send a browser-style Accept and never ask for markdown, but that
+    fetcher is reported to read this hint and request the .md sibling. Every
+    site in the 2026-09-16 survey ships it."""
+    page = client.get("/", headers={"Accept": BROWSER}).text
+    assert '<link rel="alternate" type="text/markdown" href="/index.md">' in page
