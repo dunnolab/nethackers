@@ -106,6 +106,10 @@ def test_the_brief_never_leaks_a_hidden_seed(populated_store):
         [_atom(seed, tier="verified") for seed in HIDDEN_SEEDS],
         secret_fingerprint=secret_fingerprint(SECRET),
         verifier_token_fingerprint="tok", arena_major=ARENA_MAJOR)
+    populated_store.insert_verified_baseline_atoms(
+        [_atom(seed, tier="baseline", progression=0.123) for seed in HIDDEN_SEEDS],
+        secret_fingerprint=secret_fingerprint(SECRET),
+        verifier_token_fingerprint="tok", arena_major=ARENA_MAJOR)
     epoch = Epoch(secret_fingerprint=secret_fingerprint(SECRET),
                   arena_major=ARENA_MAJOR, seeds=HIDDEN_SEEDS)
     brief = render_brief(populated_store, epoch=epoch, version="9.9.9")

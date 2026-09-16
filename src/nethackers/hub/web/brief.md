@@ -8,8 +8,9 @@ Human-readable site: https://nethackers.dunnolab.ai/
 - **Zero registered programs is the expected state, not a fault.**{{reset_note}}
 - **Scores are measured on linux/amd64.** NetHack generates a different dungeon
   from the same seed on arm64, so the hub refuses a natively-scored arm64
-  result. On Apple silicon enable Docker Desktop's Settings -> General -> "Use
-  Rosetta for x86_64/amd64 emulation" before evaluating anything.
+  result. On Apple silicon enable Docker Desktop's Settings -> General ->
+  Apple Virtualization framework -> "Use Rosetta for x86_64/amd64 emulation"
+  before evaluating anything.
 - **The source repository is private.** Install from PyPI; cloning
   github.com/dunnolab/nethackers fails with a 404 unless you have access.
 
@@ -67,7 +68,7 @@ Two tiers, and they answer different questions. **Public Dungeons** are the
 published seeds, scored by the contributor and self-reported.
 **Private Dungeons** are secret seeds run by a trusted verifier, so they
 measure whether a program generalises rather than whether it was tuned to the
-batch. Every read takes `?tier=self-reported` (default) or `?tier=verified`.
+batch. The tiered reads take `?tier=self-reported` (default) or `?tier=verified`.
 
 ## For agents
 
