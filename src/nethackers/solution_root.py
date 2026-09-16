@@ -2,16 +2,15 @@
 
 Two jobs, both about the solution root a caller named.
 
-**Resolution.** ``roots/autoascend`` is how the README and four other docs name
-the reference solution, and it resolves against the CWD -- which only works
-inside a repo checkout. A ``pip install nethackers`` user has no checkout, so
-the wheel carries its own copy of the tree (force-included at
-``nethackers/roots/autoascend``; see pyproject) and AutoAscend's canonical
-names resolve to it when nothing is on disk. A path that DOES exist always
-wins, so a checkout is unaffected and a user's own ``roots/autoascend`` is
-never shadowed by ours. Only AutoAscend's own names get this fallback: mapping
-any missing path onto a tree the caller did not ask for would silently score
-the wrong solution.
+**Resolution.** ``roots/autoascend`` is how the README and four other docs
+name the reference solution, and it resolves against the CWD -- which only
+works inside a repo checkout. A ``pip install nethackers`` user has no
+checkout, so the tree ships inside the package itself
+(``nethackers/roots/autoascend``) and AutoAscend's canonical names resolve to
+it when nothing is on disk. A path that DOES exist always wins, so a checkout
+is unaffected and a user's own ``roots/autoascend`` is never shadowed by ours.
+Only AutoAscend's own names get this fallback: mapping any missing path onto a
+tree the caller did not ask for would silently score the wrong solution.
 
 **Validation.** A missing root used to be invisible. Docker's bind mount
 CREATES an absent host directory, so every episode ran against an empty folder,
@@ -30,9 +29,10 @@ from pathlib import Path
 
 from nethackers.hub.ids import AUTOASCEND_TREE
 
-#: The wheel's own copy of the vendored solution roots. Deliberately absent in
-#: a repo checkout -- there the trees live at the repo root, outside the
-#: package, and the relative path resolves on its own.
+#: The vendored solution roots that ship with the package. Present in a
+#: checkout and in an installed wheel alike, so ``autoascend`` means the same
+#: tree either way. Absent only inside the arena/hub images, which exclude it
+#: from their build context (see .dockerignore) because neither needs it.
 PACKAGED_ROOTS = Path(__file__).parent / "roots"
 
 #: The file the arena loads a bot from (``arena.sandbox._load_agent``), and so

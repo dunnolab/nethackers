@@ -21,7 +21,7 @@ from pathlib import Path
 import pytest
 
 REPO_ROOT = Path(__file__).parents[1]
-SOLUTION = REPO_ROOT / "roots" / "autoascend"
+SOLUTION = REPO_ROOT / "src" / "nethackers" / "roots" / "autoascend"
 IMAGE = "nethackers/arena:dev"
 
 

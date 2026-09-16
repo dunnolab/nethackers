@@ -29,7 +29,7 @@ from nethackers.eval.runner import eval_batch
 from nethackers.harness.seeds import validation_spec
 
 REPO_ROOT = Path(__file__).parents[1]
-SOLUTION = REPO_ROOT / "roots" / "autoascend"
+SOLUTION = REPO_ROOT / "src" / "nethackers" / "roots" / "autoascend"
 IMAGE = "nethackers/arena:dev"
 
 # A small, deterministic, single-identity batch: 4 episodes of the same

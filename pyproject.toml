@@ -49,13 +49,6 @@ packages = ["src/nethackers"]
 
 [tool.hatch.build.targets.wheel.force-include]
 "src/nethackers/hub/web/index.html" = "nethackers/hub/web/index.html"
-# AutoAscend travels IN the wheel. Every doc tells a new user to pass
-# `roots/autoascend`, which is a checkout-relative path -- so before this, a
-# `pip install nethackers` user had no way to obtain the one solution the
-# getting-started instructions are written around. MIT-licensed, and its
-# LICENSE is inside the tree, so the notice ships with the code it covers.
-# `nethackers.solution_root` resolves the documented names to this copy.
-"roots/autoascend" = "nethackers/roots/autoascend"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
@@ -80,7 +73,7 @@ warn_unused_ignores = true
 # tests/fixtures/bots/*/bot.py files (no __init__.py, by design -- they
 # mirror a real submission root) and fails collection with "Duplicate
 # module named 'bot'" before any type checking runs.
-exclude = ["^tests/fixtures/"]
+exclude = ["^tests/fixtures/", "^src/nethackers/roots/"]
 
 [[tool.mypy.overrides]]
 module = [
@@ -106,7 +99,7 @@ cache-keys = [{ file = "pyproject.toml" }, { file = "src/**/*.py" }]
 [tool.ruff]
 target-version = "py311"
 line-length = 100
-extend-exclude = ["roots/autoascend/autoascend"]
+extend-exclude = ["src/nethackers/roots/autoascend/autoascend"]
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
 [tool.ruff.lint.isort]

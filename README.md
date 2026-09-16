@@ -248,8 +248,8 @@ nethackers evolve val-dwa-law-fem \
 ```
 
 The objective is positional; `--seed` points at the starting solution. AutoAscend
-ships inside nethackers, so `autoascend` works from anywhere — in a checkout it is
-also the tree at `roots/autoascend`. Each iteration picks a cell, mutates its elite
+ships inside nethackers, so `autoascend` works from anywhere, installed or from a
+checkout. The older spelling `roots/autoascend` still resolves to the same tree. Each iteration picks a cell, mutates its elite
 with the coding agent in its container, and evaluates the result.
 
 **Every candidate that survives the smoke check and gets evaluated is then pushed
@@ -338,6 +338,7 @@ good at NetHack for any of them. Start with
 ## License
 
 Apache-2.0. See [`LICENSE`](LICENSE). AutoAscend, vendored at
-`roots/autoascend/` and redistributed inside the wheel, carries its own MIT
-license — see [`roots/autoascend/LICENSE`](roots/autoascend/LICENSE), which
-travels with the tree in both places.
+`src/nethackers/roots/autoascend/` and so shipped inside the wheel, carries its
+own MIT license — see
+[`LICENSE`](src/nethackers/roots/autoascend/LICENSE), which travels with the
+tree wherever it goes.

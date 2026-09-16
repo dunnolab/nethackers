@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-ROOT = Path(__file__).parents[1] / "roots" / "autoascend"
+ROOT = Path(__file__).parents[1] / "src" / "nethackers" / "roots" / "autoascend"
 
 
 @pytest.mark.nle
