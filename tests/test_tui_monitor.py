@@ -399,3 +399,29 @@ async def test_cold_start_frame_populates_the_progress_table_live():
         assert dt.row_count > 0                         # populated by the first cold-start frame
         text = _dump(dt)
         assert "wiz-elf-cha-mal" in text and "val-dwa-law-fem" in text
+
+
+async def test_empty_detail_table_survives_a_click_without_crashing():
+    # open_best on an AutoAscend identity -> show_baseline leaves #d_table with
+    # NO columns. Clicking it (a header / out-of-bounds click) must NOT crash:
+    # a bare DataTable indexes ordered_columns[0] -> IndexError; the ClickTable
+    # override returns early for row < 0. Regression for the reported traceback.
+    r = Run("r1", EvolveConfig("wiz-elf-cha-mal", "claude", 3))
+    r.apply_state({"phase": "cold-start", "iteration": 0, "identities": ["wiz-elf-cha-mal"],
+                   "cells": [], "origins": {}, "elite_of": {},
+                   "aa_baseline": {"wiz-elf-cha-mal": 0.08}, "union": None,
+                   "cell_results": {}, "coverage": (0, 1), "cell": None, "generation": 0,
+                   "baseline_dev": 0.0, "best_dev": 0.0, "wins": 0, "tokens": 0,
+                   "detail": "", "parent_digest": "", "parent_dev": 0.0})
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        mon.open_best("wiz-elf-cha-mal")   # AutoAscend floor -> show_baseline (empty table)
+        await pilot.pause()
+        assert mon.detail_open is True
+        dt = mon.query_one("#d_table", DataTable)
+        assert len(dt.columns) >= 1                     # never column-less (the fix)
+        await pilot.click("#d_table", offset=(3, 0))    # header click -> used to IndexError
+        await pilot.pause()
+        assert mon.detail_open is True                  # survived, no crash

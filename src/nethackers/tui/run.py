@@ -414,24 +414,33 @@ class Run:
         idents = self.identities()
         total = self._per_ident_total()
         if k == 0:
-            src = {i: [r for r in self.init_cell_results.get(i, [])
-                       if r.get("character") in (i, None)] for i in idents}
-        elif k in self.iter_results and self.iter_results[k].results is not None:
-            src = {i: [] for i in idents}
+            # cold-start: scored cells from the snapshot; for an identity whose
+            # champion is still streaming (not scored into a cell yet) fall back
+            # to the LIVE batch, so its detail shows the in-flight episodes
+            # rather than an empty table.
+            live = self._batch_rows_for() if self.state.get("phase") == "cold-start" else {}
+            out: dict[str, EvalView] = {}
+            for i in idents:
+                scored = [r for r in self.init_cell_results.get(i, [])
+                          if r.get("character") in (i, None)]
+                out[i] = (EvalView(i, total, [_seed_row(r) for r in scored]) if scored
+                          else EvalView(i, total, live.get(i, [])))
+            return out
+        if k in self.iter_results and self.iter_results[k].results is not None:
+            src: dict[str, list[dict]] = {i: [] for i in idents}
             for r in self.iter_results[k].results or []:
                 c = r.get("character")
                 if c:
                     src.setdefault(c, []).append(r)
-        else:
-            # Only the actually-running iteration streams live per-seed rows.
-            # A completed-but-no-eval iteration (gate/error reject, results=None)
-            # or a not-yet-started one has none -> empty EvalViews (not another
-            # iteration's live batch).
-            if self.iteration_status(k) == "running":
-                live = self._batch_rows_for()
-                return {i: EvalView(i, total, live.get(i, [])) for i in idents}
-            return {i: EvalView(i, total, []) for i in idents}
-        return {i: EvalView(i, total, [_seed_row(r) for r in src.get(i, [])]) for i in idents}
+            return {i: EvalView(i, total, [_seed_row(r) for r in src.get(i, [])])
+                    for i in idents}
+        # Only the actually-running iteration streams live per-seed rows. A
+        # completed-but-no-eval iteration (gate/error reject, results=None) or a
+        # not-yet-started one has none -> empty (not another iteration's batch).
+        if self.iteration_status(k) == "running":
+            live2 = self._batch_rows_for()
+            return {i: EvalView(i, total, live2.get(i, [])) for i in idents}
+        return {i: EvalView(i, total, []) for i in idents}
 
     def union_evals(self) -> dict[str, EvalView]:
         """Per-identity EvalViews for the BEST OVERALL (union) HUB champion's

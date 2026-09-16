@@ -71,6 +71,9 @@ class DetailView(Vertical):
     def compose(self) -> ComposeResult:
         yield Static(id="d_head")
         yield Static(id="d_src")
+        # NB: this table must never be left column-less -- a header/out-of-bounds
+        # click on a DataTable with no columns crashes Textual 8.2.x
+        # (ordered_columns[idx] -> IndexError). Every show_* below adds columns.
         yield DataTable(id="d_table", zebra_stripes=True, cursor_type="row")
         yield Button("‹ Back to optimization", id="back", variant="primary")
 
@@ -87,18 +90,31 @@ class DetailView(Vertical):
                       "depth", "turns", "time")
         self._render_eval(rows, total)
 
-    def show_baseline(self, title: str, score: float) -> None:
+    def show_baseline(self, title: str, score: float,
+                      per_identity: dict[str, float] | None = None) -> None:
         """D5: AutoAscend is a hub-owned reference score, not a local tree --
-        there is nothing to re-run, so no per-seed table, just the average
-        and an honest note."""
+        there is nothing to re-run, so no per-seed table. Show the average +
+        an honest note; for BEST OVERALL, also list the per-identity AutoAscend
+        floor so the panel isn't blank."""
         self.kind = "baseline"
         self._live = None
         self.border_title = title
         self.query_one("#d_head", Static).update(Text.from_markup(
-            f"x̄ [b #ffd54a]{score:.2f}[/]   [dim]baseline · no per-seed breakdown[/]"))
+            f"x̄ [b #ffd54a]{score:.2f}[/]   [dim]AutoAscend baseline · no per-seed breakdown[/]"))
         self.query_one("#d_src", Static).update(Text.from_markup(
             "[dim]source[/]  [dim]AutoAscend baseline · not a repository[/]"))
-        self.query_one("#d_table", DataTable).clear(columns=True)
+        t = self.query_one("#d_table", DataTable)
+        t.clear(columns=True)
+        if per_identity:
+            t.add_column("identity", width=24)
+            t.add_column("AutoAscend x̄", width=16)
+            for ident in sorted(per_identity):
+                t.add_row(ident, f"{per_identity[ident]:.2f}")
+        else:
+            # never leave the table column-less (clicking an empty DataTable's
+            # header crashes Textual -- see compose()).
+            t.add_column("AutoAscend baseline", width=44)
+            t.add_row("hub reference score · no per-seed breakdown")
 
     def show_program(self, run: Run, info: tuple[float, str, str, int | None]) -> None:
         """The BEST OVERALL (union-cell) program's FULL table -- every seed on
@@ -108,7 +124,8 @@ class DetailView(Vertical):
         self.kind = "program"
         self._live = None
         if kind == "aa":
-            self.show_baseline(f" BEST OVERALL · {label} ", score)
+            self.show_baseline(f" BEST OVERALL · {label} ", score,
+                               per_identity=run.aa_baseline())
             return
         self.border_title = f" BEST OVERALL · {label} · all evaluations "
         t = self.query_one("#d_table", DataTable)
@@ -542,7 +559,11 @@ class RunMonitor(Screen):
             dv.show_eval(ev.rows, ev.total, title, src)
         elif kind == "hub":
             ev = self.run.iteration_evals(0)[ident]
-            digest = (self.run.init_cells.get(ident) or {}).get("digest")
+            # its scored cell digest (post-eval) or, mid-cold-start, the pulled
+            # champion's program_id from elite_of -- so the GitHub source link
+            # resolves even before the champion's cell is scored.
+            digest = ((self.run.init_cells.get(ident) or {}).get("digest")
+                      or (self.run.elite_of().get(ident) or {}).get("program_id"))
             origin = (self.run.origins().get(digest) or {}) if digest else {}
             repo, sha = origin.get("repo"), origin.get("sha")
             src = (f"[dim]source[/]  [link=https://{repo}/commit/{sha}]{repo}@{sha} ↗[/]"
