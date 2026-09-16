@@ -97,7 +97,10 @@ def run_causes(runs: list[dict]) -> dict[str, int]:
 
 
 class RunsView(VerticalScroll):
-    """Ongoing runs (live) as a pick-to-open list, then past runs below."""
+    """This session's runs (live + finished) as a pick-to-open list -- each
+    reopens its full monitor with all the detail it recorded -- then older runs
+    from earlier sessions below as a read-only summary (their live per-seed
+    detail isn't persisted, so they can't be reopened into the monitor)."""
 
     DEFAULT_CSS = """
     RunsView { margin: 1 2; padding: 0 1; height: 1fr; }
@@ -120,7 +123,7 @@ class RunsView(VerticalScroll):
     def compose(self) -> ComposeResult:
         yield Static(id="runs_ongoing_title")
         yield Vertical(id="runs_ongoing")  # one focusable Button per ongoing run
-        yield Static("past runs", id="runs_past_title")
+        yield Static("earlier sessions · summary only", id="runs_past_title")
         yield Static(id="runs_past")
 
     def on_mount(self) -> None:
@@ -133,54 +136,68 @@ class RunsView(VerticalScroll):
 
     def _tick(self) -> None:
         if self.display:  # only while the Runs section is the visible pane
-            self._refresh_ongoing()
+            self._refresh_session()
 
     def _refresh(self) -> None:
-        self._refresh_ongoing()
+        self._refresh_session()
         self._refresh_past()
 
     def _app(self) -> NetHackersApp:
         return cast("NetHackersApp", self.app)
 
-    def _ongoing_label(self, run) -> str:
+    _STATUS_TAG = {"done": "✓ done", "stopped": "■ stopped", "failed": "✗ failed"}
+
+    def _run_label(self, run) -> str:
         st = run.state
-        return (f"⚔ {run.cfg.objective}   {st.get('phase', '')}   "
-                f"gen {st.get('generation', 0)}   w {st.get('wins', 0)}   "
+        if run.running:
+            head = f"⚔ {run.cfg.objective}   {st.get('phase', '')}"
+        else:  # finished this session -> a static status head, still reopenable
+            head = f"{self._STATUS_TAG.get(run.status, run.status)}   {run.cfg.objective}"
+        return (f"{head}   gen {st.get('generation', 0)}   w {st.get('wins', 0)}   "
                 f"{_compact(run.total_tokens())} tok   ⏱ {_clock(run.run_time())}")
 
-    def _refresh_ongoing(self) -> None:
-        runs = [r for r in self._app()._runs.values() if r.running]
+    def _refresh_session(self) -> None:
+        # Every run started THIS session (live AND finished): their full Run is
+        # still in memory, so each reopens its complete monitor. Running first,
+        # then most-recent. A run never leaves self._runs, so the list only grows.
+        runs = sorted(self._app()._runs.values(), key=lambda r: (not r.running, -r.started))
         container = self.query_one("#runs_ongoing", Vertical)
         current = [r.rid for r in runs]
         # Reconcile incrementally -- never remove_children()+remount: removal is
         # async, so re-mounting a still-present id raises DuplicateIds. Track the
         # mounted ids in self._ongoing_ids (updated synchronously) so a second
         # refresh before a pending mount lands doesn't double-mount.
-        for rid in self._ongoing_ids:  # drop runs that finished
-            if rid not in current:
+        for rid in self._ongoing_ids:
+            if rid not in current:  # (defensive: runs don't currently leave the registry)
                 with contextlib.suppress(NoMatches):
                     self.query_one(f"#ongoing-{rid}", Button).remove()
         for run in runs:
-            if run.rid in self._ongoing_ids:  # update the live label in place
+            if run.rid in self._ongoing_ids:  # update the label in place (live runs tick)
                 # (NoMatches: its mount is still pending -- refreshes next tick)
                 with contextlib.suppress(NoMatches):
-                    self.query_one(f"#ongoing-{run.rid}", Button).label = \
-                        self._ongoing_label(run)
+                    self.query_one(f"#ongoing-{run.rid}", Button).label = self._run_label(run)
             else:  # a new run -> mount one button for it
-                container.mount(Button(self._ongoing_label(run),
+                container.mount(Button(self._run_label(run),
                                        id=f"ongoing-{run.rid}", classes="ongoing-run"))
         self._ongoing_ids = current
-        self.query_one("#runs_ongoing_title", Static).update(
-            f"● {len(runs)} run(s) in flight — enter to jump in" if runs
-            else "[dim]No runs in flight. Start one from the ⚔ Evolve tab.[/]")
+        n_live = sum(1 for r in runs if r.running)
+        if not runs:
+            title = "[dim]No runs yet. Start one from the ⚔ Evolve tab.[/]"
+        else:
+            flight = f" · {n_live} in flight" if n_live else ""
+            title = f"● {len(runs)} run(s) this session{flight} — enter to open"
+        self.query_one("#runs_ongoing_title", Static).update(title)
 
     def _refresh_past(self) -> None:
         from nethackers.tui.screens.home import recent_runs_panel
 
-        ongoing = set(self._ongoing_ids)
-        past = [r for r in read_runs(load_stage().runs_dir) if r["run_id"] not in ongoing]
+        # Older runs from earlier sessions -- read from disk, shown as a summary
+        # only (no in-memory Run to reopen). Exclude every run from THIS session
+        # (live or finished): those are the reopenable buttons above.
+        session = set(self._app()._runs)
+        past = [r for r in read_runs(load_stage().runs_dir) if r["run_id"] not in session]
         self.query_one("#runs_past", Static).update(
-            recent_runs_panel(past) if past else "[dim]No finished runs yet.[/]")
+            recent_runs_panel(past) if past else "[dim]No runs from earlier sessions.[/]")
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         bid = event.button.id or ""

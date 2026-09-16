@@ -333,3 +333,40 @@ async def test_ongoing_reconciles_when_set_changes_without_duplicate_ids():
             if not (ra.running or rb.running):
                 break
             await asyncio.sleep(0.01)
+
+
+async def test_finished_this_session_run_stays_listed_and_reopens_its_monitor():
+    # feature: a run that finished THIS session keeps its full Run in memory, so
+    # it must stay in the Runs list as a clickable button (not drop to the
+    # read-only "earlier sessions" summary) and reopen its complete monitor.
+    def quick_run(cb):
+        cb["on_state"]({
+            "phase": "mutating", "iteration": 1, "baseline_dev": 0.0, "baseline_held": 0.0,
+            "best_dev": 0.0, "best_held": 0.0, "wins": 1, "tokens": 0, "detail": "",
+            "parent_digest": "seed0", "parent_dev": 0.0, "parent_held": 0.0, "generation": 1})
+        return []  # returns immediately -> the run finishes ("done")
+
+    app = NetHackersApp(hub="http://127.0.0.1:1", creds=None, start="runs")
+    async with app.run_test() as pilot:
+        await pilot.pause()
+        run = app.start_run(_Plan(quick_run))
+        for _ in range(200):  # wait for the worker to finish
+            if not run.running:
+                break
+            await asyncio.sleep(0.01)
+        await pilot.pause()
+        if isinstance(app.screen, RunMonitor):  # start_run opened it -> back to Runs
+            await pilot.press("escape")
+            await pilot.pause()
+
+        app.query_one(RunsView)._refresh()
+        await pilot.pause()
+        buttons = list(app.query(".ongoing-run").results(Button))
+        assert len(buttons) == 1                       # the finished run is still listed
+        assert buttons[0].id == f"ongoing-{run.rid}"
+        assert not run.running                         # ...and it really did finish
+        assert "done" in str(buttons[0].label)         # shows a finished-status head
+
+        buttons[0].press()                             # reopen its full monitor
+        await pilot.pause()
+        assert isinstance(app.screen, RunMonitor) and app.screen.run is run
