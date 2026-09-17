@@ -3,9 +3,7 @@
 One command per worktree brings up an isolated hub + arena + mutator
 stack, so `nethackers evolve` can run the whole register -> board loop
 against a throwaway repo/DB instead of production. This is the practical,
-runnable form of the stage-config-model design
-(`docs/superpowers/specs/2026-08-27-stage-config-model-design.md`) --
-read that doc for the *why*, this one for the *how*.
+runnable form of the stage-config model.
 
 ## Quickstart
 
@@ -62,8 +60,7 @@ registration it attempts is refused, recorded as `local-only` in the run
 log.
 
 That is by design, not a bug to work around. Since the amd64 reference
-reset (`docs/superpowers/specs/2026-09-14-amd64-reference-reset-design.md`,
-D5) the hub admits evidence only from an arena digest classified at the
+reset the hub admits evidence only from an arena digest classified at the
 current `ARENA_MAJOR`. A tag names movable bytes, so `arena:<slug>` is
 unclassified *by construction* and `register` raises `UnclassifiedArena`.
 The local hub runs the same admission code as prod, so it refuses it too.

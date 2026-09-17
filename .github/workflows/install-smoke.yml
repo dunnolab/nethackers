@@ -2,8 +2,7 @@ name: Install smoke
 
 # Regression test for the shipped `[tool.uv] cache-keys` fix
 # (pyproject.toml:96-97, commit f37fc17) and the gap the onboarding testing
-# strategy flagged (docs/superpowers/specs/2026-08-29-onboarding-testing-
-# strategy.md, section 4): nothing installed the built wheel and checked it
+# strategy flagged: nothing installed the built wheel and checked it
 # actually runs.
 #
 # The load-bearing assertion: build the wheel once, install the ARTIFACT

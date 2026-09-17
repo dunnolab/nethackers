@@ -59,8 +59,7 @@ jobs:
           # `docker manifest` is still marked experimental in the Docker CLI.
           DOCKER_CLI_EXPERIMENTAL: enabled
         run: |
-          # D12 (docs/superpowers/specs/2026-08-28-sandbox-image-distribution-design.md
-          # section 5.12): a wheel must never reach PyPI pinning sandbox image
+          # D12: a wheel must never reach PyPI pinning sandbox image
           # digests that don't actually exist in GHCR -- that's the exact
           # "changed the image, forgot to re-pin" failure this distribution
           # design exists to prevent. Read the two pins from the single

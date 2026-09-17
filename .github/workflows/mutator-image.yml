@@ -1,7 +1,6 @@
 name: Mutator image
 
-# Automatic mutator rebuild + re-pin (spec
-# docs/superpowers/specs/2026-09-15-mutator-image-automation-design.md §5.3).
+# Automatic mutator rebuild + re-pin.
 # Builds the mutator for its input fingerprint only when GHCR lacks it, on the
 # pinned nle-base, and commits the re-pin to the branch with a GitHub App token
 # so the commit starts the PR's checks (GITHUB_TOKEN pushes start none). The

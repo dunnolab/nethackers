@@ -26,12 +26,6 @@ htmlcov/
 .env.stack
 .nethackers/
 
-# Implementation plans are working docs, not tracked artifacts
-docs/superpowers/plans/
-
-# Research scratch (raw eval-cost data + bench scripts; provenance, not tracked)
-docs/superpowers/research/data/
-
 # SDD scratch (ledger, briefs, reports, review packages)
 .superpowers/
 

@@ -327,10 +327,6 @@ host. GitHub is all three, which keeps the hub small enough to be honest about.
 | [`docs/local-stack.md`](docs/local-stack.md) | Running a full local hub + arena + mutator stack |
 | [`deploy/README.md`](deploy/README.md) | Operating the production hub |
 
-Design specs for individual features live in
-[`docs/superpowers/specs/`](docs/superpowers/specs/) — they are working
-documents, dated and sometimes superseded, not reference material.
-
 ## Contributing
 
 Bug reports, bots, and harnesses are all welcome — and you do not need to be

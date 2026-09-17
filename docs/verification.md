@@ -339,5 +339,3 @@ games were played.
 - [`../README.md#public-and-private-dungeons`](../README.md#public-and-private-dungeons) — the short version
 - [`harness.md`](harness.md) — the contract, the loop, and the information diet
 - [`../deploy/README.md`](../deploy/README.md) — operating the hub
-- [`superpowers/specs/2026-09-03-verified-tier-design.md`](superpowers/specs/2026-09-03-verified-tier-design.md) — the original design
-- [`superpowers/specs/2026-09-07-public-private-dungeons-design.md`](superpowers/specs/2026-09-07-public-private-dungeons-design.md) — the website rename

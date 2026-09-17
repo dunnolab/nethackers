@@ -1,7 +1,6 @@
 # Mutator sandbox runtime: the resource-capped cage `ContainerOperator`
 # (src/nethackers/harness/container_operator.py) runs a headless coding-agent
-# CLI inside. Implements docs/superpowers/specs/2026-08-16-mutator-sandbox-design.md
-# §3.2 (image layering) / §3.6 (info diet) / §3.7 (ContainerOperator).
+# CLI inside: image layering, the info diet, and the ContainerOperator cage.
 #
 # Built FROM the shared nle-base (NOT the arena image): the mutator gets a
 # byte-identical compiled NLE, but the nethackers PACKAGE is not installed here

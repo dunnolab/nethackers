@@ -1,6 +1,5 @@
 """Diagnostics: the version regimes ``nethackers`` reports about itself, and
-per-capability machine readiness (spec ``docs/superpowers/specs/2026-08-28-
-sandbox-image-distribution-design.md`` 5.7/5.6).
+per-capability machine readiness.
 
 ``version_info()`` backs the top-level ``--version`` flag (cli.py) and is
 also the single builder ``doctor -o json``'s ``env`` header extends --

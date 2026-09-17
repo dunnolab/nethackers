@@ -547,7 +547,7 @@ wheels = [
 
 [[package]]
 name = "nethackers"
-version = "0.17.0"
+version = "0.31.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
@@ -601,7 +601,7 @@ requires-dist = [
     { name = "rich", specifier = ">=13" },
     { name = "rich-argparse", specifier = ">=1.5" },
     { name = "scipy", marker = "extra == 'autoascend'", specifier = ">=1.11" },
-    { name = "textual", specifier = ">=0.60" },
+    { name = "textual", specifier = ">=8.2.8" },
     { name = "toolz", marker = "extra == 'autoascend'", specifier = ">=1.0" },
     { name = "uvicorn", marker = "extra == 'hub'", specifier = ">=0.30" },
 ]

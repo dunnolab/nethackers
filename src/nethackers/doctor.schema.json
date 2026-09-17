@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://nethackers.dunnolab.ai/schemas/doctor.schema.json",
   "title": "nethackers doctor -o json",
-  "description": "Complete bug-report shape for `nethackers doctor -o json` (design spec docs/superpowers/specs/2026-08-28-sandbox-image-distribution-design.md S5.6). checks[].id / checks[].severity / checks[].capabilities are a closed enum derived from nethackers.diagnostics.CHECK_SPECS -- any change to that table must be mirrored here, or tests/test_doctor_schema.py's drift gate fails.",
+  "description": "Complete bug-report shape for `nethackers doctor -o json`. checks[].id / checks[].severity / checks[].capabilities are a closed enum derived from nethackers.diagnostics.CHECK_SPECS -- any change to that table must be mirrored here, or tests/test_doctor_schema.py's drift gate fails.",
   "type": "object",
   "additionalProperties": false,
   "required": ["checks", "capabilities", "env"],

@@ -1,9 +1,7 @@
 """The evolution monitor: a left iteration list (init + every iteration, each
 marked live/registered/rejected/pending) next to Progress/Mutator Logs/Logs
 tabs, rendered from an app-owned ``Run``. Replaces the old cockpit/2-tab
-screen -- port of the validated prototype
-(docs/superpowers/plans/2026-09-06-evolve-monitor-proto.py's ``MonitorScreen``)
-onto real ``Run`` accessors.
+screen, built on real ``Run`` accessors.
 
 Opening it **backfills** the whole view from the run's accumulated state (the
 iteration list + the currently-viewed iteration's Progress table), then the
