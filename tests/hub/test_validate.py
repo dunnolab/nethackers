@@ -18,12 +18,13 @@ import pytest
 from nethackers._image_pins import ARENA_IMAGE
 from nethackers.arena_version import ARENA_MAJOR_BY_DIGEST
 from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
-from nethackers.github_ref import NonGitHubRef
 from nethackers.hub.auth import AuthError, LocalStubAuth
 from nethackers.hub.objectives import CATALOG, build_union_spec
 from nethackers.hub.store import Store
 from nethackers.hub.validate import (
     MissingCommit,
+    NonGitHubRepo,
+    RegisterError,
     SolutionReference,
     UnclassifiedArena,
     WrongArenaMajor,
@@ -188,8 +189,14 @@ def test_register_rejects_non_github_host(tmp_path):
     # reports the commit exists. Both would let this reference sail through
     # every other check, so raising here proves the host gate runs BEFORE
     # them, not that it merely happens to be caught by one of them.
+    #
+    # register() raises its own NonGitHubRepo, not github_ref.py's leaf
+    # NonGitHubRef -- NonGitHubRepo is a RegisterError subclass, so
+    # hub/api.py's existing "except RegisterError" maps this to a clean 400
+    # instead of an unhandled 500 for a bare ValueError.
+    assert issubclass(NonGitHubRepo, RegisterError)
     s = _store(tmp_path)
-    with pytest.raises(NonGitHubRef):
+    with pytest.raises(NonGitHubRepo):
         register(
             s,
             LocalStubAuth({"t": "sam"}),

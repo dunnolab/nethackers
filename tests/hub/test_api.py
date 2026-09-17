@@ -284,6 +284,25 @@ def test_register_wrong_owner_403(tmp_path: Any) -> None:
     assert store.get_solution(f"github.com/eve/nethacker@{SHA}") is None
 
 
+def test_register_non_github_host_400(tmp_path: Any) -> None:
+    # A non-github repo host -> register()'s own NonGitHubRepo (a
+    # RegisterError, not github_ref.py's bare-ValueError leaf NonGitHubRef)
+    # -> the generic 400, not an unhandled 500. The owner segment ("sam")
+    # matches OWNER and this app's git fake defaults to exists=True, so
+    # nothing else in the ladder would reject this reference if the host
+    # gate didn't run first.
+    client, store = _app(tmp_path)
+
+    response = client.post(
+        "/register",
+        json=_register_body(repo=f"https://evil.example/{OWNER}/nethacker"),
+        headers=_auth_headers(),
+    )
+
+    assert response.status_code == 400
+    assert store.get_solution(f"https://evil.example/{OWNER}/nethacker@{SHA}") is None
+
+
 def test_register_bad_token_401(tmp_path: Any) -> None:
     # A present-but-unknown token -> LocalStubAuth raises AuthError -> 401.
     client, store = _app(tmp_path)
