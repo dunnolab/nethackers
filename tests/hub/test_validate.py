@@ -18,6 +18,7 @@ import pytest
 from nethackers._image_pins import ARENA_IMAGE
 from nethackers.arena_version import ARENA_MAJOR_BY_DIGEST
 from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
+from nethackers.github_ref import NonGitHubRef
 from nethackers.hub.auth import AuthError, LocalStubAuth
 from nethackers.hub.objectives import CATALOG, build_union_spec
 from nethackers.hub.store import Store
@@ -178,6 +179,28 @@ def test_wrong_owner(tmp_path):
             git=_Git(),
             now="n",
         )
+
+
+def test_register_rejects_non_github_host(tmp_path):
+    # A host that isn't github.com must never enter the hub -- even though
+    # owns_repo is a pure string check on the owner segment (blind to host,
+    # so "sam" "owns" "https://evil.example/sam/x" too) and the fake git
+    # reports the commit exists. Both would let this reference sail through
+    # every other check, so raising here proves the host gate runs BEFORE
+    # them, not that it merely happens to be caught by one of them.
+    s = _store(tmp_path)
+    with pytest.raises(NonGitHubRef):
+        register(
+            s,
+            LocalStubAuth({"t": "sam"}),
+            token="t",
+            reference=SolutionReference("https://evil.example/sam/x", SHA),
+            manifest=MANIFEST,
+            evidence=_evidence(),
+            git=_Git(exists=True),
+            now="n",
+        )
+    assert s.get_solution("https://evil.example/sam/x@" + SHA) is None
 
 
 def test_bad_sha(tmp_path):

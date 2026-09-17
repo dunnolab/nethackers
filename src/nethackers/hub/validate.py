@@ -27,11 +27,12 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
 from nethackers.arena_version import ARENA_MAJOR, major_for
 from nethackers.contracts.models import Evidence, ObjectiveSpec
+from nethackers.github_ref import normalize_github_ref
 from nethackers.hub.atoms import evidence_to_atoms
 from nethackers.hub.auth import AuthProvider, owns_repo
 from nethackers.hub.ids import program_id as _program_id
@@ -185,6 +186,12 @@ def register(
     """
     # 1. identity -- the token's login owns the repo.
     login = auth.resolve(token)
+    # reference host -- must be an unambiguous github.com/<owner>/<name>
+    # (raises NonGitHubRef). Normalizing here, before owns_repo/commit_exists
+    # ever run, is the authoritative server-side gate: owns_repo only compares
+    # the owner segment (blind to host), so a non-github URL sharing the
+    # caller's login as its owner segment would otherwise sail through.
+    reference = replace(reference, repo=normalize_github_ref(reference.repo))
     segments = reference.repo.rstrip("/").split("/")
     if len(segments) < 2 or not owns_repo(login, reference.repo):
         raise WrongOwner(f"{login!r} does not own {reference.repo!r}")
