@@ -70,6 +70,17 @@ ARENA_MAJOR_BY_DIGEST: dict[str, int] = {
     # above. Also the linux/amd64 LEG, not an index, so the reference
     # architecture is preserved (I7). Read from the diff, not measured.
     "sha256:865eb2033dd31892418915fe44a15e78e2beefc88fe358f89864b0ffce6d3e42": 2,
+    # v0.31.1, rebuilt because uv.lock is an arena input. Three files differ from
+    # the digest above: the website page (src/nethackers/hub/web/index.html --
+    # scratch-card behaviour, served by the hub, never loaded by an episode), and
+    # the project's own version in pyproject.toml and uv.lock, 0.31.0 -> 0.31.1.
+    # The lock delta is that one line; not a single package version moves, so the
+    # installed environment is byte-identical. arena/ and contracts/ are untouched
+    # (`git diff v0.31.0...HEAD -- src/nethackers/arena src/nethackers/contracts`
+    # is empty), so nothing on the path that seeds, steps or scores an episode
+    # differs. Also the linux/amd64 LEG, not an index, so the reference
+    # architecture is preserved (I7). Read from the diff, not measured.
+    "sha256:0c8715c6812ae24dd3b93ed79969c69e6bdc08513302c42b792bd593afc78ffe": 2,
 }
 
 
