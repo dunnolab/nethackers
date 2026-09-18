@@ -21,7 +21,7 @@ def _tree(root, body="x = 1\n", entrypoint="bot.py"):
 
 
 def _runner(status):
-    def fake(cmd, check):
+    def fake(cmd, check, input=None):
         host_out = next(v.removesuffix(":/out") for v in cmd if v.endswith(":/out"))
         Path(host_out, "results.json").write_text(json.dumps([{
             "trajectory_id": 0, "status": status, "progress": 0.1, "ascended": False,
