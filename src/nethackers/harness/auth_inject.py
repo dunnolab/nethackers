@@ -67,12 +67,29 @@ Two things this pairing does NOT resolve, both live-verification concerns
   lifetime. The mount path sidesteps this entirely by sharing the live,
   self-refreshing file instead of a value copied out of it once.
 
-OpenCode 2 has no broker form at all: its base-URL override is a
-per-provider JSON config field (``options.baseURL``), not a single env var
-this module could point at the broker independent of which (arbitrary)
-provider is configured, and rewriting that safely is unverified -- so
-``auth_broker_args`` raises rather than guessing, and callers keep using the
-credential mount for it either way.
+**OpenCode 2's broker path is per-provider.** OpenCode's base-URL override is
+a per-provider JSON config field (``options.baseURL``), not a single env var
+``auth_broker_args`` could point at one broker independent of which
+(arbitrary) provider is configured -- so ``auth_broker_args`` itself stays
+claude/codex-only and still raises for ``harness="opencode2"``. OpenCode 2
+gets its own pair of functions instead: ``opencode2_broker_targets``
+resolves, for every provider across the global configs, whether it's
+brokerable and the ``(upstream, header_name, header_value)`` to broker it
+with -- a literal or env-sourced ``apiKey`` (a ``{file:...}`` key, or no key
+at all, is left alone); an explicit ``options.baseURL``, or absent one,
+Anthropic's/OpenAI's own default host for those two provider names
+specifically (Anthropic gets ``x-api-key``, everything else
+``Authorization: Bearer``, per the Claude scheme-mismatch caveat above).
+``opencode2_broker_docker_args`` then writes the cage config with each
+brokered provider's ``baseURL``/``apiKey`` replaced by the broker's own base
+URL and the ``"proxy-managed"`` placeholder -- forwarding by name only the
+env vars of providers that stayed unbrokered, since forwarding a brokered
+provider's own key var would hand the container that value directly,
+bypassing the broker entirely. ``ContainerOperator`` starts one
+``cred_broker.CredBroker`` per target ``opencode2_broker_targets`` returns
+and wires their base URLs straight into ``opencode2_broker_docker_args``; a
+config with no brokerable provider at all falls back to the credential
+mount wholesale rather than start zero brokers around an empty config.
 """
 
 from __future__ import annotations
@@ -85,6 +102,7 @@ import subprocess
 import tempfile
 from collections.abc import Mapping
 from pathlib import Path
+from urllib.parse import urlsplit
 
 _CLAUDE_LOGIN_HINT = "run `claude` on this host to log in, then retry"
 
@@ -161,14 +179,15 @@ def auth_broker_args(harness: str, *, broker_base: str) -> list[str]:
 
     if harness == "opencode2":
         # OpenCode's base-URL override is a per-provider JSON config field
-        # (`options.baseURL`), not a single env var this function could point
-        # at the broker independent of which (arbitrary) provider is
-        # configured -- rewriting the cage config safely is unverified, so
-        # this deliberately doesn't guess. Callers keep using the credential
-        # mount (`auth_docker_args`) for opencode2.
+        # (`options.baseURL`), not the single (harness, broker_base) env pair
+        # this function assumes -- deliberately not guessed here. The real
+        # opencode2 broker path goes through `opencode2_broker_targets` /
+        # `opencode2_broker_docker_args` instead (one broker per brokerable
+        # provider); `ContainerOperator` calls those directly for opencode2
+        # and never reaches this branch.
         raise NotImplementedError(
-            "broker unsupported for opencode2 -- use the credential mount "
-            "(auth_docker_args) instead"
+            "opencode2 has no single-broker-base form -- use "
+            "opencode2_broker_targets/opencode2_broker_docker_args instead"
         )
 
     raise ValueError(f"unknown harness: {harness!r}")
@@ -272,6 +291,108 @@ def opencode2_has_provider_key(*, home: Path, environ: Mapping[str, str] | None 
     return False
 
 
+# --- opencode2 per-provider credential broker (§3d, INV2) -------------------
+#
+# See this module's docstring ("OpenCode 2's broker path is per-provider").
+# `opencode2_broker_targets` is the resolve-only half: for each provider
+# across the global configs, is there a real key AND somewhere to send it?
+# `opencode2_broker_docker_args` (below, alongside `_opencode2_docker_args`)
+# is the half that actually rewrites the cage config once brokers exist for
+# whichever targets this returned.
+
+_OPENCODE2_DEFAULT_UPSTREAMS = {
+    # (upstream, header_name, is_bearer) for a provider with NO explicit
+    # `options.baseURL`, keyed by provider name -- the only two names this
+    # module knows a real default host for. Any other unrecognized name
+    # without a `baseURL` has nowhere known to broker it TO and is left
+    # alone (see `_opencode2_provider_upstream`).
+    "anthropic": ("https://api.anthropic.com", "x-api-key", False),
+    "openai": ("https://api.openai.com/v1", "Authorization", True),
+}
+
+
+def _opencode2_provider_key(provider: dict, env: Mapping[str, str]) -> str | None:
+    """The real key value for one provider, or ``None`` if it can't be used
+    in the cage: a literal ``options.apiKey`` is returned as-is; an
+    ``{env:NAME}`` one resolves through ``env`` (``None`` if ``NAME`` isn't
+    set -- the provider is simply left unbrokered, same as if it had no key
+    at all); anything else -- ``{file:...}``, a non-string, or absent --
+    isn't brokerable (a file path doesn't exist in the container, and
+    nothing else here is safe to guess at)."""
+    options = provider.get("options")
+    api_key = options.get("apiKey") if isinstance(options, dict) else None
+    if not isinstance(api_key, str) or not api_key:
+        return None
+    env_ref = _OPENCODE_ENV.fullmatch(api_key)
+    if env_ref:
+        return env.get(env_ref.group(1))
+    if _OPENCODE_TEMPLATE.search(api_key):
+        return None   # e.g. {file:...} -- that file isn't in the container
+    return api_key
+
+
+def _opencode2_provider_upstream(name: str, provider: dict) -> tuple[str, str, bool] | None:
+    """``(upstream, header_name, is_bearer)`` for one provider, or ``None``
+    if there's nowhere known to broker it to.
+
+    An explicit ``options.baseURL`` always wins and becomes the upstream;
+    the header is ``x-api-key`` when the provider is named ``anthropic`` or
+    its base URL's host ends in ``anthropic.com`` (an Anthropic-compatible
+    endpoint under a different provider name), ``Authorization: Bearer``
+    otherwise. Without a ``baseURL``, only ``anthropic``/``openai`` --
+    ``_OPENCODE2_DEFAULT_UPSTREAMS`` -- are brokerable; any other name is
+    left alone (it keeps the mount/forward path) rather than guessed at.
+    """
+    options = provider.get("options")
+    base_url = options.get("baseURL") if isinstance(options, dict) else None
+    if isinstance(base_url, str) and base_url:
+        host = urlsplit(base_url).hostname or ""
+        if name == "anthropic" or host.endswith("anthropic.com"):
+            return base_url, "x-api-key", False
+        return base_url, "Authorization", True
+    return _OPENCODE2_DEFAULT_UPSTREAMS.get(name)
+
+
+def opencode2_broker_targets(
+    *, home: Path, environ: Mapping[str, str] | None = None,
+) -> list[dict]:
+    """One entry per BROKERABLE provider across the global OpenCode configs
+    (``opencode2_global_providers``): ``{"file", "name", "upstream",
+    "header_name", "header_value"}``, ready to hand straight to
+    ``cred_broker.CredBroker(upstream, header_name, header_value)``.
+
+    A provider is brokerable only when BOTH halves resolve --
+    ``_opencode2_provider_key`` (the real value ``header_value`` needs) and
+    ``_opencode2_provider_upstream`` (where to send it and under what header
+    name). A provider with a ``{file:...}``/absent key, an unset
+    ``{env:NAME}``, or an unrecognized name with no ``baseURL`` is simply
+    absent from the result -- it keeps the existing mount/forward path
+    instead, never an error. Order follows ``opencode2_global_providers``'
+    (file load order, then dict order within each file).
+    """
+    env = os.environ if environ is None else environ
+    targets: list[dict] = []
+    for file_name, providers in opencode2_global_providers(home=home, environ=env):
+        for provider_name, provider in providers.items():
+            if not isinstance(provider, dict):
+                continue
+            key = _opencode2_provider_key(provider, env)
+            if key is None:
+                continue
+            resolved = _opencode2_provider_upstream(provider_name, provider)
+            if resolved is None:
+                continue
+            upstream, header_name, is_bearer = resolved
+            targets.append({
+                "file": file_name,
+                "name": provider_name,
+                "upstream": upstream,
+                "header_name": header_name,
+                "header_value": f"Bearer {key}" if is_bearer else key,
+            })
+    return targets
+
+
 def _write_cage_config(home: Path, name: str, providers: dict) -> Path | None:
     """Write ``{"provider": providers}`` where the container can mount it.
 
@@ -316,6 +437,72 @@ def _opencode2_docker_args(home: Path, *, environ: Mapping[str, str] | None) -> 
         args += ["-v", f"{cage_config}:{_OPENCODE_CAGE_CONFIG_DIR}/{name}:ro"]
         for provider in providers.values():
             names.update(_provider_env_names(provider))
+    args += ["-e", "OPENCODE_DISABLE_PROJECT_CONFIG=1"]
+    for name in sorted(names):
+        if name in env:
+            args += ["-e", name]
+    return args
+
+
+def _opencode2_brokered_provider(provider: dict, broker_base: str) -> dict:
+    """``provider`` with its ``options.baseURL``/``options.apiKey``
+    overwritten to point at the broker -- everything else about it (models,
+    its own ``env`` list, any other ``options`` field) carried over
+    unchanged. The pair this overwrites is exactly what
+    ``_opencode2_provider_upstream``/``_opencode2_provider_key`` resolved to
+    build the broker ``broker_base`` is the (host-gateway) address of."""
+    options = provider.get("options")
+    new_options = dict(options) if isinstance(options, dict) else {}
+    new_options["baseURL"] = broker_base
+    new_options["apiKey"] = "proxy-managed"
+    rewritten = dict(provider)
+    rewritten["options"] = new_options
+    return rewritten
+
+
+def opencode2_broker_docker_args(
+    home: Path,
+    *,
+    environ: Mapping[str, str] | None = None,
+    broker_bases: Mapping[tuple[str, str], str],
+) -> list[str]:
+    """Broker-path counterpart to ``_opencode2_docker_args``: same cage-config
+    mount + env-forwarding shape, except every provider keyed (by ``(file,
+    provider name)``) in ``broker_bases`` -- the targets
+    ``opencode2_broker_targets`` returned, each now backed by a running
+    broker at the given base URL -- is rewritten via
+    ``_opencode2_brokered_provider`` to point at its broker instead of the
+    real upstream. Non-brokered providers are written through exactly as
+    ``_opencode2_docker_args`` would.
+
+    Env-forwarding covers ONLY providers NOT in ``broker_bases``. A brokered
+    provider's real key must never reach the container -- neither as the
+    literal ``_opencode2_brokered_provider`` already replaced, nor (the part
+    that matters here) as the env var it might have come from: forwarding
+    that var by name would hand the container the value straight out of
+    this process's environment, right past the broker that exists
+    specifically to keep it out.
+    """
+    env = os.environ if environ is None else environ
+    args: list[str] = []
+    names: set[str] = set()
+    for file_name, providers in opencode2_global_providers(home=home, environ=env):
+        rewritten: dict[str, object] = {}
+        for provider_name, provider in providers.items():
+            broker_base = broker_bases.get((file_name, provider_name))
+            if broker_base is not None and isinstance(provider, dict):
+                rewritten[provider_name] = _opencode2_brokered_provider(provider, broker_base)
+            else:
+                rewritten[provider_name] = provider
+        cage_config = _write_cage_config(home, file_name, rewritten)
+        if cage_config is None:
+            continue
+        args += ["-v", f"{cage_config}:{_OPENCODE_CAGE_CONFIG_DIR}/{file_name}:ro"]
+        for provider_name, provider in providers.items():
+            if (file_name, provider_name) in broker_bases:
+                continue   # brokered -- its env var (if any) must not be forwarded
+            if isinstance(provider, dict):
+                names.update(_provider_env_names(provider))
     args += ["-e", "OPENCODE_DISABLE_PROJECT_CONFIG=1"]
     for name in sorted(names):
         if name in env:

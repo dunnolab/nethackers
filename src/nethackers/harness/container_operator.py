@@ -18,16 +18,25 @@ would otherwise double-sandbox and fail inside the container); claude gets
 "already sandboxed" flag of its own.
 
 ``ContainerOperator``'s ``broker`` flag (default ``False``) is a SELECTABLE
-alternative to the credential mount above: when set, ``run`` starts a
-``cred_broker.CredBroker`` for the container's lifetime and uses
+alternative to the credential mount above: when set, ``run`` starts one
+``cred_broker.CredBroker`` per credential that needs brokering, for the
+container's whole lifetime, in place of ``auth_docker_args``. claude/codex
+each have exactly one upstream/credential, so that's a single broker via
 ``auth_inject.auth_broker_args`` (base-URL env + placeholder key, no ``-v``
-mount) instead of ``auth_docker_args``. The mount stays the default because
-live per-agent base-URL-override behavior is unverified -- see
-``auth_inject``'s module docstring for the broker path's known concerns.
+mount). OpenCode 2 is multi-provider -- its base-URL override is a
+per-provider JSON field, not one env var -- so it starts one broker PER
+BROKERABLE PROVIDER instead, via ``auth_inject.opencode2_broker_targets``
+(resolve) / ``opencode2_broker_docker_args`` (rewrite the cage config);
+``auth_broker_args`` itself stays claude/codex-only and is never called for
+opencode2. A config with no brokerable provider falls back to the credential
+mount wholesale. The mount stays the default because live per-agent
+base-URL-override behavior is unverified -- see ``auth_inject``'s module
+docstring for the broker path's known concerns.
 """
 from __future__ import annotations
 
 import contextlib
+import os
 import platform
 import subprocess
 import threading
@@ -42,6 +51,8 @@ from nethackers.harness.auth_inject import (
     auth_broker_args,
     auth_docker_args,
     broker_credential as _default_broker_credential,
+    opencode2_broker_docker_args,
+    opencode2_broker_targets,
 )
 from nethackers.harness.cred_broker import CredBroker
 from nethackers.harness.operator import (
@@ -284,26 +295,21 @@ class ContainerOperator:
         name = _mutator_container_name(
             self._run_id, worktree.name, worktree.parent.name
         )
-        broker_proc = None
+        # N brokers, not one: claude/codex ever start exactly one (their
+        # single upstream/credential), but opencode2 -- multi-provider, with
+        # a per-provider base-URL override rather than one env var -- starts
+        # one PER BROKERABLE PROVIDER (see `_start_broker_auth`). Every entry
+        # here gets `.stop()`ed in the `finally` below, regardless of harness
+        # or how many there turned out to be (including zero).
+        broker_procs: list[_CredBrokerLike] = []
         try:
             if self.broker:
-                # Broker path (§3d, INV2): a placeholder key + base-URL env
-                # instead of a credential mount. The broker itself is started
-                # here, before the docker argv is even built -- its
-                # `auth_broker_args` env needs the broker's (host-gateway)
-                # base URL, which only exists once `start()` has run.
-                header_name, header_value = self._broker_credential(
-                    self.harness, system=self.system, home=self.home, run=self._run,
-                )
-                broker_proc = self._cred_broker_factory(
-                    _broker_upstream_base(self.harness), header_name, header_value,
-                )
-                broker_base = _host_gateway_url(broker_proc.start())
-                auth = auth_broker_args(self.harness, broker_base=broker_base)
-                # The container needs a route to the host-side broker;
-                # `host.docker.internal` only resolves with this on Linux
-                # docker (Docker Desktop/macOS already provides it).
-                extra_args = ["--add-host", "host.docker.internal:host-gateway"]
+                # Broker path (§3d, INV2): a placeholder key + base-URL(s)
+                # instead of a credential mount. Broker(s) are started here,
+                # before the docker argv is even built -- the auth args need
+                # each broker's (host-gateway) base URL, which only exists
+                # once `start()` has run.
+                auth, extra_args = self._start_broker_auth(broker_procs)
             else:
                 # Resolve auth/config BEFORE shelling out to docker: login-only
                 # backends fail early instead of mounting an empty path. OpenCode 2
@@ -367,15 +373,76 @@ class ContainerOperator:
                 self._maybe_kill_on_stop(name, stop)
         finally:
             # Outer to the whole method (not just the run_operator try/
-            # finally above) so the broker outlives the container for its
+            # finally above) so every broker outlives the container for its
             # ENTIRE lifetime, independent of whether run_operator returned
             # normally, was stopped, or raised. Orthogonal to the
             # stop-watcher/`_maybe_kill_on_stop` dance above: that manages
             # the DOCKER CONTAINER's lifecycle against `stop`; this manages
-            # the BROKER PROCESS's lifecycle against this method returning --
-            # neither one's cleanup depends on the other's.
-            if broker_proc is not None:
-                broker_proc.stop()
+            # each BROKER PROCESS's lifecycle against this method returning --
+            # neither one's cleanup depends on the other's, and that stays
+            # true for N brokers exactly as it did for one: this loop is the
+            # only thing that changed to generalize it, nothing about the
+            # nesting above.
+            for proc in broker_procs:
+                proc.stop()
+
+    def _start_broker_auth(
+        self, broker_procs: list[_CredBrokerLike],
+    ) -> tuple[list[str], list[str] | None]:
+        """Start whatever ``CredBroker``(s) this run's harness needs and
+        return the ``(auth_args, extra_args)`` pair ``run`` splices into the
+        docker argv -- the broker-path counterpart to the plain
+        ``auth_docker_args`` call in ``run``'s ``else`` branch. Every broker
+        started is appended to ``broker_procs`` (the caller's list) so its
+        ``finally`` stops all of them, however many there turned out to be.
+
+        claude/codex each have exactly one upstream/credential -- unchanged
+        from before this method existed: one ``CredBroker``, one
+        ``auth_broker_args`` call. opencode2 is multi-provider: its base-URL
+        override is a per-provider JSON field, not one env var, so it starts
+        one broker PER BROKERABLE PROVIDER (``auth_inject.opencode2_broker_targets``)
+        and rewrites the cage config to point each at its own broker
+        (``opencode2_broker_docker_args``) -- never ``auth_broker_args``,
+        which stays claude/codex-only (see its docstring). A config with no
+        brokerable provider at all (e.g. only ``{file:...}`` keys) starts
+        zero brokers and falls back to the credential mount wholesale,
+        rather than mount an empty broker config behind an unused
+        ``--add-host``.
+        """
+        if self.harness == "opencode2":
+            targets = opencode2_broker_targets(home=self.home, environ=os.environ)
+            if not targets:
+                auth = auth_docker_args(
+                    self.harness, system=self.system, home=self.home, _require_exists=True,
+                )
+                return auth, None
+            broker_bases: dict[tuple[str, str], str] = {}
+            for target in targets:
+                proc = self._cred_broker_factory(
+                    target["upstream"], target["header_name"], target["header_value"],
+                )
+                broker_procs.append(proc)
+                broker_bases[(target["file"], target["name"])] = _host_gateway_url(proc.start())
+            auth = opencode2_broker_docker_args(
+                self.home, environ=os.environ, broker_bases=broker_bases,
+            )
+        else:
+            header_name, header_value = self._broker_credential(
+                self.harness, system=self.system, home=self.home, run=self._run,
+            )
+            proc = self._cred_broker_factory(
+                _broker_upstream_base(self.harness), header_name, header_value,
+            )
+            broker_procs.append(proc)
+            broker_base = _host_gateway_url(proc.start())
+            auth = auth_broker_args(self.harness, broker_base=broker_base)
+        # The container needs a route to the host-side broker(s);
+        # `host.docker.internal` only resolves with this on Linux docker
+        # (Docker Desktop/macOS already provides it) -- one add-host serves
+        # every broker above, since they all listen on loopback and share
+        # the same host-gateway rewrite (`_host_gateway_url`).
+        extra_args = ["--add-host", "host.docker.internal:host-gateway"]
+        return auth, extra_args
 
     def _maybe_kill_on_stop(self, name: str, stop: threading.Event | None) -> None:
         """Single check-and-act step, kept separate from the watcher's poll
