@@ -390,7 +390,11 @@ def run_loop(
             worktree = workdir / f"iter-{k}"
             if worktree.exists():
                 shutil.rmtree(worktree)
-            shutil.copytree(cell.tree, worktree)
+            # ignore=refs._mutator_ignore: strip build junk AND instruction-
+            # bearing agent config (CLAUDE.md, .claude/, ...) before the
+            # mutator's coding agent ever reads this tree (spec §3d) --
+            # defuses prompt-injection carried in a pulled program.
+            shutil.copytree(cell.tree, worktree, ignore=refs._mutator_ignore)
 
             # Hand the TRAINING seeds in as data (spec §3.6): the mutator image
             # has no harness/seeds.py to derive them. parent_means/parent_overall:
