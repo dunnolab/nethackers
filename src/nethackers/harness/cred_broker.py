@@ -14,6 +14,7 @@ into an open relay.
 """
 from __future__ import annotations
 
+import contextlib
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
@@ -73,16 +74,35 @@ class CredBroker:
                     if k.lower() not in ("host", "content-length", broker._header_name.lower())
                 }
                 headers[broker._header_name] = broker._header_value
-                upstream_response = client.request(
-                    self.command, broker._upstream + self.path, content=body, headers=headers,
-                )
-                self.send_response(upstream_response.status_code)
-                for k, v in upstream_response.headers.items():
-                    if k.lower() not in _HOP_BY_HOP_RESPONSE_HEADERS:
-                        self.send_header(k, v)
-                self.send_header("Content-Length", str(len(upstream_response.content)))
-                self.end_headers()
-                self.wfile.write(upstream_response.content)
+                try:
+                    upstream_response = client.request(
+                        self.command, broker._upstream + self.path,
+                        content=body, headers=headers,
+                    )
+                    self.send_response(upstream_response.status_code)
+                    for k, v in upstream_response.headers.items():
+                        if k.lower() not in _HOP_BY_HOP_RESPONSE_HEADERS:
+                            self.send_header(k, v)
+                    self.send_header("Content-Length", str(len(upstream_response.content)))
+                    self.end_headers()
+                    self.wfile.write(upstream_response.content)
+                except Exception:
+                    # `client` can be closed out from under this thread by a
+                    # concurrent stop() (daemon_threads=True means stop()
+                    # doesn't wait for an in-flight request -- see the
+                    # comment below), the upstream can be unreachable, or
+                    # the client side of THIS connection can drop mid-write.
+                    # Whatever the cause, a forwarding failure must end the
+                    # request cleanly rather than raise out of the handler
+                    # (socketserver's default error handling would otherwise
+                    # print a stack trace to stderr for what is, from the
+                    # mutator's point of view, just a failed HTTP call).
+                    # Best-effort only: if the client side is what's gone,
+                    # this send fails too and is swallowed rather than
+                    # raising a second exception.
+                    with contextlib.suppress(Exception):
+                        self.send_response(502)
+                        self.end_headers()
 
             def log_message(self, *args: object) -> None:  # quiet; no test/prod need
                 pass
@@ -91,9 +111,17 @@ class CredBroker:
             setattr(Handler, f"do_{method}", Handler._proxy)
 
         self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
-        # Worker threads ThreadingMixIn spawns per-request must not outlive
-        # the process/test on their own -- stop() only joins the accept-loop
-        # thread below, not these.
+        # DELIBERATE: stop() joins the accept-loop thread (`self._thread`,
+        # below) so `serve_forever` is guaranteed to have exited, but it
+        # does NOT wait for whatever per-request worker thread ThreadingMixIn
+        # spawned for a request that's still in flight -- draining those
+        # would mean stop() could hang on a stuck/slow request (e.g. the
+        # harness killing a hung mutator container mid-call). daemon_threads
+        # = True means an in-flight worker thread can't block process exit
+        # either way; the try/except in `_proxy` above is what makes an
+        # interrupted in-flight request fail cleanly (a 502, or just a
+        # closed connection) instead of raising once `stop()` has closed
+        # `client`/the socket out from under it.
         self._server.daemon_threads = True
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
@@ -110,5 +138,9 @@ class CredBroker:
             self._client.close()
 
     def _host_allowed(self, host_header: str | None) -> bool:
-        host = (host_header or "").split(":")[0]
+        # Host headers are case-insensitive (RFC 9110 §4.2.3); `.hostname`
+        # already lower-cases `self._upstream_host`, so the incoming side
+        # must be lower-cased too or a same-host request in a different case
+        # (e.g. "LOCALHOST") would be wrongly refused.
+        host = (host_header or "").split(":")[0].lower()
         return not host or host in ("127.0.0.1", "localhost", self._upstream_host)
