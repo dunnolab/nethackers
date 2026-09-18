@@ -158,6 +158,40 @@ def test_eval_batch_wraps_container_results_into_evidence(tmp_path):
         assert need in cmd, need
 
 
+def test_arena_run_is_wrapped_by_an_entrypoint_override_timeout(tmp_path):
+    """CRITICAL fix-round-1 #1: the wall-clock timeout must WRAP the arena
+    entrypoint via ``--entrypoint timeout``, not sit as a trailing CMD arg
+    after the image -- the latter shape gets swallowed as bogus argv to the
+    image's baked ``python -m nethackers.arena.run`` entrypoint, which
+    argparse rejects ("unrecognized arguments: timeout 3600"), failing
+    EVERY real ``eval_batch`` call (self-report eval/submit, evolve scoring,
+    the verified-tier worker). Only a real docker daemon caught that
+    regression -- every other test in this file stayed green -- so this
+    structural check on the fake-captured argv is the enforceable
+    regression gate until Task 8 rebuilds+re-pins the arena image for a
+    real docker-gated smoke."""
+    sol = tmp_path / "sol"
+    sol.mkdir()
+    (sol / "bot.py").write_text("x")
+    calls: list = []
+
+    eval_batch(sol, _SPEC, "img:dev", now="t",
+               runner=_make_fake_docker_run(calls),
+               image_digest_resolver=lambda img: "img@sha256:deadbeef")
+
+    cmd = calls[0]
+    # --entrypoint OVERRIDES the image's baked entrypoint with bare `timeout`...
+    assert cmd[cmd.index("--entrypoint") + 1] == "timeout"
+    # ...so the post-image command must re-state the FULL invocation as
+    # timeout's own argv (`timeout <seconds> python -m nethackers.arena.run
+    # --solution /sol ...`) -- NOT `--solution /sol ...` right after the
+    # image, which is exactly the regression shape this test pins against.
+    image_idx = cmd.index("img:dev")
+    assert cmd[image_idx + 1] == str(eval_runner.WALL_TIMEOUT_S)
+    assert cmd[image_idx + 2 : image_idx + 5] == ["python", "-m", "nethackers.arena.run"]
+    assert cmd[image_idx + 5] == "--solution"
+
+
 @pytest.mark.parametrize(
     "image, expect_platform",
     [

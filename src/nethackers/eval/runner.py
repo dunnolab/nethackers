@@ -28,8 +28,10 @@ import json
 import re
 import subprocess
 import tempfile
+import threading
 from collections import deque
 from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 
 from nethackers import _image_pins
@@ -60,14 +62,28 @@ def _stream_episodes(
 
     ``stdin_payload`` is the same pre-derived-specs JSON ``runner(...,
     input=...)`` feeds the non-streaming path (threat 3 a,b -- the secret
-    never enters the container on either path); written to the child's stdin
-    and the pipe closed immediately, exactly like ``subprocess.run(input=)``
-    does -- only the invocation mechanism (Popen vs run) differs, not what
-    the container receives."""
+    never enters the container on either path) -- only the invocation
+    mechanism (Popen vs run) differs, not what the container receives. Fed
+    to the child from a separate thread rather than written inline here:
+    writing the whole payload on this thread BEFORE draining ``stderr``
+    below would deadlock once the payload outgrows the pipe's OS buffer --
+    this thread blocks on the child reading stdin, while the child can
+    itself be blocked writing a full stderr pipe nobody is draining yet,
+    and neither side ever proceeds. This is the exact hazard
+    ``subprocess.communicate()`` avoids by never sequencing a blocking write
+    then a blocking read on one thread; batches are tiny today so it was
+    latent rather than observed, but the shape is cheap to close."""
     proc = popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.DEVNULL,
                  stderr=subprocess.PIPE, text=True, bufsize=1)
-    proc.stdin.write(stdin_payload)
-    proc.stdin.close()
+
+    def _feed_stdin() -> None:
+        with suppress(BrokenPipeError, OSError):
+            proc.stdin.write(stdin_payload)
+        with suppress(OSError):
+            proc.stdin.close()
+
+    writer = threading.Thread(target=_feed_stdin, daemon=True)
+    writer.start()
     tail: deque[str] = deque(maxlen=_STDERR_TAIL_LINES)
     for line in proc.stderr:
         tail.append(line)
@@ -89,6 +105,7 @@ def _stream_episodes(
             }
         )
     returncode = proc.wait()
+    writer.join()  # the write is done (or gave up) well before the process exits
     if returncode != 0:
         raise subprocess.CalledProcessError(returncode, cmd, stderr="".join(tail))
 
@@ -203,15 +220,24 @@ def eval_batch(
     """Evaluate ``solution_path`` against ``image`` for ``spec``'s published
     ``(seed, character)`` batch and return the resulting ``Evidence``.
 
-    Runs ``<runtime> run --rm -i`` (``runtime`` is the resolved container CLI
-    -- ``"docker"`` or ``"podman"``, issue #50 -- defaulting to ``"docker"``;
-    ``cli.py``'s handler passes ``container_runtime()``) sealed by
-    ``offline_flags()`` (spec sec3b, threat 4: no network, read-only rootfs,
-    every capability dropped, no privilege escalation, resource caps, a
-    non-root user) plus an in-image wall-clock ``timeout`` (``WALL_TIMEOUT_S``
-    -- an outer DoS bound the per-action timeout doesn't give), with the
-    solution bind-mounted read-only at ``/sol`` and a fresh host temp directory
-    bind-mounted at ``/out``.
+    Runs ``<runtime> run --rm -i --entrypoint timeout`` (``runtime`` is the
+    resolved container CLI -- ``"docker"`` or ``"podman"``, issue #50 --
+    defaulting to ``"docker"``; ``cli.py``'s handler passes
+    ``container_runtime()``) sealed by ``offline_flags()`` (spec sec3b,
+    threat 4: no network, read-only rootfs, every capability dropped, no
+    privilege escalation, resource caps, a non-root user), with the solution
+    bind-mounted read-only at ``/sol`` and a fresh host temp directory
+    bind-mounted at ``/out``. ``--entrypoint timeout`` OVERRIDES the image's
+    baked entrypoint (``python -m nethackers.arena.run``) with bare
+    ``timeout`` (coreutils, present in the debian-slim base), and the
+    post-image command re-states the full invocation as ``timeout``'s own
+    argv -- ``str(WALL_TIMEOUT_S), "python", "-m", "nethackers.arena.run",
+    ...`` -- so the wall-clock bound (``WALL_TIMEOUT_S``, an outer DoS bound
+    the per-action timeout doesn't give) WRAPS the whole python process,
+    rather than being appended as bogus CMD args to it (which argparse
+    rejects outright, failing every real call -- a regression only a real
+    docker daemon caught). ``timeout`` passes stdin through to the wrapped
+    command untouched.
 
     The (possibly hidden -- worker/verify.py's verified tier) ``secret``
     never enters the container (threat 3 a,b / INV3): this function derives
@@ -219,13 +245,13 @@ def eval_batch(
     same pure ``trajectory_spec(secret, "local", seed)`` the container used
     to call internally -- so the games played are bit-for-bit identical to
     before -- JSON-serializes ``[{"spec": ..., "character": ...}, ...]``, and
-    pipes it into the image's ``nethackers.arena.run`` over stdin (``-i``
+    pipes it into the wrapped ``nethackers.arena.run`` over stdin (``-i``
     keeps the pipe open; ``runner(..., input=...)`` on the non-streaming
-    path, ``_stream_episodes``'s own write on the streaming one). The
-    container's argv/env carry only ``spec``'s step/timeout parameters and
-    ``--max-parallel-evals`` (``max_parallel_evals``, default 8) -- the cap
-    on how many of the batch's episodes the container runs concurrently --
-    never a seed or the secret that derived it.
+    path, ``_stream_episodes``'s own threaded write on the streaming one).
+    The container's argv/env carry only ``spec``'s step/timeout parameters
+    and ``--max-parallel-evals`` (``max_parallel_evals``, default 8) -- the
+    cap on how many of the batch's episodes the container runs concurrently
+    -- never a seed or the secret that derived it.
     Reads back ``/out/results.json`` defensively via ``read_result_json``
     (spec sec3b, INV4 -- the box's output is HOSTILE data: rejects a symlink
     escape, an oversized file, or malformed/non-list JSON) into a
@@ -324,9 +350,23 @@ def eval_batch(
             "-e", "HOME=/tmp",
             "-v", f"{solution_path}:/sol:ro",
             "-v", f"{td}:/out",
+            # Override the image's baked ENTRYPOINT (`python -m nethackers.
+            # arena.run`) with bare `timeout` so the wall-clock bound below
+            # WRAPS the whole python invocation, instead of being appended
+            # as CMD args to the original entrypoint -- which argparse
+            # rejects outright ("unrecognized arguments: timeout 3600"),
+            # failing EVERY real eval_batch call (self-report eval/submit,
+            # evolve scoring, the verified-tier worker). `timeout` (coreutils,
+            # present in the debian-slim base) passes stdin through
+            # untouched, so the specs piped above still reach python.
+            "--entrypoint", "timeout",
             image,
-            # An outer wall-clock DoS bound -- see WALL_TIMEOUT_S.
-            "timeout", str(WALL_TIMEOUT_S),
+            # An outer wall-clock DoS bound -- see WALL_TIMEOUT_S. Re-states
+            # the full invocation as `timeout`'s own argv (`timeout N cmd
+            # [args...]`) since overriding the entrypoint above means this
+            # image no longer runs `python -m nethackers.arena.run` on its
+            # own -- something has to say so explicitly now.
+            str(WALL_TIMEOUT_S), "python", "-m", "nethackers.arena.run",
             "--solution", "/sol",
             "--max-steps", str(spec.max_steps),
             "--no-progress-timeout", str(spec.no_progress_timeout),
