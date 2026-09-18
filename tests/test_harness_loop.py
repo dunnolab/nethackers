@@ -134,17 +134,21 @@ class _AlwaysRejectingOperator:
 
 
 def _fitness_runner(progress_by_version):
-    """Fake Docker runner: reads the mounted bot's VERSION, scores by table."""
-    def fake(cmd, check):
+    """Fake Docker runner: reads the mounted bot's VERSION, scores by table.
+    Reads its batch from the `input=` kwarg -- the real, current eval/runner.py
+    call shape (the per-trajectory seeds are derived host-side and piped over
+    stdin as `[{"spec": ..., "character": ...}, ...]`; there is no `--batch`
+    argv entry anymore, only arena/run.py's now-legacy path still has one)."""
+    def fake(cmd, check, input=None):
         sol = next(v.removesuffix(":/sol:ro") for v in cmd if v.endswith(":/sol:ro"))
         version = int(Path(sol, "bot.py").read_text().split("=")[1].splitlines()[0])
-        batch = json.loads(cmd[cmd.index("--batch") + 1])
+        batch = json.loads(input.decode())
         host_out = next(v.removesuffix(":/out") for v in cmd if v.endswith(":/out"))
         Path(host_out, "results.json").write_text(json.dumps([
-            {"trajectory_id": s, "status": "completed", "progress": progress_by_version(version),
+            {"trajectory_id": i, "status": "completed", "progress": progress_by_version(version),
              "ascended": False, "steps": 1, "turns": 1, "max_depth": 1, "end_status": "died",
-             "error": None, "wall_seconds": 0.1, "character": c, "milestone": None}
-            for s, c in batch]))
+             "error": None, "wall_seconds": 0.1, "character": e["character"], "milestone": None}
+            for i, e in enumerate(batch)]))
     return fake
 
 
@@ -152,17 +156,19 @@ def _fitness_runner_by_character(progress_fn):
     """Fake Docker runner like `_fitness_runner`, but keyed on (version,
     character) instead of version alone -- lets a test give per-identity
     progress that diverges by build (one build up, another down) rather than
-    every identity moving in lockstep."""
-    def fake(cmd, check):
+    every identity moving in lockstep. Reads its batch from `input=` -- see
+    `_fitness_runner`'s docstring."""
+    def fake(cmd, check, input=None):
         sol = next(v.removesuffix(":/sol:ro") for v in cmd if v.endswith(":/sol:ro"))
         version = int(Path(sol, "bot.py").read_text().split("=")[1].splitlines()[0])
-        batch = json.loads(cmd[cmd.index("--batch") + 1])
+        batch = json.loads(input.decode())
         host_out = next(v.removesuffix(":/out") for v in cmd if v.endswith(":/out"))
         Path(host_out, "results.json").write_text(json.dumps([
-            {"trajectory_id": s, "status": "completed", "progress": progress_fn(version, c),
+            {"trajectory_id": i, "status": "completed",
+             "progress": progress_fn(version, e["character"]),
              "ascended": False, "steps": 1, "turns": 1, "max_depth": 1, "end_status": "died",
-             "error": None, "wall_seconds": 0.1, "character": c, "milestone": None}
-            for s, c in batch]))
+             "error": None, "wall_seconds": 0.1, "character": e["character"], "milestone": None}
+            for i, e in enumerate(batch)]))
     return fake
 
 
