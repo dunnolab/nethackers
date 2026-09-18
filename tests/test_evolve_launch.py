@@ -160,3 +160,25 @@ def test_run_forwards_on_iteration_and_still_writes_metric(tmp_path, monkeypatch
     assert seen and seen[0][0] == 1 and seen[0][1].improved == ["val-dwa-law-fem"]
     lines = (plan.run_dir / "metrics.jsonl").read_text().splitlines()
     assert any(json.loads(x)["outcome"] == "registered" for x in lines)  # disk unchanged
+
+
+def test_prepare_evolve_passes_tier_through_to_run_loop(tmp_path, monkeypatch):
+    # Task 12: EvolveParams.tier must reach run_loop's own `tier` kwarg --
+    # defaults to "self-reported" untouched, but an explicit "verified" pin
+    # (the opt-in to cold-start off the trusted network) must thread through.
+    captured = {}
+    monkeypatch.setattr(launch, "run_loop", lambda **kw: captured.update(kw) or [])
+    monkeypatch.setattr(launch, "_now", lambda: "2026-09-18T00:00:00+00:00")
+    p = EvolveParams(objective="wiz-elf-cha-mal", seed="roots/autoascend",
+                     from_seed=True, workdir=str(tmp_path), hub="http://h",
+                     token="t", owner="o")
+    assert p.tier == "self-reported"   # the default, unset
+    prepare_evolve(p, git_sha="x").run(_run_kwargs())
+    assert captured["tier"] == "self-reported"
+
+    captured.clear()
+    p2 = EvolveParams(objective="wiz-elf-cha-mal", seed="roots/autoascend",
+                      from_seed=True, workdir=str(tmp_path), hub="http://h",
+                      token="t", owner="o", tier="verified")
+    prepare_evolve(p2, git_sha="x").run(_run_kwargs())
+    assert captured["tier"] == "verified"

@@ -82,6 +82,10 @@ class EvolveParams:
     workdir: str = field(default_factory=_default_workdir)
     run_name: str | None = None
     from_seed: bool = False  # skip SELECT; cold-start from `seed` directly
+    # Network tier the cold-start SELECT reads elites/the board from --
+    # "self-reported" is the fast default; "verified" opts into the trusted
+    # (worker-scored) network instead, e.g. for a hardened cold start.
+    tier: str = "self-reported"
     offline: bool = False  # explicit no-publish/no-register gate (hub is still read for seeding)
     model: str | None = None   # pin the operator's model (None = harness default)
     effort: str | None = None  # reasoning effort level (None = harness default)
@@ -263,7 +267,7 @@ def prepare_evolve(
             tree_store=store, operator=operator,
             hub=hub, image=params.image, token=params.token,
             owner=params.owner, iterations=params.iterations,
-            from_seed=params.from_seed, rng=random.Random(rid),
+            from_seed=params.from_seed, tier=params.tier, rng=random.Random(rid),
             max_parallel_evals=params.max_parallel_evals, stop=callbacks.get("stop"),
             runtime=params.runtime,
             now_fn=_now, report=report, on_episode=callbacks["on_episode"],

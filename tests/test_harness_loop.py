@@ -170,12 +170,14 @@ class _ElitesHub(_FakeHub):
     """A hub that also serves per-identity elites for cold-start cell seeding.
     `by_identity` maps identity -> a champion entry; every fixture entry
     below carries owner='dev', matching every one of this file's run_loop
-    calls that use `_ElitesHub` -- so every entry is trusted (select._trusted
-    is an owner match only; there's no 'verified' tier)."""
+    calls that use `_ElitesHub` -- so every entry is trusted (an owner match
+    only). Ignores `tier` (Task 12) -- it returns the same fixture regardless
+    of which network run_loop asked for; see test_run_loop_threads_tier_to_
+    both_coldstart_hub_reads for a fake that actually records it."""
     def __init__(self, by_identity):
         super().__init__()
         self._by = by_identity
-    def elites(self, identity):
+    def elites(self, identity, tier="self-reported"):
         e = self._by.get(identity)
         return [e] if e is not None else []
 
@@ -1135,6 +1137,59 @@ def test_coldstart_seeds_union_from_board_champion(tmp_path):
     assert cold["union"]["results"]
     assert {r["character"] for r in cold["union"]["results"]} == {a, b}
     assert all(r["progress"] == 0.6 for r in cold["union"]["results"])
+
+
+# -- Task 12: `tier` threads through run_loop into BOTH cold-start hub reads
+# (per-identity elites AND the union board champion) -- lets cold-start pull
+# from the verified network instead of self-reported. A default-only test
+# suite can't catch a dropped `tier=tier` at either call site (both fall back
+# to the same "self-reported" default either way), so this pins a NON-default
+# value all the way through.
+
+def _tier_test_runner(progress_by_version):
+    """A minimal fake Docker runner for the tier-threading test only: same
+    shape as `_fitness_runner` above, but reads its batch from the `input=`
+    kwarg (the real, current eval/runner.py call shape) instead of a
+    `--batch` argv entry. `_fitness_runner` itself is stale against that
+    shape -- a pre-existing failure unrelated to Task 12 (see e.g.
+    test_coldstart_base_dev_is_the_frontier_mean) -- so this keeps the new
+    test's pass/fail a clean signal of tier-threading alone, uncoupled from
+    that fixture drift."""
+    def fake(cmd, check=True, **kwargs):
+        sol = next(v.removesuffix(":/sol:ro") for v in cmd if v.endswith(":/sol:ro"))
+        version = int(Path(sol, "bot.py").read_text().split("=")[1].splitlines()[0])
+        host_out = next(v.removesuffix(":/out") for v in cmd if v.endswith(":/out"))
+        batch = json.loads(kwargs["input"].decode())
+        Path(host_out, "results.json").write_text(json.dumps([
+            {"trajectory_id": i, "status": "completed", "progress": progress_by_version(version),
+             "ascended": False, "steps": 1, "turns": 1, "max_depth": 1, "end_status": "died",
+             "error": None, "wall_seconds": 0.1, "character": e["character"], "milestone": None}
+            for i, e in enumerate(batch)]))
+    return fake
+
+
+def test_run_loop_threads_tier_to_both_coldstart_hub_reads(tmp_path):
+    a, b = "wiz-elf-cha-mal", "wiz-orc-cha-mal"
+    champ_a = {"program_id": "github.com/t/a@11", "score": 0.9, "owner": "clyde",
+               "reference": {"repo": "github.com/t/a", "commit": "11"}}
+    seen: dict[str, list[str]] = {"elites": [], "board": []}
+    class _Hub(_ElitesHub):
+        def elites(self, identity, tier="self-reported"):
+            seen["elites"].append(tier)
+            return super().elites(identity, tier=tier)
+        def board(self, scope, tier="self-reported"):
+            seen["board"].append(tier)
+            return []
+        def baseline(self): return []
+    run_loop(objective=f"{a},{b}", seed_tree=_seed_tree(tmp_path / "seed"),
+             tree_store=LocalTreeStore(tmp_path / "store"), operator=_ImprovingOperator(),
+             hub=_Hub({a: champ_a}), image="img:dev", token="t", owner="dev", iterations=0,
+             now_fn=lambda: "2026-09-18T00:00:00Z",
+             runner=_tier_test_runner(lambda v: {0: 0.2, 5: 0.7}.get(v, 0.2)),
+             fetch=_champion_fetch({"github.com/t/a@11": 5}),
+             workdir=tmp_path / "work", tier="verified")
+    assert seen["elites"] == ["verified", "verified"]   # one call per identity (a, b)
+    assert seen["board"] == ["verified"]                # the union cold-start read
 
 
 def test_union_seed_skipped_for_single_identity(tmp_path):

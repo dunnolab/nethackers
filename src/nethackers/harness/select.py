@@ -79,16 +79,19 @@ def per_identity_elites(
     hub, identities: tuple[str, ...], *,
     store: LocalTreeStore,
     fetch: Callable[[dict, Path], Path | None] = pull_fetch,
+    tier: str = "self-reported",
 ) -> dict[str, tuple[dict, Path]]:
     """For each identity in ``identities``, the global top elite entry plus
     its resolved tree on disk -- the thin per-identity read the MAP-Elites cold
     start seeds cells from. An identity with no elite (or whose top elite fails
     to resolve) is simply absent. Any hub error on a member -> that member
-    absent (never raises)."""
+    absent (never raises). ``tier`` selects which network cold-start reads
+    from (``"self-reported"`` the fast default, ``"verified"`` the opt-in
+    trusted-worker-scored one) -- forwarded verbatim to ``hub.elites``."""
     out: dict[str, tuple[dict, Path]] = {}
     for ident in identities:
         try:
-            entries = list(hub.elites(ident))
+            entries = list(hub.elites(ident, tier=tier))
         except Exception:
             entries = []
         if not entries:
