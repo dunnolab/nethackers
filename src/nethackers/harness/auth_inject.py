@@ -347,7 +347,7 @@ def _opencode2_provider_upstream(name: str, provider: dict) -> tuple[str, str, b
     base_url = options.get("baseURL") if isinstance(options, dict) else None
     if isinstance(base_url, str) and base_url:
         host = urlsplit(base_url).hostname or ""
-        if name == "anthropic" or host.endswith("anthropic.com"):
+        if name == "anthropic" or host == "anthropic.com" or host.endswith(".anthropic.com"):
             return base_url, "x-api-key", False
         return base_url, "Authorization", True
     return _OPENCODE2_DEFAULT_UPSTREAMS.get(name)
