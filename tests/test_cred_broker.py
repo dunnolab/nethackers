@@ -120,3 +120,27 @@ def test_broker_refuses_offhost(fake_upstream):
         finally:
             conn.close()
     assert status == 403
+
+
+def test_broker_allows_host_docker_internal(fake_upstream):
+    # The mutator container reaches the broker via `host.docker.internal`
+    # (ContainerOperator's broker path: `--add-host host.docker.internal:
+    # host-gateway` + ANTHROPIC_BASE_URL/OPENAI_BASE_URL pointed at the
+    # broker -- see container_operator.py), so every real broker-path
+    # request arrives with `Host: host.docker.internal`. That must be
+    # ALLOWED (forwarded, like the broker's own loopback addresses), not
+    # rejected as a genuine off-host guess the way "evil.example" is above.
+    with CredBroker(fake_upstream.url, "Authorization", "Bearer REALKEY") as base:
+        parsed = urlsplit(base)
+        conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=5)
+        try:
+            conn.putrequest("GET", "/", skip_host=True)
+            conn.putheader("Host", "host.docker.internal")
+            conn.endheaders()
+            response = conn.getresponse()
+            status = response.status
+            response.read()
+        finally:
+            conn.close()
+    assert status == 200
+    assert fake_upstream.last_headers["authorization"] == "Bearer REALKEY"

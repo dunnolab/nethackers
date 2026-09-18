@@ -142,5 +142,15 @@ class CredBroker:
         # already lower-cases `self._upstream_host`, so the incoming side
         # must be lower-cased too or a same-host request in a different case
         # (e.g. "LOCALHOST") would be wrongly refused.
+        #
+        # `host.docker.internal` is the mutator container's OWN route back to
+        # this broker -- ContainerOperator's broker path adds `--add-host
+        # host.docker.internal:host-gateway` and points the harness's
+        # base-URL env at exactly that host (container_operator.py), so every
+        # broker-path request genuinely arrives with this Host header. It
+        # belongs alongside the broker's own loopback addresses, not with a
+        # real off-host guess like "evil.example".
         host = (host_header or "").split(":")[0].lower()
-        return not host or host in ("127.0.0.1", "localhost", self._upstream_host)
+        return not host or host in (
+            "127.0.0.1", "localhost", "host.docker.internal", self._upstream_host,
+        )
