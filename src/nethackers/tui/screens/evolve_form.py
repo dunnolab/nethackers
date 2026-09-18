@@ -226,6 +226,20 @@ class EvolveForm(Vertical):
                              value="", allow_blank=False, id="f_effort")
                 yield Label("Iterations")
                 yield Input(value="1", id="f_iters")
+                yield Label("Network")
+                yield Select(
+                    [("Fast — self-reported (default)", "self-reported"),
+                     ("Verified — trusted scores on hidden seeds", "verified")],
+                    value="self-reported", allow_blank=False, id="f_network",
+                )
+                yield Static(
+                    "[dim]Fast pulls from the open leaderboard — scores are self-reported "
+                    "claims, and it's safe to run because every program runs in the sealed "
+                    "sandbox. Verified pulls only programs re-scored on hidden seeds, so the "
+                    "score is trustworthy. This changes which programs you pull, never how "
+                    "safely they run.[/]",
+                    id="f_network_help",
+                )
         # full-width start bar below the two subwindows
         with Horizontal(id="f_startbar"):
             yield Button("Start", id="f_start", variant="success")
@@ -454,6 +468,9 @@ class EvolveForm(Vertical):
     def _effort(self) -> str | None:
         return str(self.query_one("#f_effort", Select).value) or None
 
+    def _network_tier(self) -> str:
+        return str(self.query_one("#f_network", Select).value)
+
     def _params(self) -> EvolveParams:
         if not self._objective:
             raise ValueError("pick an objective from the list")
@@ -474,6 +491,7 @@ class EvolveForm(Vertical):
             hub=self._hub,
             token=self._creds.access_token if self._creds else OFFLINE_TOKEN,
             owner=self._creds.login if self._creds else OFFLINE_OWNER,
+            tier=self._network_tier(),
         )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

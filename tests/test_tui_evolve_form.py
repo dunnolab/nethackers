@@ -791,3 +791,54 @@ async def test_publish_warning_shows_offline_note_when_not_logged_in(monkeypatch
         assert "nethackers login" in warn
         assert gh_calls == []                   # gh_state was never even consulted
         assert isinstance(app.started, _Plan)
+
+
+# ---------------------------------------------------------------------------
+# Network toggle (spec 3e): which network the cold-start SELECT reads elites
+# from -- "self-reported" (fast, open leaderboard) by default, or "verified"
+# (trusted scores on hidden seeds) opt-in. Orthogonal to sandboxing: every
+# pulled program still runs in the sealed sandbox either way (INV7).
+# ---------------------------------------------------------------------------
+
+async def test_network_toggle_defaults_to_self_reported(monkeypatch):
+    seen: dict = {}
+
+    def _fake_prepare_evolve(params, **_kw):
+        seen["params"] = params
+        return _Plan()
+
+    monkeypatch.setattr(ef, "prepare_evolve", _fake_prepare_evolve)
+    app = _Host(None)
+    async with app.run_test(size=(100, 50)) as pilot:
+        form = app.query_one(ef.EvolveForm)
+        assert form._network_tier() == "self-reported"     # default, before any Start
+        # the explanation text sits next to the control and names the safety
+        # invariant (sandboxing) that holds regardless of which network is picked
+        help_text = str(form.query_one("#f_network_help", Static).render()).lower()
+        assert "sealed" in help_text
+
+        form._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        assert seen["params"].tier == "self-reported"       # flows through to EvolveParams
+
+
+async def test_selecting_verified_sets_tier(monkeypatch):
+    seen: dict = {}
+
+    def _fake_prepare_evolve(params, **_kw):
+        seen["params"] = params
+        return _Plan()
+
+    monkeypatch.setattr(ef, "prepare_evolve", _fake_prepare_evolve)
+    app = _Host(None)
+    async with app.run_test(size=(100, 50)) as pilot:
+        form = app.query_one(ef.EvolveForm)
+        form.query_one("#f_network", Select).value = "verified"
+        await pilot.pause()
+        assert form._network_tier() == "verified"
+
+        form._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        assert seen["params"].tier == "verified"
