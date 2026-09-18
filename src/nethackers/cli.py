@@ -514,6 +514,12 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
         "--run-name", default=None,
         help="Optional label appended to the run-id folder under runs/.",
     )
+    evolve.add_argument(
+        "--verified", action="store_true",
+        help="Seed only from the VERIFIED network (trusted scores on hidden seeds); "
+        "default is the fast self-reported network. Either way, every pulled "
+        "program runs in the sealed sandbox.",
+    )
 
     pl = sub.add_parser(
         "pull", parents=[common], formatter_class=RichHelpFormatter,
@@ -935,6 +941,7 @@ def _run(argv: list[str] | None) -> int:
             from_seed=args.from_seed, offline=args.offline,
             model=args.model, effort=args.effort, mutator_image=mut,
             runtime=evolve_runtime,
+            tier="verified" if args.verified else "self-reported",
         )
         # An anonymous run is offline by necessity (the owner==OFFLINE_OWNER
         # backstop in _publisher_for), but --offline is the only case that says
