@@ -14,9 +14,13 @@ an injected thread pool instead, matching this file's fake-injection style
 throughout.
 
 Nothing here touches NLE, a real sandboxed bot subprocess, or the Docker
-image (see tests/test_docker_smoke.py for that). ``--batch`` is the only
-supported way in -- the legacy single-character ``--character``/``--seeds``
-path has been retired.
+image (see tests/test_docker_smoke.py for that). ``--batch`` is the
+public-seed fallback (R67-2); the legacy single-character ``--character``/
+``--seeds`` path has been retired. ``main()``'s OTHER entry path -- reading
+pre-derived specs from stdin when ``--batch`` is omitted (Task 7, threat 3
+a,b) -- is exercised end-to-end in tests/test_arena_run.py instead, since it
+is a dispatch/wiring concern rather than the per-entry fan-out logic this
+file covers.
 """
 
 import concurrent.futures as cf
@@ -89,18 +93,13 @@ def test_batch_dash_sentinel_means_random_draw_but_is_still_recorded():
     assert calls[7]["character"] == "-"
 
 
-def test_neither_batch_nor_seeds_raises_systemexit(tmp_path):
+def test_missing_solution_raises_systemexit(tmp_path):
+    """``--batch`` is no longer required (Task 7 made it optional so its
+    absence can instead mean "read pre-derived specs from stdin" -- see
+    tests/test_arena_run.py::test_main_reads_specs_from_stdin), so
+    ``--solution`` is the argparse-required flag this file pins instead."""
     with pytest.raises(SystemExit) as excinfo:
-        R.main(
-            [
-                "--solution",
-                str(tmp_path),
-                "--evaluation-id",
-                "e",
-                "--out",
-                str(tmp_path / "r.json"),
-            ]
-        )
+        R.main(["--evaluation-id", "e", "--out", str(tmp_path / "r.json")])
     assert excinfo.value.code == 2  # argparse's parser.error() exit status
 
 

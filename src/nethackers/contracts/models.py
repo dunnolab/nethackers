@@ -25,6 +25,18 @@ class TrajectorySpec:
     level_seed: int
     bot_seed: int
 
+    # Wire format for the host->container handoff (spec sec3c, threat 3
+    # a,b): eval_batch derives the concrete spec from the (possibly hidden)
+    # secret HOST-side and JSON-serializes it into the container's stdin, so
+    # the secret itself never has to enter the box -- only the already-
+    # derived, per-trajectory seeds do.
+    def to_dict(self) -> dict[str, Any]:
+        return asdict(self)
+
+    @classmethod
+    def from_dict(cls, value: dict[str, Any]) -> TrajectorySpec:
+        return cls(**value)
+
 
 @dataclass(frozen=True)
 class TrajectoryResult:
