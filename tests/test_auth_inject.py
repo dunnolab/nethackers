@@ -197,3 +197,125 @@ def test_claude_macos_missing_access_token_raises():
 def test_unknown_harness_raises():
     with pytest.raises(ValueError, match="unknown harness"):
         auth_docker_args("pi", system="Linux", home=Path("/h"))
+
+
+# --- broker path (§3d, INV2): auth_broker_args + broker_credential --------
+#
+# `auth_broker_args` returns env args that point a harness at the credential
+# broker with a PLACEHOLDER key -- no mount, no real key. `broker_credential`
+# is the host-side read the broker itself uses for its real `header_value`
+# (ContainerOperator wires the two together -- see test_container_operator.py).
+
+from nethackers.harness.auth_inject import auth_broker_args, broker_credential  # noqa: E402
+
+
+def test_claude_uses_broker_base_and_placeholder():
+    args = auth_broker_args("claude", broker_base="http://host.docker.internal:5000")
+    joined = " ".join(args)
+    assert "ANTHROPIC_BASE_URL=http://host.docker.internal:5000" in joined
+    assert "ANTHROPIC_API_KEY=proxy-managed" in joined
+    assert "-v" not in args                       # no credential mount
+    assert "REAL" not in joined                    # no real key crosses the boundary
+
+
+def test_codex_uses_broker_base_and_placeholder():
+    args = auth_broker_args("codex", broker_base="http://host.docker.internal:5001")
+    joined = " ".join(args)
+    assert "OPENAI_BASE_URL=http://host.docker.internal:5001" in joined
+    assert "OPENAI_API_KEY=proxy-managed" in joined
+    assert "-v" not in args
+    assert "REAL" not in joined
+
+
+def test_opencode2_broker_not_implemented():
+    # OpenCode's base-URL override is a per-provider JSON field, not a single
+    # env var -- not guessed; callers keep using the credential mount.
+    with pytest.raises(NotImplementedError):
+        auth_broker_args("opencode2", broker_base="http://host.docker.internal:5002")
+
+
+def test_unknown_harness_broker_raises():
+    with pytest.raises(ValueError, match="unknown harness"):
+        auth_broker_args("pi", broker_base="http://host.docker.internal:5000")
+
+
+def test_broker_credential_claude_linux_reads_credentials_json(tmp_path):
+    creds_dir = tmp_path / ".claude"
+    creds_dir.mkdir()
+    (creds_dir / ".credentials.json").write_text(
+        json.dumps({"claudeAiOauth": {"accessToken": "tok-linux"}})
+    )
+    header_name, header_value = broker_credential("claude", system="Linux", home=tmp_path)
+    assert header_name == "x-api-key"
+    assert header_value == "tok-linux"
+
+
+def test_broker_credential_claude_macos_reads_keychain():
+    def fake_run(cmd, **kw):
+        assert "find-generic-password" in cmd
+
+        class R:
+            returncode = 0
+            stdout = json.dumps({"claudeAiOauth": {"accessToken": "tok-mac"}})
+
+        return R()
+
+    header_name, header_value = broker_credential(
+        "claude", system="Darwin", home=Path("/h"), run=fake_run,
+    )
+    assert header_name == "x-api-key"
+    assert header_value == "tok-mac"
+
+
+def test_broker_credential_claude_linux_missing_creds_raises(tmp_path):
+    with pytest.raises(AuthUnavailable):
+        broker_credential("claude", system="Linux", home=tmp_path)
+
+
+def test_broker_credential_claude_macos_keychain_miss_raises():
+    def fake_run(cmd, **kw):
+        class R:
+            returncode = 1
+            stdout = ""
+
+        return R()
+
+    with pytest.raises(AuthUnavailable):
+        broker_credential("claude", system="Darwin", home=Path("/h"), run=fake_run)
+
+
+def test_broker_credential_codex_prefers_stable_api_key(tmp_path):
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir()
+    (codex_dir / "auth.json").write_text(json.dumps({
+        "OPENAI_API_KEY": "sk-real",
+        "tokens": {"access_token": "should-not-be-used"},
+    }))
+    header_name, header_value = broker_credential("codex", system="Linux", home=tmp_path)
+    assert header_name == "Authorization"
+    assert header_value == "Bearer sk-real"
+
+
+def test_broker_credential_codex_falls_back_to_oauth_access_token(tmp_path):
+    # No stable API-key login -- only a ChatGPT/OAuth session. This snapshots
+    # the rotating access_token once; see the module docstring's Broker
+    # section for the staleness caveat this creates on a long mutator run.
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir()
+    (codex_dir / "auth.json").write_text(json.dumps({
+        "OPENAI_API_KEY": None,
+        "tokens": {"access_token": "chatgpt-oauth-tok"},
+    }))
+    header_name, header_value = broker_credential("codex", system="Linux", home=tmp_path)
+    assert header_name == "Authorization"
+    assert header_value == "Bearer chatgpt-oauth-tok"
+
+
+def test_broker_credential_codex_missing_login_raises(tmp_path):
+    with pytest.raises(AuthUnavailable):
+        broker_credential("codex", system="Linux", home=tmp_path)
+
+
+def test_broker_credential_unknown_harness_raises():
+    with pytest.raises(ValueError):
+        broker_credential("opencode2", system="Linux", home=Path("/h"))

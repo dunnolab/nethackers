@@ -88,6 +88,11 @@ class EvolveParams:
     mutator_image: str = field(
         default_factory=lambda: resolve_image(load_stage().mutator_image, "mutator"))
     repo_name: str = field(default_factory=lambda: load_stage().repo_name)  # <owner>/<repo_name>
+    # Opt into ContainerOperator's credential-broker path (§3d, INV2) instead
+    # of its default credential mount. False keeps every existing run
+    # byte-identical; live per-agent broker auth is unverified, so this isn't
+    # switched on by default -- see container_operator.py's module docstring.
+    broker: bool = False
 
 
 @dataclass
@@ -237,7 +242,8 @@ def prepare_evolve(
     # duck-typed on `.run(worktree, brief, *, on_line, stop)`.
     operator: Any = ContainerOperator(
         harness=params.operator, image=params.mutator_image,
-        model=params.model, effort=params.effort, run_id=rid, docker=params.runtime)
+        model=params.model, effort=params.effort, run_id=rid, docker=params.runtime,
+        broker=params.broker)
     cfg = EvolveConfig(objective=params.objective, backend=params.operator,
                        iterations=params.iterations, model=params.model,
                        effort=params.effort, operator_version=operator_version)

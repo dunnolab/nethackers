@@ -16,6 +16,14 @@ container is already the sandbox: codex's
 would otherwise double-sandbox and fail inside the container); claude gets
 ``--dangerously-skip-permissions`` appended outright, since claude has no
 "already sandboxed" flag of its own.
+
+``ContainerOperator``'s ``broker`` flag (default ``False``) is a SELECTABLE
+alternative to the credential mount above: when set, ``run`` starts a
+``cred_broker.CredBroker`` for the container's lifetime and uses
+``auth_inject.auth_broker_args`` (base-URL env + placeholder key, no ``-v``
+mount) instead of ``auth_docker_args``. The mount stays the default because
+live per-agent base-URL-override behavior is unverified -- see
+``auth_inject``'s module docstring for the broker path's known concerns.
 """
 from __future__ import annotations
 
@@ -26,9 +34,16 @@ import threading
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
+from urllib.parse import urlsplit, urlunsplit
 
 from nethackers.containers import label_args
-from nethackers.harness.auth_inject import auth_docker_args
+from nethackers.harness.auth_inject import (
+    auth_broker_args,
+    auth_docker_args,
+    broker_credential as _default_broker_credential,
+)
+from nethackers.harness.cred_broker import CredBroker
 from nethackers.harness.operator import (
     OperatorResult,
     _claude_cmd,
@@ -36,6 +51,44 @@ from nethackers.harness.operator import (
     _opencode2_cmd,
     run_operator,
 )
+
+# The provider API host CredBroker forwards to, per harness -- fixed at
+# construction (CredBroker is a single-upstream proxy, never open-relay).
+# Codex's real backend (a plain API-key host vs. a ChatGPT/ChatGPT-plan
+# backend behind the OAuth login docs/harness.md describes) is UNVERIFIED;
+# this is the standard public-API host, parked for live confirmation like
+# the rest of the broker path -- see auth_inject's module docstring.
+_BROKER_UPSTREAM_BASE = {
+    "claude": "https://api.anthropic.com",
+    "codex": "https://api.openai.com",
+}
+
+
+def _broker_upstream_base(harness: str) -> str:
+    try:
+        return _BROKER_UPSTREAM_BASE[harness]
+    except KeyError:
+        raise ValueError(f"no broker upstream configured for harness: {harness!r}") from None
+
+
+class _CredBrokerLike(Protocol):
+    """The two calls ``ContainerOperator.run`` makes on whatever
+    ``cred_broker_factory`` returns -- real ``cred_broker.CredBroker`` or a
+    test's fake, never depended on for anything else."""
+
+    def start(self) -> str: ...
+    def stop(self) -> None: ...
+
+
+def _host_gateway_url(base_url: str) -> str:
+    """``http://127.0.0.1:<port>`` (what ``CredBroker.start()`` returns) --
+    reachable from the host, but 127.0.0.1 *inside* the container is the
+    container itself, not the host. Re-hosts the same port onto
+    ``host.docker.internal``, which ``build_docker_argv``'s ``--add-host
+    host.docker.internal:host-gateway`` (added on the broker path) makes
+    resolvable from inside the container."""
+    parts = urlsplit(base_url)
+    return urlunsplit(parts._replace(netloc=f"host.docker.internal:{parts.port}"))
 
 
 @dataclass(frozen=True)
@@ -68,11 +121,12 @@ def build_docker_argv(
     brief: str,
     refs: Path | None = None,
     docker: str = "docker",
+    extra_args: list[str] | None = None,
 ) -> list[str]:
     """Assemble ``docker run`` argv for one mutator iteration: fixed docker
-    prefix (name + caps + security-opt + workspace mount), then ``auth_args``,
-    then ``image``, then an in-container wall-clock ``timeout``, then the
-    in-cage harness command.
+    prefix (name + caps + security-opt + extra_args + workspace mount), then
+    ``auth_args``, then ``image``, then an in-container wall-clock
+    ``timeout``, then the in-cage harness command.
 
     ``brief`` flows straight into the inner ``_claude_cmd``/``_codex_cmd``
     call and is required (no placeholder default): a caller that forgets it
@@ -86,6 +140,12 @@ def build_docker_argv(
     coding agent to read from inside the sandbox. ``None`` (the default)
     keeps the argv byte-identical to before this mount existed, so callers
     that don't yet have a refs dir (and all pre-existing tests) are unaffected.
+
+    ``extra_args``, when given, is spliced in right after the fixed cap/
+    security-opt block -- today only ``ContainerOperator``'s broker path uses
+    it, for ``--add-host host.docker.internal:host-gateway`` (the container
+    needs a route to the host-side broker). ``None`` (the default) keeps the
+    argv byte-identical to before this existed.
     """
     argv = [
         docker, "run", "--rm",
@@ -95,8 +155,10 @@ def build_docker_argv(
         "--memory-swap", caps.memory,  # cap swap too -- else a runaway reaches ~2x via swap
         "--cpus", caps.cpus,
         "--security-opt", "no-new-privileges",
-        "-v", f"{worktree}:/workspace",
     ]
+    if extra_args:
+        argv += extra_args
+    argv += ["-v", f"{worktree}:/workspace"]
     if refs is not None:
         argv += ["-v", f"{refs}:/refs:ro"]
     argv += ["-w", "/workspace"]
@@ -167,6 +229,9 @@ class ContainerOperator:
         home: Path | None = None,
         docker: str = "docker",
         run_id: str | None = None,
+        broker: bool = False,
+        cred_broker_factory: Callable[[str, str, str], _CredBrokerLike] = CredBroker,
+        broker_credential: Callable[..., tuple[str, str]] = _default_broker_credential,
     ) -> None:
         self.harness = harness
         self.image = image
@@ -193,6 +258,16 @@ class ContainerOperator:
         self.home = home if home is not None else Path.home()
         self.docker = docker
         self._popen = subprocess.Popen
+        # SELECTABLE broker path (§3d, INV2) -- default False keeps the
+        # credential MOUNT (`auth_docker_args`, unchanged below) as what
+        # every existing caller gets. `cred_broker_factory`/`broker_credential`
+        # are injectable seams (mirrors `_popen` above) so a test can drive
+        # the broker path without starting a real server or touching the
+        # Keychain/`~/.codex`/`.credentials.json`.
+        self.broker = broker
+        self._cred_broker_factory = cred_broker_factory
+        self._broker_credential = broker_credential
+        self._run = subprocess.run
 
     def run(
         self,
@@ -209,64 +284,98 @@ class ContainerOperator:
         name = _mutator_container_name(
             self._run_id, worktree.name, worktree.parent.name
         )
-        # Resolve auth/config BEFORE shelling out to docker: login-only
-        # backends fail early instead of mounting an empty path. OpenCode 2
-        # never fails here (no key still leaves its free models), and never
-        # reads the worktree's config: that tree is untrusted.
-        # AuthUnavailable propagates to the caller (the CLI catches it).
-        auth = auth_docker_args(
-            self.harness, system=self.system, home=self.home, _require_exists=True,
-        )
-        argv = build_docker_argv(
-            harness=self.harness, image=self.image, name=name, worktree=worktree,
-            cli=self.cli, model=self.model, effort=self.effort, caps=self.caps,
-            auth_args=auth, brief=brief, refs=refs, docker=self.docker,
-        )
-        done = threading.Event()
-        watcher: threading.Thread | None = None
-        if stop is not None:
-            def _watch() -> None:
-                # Poll the shared `stop` until THIS run finishes (local
-                # `done`) -- mirrors run_operator's own watcher shape so a
-                # normal completion never blocks on, or poisons, `stop`
-                # (shared across every iteration's run).
-                while not done.wait(timeout=0.1):
-                    if stop.is_set():
-                        self._maybe_kill_on_stop(name, stop)
-                        return
-            watcher = threading.Thread(target=_watch, daemon=True)
-            watcher.start()
+        broker_proc = None
         try:
-            # `stop` is also passed straight through so run_operator does its
-            # own SIGKILL of the local `docker run` client (reaping the
-            # foreground process + the "killed" bookkeeping below); the
-            # watcher above is what actually stops the container.
-            return run_operator(
-                argv, cwd=".", backend=self.harness, on_line=on_line, stop=stop,
-                popen=self._popen,
-                stdin_text=brief if self.harness == "opencode2" else None,
+            if self.broker:
+                # Broker path (§3d, INV2): a placeholder key + base-URL env
+                # instead of a credential mount. The broker itself is started
+                # here, before the docker argv is even built -- its
+                # `auth_broker_args` env needs the broker's (host-gateway)
+                # base URL, which only exists once `start()` has run.
+                header_name, header_value = self._broker_credential(
+                    self.harness, system=self.system, home=self.home, run=self._run,
+                )
+                broker_proc = self._cred_broker_factory(
+                    _broker_upstream_base(self.harness), header_name, header_value,
+                )
+                broker_base = _host_gateway_url(broker_proc.start())
+                auth = auth_broker_args(self.harness, broker_base=broker_base)
+                # The container needs a route to the host-side broker;
+                # `host.docker.internal` only resolves with this on Linux
+                # docker (Docker Desktop/macOS already provides it).
+                extra_args = ["--add-host", "host.docker.internal:host-gateway"]
+            else:
+                # Resolve auth/config BEFORE shelling out to docker: login-only
+                # backends fail early instead of mounting an empty path. OpenCode 2
+                # never fails here (no key still leaves its free models), and never
+                # reads the worktree's config: that tree is untrusted.
+                # AuthUnavailable propagates to the caller (the CLI catches it).
+                auth = auth_docker_args(
+                    self.harness, system=self.system, home=self.home, _require_exists=True,
+                )
+                extra_args = None
+            argv = build_docker_argv(
+                harness=self.harness, image=self.image, name=name, worktree=worktree,
+                cli=self.cli, model=self.model, effort=self.effort, caps=self.caps,
+                auth_args=auth, brief=brief, refs=refs, docker=self.docker,
+                extra_args=extra_args,
             )
+            done = threading.Event()
+            watcher: threading.Thread | None = None
+            if stop is not None:
+                def _watch() -> None:
+                    # Poll the shared `stop` until THIS run finishes (local
+                    # `done`) -- mirrors run_operator's own watcher shape so a
+                    # normal completion never blocks on, or poisons, `stop`
+                    # (shared across every iteration's run).
+                    while not done.wait(timeout=0.1):
+                        if stop.is_set():
+                            self._maybe_kill_on_stop(name, stop)
+                            return
+                watcher = threading.Thread(target=_watch, daemon=True)
+                watcher.start()
+            try:
+                # `stop` is also passed straight through so run_operator does its
+                # own SIGKILL of the local `docker run` client (reaping the
+                # foreground process + the "killed" bookkeeping below); the
+                # watcher above is what actually stops the container.
+                return run_operator(
+                    argv, cwd=".", backend=self.harness, on_line=on_line, stop=stop,
+                    popen=self._popen,
+                    stdin_text=brief if self.harness == "opencode2" else None,
+                )
+            finally:
+                done.set()
+                if watcher is not None:
+                    watcher.join(timeout=2)
+                # Closes a race between the two watchers (this one, and
+                # run_operator's own internal one -- both poll the same `stop`
+                # but against different `done` events): if run_operator's own
+                # watcher is the one that notices `stop` first, it SIGKILLs only
+                # the local `docker run` client, run_operator returns fast, and
+                # THIS `done` gets set -- possibly while our watcher is still
+                # mid-wait, so its `done.wait()` returns via the "already set"
+                # path without ever reaching the `stop.is_set()` check above,
+                # and the container is left running (SIGKILLing the client does
+                # NOT stop it). This final call is synchronous, on the main
+                # thread, made only after run_operator is confirmed done --
+                # independent of watcher poll-timing, so it can't lose the race.
+                # `_maybe_kill_on_stop` already no-ops when `stop` was never set
+                # (normal completion), and `_docker_kill` is idempotent/
+                # best-effort, so a possible double-call (watcher + this) is
+                # harmless.
+                self._maybe_kill_on_stop(name, stop)
         finally:
-            done.set()
-            if watcher is not None:
-                watcher.join(timeout=2)
-            # Closes a race between the two watchers (this one, and
-            # run_operator's own internal one -- both poll the same `stop`
-            # but against different `done` events): if run_operator's own
-            # watcher is the one that notices `stop` first, it SIGKILLs only
-            # the local `docker run` client, run_operator returns fast, and
-            # THIS `done` gets set -- possibly while our watcher is still
-            # mid-wait, so its `done.wait()` returns via the "already set"
-            # path without ever reaching the `stop.is_set()` check above,
-            # and the container is left running (SIGKILLing the client does
-            # NOT stop it). This final call is synchronous, on the main
-            # thread, made only after run_operator is confirmed done --
-            # independent of watcher poll-timing, so it can't lose the race.
-            # `_maybe_kill_on_stop` already no-ops when `stop` was never set
-            # (normal completion), and `_docker_kill` is idempotent/
-            # best-effort, so a possible double-call (watcher + this) is
-            # harmless.
-            self._maybe_kill_on_stop(name, stop)
+            # Outer to the whole method (not just the run_operator try/
+            # finally above) so the broker outlives the container for its
+            # ENTIRE lifetime, independent of whether run_operator returned
+            # normally, was stopped, or raised. Orthogonal to the
+            # stop-watcher/`_maybe_kill_on_stop` dance above: that manages
+            # the DOCKER CONTAINER's lifecycle against `stop`; this manages
+            # the BROKER PROCESS's lifecycle against this method returning --
+            # neither one's cleanup depends on the other's.
+            if broker_proc is not None:
+                broker_proc.stop()
 
     def _maybe_kill_on_stop(self, name: str, stop: threading.Event | None) -> None:
         """Single check-and-act step, kept separate from the watcher's poll

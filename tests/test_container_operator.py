@@ -404,3 +404,143 @@ def test_stop_reliably_kills_even_when_run_operators_watcher_wins_the_race(
         f"{misses}/{trials} trials never called _docker_kill -- the "
         "container would have been left running"
     )
+
+
+# --- selectable credential broker path (§3d, INV2) -------------------------
+#
+# `broker=True` swaps the credential MOUNT for base-URL env args pointing at
+# a `CredBroker` this module starts/stops around the container's lifetime.
+# Both the broker factory and the host-side credential read are injected
+# fakes -- no real server, no real Keychain/`.codex`/`.credentials.json`
+# touched by these tests.
+
+class _FakeBroker:
+    """Stands in for `cred_broker.CredBroker`: records ctor args, fakes
+    start()/stop() so no real socket/thread is ever created in a test."""
+
+    def __init__(self, upstream_base, header_name, header_value):
+        self.upstream_base = upstream_base
+        self.header_name = header_name
+        self.header_value = header_value
+        self.started = False
+        self.stopped = False
+
+    def start(self):
+        self.started = True
+        return "http://127.0.0.1:9999"
+
+    def stop(self):
+        self.stopped = True
+
+
+def _broker_op(tmp_path, harness="claude", **kw):
+    holder = {}
+
+    def fake_factory(upstream_base, header_name, header_value):
+        b = _FakeBroker(upstream_base, header_name, header_value)
+        holder["broker"] = b
+        return b
+
+    op = ContainerOperator(
+        harness=harness, image="img:test", system="Linux", home=tmp_path,
+        broker=True,
+        cred_broker_factory=fake_factory,
+        broker_credential=lambda *a, **kw: ("x-api-key", "REAL-SECRET-VALUE"),
+        **kw,
+    )
+    return op, holder
+
+
+def test_broker_path_claude_env_and_add_host_no_mount(tmp_path):
+    seen = {}
+    op, holder = _broker_op(tmp_path, harness="claude")
+    wt = tmp_path / "work" / "iter-1"
+    wt.mkdir(parents=True)
+    op._popen = lambda cmd, **kw: seen.setdefault("cmd", cmd) and FakePopen(cmd, **kw)
+
+    op.run(wt, "BRIEF-TEXT")
+
+    cmd = seen["cmd"]
+    joined = " ".join(cmd)
+    assert "ANTHROPIC_BASE_URL=http://host.docker.internal:9999" in joined
+    assert "ANTHROPIC_API_KEY=proxy-managed" in joined
+    assert "--add-host" in cmd
+    assert cmd[cmd.index("--add-host") + 1] == "host.docker.internal:host-gateway"
+    assert "REAL-SECRET-VALUE" not in joined   # real key never reaches argv
+    # no credential mount -- the only -v left is the workspace mount
+    v_values = [v for flag, v in zip(cmd, cmd[1:], strict=False) if flag == "-v"]
+    assert v_values == [f"{wt}:/workspace"]
+    assert holder["broker"].upstream_base == "https://api.anthropic.com"
+    assert holder["broker"].header_name == "x-api-key"
+    assert holder["broker"].header_value == "REAL-SECRET-VALUE"
+    assert holder["broker"].started is True
+    assert holder["broker"].stopped is True
+
+
+def test_broker_path_codex_env_and_add_host_no_mount(tmp_path):
+    seen = {}
+    op, holder = _broker_op(tmp_path, harness="codex")
+    wt = tmp_path / "work" / "iter-1"
+    wt.mkdir(parents=True)
+    op._popen = lambda cmd, **kw: seen.setdefault("cmd", cmd) and FakePopen(cmd, **kw)
+
+    op.run(wt, "BRIEF-TEXT")
+
+    cmd = seen["cmd"]
+    joined = " ".join(cmd)
+    assert "OPENAI_BASE_URL=http://host.docker.internal:9999" in joined
+    assert "OPENAI_API_KEY=proxy-managed" in joined
+    assert "--add-host" in cmd
+    assert "REAL-SECRET-VALUE" not in joined
+    v_values = [v for flag, v in zip(cmd, cmd[1:], strict=False) if flag == "-v"]
+    assert v_values == [f"{wt}:/workspace"]
+    assert holder["broker"].upstream_base == "https://api.openai.com"
+    assert holder["broker"].started is True
+    assert holder["broker"].stopped is True
+
+
+def test_broker_stopped_even_if_the_run_raises(tmp_path):
+    op, holder = _broker_op(tmp_path, harness="codex")
+    wt = tmp_path / "work" / "iter-1"
+    wt.mkdir(parents=True)
+
+    def boom(cmd, **kw):
+        raise RuntimeError("boom")
+    op._popen = boom
+
+    with pytest.raises(RuntimeError):
+        op.run(wt, "BRIEF-TEXT")
+
+    assert holder["broker"].started is True
+    assert holder["broker"].stopped is True
+
+
+def test_broker_off_by_default_keeps_the_mount_and_no_add_host(tmp_path):
+    # Regression pin: constructing/running WITHOUT `broker=` at all must stay
+    # byte-identical to the pre-broker mount path -- nothing above may change
+    # default behavior.
+    seen = {}
+    op = ContainerOperator(harness="codex", image="img:test", system="Linux", home=tmp_path)
+    (tmp_path / ".codex").mkdir()
+    wt = tmp_path / "work" / "iter-1"
+    wt.mkdir(parents=True)
+    op._popen = lambda cmd, **kw: seen.setdefault("cmd", cmd) and FakePopen(cmd, **kw)
+
+    op.run(wt, "BRIEF-TEXT")
+
+    cmd = seen["cmd"]
+    assert "--add-host" not in cmd
+    assert f"{tmp_path}/.codex:/home/agent/.codex" in cmd
+    assert "OPENAI_BASE_URL" not in " ".join(cmd)
+
+
+def test_build_docker_argv_extra_args_precede_the_image():
+    a = _argv("codex", extra_args=["--add-host", "host.docker.internal:host-gateway"])
+    assert "--add-host" in a
+    assert a.index("--add-host") < a.index("nethackers/mutator:test")
+    assert a[a.index("--add-host") + 1] == "host.docker.internal:host-gateway"
+
+
+def test_build_docker_argv_no_extra_args_by_default():
+    a = _argv("codex")
+    assert "--add-host" not in a
