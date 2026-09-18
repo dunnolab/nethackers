@@ -124,17 +124,29 @@ def test_eval_batch_wraps_container_results_into_evidence(tmp_path):
     assert ev.objective.no_progress_timeout == _SPEC.no_progress_timeout
     assert ev.objective.action_timeout_seconds == _SPEC.action_timeout_seconds
 
-    # Command-building: --network none, solution mounted read-only, and the
-    # batch passed as [[seed, character], ...] JSON (not --character/--seeds).
+    # Command-building: sealed box (offline_flags, threat 4), solution
+    # mounted read-only, and the batch passed as [[seed, character], ...]
+    # JSON (not --character/--seeds).
     cmd = calls[0]
     # No --platform here: "img:dev" is an override, not the pin. See
     # test_platform_flag_is_scoped_to_the_pinned_arena_image below.
-    assert cmd[:5] == ["docker", "run", "--rm", "--network", "none"]
+    assert cmd[:2] == ["docker", "run"]
     assert f"{sol}:/sol:ro" in cmd
     expected_batch_arg = json.dumps([[seed, char] for seed, char in _SPEC.batch])
     assert cmd[cmd.index("--batch") + 1] == expected_batch_arg
     assert "--character" not in cmd
     assert "--seeds" not in cmd
+    # Sealed box (spec sec3b, threat 4): --network none now lives inside
+    # offline_flags() (after --name/--label), alongside the read-only
+    # rootfs, dropped capabilities, no-new-privileges, and resource caps --
+    # plus an in-image wall-clock timeout as an outer DoS bound.
+    assert cmd[cmd.index("--network") + 1] == "none"
+    for need in [
+        "--read-only", "--cap-drop", "ALL", "--security-opt",
+        "no-new-privileges", "--pids-limit", "--memory", "--cpus",
+        "--user", "timeout",
+    ]:
+        assert need in cmd, need
 
 
 @pytest.mark.parametrize(
@@ -164,11 +176,15 @@ def test_platform_flag_is_scoped_to_the_pinned_arena_image(tmp_path, image, expe
     cmd = calls[0]
     assert ("--platform" in cmd) is expect_platform
     if expect_platform:
-        assert cmd[:7] == [
-            "docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none",
-        ]
+        assert cmd[:4] == ["docker", "run", "--platform", "linux/amd64"]
+        assert cmd[4] == "--rm"
     else:
-        assert cmd[:5] == ["docker", "run", "--rm", "--network", "none"]
+        assert cmd[:2] == ["docker", "run"]
+        assert cmd[2] == "--rm"
+    # Sealed regardless of the platform flag's presence -- see
+    # test_eval_batch_wraps_container_results_into_evidence for the full
+    # sealed-flag membership check.
+    assert cmd[cmd.index("--network") + 1] == "none"
 
 
 def test_already_pinned_refs_skip_the_runtime_round_trip():

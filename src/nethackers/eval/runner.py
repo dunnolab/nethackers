@@ -33,8 +33,10 @@ from collections.abc import Callable
 from pathlib import Path
 
 from nethackers import _image_pins
+from nethackers.arena.result_io import read_result_json
 from nethackers.containers import container_name, container_runtime, label_args
 from nethackers.contracts.models import Evidence, Objective, ObjectiveSpec, TrajectoryResult
+from nethackers.sandbox_flags import offline_flags
 from nethackers.solution_root import require_solution_root
 
 _ARENA_EPISODE = re.compile(
@@ -142,6 +144,16 @@ def _default_image_digest(image: str, *, runtime: str | None = None) -> str:
 # note in ``hub/objectives.py`` for the time this corrupted the hub baseline.
 DEFAULT_MAX_PARALLEL_EVALS = 8
 
+# An outer wall-clock DoS bound the per-action timeout doesn't give (spec
+# sec3b, threat 4): the per-action hang-guard (arena/sandbox.py's
+# connection.poll) only fires while the bot is talking to the harness, so a
+# submission that never calls back (e.g. forks past --pids-limit and only
+# some children respect signals) would otherwise run until the batch's own
+# step/no-progress ceilings, or never. `timeout` is in-image coreutils, run
+# INSIDE the container so it applies even though the container itself is
+# invoked with `check=True`/no host-side timeout.
+WALL_TIMEOUT_S = 3600
+
 
 def _eval_temp_dir() -> tempfile.TemporaryDirectory:
     """Create a Docker Desktop-shareable temporary arena output directory.
@@ -179,18 +191,24 @@ def eval_batch(
     """Evaluate ``solution_path`` against ``image`` for ``spec``'s published
     ``(seed, character)`` batch and return the resulting ``Evidence``.
 
-    Runs ``<runtime> run --rm --network none`` (``runtime`` is the resolved
-    container CLI -- ``"docker"`` or ``"podman"``, issue #50 -- defaulting to
-    ``"docker"``; ``cli.py``'s handler passes ``container_runtime()``) with the
+    Runs ``<runtime> run --rm`` (``runtime`` is the resolved container CLI --
+    ``"docker"`` or ``"podman"``, issue #50 -- defaulting to ``"docker"``;
+    ``cli.py``'s handler passes ``container_runtime()``) sealed by
+    ``offline_flags()`` (spec sec3b, threat 4: no network, read-only rootfs,
+    every capability dropped, no privilege escalation, resource caps, a
+    non-root user) plus an in-image wall-clock ``timeout`` (``WALL_TIMEOUT_S``
+    -- an outer DoS bound the per-action timeout doesn't give), with the
     solution bind-mounted read-only at ``/sol`` and a fresh host temp directory
     bind-mounted at ``/out``, invoking the image's ``nethackers.arena.run`` with
     ``--batch`` (JSON ``[[seed, character], ...]``, replacing the legacy
     ``--character``/``--seeds``), ``spec``'s step/timeout parameters, and
     ``--max-parallel-evals`` (``max_parallel_evals``, default 8) -- the cap
     on how many of the batch's episodes the container runs concurrently.
-    Reads back ``/out/results.json`` (a ``list[TrajectoryResult.to_dict()]``,
-    one per batch entry in batch order regardless of completion order) and
-    wraps it into an ``Evidence``.
+    Reads back ``/out/results.json`` defensively via ``read_result_json``
+    (spec sec3b, INV4 -- the box's output is HOSTILE data: rejects a symlink
+    escape, an oversized file, or malformed/non-list JSON) into a
+    ``list[TrajectoryResult.to_dict()]``, one per batch entry in batch order
+    regardless of completion order, and wraps it into an ``Evidence``.
 
     ``--platform linux/amd64`` is added only when ``image`` is the arena pin
     (``_image_pins.ARENA_IMAGE``), where it is cosmetic. On any other ref it
@@ -234,7 +252,6 @@ def eval_batch(
         lambda img: _default_image_digest(img, runtime=runtime)
     )
     with _eval_temp_dir() as td:
-        out = Path(td) / "results.json"
         # --platform is cosmetic FOR THE PIN and only for it: ARENA_IMAGE is an
         # amd64 MANIFEST digest, so the architecture is already decided (spec
         # 2026-09-14 D2) and the flag merely suppresses the mismatch warning
@@ -249,16 +266,30 @@ def eval_batch(
         # passed only when the resolved ref IS the pin.
         platform = ["--platform", "linux/amd64"] if image == _image_pins.ARENA_IMAGE else []
         cmd = [
-            runtime, "run", *platform, "--rm", "--network", "none",
+            runtime, "run", *platform, "--rm",
             "--name", container_name("arena"), *label_args(),
+            # Sealed box (spec sec3b, threat 4): no network, read-only rootfs
+            # (with a noexec/nosuid tmpfs for scratch space), every Linux
+            # capability dropped, no privilege escalation, and resource caps
+            # -- a malicious or merely buggy submission (fork bomb, OOM, a
+            # reverse shell) dies inside the container instead of touching
+            # the host or the network.
+            *offline_flags(),
             # Silence AutoAscend's numpy RuntimeWarning flood at interpreter
             # startup, for every process in the container (a plain in-arena
             # filter didn't hold -- NLE/AutoAscend resets it).
             "-e", "PYTHONWARNINGS=ignore::RuntimeWarning",
             "-e", f"NETHACK_ARENA_SECRET={secret}",
+            # offline_flags()'s non-root --user has no writable $HOME under
+            # the read-only rootfs; NLE/numba want one to cache into, and the
+            # tmpfs mounted at /tmp is the only writable, non-bind-mounted
+            # path offline_flags() leaves available.
+            "-e", "HOME=/tmp",
             "-v", f"{solution_path}:/sol:ro",
             "-v", f"{td}:/out",
             image,
+            # An outer wall-clock DoS bound -- see WALL_TIMEOUT_S.
+            "timeout", str(WALL_TIMEOUT_S),
             "--solution", "/sol",
             "--batch", json.dumps([[seed, character] for seed, character in spec.batch]),
             "--evaluation-id", "local",
@@ -272,7 +303,10 @@ def eval_batch(
             runner(cmd, check=True)
         else:
             _stream_episodes(cmd, spec, on_episode, popen)
-        results = [TrajectoryResult.from_dict(r) for r in json.loads(out.read_text())]
+        # Defensive read (spec sec3b, INV4): the box's output is HOSTILE
+        # data -- reject a symlink escape, an oversized file, or
+        # malformed/non-list JSON before trusting anything it wrote.
+        results = [TrajectoryResult.from_dict(r) for r in read_result_json(Path(td))]
     objective = Objective(
         character=None,
         max_steps=spec.max_steps,
