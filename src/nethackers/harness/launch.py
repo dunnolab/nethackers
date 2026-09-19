@@ -67,9 +67,12 @@ class EvolveParams:
     iterations: int = 1
     max_parallel_evals: int = 8
     # The container CLI every `<runtime> run` uses (docker OR podman -- issue
-    # #50). Defaults to "docker"; the CLI evolve handler resolves the actual one
-    # via `container_runtime()` and sets it here, so the whole run (arena evals
-    # AND the mutator container) shells out to the same detected binary.
+    # #50). Defaults to "docker"; BOTH launch paths -- the CLI evolve handler
+    # and the TUI evolve form's Start -- resolve the actual one via
+    # `container_runtime()` and set it here, so the whole run (arena evals AND
+    # the mutator container) shells out to the same detected binary. Leaving it
+    # unset on a new launch path is issue #54: a podman-only host passes every
+    # preflight and then execs a `docker` that isn't installed.
     runtime: str = "docker"
     # All of the below are late-bound to the active Stage via default_factory
     # -- never read at import time -- so a test's env/monkeypatch (or a future
