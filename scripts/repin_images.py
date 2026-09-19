@@ -3,7 +3,7 @@
 image refs -- THE single source of the pins-file format.
 
 ``.github/workflows/sandbox-images.yml`` calls this right after it builds and
-pushes the multi-arch ``arena``/``mutator`` images, so the "re-pin ceremony"
+pushes the ``arena``/``mutator`` images, so the "re-pin ceremony"
 (design spec section 8 / decision D11) is a generated, reviewable PR instead
 of a hand-paste of two 64-hex digests. Stdlib only, so CI runs it with a bare
 ``python3`` (no ``uv``/deps) -- except that classifying the arena digest
@@ -27,8 +27,8 @@ import sys
 from pathlib import Path
 
 # A digest-pinned OCI ref: <lowercase repo path>@sha256:<64 lowercase hex>. Only
-# a manifest-list DIGEST pin is acceptable here (never a mutable tag) -- that is
-# the whole point of the pins file (content-addressed, reproducible).
+# a DIGEST pin is acceptable here (never a mutable tag) -- that is the whole
+# point of the pins file (content-addressed, reproducible).
 _REF_RE = re.compile(r"^(?P<repo>[a-z0-9][a-z0-9._/-]*)@sha256:(?P<hex>[0-9a-f]{64})$")
 _INPUTS_RE = re.compile(r"^sha256:[0-9a-f]{64}$")
 

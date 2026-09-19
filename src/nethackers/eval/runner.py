@@ -32,7 +32,7 @@ from collections import deque
 from collections.abc import Callable
 from pathlib import Path
 
-from nethackers import _image_pins
+from nethackers import _image_pins, image_inputs
 from nethackers.containers import container_name, container_runtime, label_args
 from nethackers.contracts.models import Evidence, Objective, ObjectiveSpec, TrajectoryResult
 from nethackers.solution_root import require_solution_root
@@ -247,7 +247,8 @@ def eval_batch(
         # keeps open: `--image`/NETHACKERS_ARENA_IMAGE for arena development,
         # and the per-worktree `arena:<slug>` of docs/local-stack.md. So it is
         # passed only when the resolved ref IS the pin.
-        platform = ["--platform", "linux/amd64"] if image == _image_pins.ARENA_IMAGE else []
+        platform = (["--platform", image_inputs.REFERENCE_PLATFORM]
+                    if image == _image_pins.ARENA_IMAGE else [])
         cmd = [
             runtime, "run", *platform, "--rm", "--network", "none",
             "--name", container_name("arena"), *label_args(),

@@ -86,6 +86,20 @@ def _hermetic_provenance(monkeypatch):
     monkeypatch.setattr(_launch, "_default_operator_version", lambda *a, **kw: None, raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_platform_guard(monkeypatch):
+    # Evolve's Start, in the CLI and in the form, compares the two sandbox
+    # images' platforms with a real `docker image inspect` before launching.
+    # Stub it green suite-wide on the names both callers bound (the
+    # hermetic-suite rule). Its own logic is tested in test_sandbox_preflight.py;
+    # the refusal wiring tests override this.
+    import nethackers.cli as _cli
+    monkeypatch.setattr(_cli, "sandbox_platform_mismatch", lambda *a, **kw: None,
+                        raising=False)
+    monkeypatch.setattr(_ef, "sandbox_platform_mismatch", lambda *a, **kw: None,
+                        raising=False)
+
+
 # The NETHACKERS_* stage keys that `load_stage`/`_find_stack_file` consume.
 _STAGE_ENV_KEYS = (
     "NETHACKERS_STAGE", "NETHACKERS_HUB", "NETHACKERS_HUB_PORT",

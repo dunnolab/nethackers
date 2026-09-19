@@ -108,6 +108,7 @@ from nethackers.harness.sandbox_preflight import (
     preflight as sandbox_preflight,
     preflight_runtime,
     resolve_image,
+    sandbox_platform_mismatch,
 )
 from nethackers.hub.objectives import CATALOG
 from nethackers.hub.selector import resolve
@@ -919,6 +920,12 @@ def _run(argv: list[str] | None) -> int:
                 err.print(ierr)
                 return 1
             err.print(f"[green]✓ {_kind} sandbox ready[/]")
+        # The agent scores its own candidates inside the mutator: on another
+        # platform than the arena it would optimize games the arena never plays.
+        msg = sandbox_platform_mismatch(arena_img, mut, runtime=evolve_runtime)
+        if msg is not None:
+            err.print(msg)
+            return 1
 
         _creds = _load_creds()
         # run.json + run wiring live in prepare_evolve, shared with the in-app

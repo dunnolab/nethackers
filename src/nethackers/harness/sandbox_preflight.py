@@ -15,6 +15,10 @@ sandboxed command, including a plain ``eval``/``submit``; ``preflight_operator``
 (a resolvable ``codex``/``claude`` host login) is needed ONLY by ``evolve`` --
 the arena has no operator, so eval/submit must never call it. ``preflight``
 stays as a thin backward-compatible wrapper over both, for evolve's use.
+Evolve adds a third, after both images are acquired:
+``sandbox_platform_mismatch`` refuses an arena and mutator built for different
+platforms, because the coding agent scores its own candidates inside the
+mutator.
 
 ``ensure_image`` makes a ``resolve_image``-produced ref actually present: a
 GHCR digest pin is always ``docker pull``ed -- that now includes the arena
@@ -80,6 +84,22 @@ def image_present(image: str, *, runtime: str = "docker", run=subprocess.run) ->
                    capture_output=True, timeout=10).returncode == 0
     except (OSError, subprocess.SubprocessError):
         return False
+
+
+def image_platform(image: str, *, runtime: str = "docker", run=subprocess.run) -> str | None:
+    """The ``os/arch`` (e.g. ``linux/amd64``) of a LOCAL image, from ``<runtime>
+    image inspect``; ``None`` when it can't be read (absent, runtime down, or a
+    record missing either field)."""
+    try:
+        result = run([runtime, "image", "inspect", "--format", "{{.Os}}/{{.Architecture}}",
+                      image], capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    value = result.stdout.strip()
+    os_name, _, arch = value.partition("/")
+    return value if os_name and arch else None
 
 
 def _repo_root() -> Path | None:
@@ -149,6 +169,22 @@ def is_local_mutator_fingerprint(ref: str) -> bool:
 def ghcr_mutator_ref(local_ref: str) -> str:
     """The name CI publishes a local fingerprint ref under."""
     return f"{_GHCR_MUTATOR_REPO}:{local_ref.partition(':')[2]}"
+
+
+def mutator_platform_args(image: str) -> list[str]:
+    """``--platform`` for any ``<runtime> run`` of the mutator ``image`` (a run's
+    operator container, discovery's probes), mirroring the arena's
+    (eval/runner.py). The pin and a checkout's fingerprint tag are built for the
+    reference platform, so there the flag silences the platform-mismatch
+    warning Docker would otherwise print as the first line of every iteration's
+    output, and keeps those runs from depending on how an image store resolves
+    an unflagged run. Any other ref gets nothing: it may be a local build for
+    another platform, which ``docker run --platform`` refuses to run at all.
+    ``sandbox_platform_mismatch`` is what stops such a ref from being used for
+    evolve."""
+    if image == _image_pins.MUTATOR_IMAGE or is_local_mutator_fingerprint(image):
+        return ["--platform", image_inputs.REFERENCE_PLATFORM]
+    return []
 
 
 _MAKE_VAR = {"arena": "ARENA_IMAGE", "mutator": "MUTATOR_IMAGE"}
@@ -244,8 +280,11 @@ def _acquire_mutator_fingerprint(ref: str, *, runtime: str, on_line, on_event, p
     if root is None:
         return ("[red]can't set up the sandbox[/]: run nethackers from its repo "
                 "(the mutator image builds from Dockerfile.mutator there)")
+    # --platform: the arena's platform, never the host's. A host-native build on
+    # Apple Silicon is arm64 NetHack, which plays a different game per seed.
     return _run_build(
-        [runtime, "build", "-f", "Dockerfile.mutator",
+        [runtime, "build", "--platform", image_inputs.REFERENCE_PLATFORM,
+         "-f", "Dockerfile.mutator",
          "--build-arg", f"NLE_BASE={_image_pins.NLE_BASE_IMAGE}",
          "--label", _MUTATOR_BUILD_LABEL, "-t", ref, "."],
         cwd=root, image=ref, kind="mutator", on_line=on_line, on_event=on_event,
@@ -512,3 +551,37 @@ def preflight(operator: str, *, system: str | None = None,
     if msg is not None:
         return msg
     return preflight_operator(operator, system=system, home=home)
+
+
+def sandbox_platform_mismatch(arena_image: str, mutator_image: str, *,
+                              runtime: str = "docker", run=subprocess.run) -> str | None:
+    """``None`` unless evolve's two sandboxes are LOCAL images for different
+    platforms; else the styled message saying which one to rebuild.
+
+    The coding agent scores its candidates with the arena kit inside the
+    mutator, and NetHack generates a different dungeon from the same seed on
+    another architecture. A mismatched pair therefore has the agent optimizing
+    games the arena never plays: every change it measures as a win is judged
+    on other games. Only a definite mismatch refuses -- a platform that can't
+    be read is not evidence of one. Both images must already be present
+    (``ensure_image``), so call this after acquisition."""
+    arena = image_platform(arena_image, runtime=runtime, run=run)
+    mutator = image_platform(mutator_image, runtime=runtime, run=run)
+    if arena is None or mutator is None or arena == mutator:
+        return None
+    kind = "mutator" if mutator != image_inputs.REFERENCE_PLATFORM else "arena"
+    ref = mutator_image if kind == "mutator" else arena_image
+    if kind == "mutator" and mutator_platform_args(ref):
+        # The pin or our fingerprint tag: acquisition fetches or builds it for
+        # the reference platform again once the local copy is gone.
+        fix = (f"Remove the {kind} image so the next run fetches it again: "
+               f"`{runtime} image rm {escape(ref)}`")
+    elif "@" in ref:
+        fix = (f"The {kind} image is pinned by digest, so it can't be rebuilt: "
+               f"drop its image override")
+    else:
+        fix = (f"Rebuild the {kind} image for {image_inputs.REFERENCE_PLATFORM} with "
+               f"`make {kind} {_MAKE_VAR[kind]}={escape(ref)}`, or drop its image override")
+    return (f"[red]sandbox platform mismatch[/] — the mutator image runs {mutator} but "
+            f"the arena image runs {arena}, so the coding agent would test its changes "
+            f"on different NetHack games than the ones they are scored on. {fix}")

@@ -429,6 +429,22 @@ def test_container_run_wraps_operator_cli_in_docker_with_image_and_auth():
     assert "-v" in argv[:i]                                # codex auth mount precedes the image
 
 
+def test_probes_run_our_own_mutator_on_the_reference_platform():
+    # The flag a run's own container gets, so a probe never depends on how an
+    # image store resolves an unflagged `docker run` of an amd64-only image --
+    # a failed probe degrades silently to "no models".
+    from nethackers import _image_pins
+    seen = []
+
+    def _capture(argv, **k):
+        seen.append(argv)
+        return SimpleNamespace(returncode=0, stdout="")
+
+    _disc._container_run(_image_pins.MUTATOR_IMAGE, run=_capture)(["codex", "--version"])
+    _disc._run_image_script(_image_pins.MUTATOR_IMAGE, "codex", "true", run=_capture)
+    assert [argv[:4] for argv in seen] == [["docker", "run", "--platform", "linux/amd64"]] * 2
+
+
 def test_container_run_leaves_host_only_commands_on_the_host():
     # the macOS keychain probe must NOT be wrapped in docker (no keychain in the
     # linux container) -- only codex/claude route into the image.

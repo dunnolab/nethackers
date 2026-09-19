@@ -5,9 +5,16 @@ name: Mutator image
 # pinned nle-base, and commits the re-pin to the branch with a GitHub App token
 # so the commit starts the PR's checks (GITHUB_TOKEN pushes start none). The
 # bot's own commit re-triggers this workflow, which then finds the image and the
-# pins current and exits: that is the loop guard. Fork PRs build amd64 without
+# pins current and exits: that is the loop guard. Fork PRs build without
 # publishing; the run on main after merge publishes. The arena and the base are
 # NOT built here -- they stay the manual sandbox-images.yml.
+#
+# Built for the reference platform ONLY (image_inputs.REFERENCE_PLATFORM, the
+# arena's), as one plain manifest. The coding agent scores its own candidates
+# with the arena kit inside this image, and NetHack plays a different game per
+# seed on another architecture, so an arm64 leg would have Apple Silicon hosts
+# optimizing games the arena never scores. With one manifest and no index, the
+# pin and the h- tag name amd64 bytes on every host.
 on:
   pull_request:
     paths:
@@ -78,16 +85,14 @@ jobs:
         run: |
           inputs=$(PYTHONPATH=src python3 -m nethackers.image_inputs mutator)
           base=$(PYTHONPATH=src python3 -c 'from nethackers._image_pins import NLE_BASE_IMAGE; print(NLE_BASE_IMAGE)')
+          platform=$(PYTHONPATH=src python3 -c 'from nethackers.image_inputs import REFERENCE_PLATFORM; print(REFERENCE_PLATFORM)')
           {
             echo "inputs=$inputs"
             echo "base=$base"
+            echo "platform=$platform"
             echo "tag=h-${inputs#sha256:}"
           } >> "$GITHUB_OUTPUT"
-          echo "mutator inputs: $inputs"
-
-      - uses: docker/setup-qemu-action@49b3bc8e6bdd4a60e6116a5414239cba5943d3cf    # v3.2.0
-        with:
-          platforms: arm64
+          echo "mutator inputs: $inputs ($platform)"
 
       - uses: docker/setup-buildx-action@c47758b77c9736f4b2ef4073d4d51994fabfe349  # v3.7.1
 
@@ -98,13 +103,20 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      # A published tag counts only if it is one manifest for the reference
+      # platform. Anything else is rebuilt and the push overwrites the tag;
+      # trusting it instead would fail the re-pin check below on every re-run.
       - name: Is this fingerprint already published?
         id: exists
         run: |
-          if docker buildx imagetools inspect "$REPO:${{ steps.fp.outputs.tag }}" >/dev/null 2>&1; then
+          ref="$REPO:${{ steps.fp.outputs.tag }}"
+          if ! docker buildx imagetools inspect "$ref" >/dev/null 2>&1; then
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          elif why=$(bash scripts/check_one_manifest.sh "$ref" "${{ steps.fp.outputs.platform }}"); then
             echo "exists=true" >> "$GITHUB_OUTPUT"
             echo "already in GHCR -- nothing to build"
           else
+            echo "::warning::$why -- rebuilding it"
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
@@ -116,7 +128,12 @@ jobs:
           context: .
           file: Dockerfile.mutator
           build-args: NLE_BASE=${{ steps.fp.outputs.base }}
-          platforms: ${{ env.SAME_REPO == 'true' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
+          # The platform the fingerprint hashed, from the same constant.
+          platforms: ${{ steps.fp.outputs.platform }}
+          # No attestation manifest: with one, buildx pushes an INDEX (this
+          # platform's manifest plus the attestation), and a client resolves
+          # an index to its own platform again.
+          provenance: false
           push: ${{ env.SAME_REPO == 'true' }}
           tags: |
             ${{ env.REPO }}:${{ steps.fp.outputs.tag }}
@@ -124,7 +141,7 @@ jobs:
 
       - name: Fork PR -- nothing published
         if: env.SAME_REPO != 'true'
-        run: echo "Built linux/amd64 only. The image is published and pinned after merge, by this workflow's run on main." >> "$GITHUB_STEP_SUMMARY"
+        run: echo "Built, not published. The image is published and pinned after merge, by this workflow's run on main." >> "$GITHUB_STEP_SUMMARY"
 
       # PYTHONPATH=src: repin_images.py classifies the ARENA digest it carries
       # through via nethackers.arena_version, even when only --mutator changes
@@ -140,6 +157,11 @@ jobs:
             digest=$(docker buildx imagetools inspect "$REPO:${{ steps.fp.outputs.tag }}" --format '{{.Manifest.Digest}}')
           else
             digest="${{ steps.build.outputs.digest }}"
+          fi
+          # Pin only ONE manifest for the reference platform, never an index.
+          if ! why=$(bash scripts/check_one_manifest.sh "$REPO@$digest" "${{ steps.fp.outputs.platform }}"); then
+            echo "::error::$why; refusing to pin it"
+            exit 1
           fi
           python3 scripts/repin_images.py --mutator "$REPO@$digest" --mutator-inputs "${{ steps.fp.outputs.inputs }}"
           if git diff --quiet -- src/nethackers/_image_pins.py; then

@@ -125,6 +125,105 @@ def test_image_present_true_on_zero_exit():
     assert sp.image_present("img", run=lambda *a, **k: SimpleNamespace(returncode=1)) is False
 
 
+# --- the sandbox platform: the agent must measure the games the arena scores
+
+
+def _inspecting(platforms, seen=None):
+    """A fake ``run`` answering ``<runtime> image inspect ... <ref>`` from
+    ``platforms`` (ref -> ``os/arch``; a ref missing from it isn't local)."""
+    def _run(argv, **kw):
+        if seen is not None:
+            seen.append(argv)
+        platform = platforms.get(argv[-1])
+        if platform is None:
+            return SimpleNamespace(returncode=1, stdout="")
+        return SimpleNamespace(returncode=0, stdout=platform + "\n")
+    return _run
+
+
+def test_image_platform_reads_the_local_images_os_and_architecture():
+    seen = []
+    run = _inspecting({"img": "linux/arm64"}, seen)
+    assert sp.image_platform("img", runtime="podman", run=run) == "linux/arm64"
+    assert seen[0][:3] == ["podman", "image", "inspect"]
+
+
+def test_image_platform_is_none_when_the_image_cant_be_read():
+    assert sp.image_platform("absent", run=_inspecting({})) is None
+
+    def _raise(*a, **kw):
+        raise OSError("no docker")
+    assert sp.image_platform("img", run=_raise) is None
+
+
+def test_image_platform_is_none_for_a_record_without_os_and_architecture():
+    # An image record missing both fields renders as "/", which must not read as
+    # a platform that differs from the other image's.
+    assert sp.image_platform("img", run=_inspecting({"img": "/"})) is None
+    run = _inspecting({"arena": "linux/amd64", "mut": "/"})
+    assert sp.sandbox_platform_mismatch("arena", "mut", run=run) is None
+
+
+def test_sandboxes_on_one_platform_pass():
+    run = _inspecting({"arena": "linux/amd64", "mut": "linux/amd64"})
+    assert sp.sandbox_platform_mismatch("arena", "mut", run=run) is None
+
+
+def test_a_mutator_on_another_platform_is_refused():
+    # The Apple Silicon failure: an arm64 mutator beside the amd64 arena. The
+    # agent's own evaluations then play different dungeons than it is scored on.
+    run = _inspecting({"arena": "linux/amd64", "my/mut:x": "linux/arm64"})
+    msg = sp.sandbox_platform_mismatch("arena", "my/mut:x", run=run)
+    assert msg is not None
+    plain = Text.from_markup(msg).plain
+    assert "linux/arm64" in plain and "linux/amd64" in plain
+    # Rebuilds the refused ref itself: a bare `make mutator` would build
+    # nethackers/mutator:latest and leave the refused one as it was.
+    assert "`make mutator MUTATOR_IMAGE=my/mut:x`" in plain
+
+
+def test_an_arena_on_another_platform_is_the_one_to_rebuild():
+    # A local-stack arena built natively on Apple Silicon: the mutator is right.
+    run = _inspecting({"nethackers/arena:wt": "linux/arm64", "mut": "linux/amd64"})
+    msg = sp.sandbox_platform_mismatch("nethackers/arena:wt", "mut", run=run)
+    assert msg is not None
+    assert "`make arena ARENA_IMAGE=nethackers/arena:wt`" in Text.from_markup(msg).plain
+
+
+def test_a_digest_override_on_another_platform_is_dropped_not_rebuilt():
+    # A build can't produce bytes under someone else's digest.
+    digest_ref = "ghcr.io/someone/mutator@sha256:" + "d" * 64
+    run = _inspecting({"arena": "linux/amd64", digest_ref: "linux/arm64"})
+    plain = Text.from_markup(sp.sandbox_platform_mismatch("arena", digest_ref, run=run)).plain
+    assert "drop its image override" in plain and "make" not in plain
+
+
+def test_our_own_mutator_on_another_platform_is_removed_to_be_fetched_again():
+    # Our fingerprint tag is re-acquired for the reference platform once gone;
+    # `make mutator` would build a different tag.
+    fingerprint = "nethackers/mutator:h-" + "e" * 64
+    run = _inspecting({"arena": "linux/amd64", fingerprint: "linux/arm64"})
+    plain = Text.from_markup(
+        sp.sandbox_platform_mismatch("arena", fingerprint, runtime="podman", run=run)).plain
+    assert f"`podman image rm {fingerprint}`" in plain and "make" not in plain
+
+
+def test_an_unreadable_platform_never_blocks_a_run():
+    # Only a definite mismatch refuses: a failed inspect is not evidence of one.
+    run = _inspecting({"arena": "linux/amd64"})          # the mutator can't be read
+    assert sp.sandbox_platform_mismatch("arena", "mut", run=run) is None
+
+
+def test_only_our_own_mutator_refs_run_with_the_platform_flag():
+    from nethackers import _image_pins
+    fingerprint = "nethackers/mutator:h-" + "e" * 64
+    assert sp.mutator_platform_args(_image_pins.MUTATOR_IMAGE) == ["--platform", "linux/amd64"]
+    assert sp.mutator_platform_args(fingerprint) == ["--platform", "linux/amd64"]
+    # An override may be a local arm64-only build, and `docker run --platform
+    # linux/amd64` fails outright on one rather than running it.
+    assert sp.mutator_platform_args("nethackers/mutator:latest") == []
+
+
 # --- a scripted Popen: the build and pull tests below read its lines and exit code
 
 

@@ -39,6 +39,22 @@ def test_docker_run_shape_and_caps():
     assert "timeout" in a and str(ContainerCaps().timeout_s) in a
 
 
+def test_our_own_mutator_images_run_on_the_reference_platform():
+    from nethackers import _image_pins
+    for image in (_image_pins.MUTATOR_IMAGE, "nethackers/mutator:h-" + "e" * 64):
+        a = build_docker_argv(
+            harness="codex", image=image, name="nethackers-mut-r-1",
+            worktree=Path("/runs/r/work/iter-1"), cli=None, model=None, effort=None,
+            caps=ContainerCaps(), auth_args=[], brief="B")
+        assert a[:4] == ["docker", "run", "--platform", "linux/amd64"], image
+
+
+def test_an_image_override_runs_without_a_platform_flag():
+    # It may be a local arm64-only build, which --platform linux/amd64 would
+    # refuse to run at all.
+    assert "--platform" not in _argv("codex")          # nethackers/mutator:test
+
+
 def test_codex_in_cage_bypasses_its_own_sandbox():
     a = _argv("codex")
     assert "--dangerously-bypass-approvals-and-sandbox" in a
