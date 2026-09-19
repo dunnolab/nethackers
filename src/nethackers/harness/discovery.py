@@ -32,7 +32,7 @@ from nethackers.harness.auth_inject import (
     opencode2_global_providers,
     opencode2_has_provider_key,
 )
-from nethackers.harness.sandbox_preflight import image_present
+from nethackers.harness.sandbox_preflight import image_present, mutator_platform_args
 
 _ANTHROPIC_MODELS_URL = "https://api.anthropic.com/v1/models?limit=100"
 _ANTHROPIC_VERSION = "2023-06-01"
@@ -63,7 +63,8 @@ def _container_run(image: str, *, docker: str = "docker", home: Path | None = No
                 )
             except AuthUnavailable:
                 auth = []
-            return run([docker, "run", "--rm", "--name", container_name("probe"),
+            return run([docker, "run", *mutator_platform_args(image), "--rm",
+                        "--name", container_name("probe"),
                         *label_args(), *auth, image, *argv], **kw)
         return run(argv, **kw)   # host-side (e.g. the `security` keychain read)
     return _run
@@ -99,7 +100,8 @@ def _run_image_script(image: str, binary: str, script: str, *,
     except AuthUnavailable:
         auth = []
     try:
-        proc = run([docker, "run", "--rm", "--name", container_name("probe"),
+        proc = run([docker, "run", *mutator_platform_args(image), "--rm",
+                    "--name", container_name("probe"),
                     *label_args(), *auth, image, "bash", "-lc", script],
                    capture_output=True, text=True, timeout=40)
     except (OSError, subprocess.SubprocessError):

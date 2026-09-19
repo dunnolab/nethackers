@@ -36,6 +36,7 @@ from nethackers.harness.operator import (
     _opencode2_cmd,
     run_operator,
 )
+from nethackers.harness.sandbox_preflight import mutator_platform_args
 
 
 @dataclass(frozen=True)
@@ -88,7 +89,7 @@ def build_docker_argv(
     that don't yet have a refs dir (and all pre-existing tests) are unaffected.
     """
     argv = [
-        docker, "run", "--rm",
+        docker, "run", *mutator_platform_args(image), "--rm",
         "--name", name, *label_args(),
         "--pids-limit", str(caps.pids),
         "--memory", caps.memory,

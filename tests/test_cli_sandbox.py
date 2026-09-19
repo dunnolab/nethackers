@@ -200,6 +200,65 @@ def test_preflight_failure_never_reaches_run_loop(tmp_path, monkeypatch, capsys)
     assert "unexpected error" not in captured.err    # not main()'s generic fallback
 
 
+# --- sandbox platforms: the agent must measure the games the arena scores ---
+
+
+def test_a_sandbox_platform_mismatch_refuses_before_any_run(tmp_path, capsys, monkeypatch):
+    seed = _seed(tmp_path)
+    _stub_preflight_ok(monkeypatch)
+    compared = []
+
+    def _mismatch(arena, mutator, **kw):
+        compared.append((arena, mutator))
+        return "[red]sandbox platform mismatch[/] — rebuild the mutator image"
+    monkeypatch.setattr(cli, "sandbox_platform_mismatch", _mismatch)
+
+    def _boom(**kw):
+        raise AssertionError("run_loop must not start on mismatched sandboxes")
+    monkeypatch.setattr(launch, "run_loop", _boom, raising=False)
+
+    rc = cli.main(_evolve_argv(seed, tmp_path, "--image", "my/arena:tag",
+                               "--mutator-image", "my/mut:tag"))
+
+    assert rc != 0
+    assert "sandbox platform mismatch" in capsys.readouterr().err
+    assert compared == [("my/arena:tag", "my/mut:tag")]    # the two images the run would use
+    assert not (tmp_path / "w" / "runs").exists()          # refused before any run dir
+
+
+def test_the_platform_guard_inspects_with_the_runtime_evolve_uses(tmp_path, monkeypatch):
+    # The guard passes whenever it can't read a platform, so on a podman-only
+    # host a `docker image inspect` would quietly check nothing.
+    seed = _seed(tmp_path)
+    _stub_preflight_ok(monkeypatch)
+    monkeypatch.setattr(cli, "container_runtime", lambda **kw: "podman")
+    runtimes = []
+    monkeypatch.setattr(cli, "sandbox_platform_mismatch",
+                        lambda arena, mutator, **kw: runtimes.append(kw.get("runtime")))
+    monkeypatch.setattr(launch, "run_loop", lambda **kw: [], raising=False)
+
+    assert cli._run(_evolve_argv(seed, tmp_path)) == 0
+    assert runtimes == ["podman"]
+
+
+def test_the_platform_guard_runs_after_both_images_are_acquired(tmp_path, monkeypatch):
+    # On a first run neither image is local yet: a guard run before acquisition
+    # would read no platform and pass without checking anything.
+    seed = _seed(tmp_path)
+    _stub_preflight_ok(monkeypatch)
+    monkeypatch.setattr(cli, "image_present", lambda *a, **kw: False)
+    acquired = []
+    monkeypatch.setattr(cli, "ensure_image",
+                        lambda ref, kind, **kw: acquired.append(kind) or None)
+    seen = []
+    monkeypatch.setattr(cli, "sandbox_platform_mismatch",
+                        lambda arena, mutator, **kw: seen.append(sorted(acquired)))
+    monkeypatch.setattr(launch, "run_loop", lambda **kw: [], raising=False)
+
+    assert cli._run(_evolve_argv(seed, tmp_path)) == 0
+    assert seen == [["arena", "mutator"]]
+
+
 # --- auto-provision: a missing sandbox image is built here, not by the user ---
 
 

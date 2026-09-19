@@ -47,6 +47,15 @@ There is no mutator step: `nethackers evolve` fetches the operator sandbox
 image that matches this worktree's files, pulling it when CI has published it
 and building it otherwise.
 
+Both sandbox images here are `linux/amd64`, emulated on Apple Silicon: `make up`
+builds `arena:<slug>` (and the `nle-base` under it) for that platform, so the
+first build is slower there, and the mutator is built or pulled for it too. The
+coding agent scores its own candidates inside the mutator, so `evolve` refuses
+to start when it finds the arena and mutator built for different platforms,
+since the agent would then tune games the arena never plays. An `arena:<slug>`
+built natively before this rule existed trips that check; the refusal names the
+`make arena ARENA_IMAGE=...` that rebuilds it.
+
 Every value above -- hub port, compose project, data root, repo name,
 image tags -- comes from the stage, not a flag. `nethackers whoami` is
 the fastest sanity check that discovery is wired up: run it anywhere

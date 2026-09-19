@@ -358,8 +358,10 @@ def test_fingerprint_ref_builds_on_the_pinned_base_when_ci_has_none(tmp_path):
     err = sp.ensure_image(FP, "mutator", run=docker, popen=_popen, repo_root=lambda: tmp_path)
 
     assert err is None
+    # --platform: a checkout builds for the arena's platform, not the host's --
+    # on Apple Silicon a host-native build is arm64 NetHack, a different game.
     assert seen["argv"] == [
-        "docker", "build", "-f", "Dockerfile.mutator",
+        "docker", "build", "--platform", "linux/amd64", "-f", "Dockerfile.mutator",
         "--build-arg", f"NLE_BASE={_image_pins.NLE_BASE_IMAGE}",
         "--label", "org.dunnolab.nethackers.image=mutator",
         "-t", FP, ".",
@@ -393,7 +395,7 @@ def test_fingerprint_ref_falls_back_to_build_when_the_pull_fails(tmp_path):
     assert err is None
     assert popened == [
         ["docker", "pull", REMOTE],
-        ["docker", "build", "-f", "Dockerfile.mutator",
+        ["docker", "build", "--platform", "linux/amd64", "-f", "Dockerfile.mutator",
          "--build-arg", f"NLE_BASE={_image_pins.NLE_BASE_IMAGE}",
          "--label", "org.dunnolab.nethackers.image=mutator",
          "-t", FP, "."],

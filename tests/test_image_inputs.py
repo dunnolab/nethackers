@@ -11,7 +11,10 @@ from nethackers import image_inputs
 
 BASE = "ghcr.io/dunnolab/nethackers-nle-base@sha256:" + "a" * 64
 REPO = Path(__file__).resolve().parents[1]
-GOLDEN = "sha256:e44c29d002bf8bfd7350b0089f1eaa5563cd6c383d91493e4283bd3d3e6105f0"
+# Scheme v2 over _tree() on BASE for linux/amd64, derived outside image_inputs by
+# re-implementing the hash by hand (the same re-implementation reproduced v1's
+# value, sha256:e44c29d0..., before the platform joined the header line).
+GOLDEN = "sha256:32e84b3a1a12af19ee15d8e5b6fb094b98ddf68520b44e4046ba4139daa6f7f9"
 
 
 def _tree(root: Path) -> Path:
@@ -31,23 +34,28 @@ def _tree(root: Path) -> Path:
     return root
 
 
-def test_scheme_v1_value_is_stable(tmp_path):
+def test_scheme_v2_value_is_stable(tmp_path):
     # Every published h- tag depends on this exact scheme. Changing the scheme
     # means bumping image_inputs.SCHEME, never silently moving this value.
     assert image_inputs.mutator_inputs_hash(_tree(tmp_path), BASE) == GOLDEN
 
 
-@pytest.mark.parametrize("change", ["content", "exec bit", "base"])
+@pytest.mark.parametrize("change", ["content", "exec bit", "base", "platform"])
 def test_any_input_change_moves_the_hash(tmp_path, change):
     root = _tree(tmp_path)
-    base = BASE
+    base, platform = BASE, "linux/amd64"
     if change == "content":
         (root / "src/nethackers/arena/run.py").write_text("print(2)\n")
     elif change == "exec bit":
         (root / "Dockerfile.mutator").chmod(0o755)
-    else:
+    elif change == "base":
         base = BASE.replace("a" * 64, "b" * 64)
-    assert image_inputs.mutator_inputs_hash(root, base) != GOLDEN
+    else:
+        # The same files built for another platform are different bytes. Sharing
+        # one h- tag is what let an Apple Silicon checkout run the arm64 build
+        # while the arena scored on amd64.
+        platform = "linux/arm64"
+    assert image_inputs.mutator_inputs_hash(root, base, platform=platform) != GOLDEN
 
 
 def test_a_new_file_in_an_input_directory_moves_the_hash(tmp_path):

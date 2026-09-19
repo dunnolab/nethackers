@@ -202,6 +202,64 @@ async def test_preflight_failure_shows_error_no_start(monkeypatch):
         assert "sandbox unavailable" in err_text
 
 
+def _refuse_mismatched_platforms(monkeypatch, acquired=()):
+    """Fake the sandbox platform guard into refusing. Returns one record per
+    call: the runtime it would inspect with, and the image kinds ``acquired``
+    held by then -- a guard that can't read a platform passes, so both matter."""
+    calls: list = []
+
+    def _mismatch(arena, mutator, **k):
+        calls.append({"runtime": k.get("runtime"), "acquired": sorted(acquired)})
+        return "[red]sandbox platform mismatch[/] — rebuild the mutator image"
+    monkeypatch.setattr(ef, "sandbox_platform_mismatch", _mismatch)
+    return calls
+
+
+async def test_platform_mismatch_shows_error_no_start(monkeypatch):
+    """Sandboxes on different platforms would have the agent optimizing games
+    the arena never plays: Start refuses, in #f_err, as the CLI does."""
+    seen: dict = {}
+    monkeypatch.setattr(ef, "prepare_evolve", lambda *a, **k: seen.update(called=True))
+    monkeypatch.setattr(ef, "container_runtime", lambda **k: "podman")
+    calls = _refuse_mismatched_platforms(monkeypatch)
+    app = _Host(None)
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        assert "called" not in seen         # prepare_evolve blocked by the guard
+        assert app.started is None
+        assert calls == [{"runtime": "podman", "acquired": []}]
+        err_text = str(app.query_one("#f_err", Static).render()).lower()
+        assert "sandbox platform mismatch" in err_text
+
+
+async def test_platform_mismatch_after_provisioning_shows_error_no_start(monkeypatch):
+    """A fresh machine's first Start pulls both images, then launches from the
+    worker: that path is the one most likely to meet a mismatch, so it is
+    guarded too -- after both images are acquired, with the same runtime."""
+    seen: dict = {}
+    monkeypatch.setattr(ef, "prepare_evolve", lambda *a, **k: seen.update(called=True))
+    monkeypatch.setattr(ef, "container_runtime", lambda **k: "podman")
+    monkeypatch.setattr(ef, "image_present", lambda *a, **k: False)   # provision first
+    acquired: list = []
+    monkeypatch.setattr(ef, "ensure_image",
+                        lambda ref, kind, **k: acquired.append(kind) or None)
+    calls = _refuse_mismatched_platforms(monkeypatch, acquired)
+    app = _Host(None)
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()   # the provision-then-launch worker
+        await pilot.pause()
+        assert "called" not in seen
+        assert app.started is None
+        assert calls == [{"runtime": "podman", "acquired": ["arena", "mutator"]}]
+        err_text = str(app.query_one("#f_err", Static).render()).lower()
+        assert "sandbox platform mismatch" in err_text
+
+
 async def test_model_picker_populates_from_live_discovery(monkeypatch):
     monkeypatch.setattr(
         ef, "probe_operator",
