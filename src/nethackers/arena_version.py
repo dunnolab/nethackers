@@ -81,6 +81,19 @@ ARENA_MAJOR_BY_DIGEST: dict[str, int] = {
     # differs. Also the linux/amd64 LEG, not an index, so the reference
     # architecture is preserved (I7). Read from the diff, not measured.
     "sha256:0c8715c6812ae24dd3b93ed79969c69e6bdc08513302c42b792bd593afc78ffe": 2,
+    # v0.32.0, rebuilt because uv.lock is an arena input and the release moves
+    # the project's own version in it, 0.31.1 -> 0.32.0; not one package version
+    # moves, so the installed environment is identical. The other files that
+    # differ from the digest above are host-side modules no episode loads
+    # (cli, eval/runner, harness/, image_inputs, tui): arena/ and contracts/ are
+    # untouched (`git diff v0.31.1...HEAD -- src/nethackers/arena
+    # src/nethackers/contracts` is empty). nle-base was rebuilt from the same
+    # Dockerfile. MEASURED, not only read from the diff: a registered knight
+    # program on the 15 published kni-hum-law-fem seeds matches its record under
+    # 5c8c0cee above -- progress, steps, turns and cause of death, 15/15. Also
+    # the linux/amd64 LEG, not an index, so the reference architecture is
+    # preserved (I7).
+    "sha256:55b19fde2d35390e5cd23f3d5808aba04b9688e7125c608f2550f1e677a9d8c6": 2,
 }
 
 
