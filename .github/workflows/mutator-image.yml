@@ -154,7 +154,9 @@ jobs:
           BUILT_FROM: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           if [ "${{ steps.exists.outputs.exists }}" = "true" ]; then
-            digest=$(docker buildx imagetools inspect "$REPO:${{ steps.fp.outputs.tag }}" --format '{{.Manifest.Digest}}')
+            # Through json: some buildx versions answer ANY format starting
+            # "{{.Manifest" with a multi-line summary instead of the field.
+            digest=$(docker buildx imagetools inspect "$REPO:${{ steps.fp.outputs.tag }}" --format '{{json .Manifest}}' | jq -r .digest)
           else
             digest="${{ steps.build.outputs.digest }}"
           fi
