@@ -114,3 +114,50 @@ def container_name(role: str) -> str:
 def label_args() -> list[str]:
     """The `docker run` args that stamp the shared `nethackers` label."""
     return ["--label", NETHACKERS_LABEL]
+
+
+# The extra `run` args that make a bind-mounted, host-owned path writable by a
+# NON-root in-container user under rootless podman.
+#
+# Rootless podman maps the invoking host user to container uid 0, so a
+# bind-mounted host dir stats as root-owned inside the container. That is
+# harmless for containers that stay root (the arena scorer -- which is why
+# these args must NEVER be added to it: under keep-id, container-root maps to a
+# subuid instead of the host user and the arena could no longer write its
+# host-owned 0700 output dir). The mutator cage is the one container that both
+# bind-mounts a host path AND drops to a non-root user (`agent`, because Claude
+# Code refuses --dangerously-skip-permissions as root), so its drop lands on a
+# /workspace -- and a credentials file -- it cannot touch: EACCES (issue #54).
+#
+# `keep-id` maps the host uid to the SAME uid inside the container, which is
+# what the mutator entrypoint already auto-detects from /workspace's owner.
+# `--user 0` is required alongside it: keep-id otherwise overrides the image's
+# user to the host uid AND hands it an empty capability set, so the
+# entrypoint's usermod/chown/gosu handoff would fail with EPERM. With `--user
+# 0` the entrypoint keeps container-root (mapped to a subuid, NOT host root)
+# plus the default caps, and its existing remap-then-drop works unchanged.
+_KEEP_ID_ARGS = ["--userns=keep-id", "--user", "0"]
+
+
+def nonroot_userns_args(runtime: str, *, run=subprocess.run) -> list[str]:
+    """``_KEEP_ID_ARGS`` when ``runtime`` is a ROOTLESS podman, else ``[]``.
+
+    Deliberately probes the runtime instead of matching on the binary's name:
+    ``Host.Security.Rootless`` is a podman-only ``info`` field (docker exits
+    non-zero on the template), so this is correct for a ``docker`` binary that
+    is really podman's shim, and it also answers rootFUL podman -- which sees
+    real ownership on bind mounts exactly like docker, and rejects keep-id
+    outright on podman 4.1-4.4.
+
+    Any probe failure returns ``[]``: adding no args is what every host does
+    today, so a broken/timed-out probe degrades to current behavior rather
+    than guessing a flag the runtime may reject. ``run`` is injectable so
+    tests never shell out."""
+    try:
+        proc = run([runtime, "info", "--format", "{{.Host.Security.Rootless}}"],
+                   capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return []
+    if getattr(proc, "returncode", 1) != 0:
+        return []
+    return list(_KEEP_ID_ARGS) if (getattr(proc, "stdout", "") or "").strip() == "true" else []

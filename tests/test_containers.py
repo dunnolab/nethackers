@@ -1,7 +1,13 @@
 import re
 from types import SimpleNamespace
 
-from nethackers.containers import NETHACKERS_LABEL, container_name, container_runtime, label_args
+from nethackers.containers import (
+    NETHACKERS_LABEL,
+    container_name,
+    container_runtime,
+    label_args,
+    nonroot_userns_args,
+)
 
 
 def test_container_name_prefixed_and_unique():
@@ -99,3 +105,56 @@ def test_probe_marks_the_first_usable_runtime(monkeypatch):
     )
     assert report.runtime == "docker"
     assert [c.state for c in report.candidates] == ["usable", "usable"]
+
+
+# --- nonroot_userns_args: rootless podman's uid mapping (issue #54) ---------
+# Rootless podman maps the host user to container uid 0, so a bind-mounted
+# host dir stats as root-owned INSIDE the container. The mutator cage both
+# bind-mounts the worktree AND drops to the non-root `agent` user, so under
+# rootless podman that drop lands on a /workspace it cannot write (EACCES).
+# `--userns=keep-id` maps the host uid to itself instead; `--user 0` keeps the
+# entrypoint at container-root (keep-id otherwise overrides the image's user
+# to the host uid, with an EMPTY capability set, which would break the
+# entrypoint's usermod/chown/gosu).
+
+
+def _info_rootless(value: str, *, rc: int = 0):
+    """A `run` stub answering `<exe> info --format {{.Host.Security.Rootless}}`."""
+    return lambda *a, **k: SimpleNamespace(returncode=rc, stdout=value, stderr="")
+
+
+def test_nonroot_userns_args_are_empty_for_docker():
+    # docker has no such `info` field -- the template errors, rc != 0.
+    assert nonroot_userns_args("docker", run=_info_rootless("", rc=1)) == []
+
+
+def test_nonroot_userns_args_keep_id_for_rootless_podman():
+    assert nonroot_userns_args("podman", run=_info_rootless("true\n")) == [
+        "--userns=keep-id", "--user", "0",
+    ]
+
+
+def test_nonroot_userns_args_are_empty_for_rootful_podman():
+    # rootful podman sees real host ownership on bind mounts, exactly like
+    # docker -- and keep-id is rejected outright on podman 4.1-4.4.
+    assert nonroot_userns_args("podman", run=_info_rootless("false\n")) == []
+
+
+def test_nonroot_userns_args_are_empty_when_the_probe_fails():
+    def run(*a, **k):
+        raise OSError("boom")
+
+    # never let a probe failure break a run that works today: fall back to the
+    # no-extra-args behavior rather than guessing.
+    assert nonroot_userns_args("podman", run=run) == []
+
+
+def test_nonroot_userns_args_probe_asks_for_the_rootless_field():
+    seen: list = []
+
+    def run(cmd, **k):
+        seen.append(cmd)
+        return SimpleNamespace(returncode=0, stdout="true", stderr="")
+
+    nonroot_userns_args("podman", run=run)
+    assert seen == [["podman", "info", "--format", "{{.Host.Security.Rootless}}"]]

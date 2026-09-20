@@ -100,6 +100,18 @@ def _hermetic_platform_guard(monkeypatch):
                         raising=False)
 
 
+@pytest.fixture(autouse=True)
+def _hermetic_userns_probe(monkeypatch):
+    # prepare_evolve asks `containers.nonroot_userns_args` whether this host is
+    # a rootless podman (issue #54) -- a real `<runtime> info` subprocess, once
+    # per built operator. Same hermetic-suite rule as _hermetic_provenance
+    # above: pin it to the docker/rootful answer (no extra args) so no
+    # evolve-wiring test shells out. Tests that exercise the probe itself call
+    # `nonroot_userns_args` directly with an injected `run`
+    # (test_containers.py), so this never hides it.
+    monkeypatch.setattr(_launch, "nonroot_userns_args", lambda *a, **kw: [], raising=False)
+
+
 # The NETHACKERS_* stage keys that `load_stage`/`_find_stack_file` consume.
 _STAGE_ENV_KEYS = (
     "NETHACKERS_STAGE", "NETHACKERS_HUB", "NETHACKERS_HUB_PORT",
