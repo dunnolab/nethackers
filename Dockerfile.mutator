@@ -42,9 +42,17 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # exact versions: a bump is an edit here, which moves the mutator's input
 # fingerprint (src/nethackers/image_inputs.py) so CI rebuilds and re-pins it.
 # Pi remains deferred to Plan B.
+#
+# OpenCode: the "OpenCode 2" rewrite that shipped as the `@opencode-ai/cli`
+# beta (binary `opencode2`) has stabilized as `opencode-ai@1.x`, which renames
+# the binary back to `opencode`. The nethackers operator id stays `opencode2`
+# (harness routing, config paths, `--operator opencode2`), so a symlink beside
+# the real binary bridges the name -- every in-cage/probe call site keeps
+# invoking `opencode2` unchanged (see harness/operator.py, harness/discovery.py).
 RUN npm install -g @anthropic-ai/claude-code@2.1.270 @openai/codex@0.154.0 \
-        @opencode-ai/cli@0.0.0-beta-19271 \
-    && npm cache clean --force
+        opencode-ai@1.18.31 \
+    && npm cache clean --force \
+    && ln -s "$(command -v opencode)" "$(dirname "$(command -v opencode)")/opencode2"
 
 # Seed-free experimentation kit onto PYTHONPATH: ONLY nethackers.arena (the
 # scorer's env + progression metric) + nethackers.contracts (its data models).

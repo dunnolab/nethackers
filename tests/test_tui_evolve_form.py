@@ -328,7 +328,7 @@ async def test_opencode2_offers_no_effort_without_a_pinned_model(monkeypatch):
 async def test_opencode2_version_line_names_free_models_without_a_key(monkeypatch):
     keyed = {"value": False}
     monkeypatch.setattr(ef, "probe_operator", lambda backend, **k: (
-        CliInfo(backend, True, "opencode2 v0.0.0-beta-19271", keyed["value"]), None))
+        CliInfo(backend, True, "1.18.31", keyed["value"]), None))
     app = _Host(None)
     async with app.run_test(size=(100, 50)) as pilot:
         await pilot.pause()
@@ -342,7 +342,7 @@ async def test_opencode2_version_line_names_free_models_without_a_key(monkeypatc
         await pilot.pause()
         await _switch_operator(app, pilot, "opencode2")
         line = str(app.query_one("#f_op_version", Static).render())
-        assert "free models only" not in line and "0.0.0-beta-19271" in line
+        assert "free models only" not in line and "1.18.31" in line
 
 
 async def test_missing_image_builds_then_launches(monkeypatch):

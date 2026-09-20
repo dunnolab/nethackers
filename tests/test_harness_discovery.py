@@ -269,7 +269,7 @@ def test_detect_cli_installed_reports_version():
 def _opencode2_version_only(cmd, **kwargs):
     # `auth list` isn't consulted: the sandbox never sees OpenCode's login store.
     if cmd == ["opencode2", "--version"]:
-        return SimpleNamespace(returncode=0, stdout="opencode2 v0.0.0-beta-19271\n")
+        return SimpleNamespace(returncode=0, stdout="1.18.31\n")
     if cmd[:2] == ["sh", "-c"] and "opencode2 models" in cmd[2]:   # the settling loop
         return SimpleNamespace(returncode=0, stdout="custom/my-model\nopencode/big-pickle\n")
     raise AssertionError(cmd)
@@ -284,7 +284,7 @@ def test_detect_cli_opencode2_is_logged_in_when_a_global_provider_has_a_key(
 
     info = detect_cli("opencode2", run=_opencode2_version_only, which=_which_ok)
 
-    assert info == CliInfo("opencode2", True, "opencode2 v0.0.0-beta-19271", True)
+    assert info == CliInfo("opencode2", True, "1.18.31", True)
 
 
 def test_detect_cli_opencode2_without_a_provider_key_is_not_logged_in(tmp_path, monkeypatch):
@@ -474,7 +474,7 @@ def test_detect_cli_with_image_ignores_host_which_and_reads_container_version():
 
 def test_probe_operator_opencode2_is_a_single_docker_run(tmp_path, monkeypatch):
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
-    combined = (f"opencode2 v0.0.0-beta-19271\n{_disc._PROBE_SEP}\n"
+    combined = (f"1.18.31\n{_disc._PROBE_SEP}\n"
                 "openai/gpt-5\nopencode/big-pickle")
     runs = {"docker_run": 0}
 
@@ -486,7 +486,7 @@ def test_probe_operator_opencode2_is_a_single_docker_run(tmp_path, monkeypatch):
 
     cli, models = _disc.probe_operator("opencode2", image="img", run=_run, home=tmp_path)
     assert runs["docker_run"] == 1
-    assert cli == CliInfo("opencode2", True, "opencode2 v0.0.0-beta-19271", False)
+    assert cli == CliInfo("opencode2", True, "1.18.31", False)
     assert [m.id for m in models] == ["openai/gpt-5", "opencode/big-pickle"]
 
 

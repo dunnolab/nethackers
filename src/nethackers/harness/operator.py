@@ -145,27 +145,40 @@ def _claude_cmd(cli: str, brief: str, model: str | None, effort: str | None) -> 
 
 
 def _opencode2_cmd(cli: str, model: str | None, effort: str | None) -> list[str]:
-    """Build a fresh, non-interactive OpenCode 2 run.
+    """Build a fresh, non-interactive OpenCode run.
 
-    The brief is not an argument: ``opencode2 run`` wraps a message containing
+    The brief is not an argument: ``opencode run`` wraps a message containing
     spaces in quotes and escapes its inner quotes, which broke the brief's
     JSON commands. The caller writes it to stdin, which OpenCode reads to EOF
     verbatim. The mutator container supplies the isolation boundary, so
-    ``--auto`` lets OpenCode 2 use its tools without stopping for approval. Its
+    ``--auto`` lets OpenCode use its tools without stopping for approval. Its
     data directory is ephemeral (nothing is mounted over it), so sessions
     carry no memory between iterations. OpenCode calls its provider-specific
     reasoning setting a model ``variant``.
+
+    (``cli`` is ``opencode2`` in the sandbox -- a symlink to the ``opencode``
+    binary, kept to preserve the operator id across the upstream rename; see
+    Dockerfile.mutator.)
     """
     # `--thinking` is required even in JSON mode: without it OpenCode consumes
     # provider reasoning blocks but omits them from the event stream, leaving
     # the mutation log with tool calls only.  The formatter already renders
     # emitted `reasoning` events, so opt in explicitly for parity with the
     # reasoning traces shown by the Codex and Claude backends.
-    cmd = [cli, "run", "--standalone", "--format", "json", "--thinking", "--auto"]
+    #
+    # `--standalone` is gone in opencode-ai@1.x; `run` is standalone already.
+    cmd = [cli, "run", "--format", "json", "--thinking", "--auto"]
     if model:
-        # V2 encodes its model variant in the model reference itself.
-        selected = f"{model.split('#', 1)[0]}#{effort}" if effort else model
-        cmd += ["--model", selected]
+        # The reasoning variant is now a dedicated `--variant` flag, not the
+        # `provider/model#variant` suffix the beta encoded it into. Strip any
+        # legacy suffix off the model, and prefer an explicit `effort` over one
+        # embedded in the model ref. Variant only rides alongside a pinned
+        # model -- the CLI/TUI reject `--effort` without one.
+        base, _, embedded = model.partition("#")
+        cmd += ["--model", base]
+        variant = effort or embedded
+        if variant:
+            cmd += ["--variant", variant]
     return cmd
 
 

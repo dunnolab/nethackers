@@ -58,8 +58,10 @@ def test_opencode2_in_cage_runs_json_and_auto_approves():
     assert a[a.index("--format") + 1] == "json"
     assert "--thinking" in a
     assert "--auto" in a
-    assert "--standalone" in a
-    assert a[a.index("--model") + 1] == "gpt-x#high"
+    assert "--standalone" not in a  # dropped in opencode-ai@1.x
+    # effort rides a dedicated --variant flag now, not a `model#variant` suffix
+    assert a[a.index("--model") + 1] == "gpt-x"
+    assert a[a.index("--variant") + 1] == "high"
 
 
 def test_opencode2_brief_goes_on_stdin_not_in_argv():

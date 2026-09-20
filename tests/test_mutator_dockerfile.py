@@ -19,7 +19,7 @@ def _npm_global_packages() -> list[str]:
 def test_every_agent_cli_is_pinned_to_an_exact_version():
     packages = _npm_global_packages()
     assert {p.rsplit("@", 1)[0] for p in packages} == {
-        "@anthropic-ai/claude-code", "@openai/codex", "@opencode-ai/cli"}
+        "@anthropic-ai/claude-code", "@openai/codex", "opencode-ai"}
     for package in packages:
         name, _, version = package.rpartition("@")
         # An exact version starts with a digit; a dist-tag (beta, latest) doesn't.
