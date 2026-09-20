@@ -508,9 +508,16 @@ class EvolveForm(Vertical):
         # straight.
         # Resolve the container runtime once (docker OR podman -- issue #50);
         # sandbox_preflight above already confirmed one is usable, so this is
-        # non-None. Threads into the presence checks AND the provision worker so
-        # the whole Start path uses the same detected binary.
+        # non-None. Threads into the presence checks, the provision worker AND
+        # `params.runtime` so the whole Start path -- the launched RUN included
+        # -- uses the same detected binary. That last one is what issue #54 was:
+        # `EvolveParams.runtime` defaults to "docker" and only the CLI evolve
+        # handler used to override it, so a podman-only host passed every check
+        # here and then launched a run whose `ContainerOperator` and arena evals
+        # (both read `params.runtime`, see harness/launch.py) exec'd a `docker`
+        # that isn't installed.
         runtime = container_runtime() or "docker"
+        params.runtime = runtime
         if image_present(params.mutator_image, runtime=runtime) and \
                 image_present(params.image, runtime=runtime):
             self._launch(params, runtime)

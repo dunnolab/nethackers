@@ -849,3 +849,60 @@ async def test_publish_warning_shows_offline_note_when_not_logged_in(monkeypatch
         assert "nethackers login" in warn
         assert gh_calls == []                   # gh_state was never even consulted
         assert isinstance(app.started, _Plan)
+
+
+# ---------------------------------------------------------------------------
+# Detected runtime -> EvolveParams (issue #54). The form already resolved
+# docker-vs-podman for its own preflight/presence/provision probes (#50/#52),
+# but never put it on the params it hands to `prepare_evolve` -- which is what
+# `ContainerOperator(docker=...)` and every arena eval in `run_loop` actually
+# shell out to. On a podman-only host that made Start pass its checks and then
+# launch a run that exec'd a `docker` binary that isn't there.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("image_built", [True, False])
+async def test_start_threads_the_detected_runtime_onto_params(monkeypatch, image_built):
+    """Start puts the DETECTED runtime on `params.runtime`, on both launch
+    paths -- straight through (image already present) and after provisioning.
+    The suite-wide conftest stub pins `container_runtime` to "docker"; this
+    test overrides it with a podman-only host."""
+    seen: dict = {}
+
+    def _fake_prepare_evolve(params, **_kw):
+        seen["params"] = params
+        return _Plan()
+
+    monkeypatch.setattr(ef, "prepare_evolve", _fake_prepare_evolve)
+    monkeypatch.setattr(ef, "container_runtime", lambda **k: "podman")
+    monkeypatch.setattr(ef, "image_present", lambda *a, **k: image_built)
+    monkeypatch.setattr(ef, "ensure_image", lambda *a, **k: None)
+    app = _Host(Credentials("castiel", "tok"))
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()   # the provision-then-launch worker
+        await pilot.pause()
+
+        assert seen["params"].runtime == "podman"
+        assert isinstance(app.started, _Plan)
+
+
+async def test_start_falls_back_to_docker_when_no_runtime_is_detected(monkeypatch):
+    """`container_runtime()` returning None can't reach here in practice (the
+    sandbox preflight above it already failed), but params.runtime is typed
+    `str` -- keep the dataclass default rather than writing None into it."""
+    seen: dict = {}
+
+    def _fake_prepare_evolve(params, **_kw):
+        seen["params"] = params
+        return _Plan()
+
+    monkeypatch.setattr(ef, "prepare_evolve", _fake_prepare_evolve)
+    monkeypatch.setattr(ef, "container_runtime", lambda **k: None)
+    app = _Host(Credentials("castiel", "tok"))
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+
+        assert seen["params"].runtime == "docker"

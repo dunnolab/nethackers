@@ -94,6 +94,18 @@ ARENA_MAJOR_BY_DIGEST: dict[str, int] = {
     # the linux/amd64 LEG, not an index, so the reference architecture is
     # preserved (I7).
     "sha256:55b19fde2d35390e5cd23f3d5808aba04b9688e7125c608f2550f1e677a9d8c6": 2,
+    # v0.32.1, rebuilt for the same reason as the digest above: uv.lock is an
+    # arena input and the release moves the project's own version in it,
+    # 0.32.0 -> 0.32.1. Everything else that differs is the TUI evolve form and
+    # a comment in harness/launch.py, neither of which an episode loads;
+    # arena/ and contracts/ are untouched (`git diff v0.32.0...HEAD --
+    # src/nethackers/arena src/nethackers/contracts` is empty). MEASURED again:
+    # the same knight program on the same 15 published kni-hum-law-fem seeds
+    # scores identically to its record, seed for seed, in progress, turns,
+    # depth, milestone and cause of death. One seed's agent-step count differs
+    # by one (84419 vs 84420) -- that counter varies run to run within a single
+    # image, so it is noise, not this rebuild. Also the linux/amd64 LEG (I7).
+    "sha256:8f3595c3fb7bdb36edf8bf0e5502d7272ef00b299001804ea4d245451fcd651a": 2,
 }
 
 
