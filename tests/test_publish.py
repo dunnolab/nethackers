@@ -16,27 +16,54 @@ class FakeRun:
     the real `_sync_tree` runs against a real filesystem."""
 
     def __init__(self, *, repo_exists=True, visibility="public", commit_rc=0,
-                 sha="a" * 40, seed_old=True):
+                 sha="a" * 40, seed_old=True, description="my bots", homepage="",
+                 has_readme=False, view_stdout=None, readme_put_fails=False,
+                 about_fails=False):
         self.calls: list[list[str]] = []
         self.repo_exists = repo_exists
         self.visibility = visibility
         self.commit_rc = commit_rc
         self.sha = sha
         self.seed_old = seed_old
+        self.description = description
+        self.homepage = homepage
+        self.has_readme = has_readme
+        self.view_stdout = view_stdout
+        self.readme_put_fails = readme_put_fails
+        self.about_fails = about_fails
 
     def __call__(self, cmd, *, check=False, capture_output=False, text=False):
         self.calls.append(cmd)
         head = cmd[:3]
         if head == ["gh", "api", "user"]:
             return _cp(cmd, 0, stdout="sam\n")
+        if cmd[:2] == ["gh", "api"] and cmd[2].endswith("/readme"):
+            # GET /repos/<slug>/readme -- probed with check=False, so an absent
+            # README is a nonzero exit, not a raise (as real subprocess does).
+            if self.has_readme:
+                return _cp(cmd, 0)
+            return _cp(cmd, 1, stderr="gh: Not Found (HTTP 404)")
+        if cmd[:4] == ["gh", "api", "--method", "PUT"]:
+            if self.readme_put_fails:
+                raise subprocess.CalledProcessError(1, cmd, stderr="gh: Server Error (HTTP 502)")
+            return _cp(cmd, 0)
         if head == ["gh", "repo", "view"]:
             if self.repo_exists:
                 import json
-                return _cp(cmd, 0, stdout=json.dumps({"visibility": self.visibility}))
+                if self.view_stdout is not None:
+                    return _cp(cmd, 0, stdout=self.view_stdout)
+                # Like real gh: only the fields the caller asked for come back,
+                # so a probe that stops requesting one loses it here too.
+                asked = cmd[cmd.index("--json") + 1].split(",")
+                full = {"visibility": self.visibility, "description": self.description,
+                        "homepageUrl": self.homepage}
+                return _cp(cmd, 0, stdout=json.dumps({k: full[k] for k in asked}))
             raise subprocess.CalledProcessError(1, cmd, stderr="Not Found")
         if head == ["gh", "repo", "create"]:
             return _cp(cmd, 0)
         if head == ["gh", "repo", "edit"]:
+            if self.about_fails and "--description" in cmd:
+                raise subprocess.CalledProcessError(1, cmd, stderr="gh: Server Error (HTTP 502)")
             return _cp(cmd, 0)
         if head == ["gh", "repo", "clone"]:
             dest = Path(cmd[4])  # gh repo clone <slug> <dest>
@@ -105,6 +132,119 @@ def test_ensure_repo_makes_private_public():
     P.ensure_repo("sam/nethacker", run=fake)
     assert ["gh", "repo", "edit", "sam/nethacker", "--visibility", "public",
             "--accept-visibility-change-consequences"] in fake.calls
+
+
+def _about_edits(fake):
+    return [c for c in fake.calls if c[:3] == ["gh", "repo", "edit"] and "--description" in c]
+
+
+def _readme_puts(fake):
+    return [c for c in fake.calls if c[:4] == ["gh", "api", "--method", "PUT"]]
+
+
+def test_new_repo_gets_its_about_fields():
+    # The About box is the repo's one line of public copy: the description, a
+    # clickable website (the hacker's own page) and the topics that list every
+    # participant under github.com/topics/nethackers.
+    fake = FakeRun(repo_exists=False)
+    P.ensure_repo("sam/nethacker", run=fake)
+    assert _about_edits(fake) == [[
+        "gh", "repo", "edit", "sam/nethacker",
+        "--description", "helping to solve nethack @ nethackers.dunnolab.ai",
+        "--homepage", "https://nethackers.dunnolab.ai/h/sam",
+        "--add-topic", "nethack,nethackers",
+    ]]
+
+
+def _put_readme_text(cmd):
+    """The README body a contents-API PUT carries (its base64 `content` field)."""
+    import base64
+    (field,) = [tok for tok in cmd if tok.startswith("content=")]
+    return base64.b64decode(field.removeprefix("content=")).decode()
+
+
+def test_new_repo_gets_a_readme_pointing_at_its_owner():
+    fake = FakeRun(repo_exists=False)
+    P.ensure_repo("sam/nethacker", run=fake)
+    (put,) = _readme_puts(fake)
+    assert put[4] == "repos/sam/nethacker/contents/README.md"
+    text = _put_readme_text(put)
+    assert "https://nethackers.dunnolab.ai/h/sam" in text        # the owner's page
+    assert "nethackers pull github.com/sam/nethacker@" in text   # how to fetch a bot
+
+
+def test_readme_lands_before_the_about_fields():
+    # The description doubles as the "dressed" marker (a set description is
+    # never touched again), so it must be written LAST: written first, a README
+    # step that then failed would never be retried.
+    fake = FakeRun(repo_exists=False)
+    P.ensure_repo("sam/nethacker", run=fake)
+    (put,), (about,) = _readme_puts(fake), _about_edits(fake)
+    assert fake.calls.index(put) < fake.calls.index(about)
+
+
+@pytest.mark.parametrize("broken", ["readme_put_fails", "about_fails"])
+def test_a_dressing_failure_never_blocks_the_publish(broken):
+    # README + About are cosmetics. `ensure_repo` raising here would fail the
+    # `submit`, or silently drop an evolve win (its publisher maps PublishError
+    # to "keep the win local") -- over a missing README.
+    fake = FakeRun(repo_exists=False, **{broken: True})
+    P.ensure_repo("sam/nethacker", run=fake)  # must not raise
+
+
+def test_a_failed_readme_leaves_the_description_unset():
+    # ...so the next publish still sees an undressed repo and retries. Guards
+    # against "hardening" _dress into independent best-effort steps, which
+    # would write the marker over a README that never landed.
+    fake = FakeRun(repo_exists=False, readme_put_fails=True)
+    P.ensure_repo("sam/nethacker", run=fake)
+    assert _about_edits(fake) == []
+
+
+def test_existing_repo_with_an_empty_description_gets_dressed():
+    # Repos created before this feature (or whose first dressing failed) are
+    # picked up on their next publish.
+    fake = FakeRun(repo_exists=True, description="")
+    P.ensure_repo("sam/nethacker", run=fake)
+    assert len(_readme_puts(fake)) == 1
+    assert len(_about_edits(fake)) == 1
+
+
+def test_a_repo_with_a_description_costs_no_extra_calls():
+    # Steady state (dressed, or the owner wrote their own description): the one
+    # probe `ensure_repo` always made, and nothing else -- no README lookup, no
+    # edit. This runs on every evolve publish, so it must stay free.
+    fake = FakeRun(repo_exists=True, description="sam's own words",
+                   homepage="", has_readme=False)
+    P.ensure_repo("sam/nethacker", run=fake)
+    assert [c[:3] for c in fake.calls] == [["gh", "repo", "view"]]
+
+
+def test_an_existing_readme_is_never_overwritten():
+    # A default branch that already renders a README (a bot's own, any name or
+    # case -- GitHub's /readme endpoint resolves them all) keeps it. The About
+    # fields still land: a README that exists is a finished step, not a failure.
+    fake = FakeRun(repo_exists=True, description="", has_readme=True)
+    P.ensure_repo("sam/nethacker", run=fake)
+    assert _readme_puts(fake) == []
+    assert len(_about_edits(fake)) == 1
+
+
+def test_an_owner_set_website_is_never_overwritten():
+    fake = FakeRun(repo_exists=True, description="", homepage="https://sam.example")
+    P.ensure_repo("sam/nethacker", run=fake)
+    (about,) = _about_edits(fake)
+    assert "--homepage" not in about
+    assert "--description" in about  # the empty description is still filled
+
+
+@pytest.mark.parametrize("stdout", ["not json", "[]", ""])
+def test_an_unreadable_probe_never_dresses(stdout):
+    # If we can't read the description we can't know the owner left it empty,
+    # and filling it then could overwrite their words.
+    fake = FakeRun(repo_exists=True, view_stdout=stdout)
+    P.ensure_repo("sam/nethacker", run=fake)
+    assert _readme_puts(fake) == [] and _about_edits(fake) == []
 
 
 def test_publish_solution_syncs_commits_and_returns_sha(tmp_path):

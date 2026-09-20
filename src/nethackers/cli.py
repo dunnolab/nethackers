@@ -1131,7 +1131,10 @@ def _run(argv: list[str] | None) -> int:
         slug = f"{creds.login}/{args.repo_name}"
         try:
             ensure_repo(slug)
-            sha = publish_solution(args.solution_dir, slug, message=args.message)
+            # Its own branch, never the default one: publish_solution tree-syncs
+            # the branch it pushes to, which would wipe the repo's landing README.
+            sha = publish_solution(args.solution_dir, slug, message=args.message,
+                                   ref="submit")
         except PublishError as e:
             err.print(f"[red]publish failed[/] — {e}")
             return 1
