@@ -15,7 +15,7 @@ from typing import Any
 
 from nethackers import config
 from nethackers.config import load_stage
-from nethackers.containers import container_runtime
+from nethackers.containers import container_runtime, nonroot_userns_args
 from nethackers.eval.runner import _default_image_digest
 from nethackers.harness import runlog
 from nethackers.harness.container_operator import ContainerOperator
@@ -240,7 +240,15 @@ def prepare_evolve(
     # duck-typed on `.run(worktree, brief, *, on_line, stop)`.
     operator: Any = ContainerOperator(
         harness=params.operator, image=params.mutator_image,
-        model=params.model, effort=params.effort, run_id=rid, docker=params.runtime)
+        model=params.model, effort=params.effort, run_id=rid, docker=params.runtime,
+        # Rootless podman maps the host user to container uid 0, so the cage's
+        # bind-mounted /workspace stats as root-owned inside and the
+        # entrypoint's drop to the non-root `agent` can't write it (#54).
+        # Resolved once per run, here, and empty on docker/rootful podman.
+        # NOT applied to the arena evals below: they stay root in-container and
+        # write a host-owned 0700 output dir, which only works under podman's
+        # DEFAULT mapping -- keep-id would break them.
+        userns_args=nonroot_userns_args(params.runtime))
     cfg = EvolveConfig(objective=params.objective, backend=params.operator,
                        iterations=params.iterations, model=params.model,
                        effort=params.effort, operator_version=operator_version)

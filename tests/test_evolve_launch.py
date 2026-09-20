@@ -160,3 +160,39 @@ def test_run_forwards_on_iteration_and_still_writes_metric(tmp_path, monkeypatch
     assert seen and seen[0][0] == 1 and seen[0][1].improved == ["val-dwa-law-fem"]
     lines = (plan.run_dir / "metrics.jsonl").read_text().splitlines()
     assert any(json.loads(x)["outcome"] == "registered" for x in lines)  # disk unchanged
+
+
+def test_prepare_evolve_gives_the_operator_rootless_podman_userns_args(tmp_path, monkeypatch):
+    """issue #54: on a ROOTLESS podman host the mutator cage needs keep-id, or
+    its drop to the non-root `agent` lands on a /workspace it can't write.
+    `prepare_evolve` resolves that once per run (the conftest stub pins it to
+    the docker/rootful answer suite-wide; override it here) and hands it to the
+    ContainerOperator -- which is what puts it in the real `podman run` argv."""
+    monkeypatch.setattr(launch, "run_loop", lambda **kw: [])
+    monkeypatch.setattr(launch, "nonroot_userns_args",
+                        lambda rt: ["--userns=keep-id", "--user", "0"] if rt == "podman" else [])
+    p = EvolveParams(objective="wiz-elf-cha-mal", seed="roots/autoascend",
+                     workdir=str(tmp_path), hub="http://h", token="tok", owner="castiel",
+                     runtime="podman")
+    plan = prepare_evolve(p, git_sha="x")
+    assert plan is not None
+    seen = {}
+    monkeypatch.setattr(launch, "ContainerOperator",
+                        lambda **kw: seen.update(kw) or object())
+    prepare_evolve(p, git_sha="x")
+    assert seen["userns_args"] == ["--userns=keep-id", "--user", "0"]
+    assert seen["docker"] == "podman"
+
+
+def test_prepare_evolve_adds_no_userns_args_on_docker(tmp_path, monkeypatch):
+    """The default host must build a byte-identical argv to before #54."""
+    monkeypatch.setattr(launch, "run_loop", lambda **kw: [])
+    monkeypatch.setattr(launch, "nonroot_userns_args",
+                        lambda rt: ["--userns=keep-id", "--user", "0"] if rt == "podman" else [])
+    seen = {}
+    monkeypatch.setattr(launch, "ContainerOperator",
+                        lambda **kw: seen.update(kw) or object())
+    p = EvolveParams(objective="wiz-elf-cha-mal", seed="roots/autoascend",
+                     workdir=str(tmp_path), hub="http://h", token="tok", owner="castiel")
+    prepare_evolve(p, git_sha="x")
+    assert seen["userns_args"] == [] and seen["docker"] == "docker"

@@ -106,6 +106,18 @@ ARENA_MAJOR_BY_DIGEST: dict[str, int] = {
     # by one (84419 vs 84420) -- that counter varies run to run within a single
     # image, so it is noise, not this rebuild. Also the linux/amd64 LEG (I7).
     "sha256:8f3595c3fb7bdb36edf8bf0e5502d7272ef00b299001804ea4d245451fcd651a": 2,
+    # v0.32.2, rebuilt for the same reason as the two digests above: uv.lock is
+    # an arena input and the release moves the project's own version in it,
+    # 0.32.1 -> 0.32.2. Everything else that differs is the rootless-podman
+    # userns fix (#54) in containers.py, harness/container_operator.py and
+    # harness/launch.py -- host-side argv assembly for the MUTATOR cage, which
+    # no episode loads and which is deliberately never applied to the arena.
+    # arena/ and contracts/ are untouched (`git diff v0.32.1...HEAD --
+    # src/nethackers/arena src/nethackers/contracts` is empty). MEASURED: the
+    # same knight program on the same 15 published kni-hum-law-fem seeds scores
+    # identically to its record, every field, all 15 -- this time including the
+    # agent-step counter that wobbles between runs. Also the linux/amd64 LEG (I7).
+    "sha256:2976e77ca1a4e7f5b269b1f001cf870e95728439da45adca416a4a193bcb029a": 2,
 }
 
 
