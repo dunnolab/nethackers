@@ -1,6 +1,6 @@
 """The mutator image's content fingerprint: one hash over everything its build
-reads, so CI, the release gate and a repo checkout agree on which image a set of
-files needs.
+reads and the platform it builds for, so CI, the release gate and a repo
+checkout agree on which image a set of files needs.
 
 Stdlib only -- CI runs it with a bare ``python3``::
 
@@ -13,7 +13,16 @@ import hashlib
 import sys
 from pathlib import Path
 
-SCHEME = "nethackers-mutator-inputs/v1"
+SCHEME = "nethackers-mutator-inputs/v2"
+
+# The one platform both sandboxes run on. The arena pin is this platform's
+# manifest (spec 2026-09-14 D1/D2), and the mutator is built for it too: the
+# coding agent scores its own candidates with the arena kit inside the mutator,
+# and NetHack generates a different dungeon from the same seed on another
+# architecture, so a mutator on any other platform optimizes games the arena
+# never plays. Part of the fingerprint (v2) because the same files built for
+# another platform are different bytes.
+REFERENCE_PLATFORM = "linux/amd64"
 
 # Every path Dockerfile.mutator COPYs, relative to the repo root, plus the
 # Dockerfile itself; a directory covers every file beneath it.
@@ -49,12 +58,14 @@ def _input_files(root: Path) -> list[Path]:
     return sorted(files, key=lambda f: f.relative_to(root).as_posix())
 
 
-def mutator_inputs_hash(root: Path, base_image: str) -> str:
-    """``sha256:<64 hex>`` over the mutator's build inputs under ``root`` and the
-    base image it builds on. The same files on the same base give the same
-    value; a change to any file's content or executable bit, a new file, or a
-    different base moves it. Raises ``FileNotFoundError`` for a missing file."""
-    digest = hashlib.sha256(f"{SCHEME}\n{base_image}\n".encode())
+def mutator_inputs_hash(root: Path, base_image: str,
+                        platform: str = REFERENCE_PLATFORM) -> str:
+    """``sha256:<64 hex>`` over the mutator's build inputs under ``root``, the
+    base image it builds on and the platform it is built for. The same files on
+    the same base for the same platform give the same value; a change to any
+    file's content or executable bit, a new file, a different base or a
+    different platform moves it. Raises ``FileNotFoundError`` for a missing file."""
+    digest = hashlib.sha256(f"{SCHEME}\n{base_image}\n{platform}\n".encode())
     for path in _input_files(root):
         rel = path.relative_to(root).as_posix()
         mode = "x" if path.stat().st_mode & 0o111 else "-"

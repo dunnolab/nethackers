@@ -202,6 +202,64 @@ async def test_preflight_failure_shows_error_no_start(monkeypatch):
         assert "sandbox unavailable" in err_text
 
 
+def _refuse_mismatched_platforms(monkeypatch, acquired=()):
+    """Fake the sandbox platform guard into refusing. Returns one record per
+    call: the runtime it would inspect with, and the image kinds ``acquired``
+    held by then -- a guard that can't read a platform passes, so both matter."""
+    calls: list = []
+
+    def _mismatch(arena, mutator, **k):
+        calls.append({"runtime": k.get("runtime"), "acquired": sorted(acquired)})
+        return "[red]sandbox platform mismatch[/] — rebuild the mutator image"
+    monkeypatch.setattr(ef, "sandbox_platform_mismatch", _mismatch)
+    return calls
+
+
+async def test_platform_mismatch_shows_error_no_start(monkeypatch):
+    """Sandboxes on different platforms would have the agent optimizing games
+    the arena never plays: Start refuses, in #f_err, as the CLI does."""
+    seen: dict = {}
+    monkeypatch.setattr(ef, "prepare_evolve", lambda *a, **k: seen.update(called=True))
+    monkeypatch.setattr(ef, "container_runtime", lambda **k: "podman")
+    calls = _refuse_mismatched_platforms(monkeypatch)
+    app = _Host(None)
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        assert "called" not in seen         # prepare_evolve blocked by the guard
+        assert app.started is None
+        assert calls == [{"runtime": "podman", "acquired": []}]
+        err_text = str(app.query_one("#f_err", Static).render()).lower()
+        assert "sandbox platform mismatch" in err_text
+
+
+async def test_platform_mismatch_after_provisioning_shows_error_no_start(monkeypatch):
+    """A fresh machine's first Start pulls both images, then launches from the
+    worker: that path is the one most likely to meet a mismatch, so it is
+    guarded too -- after both images are acquired, with the same runtime."""
+    seen: dict = {}
+    monkeypatch.setattr(ef, "prepare_evolve", lambda *a, **k: seen.update(called=True))
+    monkeypatch.setattr(ef, "container_runtime", lambda **k: "podman")
+    monkeypatch.setattr(ef, "image_present", lambda *a, **k: False)   # provision first
+    acquired: list = []
+    monkeypatch.setattr(ef, "ensure_image",
+                        lambda ref, kind, **k: acquired.append(kind) or None)
+    calls = _refuse_mismatched_platforms(monkeypatch, acquired)
+    app = _Host(None)
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()   # the provision-then-launch worker
+        await pilot.pause()
+        assert "called" not in seen
+        assert app.started is None
+        assert calls == [{"runtime": "podman", "acquired": ["arena", "mutator"]}]
+        err_text = str(app.query_one("#f_err", Static).render()).lower()
+        assert "sandbox platform mismatch" in err_text
+
+
 async def test_model_picker_populates_from_live_discovery(monkeypatch):
     monkeypatch.setattr(
         ef, "probe_operator",
@@ -842,3 +900,60 @@ async def test_selecting_verified_sets_tier(monkeypatch):
         app.query_one("#f_start", Button).press()
         await pilot.pause()
         assert seen["params"].tier == "verified"
+
+
+# ---------------------------------------------------------------------------
+# Detected runtime -> EvolveParams (issue #54). The form already resolved
+# docker-vs-podman for its own preflight/presence/provision probes (#50/#52),
+# but never put it on the params it hands to `prepare_evolve` -- which is what
+# `ContainerOperator(docker=...)` and every arena eval in `run_loop` actually
+# shell out to. On a podman-only host that made Start pass its checks and then
+# launch a run that exec'd a `docker` binary that isn't there.
+# ---------------------------------------------------------------------------
+@pytest.mark.parametrize("image_built", [True, False])
+async def test_start_threads_the_detected_runtime_onto_params(monkeypatch, image_built):
+    """Start puts the DETECTED runtime on `params.runtime`, on both launch
+    paths -- straight through (image already present) and after provisioning.
+    The suite-wide conftest stub pins `container_runtime` to "docker"; this
+    test overrides it with a podman-only host."""
+    seen: dict = {}
+
+    def _fake_prepare_evolve(params, **_kw):
+        seen["params"] = params
+        return _Plan()
+
+    monkeypatch.setattr(ef, "prepare_evolve", _fake_prepare_evolve)
+    monkeypatch.setattr(ef, "container_runtime", lambda **k: "podman")
+    monkeypatch.setattr(ef, "image_present", lambda *a, **k: image_built)
+    monkeypatch.setattr(ef, "ensure_image", lambda *a, **k: None)
+    app = _Host(Credentials("castiel", "tok"))
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()   # the provision-then-launch worker
+        await pilot.pause()
+
+        assert seen["params"].runtime == "podman"
+        assert isinstance(app.started, _Plan)
+
+
+async def test_start_falls_back_to_docker_when_no_runtime_is_detected(monkeypatch):
+    """`container_runtime()` returning None can't reach here in practice (the
+    sandbox preflight above it already failed), but params.runtime is typed
+    `str` -- keep the dataclass default rather than writing None into it."""
+    seen: dict = {}
+
+    def _fake_prepare_evolve(params, **_kw):
+        seen["params"] = params
+        return _Plan()
+
+    monkeypatch.setattr(ef, "prepare_evolve", _fake_prepare_evolve)
+    monkeypatch.setattr(ef, "container_runtime", lambda **k: None)
+    app = _Host(Credentials("castiel", "tok"))
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+
+        assert seen["params"].runtime == "docker"

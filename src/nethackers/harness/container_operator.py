@@ -62,6 +62,7 @@ from nethackers.harness.operator import (
     _opencode2_cmd,
     run_operator,
 )
+from nethackers.harness.sandbox_preflight import mutator_platform_args
 
 # The provider API host CredBroker forwards to, per harness -- fixed at
 # construction (CredBroker is a single-upstream proxy, never open-relay).
@@ -133,6 +134,7 @@ def build_docker_argv(
     refs: Path | None = None,
     docker: str = "docker",
     extra_args: list[str] | None = None,
+    userns_args: list[str] | None = None,
 ) -> list[str]:
     """Assemble ``docker run`` argv for one mutator iteration: fixed docker
     prefix (name + caps + security-opt + extra_args + workspace mount), then
@@ -145,6 +147,13 @@ def build_docker_argv(
     loudly. Callers that only care about argv shape (this module's own tests)
     pass a fixed ``brief="B"``; the operator that wraps this function (a
     later task) passes the real per-iteration brief.
+
+    ``userns_args`` are extra uid-mapping ``run`` flags, supplied by
+    ``containers.nonroot_userns_args`` (which probes the runtime to decide) and
+    merely carried here, so this stays pure argv assembly. Empty/``None`` --
+    docker and rootful podman -- keeps the argv byte-identical to before the
+    option existed; under ROOTLESS podman it is what stops the entrypoint's
+    drop to ``agent`` from landing on a ``/workspace`` it can't write (#54).
 
     ``refs``, when given, is bind-mounted read-only at ``/refs`` -- the
     reference folders ``refs.assemble`` (a separate task) builds for the
@@ -159,13 +168,14 @@ def build_docker_argv(
     argv byte-identical to before this existed.
     """
     argv = [
-        docker, "run", "--rm",
+        docker, "run", *mutator_platform_args(image), "--rm",
         "--name", name, *label_args(),
         "--pids-limit", str(caps.pids),
         "--memory", caps.memory,
         "--memory-swap", caps.memory,  # cap swap too -- else a runaway reaches ~2x via swap
         "--cpus", caps.cpus,
         "--security-opt", "no-new-privileges",
+        *(userns_args or []),
     ]
     if extra_args:
         argv += extra_args
@@ -243,6 +253,7 @@ class ContainerOperator:
         broker: bool = False,
         cred_broker_factory: Callable[[str, str, str], _CredBrokerLike] = CredBroker,
         broker_credential: Callable[..., tuple[str, str]] = _default_broker_credential,
+        userns_args: list[str] | None = None,
     ) -> None:
         self.harness = harness
         self.image = image
@@ -268,6 +279,12 @@ class ContainerOperator:
         self.system = system if system is not None else platform.system()
         self.home = home if home is not None else Path.home()
         self.docker = docker
+        # Resolved by the CALLER (launch.py, via containers.nonroot_userns_args)
+        # once per run, not probed here per iteration -- same "resolve once at
+        # the entry point, thread it down" rule as `docker` itself, and it keeps
+        # constructing an operator subprocess-free for tests. Empty on docker
+        # and rootful podman.
+        self.userns_args = list(userns_args or [])
         self._popen = subprocess.Popen
         # SELECTABLE broker path (§3d, INV2) -- default False keeps the
         # credential MOUNT (`auth_docker_args`, unchanged below) as what
@@ -324,7 +341,7 @@ class ContainerOperator:
                 harness=self.harness, image=self.image, name=name, worktree=worktree,
                 cli=self.cli, model=self.model, effort=self.effort, caps=self.caps,
                 auth_args=auth, brief=brief, refs=refs, docker=self.docker,
-                extra_args=extra_args,
+                extra_args=extra_args, userns_args=self.userns_args,
             )
             done = threading.Event()
             watcher: threading.Thread | None = None

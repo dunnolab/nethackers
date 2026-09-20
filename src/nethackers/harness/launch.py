@@ -15,7 +15,7 @@ from typing import Any
 
 from nethackers import config
 from nethackers.config import load_stage
-from nethackers.containers import container_runtime
+from nethackers.containers import container_runtime, nonroot_userns_args
 from nethackers.eval.runner import _default_image_digest
 from nethackers.harness import runlog
 from nethackers.harness.container_operator import ContainerOperator
@@ -67,9 +67,12 @@ class EvolveParams:
     iterations: int = 1
     max_parallel_evals: int = 8
     # The container CLI every `<runtime> run` uses (docker OR podman -- issue
-    # #50). Defaults to "docker"; the CLI evolve handler resolves the actual one
-    # via `container_runtime()` and sets it here, so the whole run (arena evals
-    # AND the mutator container) shells out to the same detected binary.
+    # #50). Defaults to "docker"; BOTH launch paths -- the CLI evolve handler
+    # and the TUI evolve form's Start -- resolve the actual one via
+    # `container_runtime()` and set it here, so the whole run (arena evals AND
+    # the mutator container) shells out to the same detected binary. Leaving it
+    # unset on a new launch path is issue #54: a podman-only host passes every
+    # preflight and then execs a `docker` that isn't installed.
     runtime: str = "docker"
     # All of the below are late-bound to the active Stage via default_factory
     # -- never read at import time -- so a test's env/monkeypatch (or a future
@@ -247,7 +250,15 @@ def prepare_evolve(
     operator: Any = ContainerOperator(
         harness=params.operator, image=params.mutator_image,
         model=params.model, effort=params.effort, run_id=rid, docker=params.runtime,
-        broker=params.broker)
+        broker=params.broker,
+        # Rootless podman maps the host user to container uid 0, so the cage's
+        # bind-mounted /workspace stats as root-owned inside and the
+        # entrypoint's drop to the non-root `agent` can't write it (#54).
+        # Resolved once per run, here, and empty on docker/rootful podman.
+        # NOT applied to the arena evals below: they stay root in-container and
+        # write a host-owned 0700 output dir, which only works under podman's
+        # DEFAULT mapping -- keep-id would break them.
+        userns_args=nonroot_userns_args(params.runtime))
     cfg = EvolveConfig(objective=params.objective, backend=params.operator,
                        iterations=params.iterations, model=params.model,
                        effort=params.effort, operator_version=operator_version)

@@ -40,6 +40,22 @@ def test_docker_run_shape_and_caps():
     assert "timeout" in a and str(ContainerCaps().timeout_s) in a
 
 
+def test_our_own_mutator_images_run_on_the_reference_platform():
+    from nethackers import _image_pins
+    for image in (_image_pins.MUTATOR_IMAGE, "nethackers/mutator:h-" + "e" * 64):
+        a = build_docker_argv(
+            harness="codex", image=image, name="nethackers-mut-r-1",
+            worktree=Path("/runs/r/work/iter-1"), cli=None, model=None, effort=None,
+            caps=ContainerCaps(), auth_args=[], brief="B")
+        assert a[:4] == ["docker", "run", "--platform", "linux/amd64"], image
+
+
+def test_an_image_override_runs_without_a_platform_flag():
+    # It may be a local arm64-only build, which --platform linux/amd64 would
+    # refuse to run at all.
+    assert "--platform" not in _argv("codex")          # nethackers/mutator:test
+
+
 def test_codex_in_cage_bypasses_its_own_sandbox():
     a = _argv("codex")
     assert "--dangerously-bypass-approvals-and-sandbox" in a
@@ -697,3 +713,34 @@ def test_broker_path_opencode2_stops_all_brokers_even_if_the_run_raises(monkeypa
 
     assert len(brokers) == 2
     assert all(b.started and b.stopped for b in brokers)
+# --- rootless-podman userns args (issue #54) --------------------------------
+# `nonroot_userns_args` (containers.py) decides WHETHER these are needed by
+# probing the runtime; build_docker_argv/ContainerOperator only carry them, so
+# the argv builder stays pure (no subprocess) and unit-drivable.
+
+
+def test_userns_args_default_to_nothing_so_the_argv_is_unchanged():
+    # every host that works today (docker, rootful podman) must get a
+    # byte-identical argv to before this option existed.
+    assert _argv("codex") == _argv("codex", userns_args=[])
+    assert "--userns=keep-id" not in _argv("codex")
+
+
+def test_userns_args_are_spliced_in_before_the_image():
+    a = _argv("codex", userns_args=["--userns=keep-id", "--user", "0"])
+    assert "--userns=keep-id" in a
+    assert a[a.index("--user") + 1] == "0"
+    # must be `run` flags, not arguments to the in-cage command
+    assert a.index("--userns=keep-id") < a.index("nethackers/mutator:test")
+
+
+def test_operator_threads_its_userns_args_into_the_run_argv(tmp_path):
+    seen = {}
+    op = ContainerOperator(harness="codex", image="img:test", system="Linux",
+                           home=tmp_path, userns_args=["--userns=keep-id", "--user", "0"])
+    (tmp_path / ".codex").mkdir()
+    wt = tmp_path / "work" / "iter-3"
+    wt.mkdir(parents=True)
+    op._popen = lambda cmd, **kw: seen.setdefault("cmd", cmd) and FakePopen(cmd, **kw)
+    op.run(wt, "BRIEF-TEXT")
+    assert "--userns=keep-id" in seen["cmd"]

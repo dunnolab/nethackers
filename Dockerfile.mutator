@@ -14,7 +14,10 @@
 # The agent rolls a candidate against live NLE with the exact metric the sealed
 # scorer uses, but on the TRAINING seeds it is handed as data (via the brief),
 # never seeds it can enumerate. arena/ imports nothing outside arena+contracts
-# (verified), so this subtree is self-contained.
+# (verified), so this subtree is self-contained. Parity also needs the arena's
+# PLATFORM: NetHack generates a different dungeon from the same seed on another
+# CPU architecture, so this image is built for image_inputs.REFERENCE_PLATFORM
+# (linux/amd64) alone and emulated elsewhere, like the arena.
 #
 # No fixed *command*: ContainerOperator supplies the whole in-cage argv per
 # iteration. What IS fixed is a generic entrypoint shim (docker-entrypoint.sh)

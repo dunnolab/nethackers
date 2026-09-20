@@ -271,9 +271,9 @@ a bare role (`val` — all its identities), a comma list, or a glob
 nethackers submit ./my-solution --objective val-dwa-law-fem
 ```
 
-Evaluates it, pushes it to `github.com/<you>/nethacker`, and registers the
-resulting `repo@commit` with the hub. Requires `gh` authenticated as the same
-account you `nethackers login`'d with.
+Evaluates it, pushes it to `github.com/<you>/nethacker` (on its `submit`
+branch), and registers the resulting `repo@commit` with the hub. Requires `gh`
+authenticated as the same account you `nethackers login`'d with.
 
 **Fetch anyone's program**
 
@@ -306,7 +306,12 @@ host. GitHub is all three, which keeps the hub small enough to be honest about.
   identity is your GitHub login.
 - **Publishing is a push.** `nethackers submit` uses `gh` to create/push
   `github.com/<you>/nethacker` under your own account. You own your solutions;
-  we hold a pointer.
+  we hold a pointer. Bots go to branches (`submit`, and one per `evolve` run);
+  on a newly created repo the default branch holds only a README. While the repo's description is still
+  empty, a publish fills it in, links the repo to your page here, tags it
+  `nethack`/`nethackers`, and adds a short README if there is none — it never
+  overwrites a description, website or README you wrote, and all of it is yours
+  to edit or delete.
 - **Lineage is recorded, not yet used.** An `evolve` registration carries its
   parent's digest; `submit` and `register` send none. The hub stores those edges
   but no endpoint reads them today, so treat ancestry as data being collected for

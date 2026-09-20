@@ -70,6 +70,69 @@ ARENA_MAJOR_BY_DIGEST: dict[str, int] = {
     # above. Also the linux/amd64 LEG, not an index, so the reference
     # architecture is preserved (I7). Read from the diff, not measured.
     "sha256:865eb2033dd31892418915fe44a15e78e2beefc88fe358f89864b0ffce6d3e42": 2,
+    # v0.31.1, rebuilt because uv.lock is an arena input. Three files differ from
+    # the digest above: the website page (src/nethackers/hub/web/index.html --
+    # scratch-card behaviour, served by the hub, never loaded by an episode), and
+    # the project's own version in pyproject.toml and uv.lock, 0.31.0 -> 0.31.1.
+    # The lock delta is that one line; not a single package version moves, so the
+    # installed environment is byte-identical. arena/ and contracts/ are untouched
+    # (`git diff v0.31.0...HEAD -- src/nethackers/arena src/nethackers/contracts`
+    # is empty), so nothing on the path that seeds, steps or scores an episode
+    # differs. Also the linux/amd64 LEG, not an index, so the reference
+    # architecture is preserved (I7). Read from the diff, not measured.
+    "sha256:0c8715c6812ae24dd3b93ed79969c69e6bdc08513302c42b792bd593afc78ffe": 2,
+    # v0.32.0, rebuilt because uv.lock is an arena input and the release moves
+    # the project's own version in it, 0.31.1 -> 0.32.0; not one package version
+    # moves, so the installed environment is identical. The other files that
+    # differ from the digest above are host-side modules no episode loads
+    # (cli, eval/runner, harness/, image_inputs, tui): arena/ and contracts/ are
+    # untouched (`git diff v0.31.1...HEAD -- src/nethackers/arena
+    # src/nethackers/contracts` is empty). nle-base was rebuilt from the same
+    # Dockerfile. MEASURED, not only read from the diff: a registered knight
+    # program on the 15 published kni-hum-law-fem seeds matches its record under
+    # 5c8c0cee above -- progress, steps, turns and cause of death, 15/15. Also
+    # the linux/amd64 LEG, not an index, so the reference architecture is
+    # preserved (I7).
+    "sha256:55b19fde2d35390e5cd23f3d5808aba04b9688e7125c608f2550f1e677a9d8c6": 2,
+    # v0.32.1, rebuilt for the same reason as the digest above: uv.lock is an
+    # arena input and the release moves the project's own version in it,
+    # 0.32.0 -> 0.32.1. Everything else that differs is the TUI evolve form and
+    # a comment in harness/launch.py, neither of which an episode loads;
+    # arena/ and contracts/ are untouched (`git diff v0.32.0...HEAD --
+    # src/nethackers/arena src/nethackers/contracts` is empty). MEASURED again:
+    # the same knight program on the same 15 published kni-hum-law-fem seeds
+    # scores identically to its record, seed for seed, in progress, turns,
+    # depth, milestone and cause of death. One seed's agent-step count differs
+    # by one (84419 vs 84420) -- that counter varies run to run within a single
+    # image, so it is noise, not this rebuild. Also the linux/amd64 LEG (I7).
+    "sha256:8f3595c3fb7bdb36edf8bf0e5502d7272ef00b299001804ea4d245451fcd651a": 2,
+    # v0.32.2, rebuilt for the same reason as the two digests above: uv.lock is
+    # an arena input and the release moves the project's own version in it,
+    # 0.32.1 -> 0.32.2. Everything else that differs is the rootless-podman
+    # userns fix (#54) in containers.py, harness/container_operator.py and
+    # harness/launch.py -- host-side argv assembly for the MUTATOR cage, which
+    # no episode loads and which is deliberately never applied to the arena.
+    # arena/ and contracts/ are untouched (`git diff v0.32.1...HEAD --
+    # src/nethackers/arena src/nethackers/contracts` is empty). MEASURED: the
+    # same knight program on the same 15 published kni-hum-law-fem seeds scores
+    # identically to its record, every field, all 15 -- this time including the
+    # agent-step counter that wobbles between runs. Also the linux/amd64 LEG (I7).
+    "sha256:2976e77ca1a4e7f5b269b1f001cf870e95728439da45adca416a4a193bcb029a": 2,
+    # v0.33.0, rebuilt for the same reason as the three digests above: uv.lock is
+    # an arena input and the release moves the project's own version in it,
+    # 0.32.2 -> 0.33.0. Everything else that differs is host-side publishing --
+    # hubclient/publish.py (the storage repo's README and About fields, all `gh`
+    # calls) and one kwarg in cli.py's `submit` -- which no episode loads.
+    # arena/ and contracts/ are untouched (`git diff v0.32.2...HEAD --
+    # src/nethackers/arena src/nethackers/contracts` is empty). MEASURED: a
+    # registered knight program on the 15 published kni-hum-law-fem seeds matches
+    # its record seed for seed in progress, turns, milestone and status, and
+    # matches a same-day run under the digest above in depth and cause of death
+    # as well. Its agent-step counter is off by one on a single seed (12); two
+    # runs of the digest ABOVE differ from each other by one step on seeds 5 and
+    # 12, so that is the counter's run-to-run noise, not this rebuild. Also the
+    # linux/amd64 LEG (I7).
+    "sha256:76dea5e0da80a4fb9f05706fa3bfdf43c72925f8e892f80f28fe032502902f60": 2,
 }
 
 

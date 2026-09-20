@@ -34,7 +34,7 @@ from collections.abc import Callable
 from contextlib import suppress
 from pathlib import Path
 
-from nethackers import _image_pins
+from nethackers import _image_pins, image_inputs
 from nethackers.arena.result_io import read_result_json
 from nethackers.arena.seeds import trajectory_spec
 from nethackers.containers import container_name, container_runtime, label_args
@@ -312,7 +312,8 @@ def eval_batch(
         # keeps open: `--image`/NETHACKERS_ARENA_IMAGE for arena development,
         # and the per-worktree `arena:<slug>` of docs/local-stack.md. So it is
         # passed only when the resolved ref IS the pin.
-        platform = ["--platform", "linux/amd64"] if image == _image_pins.ARENA_IMAGE else []
+        platform = (["--platform", image_inputs.REFERENCE_PLATFORM]
+                    if image == _image_pins.ARENA_IMAGE else [])
         # Derive the concrete per-trajectory seeds HOST-side (threat 3 a,b /
         # INV3): `trajectory_spec` is the exact pure function the container
         # used to call internally with these same (secret, "local", seed)

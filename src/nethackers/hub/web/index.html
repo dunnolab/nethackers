@@ -536,7 +536,12 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 /* the chart sits over the block's body text and is transparent until scraped */
 #agichart{ position:absolute; left:0; z-index:2; display:none; touch-action:none; }
 #agichart.on{ display:block; }
-.about.scratching #agichart{
+/* The button is the one thing the pointer is already on when the card arms,
+   and it sits 14px clear of the canvas so it can keep its own clicks. Left to
+   its `pointer`, pressing it changes nothing under the cursor until you have
+   travelled down into the card -- so while armed it holds the coin too. */
+.about.scratching #agichart,
+.about.scratching #agiBtn{
   cursor:url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="28" height="28"><circle cx="14" cy="14" r="10" fill="%23e9c15a" stroke="%236a6a55" stroke-width="2"/><text x="14" y="19" text-anchor="middle" font-family="monospace" font-size="14" font-weight="bold" fill="%236a6a55">$</text></svg>') 14 14, crosshair; }
 
 /* the button, on the heading's own line ------------------------------------ */
@@ -2532,7 +2537,7 @@ boot().catch(()=>{ renderFrontier(); renderRecognition(); })
               rctx.setTransform(DPR,0,0,DPR,0,0); }
     render();
   }
-  function arm(){
+  function arm(bringIntoView){
     if(armed) return;
     armed = true;
     cv.classList.add("on");
@@ -2540,7 +2545,11 @@ boot().catch(()=>{ renderFrontier(); renderRecognition(); })
     place(); wipe();
     btn.setAttribute("aria-pressed", "true");
     btn.textContent = "put it back";
-    about.scrollIntoView({ behavior: calm ? "auto" : "smooth", block: "start" });
+    /* The button sits in the block's own heading, so pressing it means the
+       block is already under your eyes -- scrolling there only yanks the page
+       out from under the cursor. `#agi` can be typed from anywhere on the
+       page, and that one path would otherwise arm the card out of sight. */
+    if(bringIntoView) about.scrollIntoView({ behavior: calm ? "auto" : "smooth", block: "start" });
   }
   function putBack(){
     if(!armed) return;
@@ -2551,13 +2560,22 @@ boot().catch(()=>{ renderFrontier(); renderRecognition(); })
     btn.setAttribute("aria-pressed", "false");
     btn.textContent = "solving = AGI?";
   }
-  btn.addEventListener("click", () => (armed ? putBack() : arm()));
+  btn.addEventListener("click", () => (armed ? putBack() : arm(false)));
 
+  /* A resize rescales nothing, so a real one starts clean -- but on a phone
+     scrolling collapses the address bar, which fires `resize` with the layout
+     width untouched. Wiping there took the drawing away a moment after the
+     scratch. The card's geometry is a function of the block's width and the
+     pixel ratio alone, so anything that leaves both alone is left alone. */
   let rt = 0;
   window.addEventListener("resize", () => {
     if(!armed) return;
     clearTimeout(rt);
-    rt = setTimeout(() => { place(); wipe(); }, 120);   // a resize rescales nothing; start clean
+    rt = setTimeout(() => {
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      if(about.clientWidth === W && dpr === DPR) return;
+      place(); wipe();
+    }, 120);
   });
 
   /* ---- NetHack's extended-command prompt --------------------------------- */
@@ -2581,7 +2599,7 @@ boot().catch(()=>{ renderFrontier(); renderRecognition(); })
   function submit(){
     const cmd = buf.trim().toLowerCase();
     if(!cmd){ closePrompt(); return; }
-    if(cmd === "agi"){ closePrompt(); arm(); return; }
+    if(cmd === "agi"){ closePrompt(); arm(true); return; }
     buf = ""; draw();                        // NetHack's reply to a verb it lacks
     curEl.hidden = true; hintEl.hidden = true;
     msgEl.textContent = "#" + cmd + ": unknown extended command.";

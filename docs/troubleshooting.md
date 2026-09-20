@@ -125,8 +125,22 @@ hatch.
 You are running from a checkout whose mutator files (its Dockerfile, entrypoint,
 or the arena code it copies) differ from the pinned build, and CI hasn't published
 an image for them. `nethackers doctor --pull` builds it now; `evolve` builds it on
-its own. Nothing to run by hand. Older fingerprint images stay on disk until you
-remove them; `docker image ls nethackers/mutator` lists them.
+its own. Nothing to run by hand. It is built for `linux/amd64`, so on Apple
+Silicon the build runs under emulation and takes several minutes. Older
+fingerprint images stay on disk until you remove them; `docker image ls
+nethackers/mutator` lists them.
+
+### "sandbox platform mismatch"
+
+`evolve` found its arena and mutator images built for different platforms, and
+refused to start. The coding agent scores its own candidates inside the mutator,
+and the same seed makes a different dungeon on another CPU architecture, so the
+agent would tune games the arena never plays. The two must match, and with the
+pinned arena, the only one the hub accepts scores from, that means
+`linux/amd64`. The usual cause is a local image built natively on Apple Silicon:
+run the rebuild the message names (`make arena` and `make mutator` now build for
+`linux/amd64`), or drop the image override (`--image`, `--mutator-image`, or
+their `NETHACKERS_*_IMAGE` variables).
 
 ---
 

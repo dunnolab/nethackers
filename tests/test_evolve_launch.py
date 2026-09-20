@@ -182,3 +182,60 @@ def test_prepare_evolve_passes_tier_through_to_run_loop(tmp_path, monkeypatch):
                       token="t", owner="o", tier="verified")
     prepare_evolve(p2, git_sha="x").run(_run_kwargs())
     assert captured["tier"] == "verified"
+def test_prepare_evolve_gives_the_operator_rootless_podman_userns_args(tmp_path, monkeypatch):
+    """issue #54: on a ROOTLESS podman host the mutator cage needs keep-id, or
+    its drop to the non-root `agent` lands on a /workspace it can't write.
+    `prepare_evolve` resolves that once per run (the conftest stub pins it to
+    the docker/rootful answer suite-wide; override it here) and hands it to the
+    ContainerOperator -- which is what puts it in the real `podman run` argv."""
+    monkeypatch.setattr(launch, "run_loop", lambda **kw: [])
+    monkeypatch.setattr(launch, "nonroot_userns_args",
+                        lambda rt: ["--userns=keep-id", "--user", "0"] if rt == "podman" else [])
+    p = EvolveParams(objective="wiz-elf-cha-mal", seed="roots/autoascend",
+                     workdir=str(tmp_path), hub="http://h", token="tok", owner="castiel",
+                     runtime="podman")
+    plan = prepare_evolve(p, git_sha="x")
+    assert plan is not None
+    seen = {}
+    monkeypatch.setattr(launch, "ContainerOperator",
+                        lambda **kw: seen.update(kw) or object())
+    prepare_evolve(p, git_sha="x")
+    assert seen["userns_args"] == ["--userns=keep-id", "--user", "0"]
+    assert seen["docker"] == "podman"
+
+
+def test_prepare_evolve_adds_no_userns_args_on_docker(tmp_path, monkeypatch):
+    """The default host must build a byte-identical argv to before #54."""
+    monkeypatch.setattr(launch, "run_loop", lambda **kw: [])
+    monkeypatch.setattr(launch, "nonroot_userns_args",
+                        lambda rt: ["--userns=keep-id", "--user", "0"] if rt == "podman" else [])
+    seen = {}
+    monkeypatch.setattr(launch, "ContainerOperator",
+                        lambda **kw: seen.update(kw) or object())
+    p = EvolveParams(objective="wiz-elf-cha-mal", seed="roots/autoascend",
+                     workdir=str(tmp_path), hub="http://h", token="tok", owner="castiel")
+    prepare_evolve(p, git_sha="x")
+    assert seen["userns_args"] == [] and seen["docker"] == "docker"
+
+
+def test_evolve_publisher_ensures_the_repo_before_pushing_its_run_branch(tmp_path, monkeypatch):
+    # The TUI form and `nethackers evolve` both publish through this hook, so it
+    # is the main way a storage repo gets created -- and gets its README/About,
+    # which ensure_repo also does. Dropping the ensure_repo call ("the repo
+    # surely exists by now") would silently stop both.
+    from nethackers.hubclient import publish as P
+    calls: list[tuple] = []
+    monkeypatch.setattr(P, "ensure_repo", lambda slug: calls.append(("ensure_repo", slug)))
+
+    def fake_publish(worktree, slug, *, message, ref=None):
+        calls.append(("publish_solution", slug, ref))
+        return "f" * 40
+
+    monkeypatch.setattr(P, "publish_solution", fake_publish)
+    publish = launch._publisher_for("sam", "20260921-101500", repo_name="nethacker")
+    assert publish is not None
+    assert publish(tmp_path) == {"repo": "github.com/sam/nethacker", "commit": "f" * 40}
+    assert calls == [
+        ("ensure_repo", "sam/nethacker"),
+        ("publish_solution", "sam/nethacker", "evo-harness-v1/20260921-101500"),
+    ]

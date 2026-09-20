@@ -17,9 +17,10 @@ a coding agent; yours can be anything at all.
 > guess at the strongest possible search — it is the reference implementation,
 > written so that people arriving from very different backgrounds can run
 > something real on day one. A lot of what looks like complexity in here is
-> breadth, not depth: a multi-arch mutator image because contributors are on
-> Apple Silicon and Linux (the arena instead pins one reference architecture —
-> more below); two coding-agent backends because people already have one
+> breadth, not depth: one reference CPU architecture that both sandbox images
+> run on, emulated on Apple Silicon, because contributors use both arm64 and
+> x86-64 machines and NetHack plays a different game on each (more below); two
+> coding-agent backends because people already have one
 > or the other; auto-provisioning, preflight checks, and a TUI because "install
 > Docker and compile NLE" is where most people would otherwise stop. Borrow the
 > **design decisions**; you almost certainly do not need the surface area.
@@ -323,15 +324,18 @@ read-write — statelessness there rests on those flags, not on the container.
 
 ### The information diet
 
-The mutator image is built **from the same NLE base as the arena**, so the agent
-experiments against the same compiled NLE it will be scored on — parity for free,
-as long as both images are built from the same base **and the same CPU
-architecture**. The mutator stays multi-arch and runs natively — it drives the
-coding agent, not scoring — while the arena pins `linux/amd64` and emulates
-elsewhere (more under Safety and sandboxing, below). On an amd64 host the two
-line up. On Apple Silicon or arm64 Linux they don't: the mutator's embedded NLE
-is then compiled for a different architecture than the one your bot is actually
-scored on. Base drift is the other failure mode. The pins record the base the
+The mutator image is built **from the same NLE base as the arena** and **for
+the same platform, `linux/amd64`**, so the agent experiments against the same
+compiled NLE it will be scored on. Both halves matter. NetHack generates a
+different dungeon from the same seed on another CPU architecture (more under
+Safety and sandboxing, below), and the agent picks its change from the scores
+it measures in here. When the mutator still ran natively on Apple Silicon, the
+agent was tuning arm64 games the arena never plays, and changes it measured as
+clear wins were judged below their parent. So the mutator is built for
+`linux/amd64` only, emulated on other hosts like the arena, and `evolve` refuses
+to start when it finds the two images it would use built for different
+platforms.
+Base drift is the other failure mode. The pins record the base the
 published pair share, and in a checkout the mutator builds on that pinned base,
 so drift there is bounded; the arena no longer builds locally at all.
 
@@ -454,7 +458,8 @@ timeouts (`BotTimeout`).
   (Settings → General → Apple Virtualization framework → "Use Rosetta for
   x86_64/amd64 emulation"): the same 15-episode batch on the same machine
   took 823s under QEMU and 224s with Rosetta. `nethackers doctor` reports
-  whether it's on.
+  whether it's on. The mutator is built for `linux/amd64` too, since the agent
+  scores its own candidates inside it ([the information diet](#the-information-diet)).
 
 #### b) The coding agent
 
@@ -565,11 +570,11 @@ program.
 
 | Worth borrowing | Probably skip |
 |---|---|
-| The resource caps on the agent ([§3](#b-the-coding-agent)) | Multi-arch image builds — you know your own machine |
+| The resource caps on the agent ([§3](#b-the-coding-agent)) | Multi-arch image builds — build for the judge's architecture alone |
 | `--network none` + read-only mount for scoring | Three coding-agent backends, model discovery, `doctor` |
 | Sealing the agent from its own past | The TUI, auto-provisioning, run monitoring |
 | Keeping the hidden secret out of every image | MAP-Elites specifically — any archive shape works |
-| A live env the agent can score candidates in | Our cell definition (one per identity) |
+| A live env the agent can score candidates in, on the judge's CPU architecture ([the information diet](#the-information-diet)) | Our cell definition (one per identity) |
 
 The right-hand column exists because this harness has to work for strangers. Yours
 doesn't.

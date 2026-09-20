@@ -31,6 +31,13 @@ ARENA_IMAGE   ?= $(or $(NETHACKERS_ARENA_IMAGE),nethackers/arena:dev)
 # used together with NETHACKERS_MUTATOR_IMAGE. nethackers itself runs a checkout on
 # nethackers/mutator:h-<fingerprint>, which it pulls or builds on its own.
 MUTATOR_IMAGE ?= $(or $(NETHACKERS_MUTATOR_IMAGE),nethackers/mutator:latest)
+# The platform every sandbox image is built for, emulated on other hosts (Apple
+# Silicon: enable Rosetta, see `nethackers doctor`). Same value as
+# image_inputs.REFERENCE_PLATFORM: NetHack plays a different game per seed on
+# another architecture, and evolve refuses an arena and mutator built for
+# different platforms, because the coding agent would then optimize games the
+# arena never scores.
+IMAGE_PLATFORM ?= linux/amd64
 # Local hub auth provider (see "Real-auth local hub mode",
 # docs/local-stack.md): `stub` (default) runs bare `docker compose up`,
 # letting the checked-in compose.override.yaml auto-merge -- offline
@@ -76,13 +83,13 @@ hub-reset:
 # -- and the mutator inherits NLE WITHOUT the nethackers package (the info-diet
 # wall is the image boundary; see nle-base/Dockerfile).
 nle-base:
-	docker build -f nle-base/Dockerfile -t $(NLE_BASE_IMAGE) .
+	docker build --platform $(IMAGE_PLATFORM) -f nle-base/Dockerfile -t $(NLE_BASE_IMAGE) .
 
 # Build the pinned arena eval image FROM nle-base (adds our source, for
 # scoring). Rebuilds when src/ changes; the NLE compile stays cached in
 # nle-base. `nethackers evolve`/`eval` default to $(ARENA_IMAGE).
 arena: nle-base
-	docker build -f arena/Dockerfile --build-arg NLE_BASE=$(NLE_BASE_IMAGE) -t $(ARENA_IMAGE) .
+	docker build --platform $(IMAGE_PLATFORM) -f arena/Dockerfile --build-arg NLE_BASE=$(NLE_BASE_IMAGE) -t $(ARENA_IMAGE) .
 
 # Build the mutator sandbox image FROM nle-base (NOT arena): same compiled NLE,
 # but no nethackers CLI and no harness/ (no seed formula) -- only the seed-free
@@ -90,7 +97,7 @@ arena: nle-base
 # `agent` user. See Dockerfile.mutator. `nethackers evolve` defaults to
 # $(MUTATOR_IMAGE).
 mutator: nle-base
-	docker build -f Dockerfile.mutator --build-arg NLE_BASE=$(NLE_BASE_IMAGE) -t $(MUTATOR_IMAGE) .
+	docker build --platform $(IMAGE_PLATFORM) -f Dockerfile.mutator --build-arg NLE_BASE=$(NLE_BASE_IMAGE) -t $(MUTATOR_IMAGE) .
 
 # Allocate/refresh this worktree's .env.stack (deterministic host port +
 # compose project name, so parallel worktrees never collide); gitignored,

@@ -39,6 +39,7 @@ from nethackers.harness.sandbox_preflight import (
     image_present,
     preflight as sandbox_preflight,
     resolve_image,
+    sandbox_platform_mismatch,
 )
 from nethackers.hub.ids import AUTOASCEND_TREE
 from nethackers.hub.selector import resolve
@@ -525,18 +526,32 @@ class EvolveForm(Vertical):
         # straight.
         # Resolve the container runtime once (docker OR podman -- issue #50);
         # sandbox_preflight above already confirmed one is usable, so this is
-        # non-None. Threads into the presence checks AND the provision worker so
-        # the whole Start path uses the same detected binary.
+        # non-None. Threads into the presence checks, the provision worker AND
+        # `params.runtime` so the whole Start path -- the launched RUN included
+        # -- uses the same detected binary. That last one is what issue #54 was:
+        # `EvolveParams.runtime` defaults to "docker" and only the CLI evolve
+        # handler used to override it, so a podman-only host passed every check
+        # here and then launched a run whose `ContainerOperator` and arena evals
+        # (both read `params.runtime`, see harness/launch.py) exec'd a `docker`
+        # that isn't installed.
         runtime = container_runtime() or "docker"
+        params.runtime = runtime
         if image_present(params.mutator_image, runtime=runtime) and \
                 image_present(params.image, runtime=runtime):
-            self._launch(params)
+            self._launch(params, runtime)
         else:
             self.query_one("#f_pull", Static).update(
                 "[yellow]setting up the sandbox[/] (first run — a few minutes)…")
             self._provision_then_launch(params, runtime)
 
-    def _launch(self, params: EvolveParams) -> None:
+    def _launch(self, params: EvolveParams, runtime: str) -> None:
+        # Both images are present by now, on either path here. The agent scores
+        # its own candidates inside the mutator: on another platform than the
+        # arena it would optimize games the arena never plays.
+        msg = sandbox_platform_mismatch(params.image, params.mutator_image, runtime=runtime)
+        if msg is not None:
+            self.query_one("#f_err", Static).update(Text.from_markup(msg))
+            return
         plan = prepare_evolve(params)
         cast("NetHackersApp", self.app).start_run(plan)  # background run + open its monitor
 
@@ -562,7 +577,7 @@ class EvolveForm(Vertical):
                 self.app.call_from_thread(
                     lambda e=err: self.query_one("#f_err", Static).update(Text.from_markup(e)))
                 return
-        self.app.call_from_thread(self._launch, params)
+        self.app.call_from_thread(self._launch, params, runtime)
 
     def _apply_pull(self, event: PullEvent) -> None:
         """Phase-driven ``#f_pull`` update from one ``PullEvent`` -- always

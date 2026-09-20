@@ -8,8 +8,9 @@ name: Sandbox images
 # (a GHCR registry ref, so buildx's isolated docker-container driver can
 # resolve it as a FROM base on both arches; its digest is pinned as
 # NLE_BASE_IMAGE, which every mutator build uses), then builds and
-# pushes BOTH `arena` and `mutator` multi-arch FROM that exact nle-base ref --
-# section 5.3's "pull both, fetch the base once" precondition -- to GHCR,
+# pushes `arena` multi-arch and `mutator` for linux/amd64 alone, both FROM that
+# exact nle-base ref -- section 5.3's "pull both, fetch the base once"
+# precondition -- to GHCR,
 # public, each under a permanent `sha-<gitsha>` tag (GHCR's GC deletes
 # untagged digests, so the tag keeps a pinned digest alive). This does NOT
 # run on release/tag push: publishing an image is a deliberate, occasional
@@ -26,7 +27,7 @@ permissions:
 
 jobs:
   build-push:
-    name: build + push arena/mutator (GHCR, multi-arch)
+    name: build + push arena/mutator (GHCR)
     runs-on: ubuntu-latest
     permissions:
       contents: write   # commit the re-pin straight to the ref this ran from
@@ -48,13 +49,13 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       # Published to GHCR as an intermediate build base (not just built
-      # locally): the multi-arch arena/mutator builds below run under
+      # locally): the arena and mutator builds below run under
       # buildx's `docker-container` driver, which builds in an isolated
       # store and cannot resolve a host-local `docker build` tag as a FROM
-      # base for the arm64 leg -- it would fall through to a nonexistent
+      # base for the arena's arm64 leg -- it would fall through to a nonexistent
       # `docker.io/nethackers/nle-base:ci` pull and fail on BOTH arches. A
       # registry ref resolves for either arch, so nle-base is pushed here,
-      # multi-arch, purely so the two legs below share the exact same
+      # multi-arch, purely so the builds below share the exact same
       # compiled-NLE layer (section 5.3: "CI builds nle-base once and both
       # images build FROM that exact digest"). Its digest is pinned in
       # _image_pins.py as NLE_BASE_IMAGE: mutator-image.yml and repo checkouts
@@ -97,8 +98,8 @@ jobs:
       # Spec 2026-09-14 D2/I7: the arena is pinned to ONE platform's bytes,
       # because NetHack's level generation is architecture-dependent and
       # linux/amd64 is the declared reference. buildx reports the manifest-LIST
-      # digest, so resolve its linux/amd64 leg here. The mutator keeps the list
-      # digest: it runs the coding agent, not scoring (D10).
+      # digest, so resolve its linux/amd64 leg here. The mutator needs no such
+      # step: it is built for that platform alone, as one manifest (below).
       - id: arena-amd64
         name: Resolve the arena's linux/amd64 manifest digest
         run: |
@@ -109,6 +110,21 @@ jobs:
           test -n "$digest"
           echo "digest=$digest" >> "$GITHUB_OUTPUT"
 
+      # Same fingerprint mutator-image.yml computes, on the base just built, so a
+      # later automatic run finds this image instead of rebuilding it.
+      - name: Fingerprint the mutator
+        id: fingerprint
+        env:
+          NLE_BASE_REF: ghcr.io/dunnolab/nethackers-nle-base@${{ steps.build-nle-base.outputs.digest }}
+        run: |
+          inputs=$(PYTHONPATH=src python3 -m nethackers.image_inputs mutator --base "$NLE_BASE_REF")
+          platform=$(PYTHONPATH=src python3 -c 'from nethackers.image_inputs import REFERENCE_PLATFORM; print(REFERENCE_PLATFORM)')
+          {
+            echo "inputs=$inputs"
+            echo "platform=$platform"
+            echo "tag=h-${inputs#sha256:}"
+          } >> "$GITHUB_OUTPUT"
+
       - id: meta-mutator
         uses: docker/metadata-action@8e5442c4ef9f78752691e2d8f8d19755c6f78e81      # v5.5.1
         with:
@@ -116,40 +132,36 @@ jobs:
           flavor: latest=false
           tags: type=sha
 
+      # For the reference platform ALONE, as one manifest (no attestation
+      # index), exactly as mutator-image.yml builds it -- see that file's header
+      # for why an arm64 leg is wrong here. Tagged with its fingerprint in the
+      # same push, so there is no index-wrapping retag step.
       - id: build-mutator
         uses: docker/build-push-action@4f58ea79222b3b9dc2c8bbdd6debcef730109a75    # v6.9.0
         with:
           context: .
           file: Dockerfile.mutator
           build-args: NLE_BASE=ghcr.io/dunnolab/nethackers-nle-base@${{ steps.build-nle-base.outputs.digest }}
-          platforms: linux/amd64,linux/arm64
+          platforms: ${{ steps.fingerprint.outputs.platform }}
+          provenance: false
           push: true
-          tags: ${{ steps.meta-mutator.outputs.tags }}
+          tags: |
+            ${{ steps.meta-mutator.outputs.tags }}
+            ghcr.io/dunnolab/nethackers-mutator:${{ steps.fingerprint.outputs.tag }}
           labels: ${{ steps.meta-mutator.outputs.labels }}
 
-      # Same fingerprint mutator-image.yml computes, on the base just built, so a
-      # later automatic run finds this image instead of rebuilding it.
-      - name: Fingerprint the mutator and tag it by its inputs
-        id: fingerprint
-        env:
-          NLE_BASE_REF: ghcr.io/dunnolab/nethackers-nle-base@${{ steps.build-nle-base.outputs.digest }}
-          MUTATOR_REF: ghcr.io/dunnolab/nethackers-mutator@${{ steps.build-mutator.outputs.digest }}
-        run: |
-          inputs=$(PYTHONPATH=src python3 -m nethackers.image_inputs mutator --base "$NLE_BASE_REF")
-          docker buildx imagetools create -t "ghcr.io/dunnolab/nethackers-mutator:h-${inputs#sha256:}" "$MUTATOR_REF"
-          echo "inputs=$inputs" >> "$GITHUB_OUTPUT"
-
-      # The two images pin DIFFERENT kinds of digest, deliberately.
-      # MUTATOR_IMAGE keeps the manifest-LIST (index) digest (D4 glossary) --
-      # still the correct thing to pin there: a client pulling `...@<this
-      # digest>` gets Docker/OCI to auto-select the right platform image, and
-      # the mutator runs the coding agent, not scoring, so its architecture
-      # cannot move a score (D10). ARENA_IMAGE instead takes the linux/amd64
-      # LEG resolved by the arena-amd64 step above, never the index digest:
-      # NetHack's level generation is architecture-dependent and linux/amd64
-      # is the declared reference architecture (spec 2026-09-14 D2/I7). An
-      # index digest is unclassified in arena_version.py, and
-      # scripts/repin_images.py now refuses to emit one for the arena.
+      # Both images pin ONE linux/amd64 manifest, by different routes.
+      # ARENA_IMAGE takes the leg resolved by the arena-amd64 step above (the
+      # arena is still built multi-arch), never the index digest: NetHack's
+      # level generation is architecture-dependent and linux/amd64 is the
+      # declared reference architecture (spec 2026-09-14 D2/I7). An index
+      # digest is unclassified in arena_version.py, and scripts/repin_images.py
+      # refuses to emit one for the arena. MUTATOR_IMAGE is the mutator build's
+      # own digest, already one manifest. It used to be the index digest, on the
+      # theory that the mutator runs the coding agent, not scoring, so its
+      # architecture could not move a score (the 2026-09-14 spec's D10). But the
+      # agent scores its own candidates with the arena kit INSIDE the mutator,
+      # so on Apple Silicon it optimized arm64 games the arena never plays.
       # Surfaced in the job summary for visibility, and (next step) fed to
       # scripts/repin_images.py, which regenerates _image_pins.py and opens a
       # PR -- the D11 ceremony as a generated, reviewed PR rather than a
@@ -166,6 +178,19 @@ jobs:
             echo "MUTATOR_INPUTS = \"${{ steps.fingerprint.outputs.inputs }}\""
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      # The mutator must be ONE manifest for the reference platform before it
+      # is pinned (the check mutator-image.yml makes too). A step of its own, so
+      # a failure here reads apart from the re-pin step's expected stop on an
+      # unclassified arena digest.
+      - name: Check the mutator is one manifest for the reference platform
+        env:
+          MUTATOR_REF: ghcr.io/dunnolab/nethackers-mutator@${{ steps.build-mutator.outputs.digest }}
+        run: |
+          if ! why=$(bash scripts/check_one_manifest.sh "$MUTATOR_REF" "${{ steps.fingerprint.outputs.platform }}"); then
+            echo "::error::$why; refusing to pin it"
+            exit 1
+          fi
 
       # Regenerate _image_pins.py from the freshly-pushed digests and commit it
       # STRAIGHT onto the ref this ran from (the re-pin ceremony, D11). A no-op
