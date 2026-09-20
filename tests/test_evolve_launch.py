@@ -196,3 +196,26 @@ def test_prepare_evolve_adds_no_userns_args_on_docker(tmp_path, monkeypatch):
                      workdir=str(tmp_path), hub="http://h", token="tok", owner="castiel")
     prepare_evolve(p, git_sha="x")
     assert seen["userns_args"] == [] and seen["docker"] == "docker"
+
+
+def test_evolve_publisher_ensures_the_repo_before_pushing_its_run_branch(tmp_path, monkeypatch):
+    # The TUI form and `nethackers evolve` both publish through this hook, so it
+    # is the main way a storage repo gets created -- and gets its README/About,
+    # which ensure_repo also does. Dropping the ensure_repo call ("the repo
+    # surely exists by now") would silently stop both.
+    from nethackers.hubclient import publish as P
+    calls: list[tuple] = []
+    monkeypatch.setattr(P, "ensure_repo", lambda slug: calls.append(("ensure_repo", slug)))
+
+    def fake_publish(worktree, slug, *, message, ref=None):
+        calls.append(("publish_solution", slug, ref))
+        return "f" * 40
+
+    monkeypatch.setattr(P, "publish_solution", fake_publish)
+    publish = launch._publisher_for("sam", "20260921-101500", repo_name="nethacker")
+    assert publish is not None
+    assert publish(tmp_path) == {"repo": "github.com/sam/nethacker", "commit": "f" * 40}
+    assert calls == [
+        ("ensure_repo", "sam/nethacker"),
+        ("publish_solution", "sam/nethacker", "evo-harness-v1/20260921-101500"),
+    ]

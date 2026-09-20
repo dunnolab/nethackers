@@ -14,6 +14,7 @@ it verbatim).
 """
 from __future__ import annotations
 
+import base64
 import json
 import shutil
 import subprocess
@@ -64,30 +65,101 @@ def gh_state(*, run: Run = subprocess.run, which=shutil.which) -> tuple[str | No
     return (login, "authed") if login is not None else (None, "unauthed")
 
 
+# The public site, not the configured hub: this copy lands on a real GitHub repo,
+# so it must never point at a dev/local hub.
+_SITE = "https://nethackers.dunnolab.ai"
+_DESCRIPTION = "helping to solve nethack @ nethackers.dunnolab.ai"
+_TOPICS = "nethack,nethackers"
+# Static on purpose -- no scores, versions or objective names -- so a README
+# written once never goes stale.
+_README = """\
+# {name}
+
+Storage for the NetHack bots I've submitted to [NetHackers]({site}),
+an open effort to solve NetHack.
+
+- **My results:** {site}/h/{owner}
+- **Where's the code?** Each run lives on its own branch; the leaderboard pins
+  every bot to an exact commit. Fetch one:
+  `nethackers pull github.com/{owner}/{name}@<commit> ./bot`
+- **Want to help?** `pip install nethackers`
+
+<sub>Created by the `nethackers` CLI. It's your repo — edit or delete this file freely.</sub>
+"""
+
+
+def _dress(slug: str, *, homepage: str, run: Run) -> None:
+    """Give the repo its public face: a README on the default branch, then the
+    About fields (description, website = the owner's page on the site, topics).
+    Only ever fills what is empty -- it is the owner's repo: a README the
+    default branch already renders is kept, as is a website (``homepage``, the
+    current value) the owner set; topics are additive.
+
+    The README goes through the contents API rather than a clone: on a
+    just-created empty repo that PUT *is* the first commit, so the default
+    branch becomes a README-only landing page before any bot branch exists
+    (pushed first, a run's branch would become the default instead).
+
+    Best-effort and never raises: this is cosmetics, and a failure here must
+    not fail a publish. The description is written LAST because it doubles as
+    the "dressed" marker (``ensure_repo`` only dresses a repo whose description
+    is empty): a step that fails leaves it unset, so the next publish retries."""
+    owner, _, name = slug.partition("/")
+    readme = _README.format(name=name, owner=owner, site=_SITE)
+    about = ["gh", "repo", "edit", slug, "--description", _DESCRIPTION]
+    if not homepage:
+        about += ["--homepage", f"{_SITE}/h/{owner}"]
+    about += ["--add-topic", _TOPICS]
+    try:
+        # GET /readme resolves the README GitHub would render (any name/case);
+        # nonzero = none yet (or an empty repo).
+        if _run(run, ["gh", "api", f"repos/{slug}/readme", "--silent"],
+                check=False).returncode != 0:
+            _run(run, ["gh", "api", "--method", "PUT", f"repos/{slug}/contents/README.md",
+                       "-f", "message=nethackers: add README",
+                       "-f", f"content={base64.b64encode(readme.encode()).decode()}"])
+        _run(run, about)
+    except PublishError:
+        pass
+
+
 def ensure_repo(slug: str, *, run: Run = subprocess.run) -> None:
     """Ensure the repo ``slug`` (``owner/name``) exists AND is public: create it
     public if absent, and flip it public if a pre-existing repo is private.
 
     Solutions must be publicly fetchable -- the hub validates commit-existence
     with an identity-scoped token that 404s on a private repo, which surfaces as
-    ``MissingCommit`` (a 400 that silently drops every win). ``gh repo view
-    --json visibility`` probes; a non-zero exit means "absent". A create/edit
-    failure raises ``PublishError``."""
+    ``MissingCommit`` (a 400 that silently drops every win). One ``gh repo view
+    --json`` probes; a non-zero exit means "absent". A create/edit failure
+    raises ``PublishError``.
+
+    A repo it just created, or one whose description is still empty, also gets
+    its public face (``_dress``) -- best-effort, never a reason to fail. A repo
+    with a description costs no extra call: the same probe carries it."""
     try:
-        proc = run(["gh", "repo", "view", slug, "--json", "visibility"],
+        proc = run(["gh", "repo", "view", slug, "--json", "visibility,description,homepageUrl"],
                    check=True, capture_output=True, text=True)
     except FileNotFoundError as e:
         raise PublishError("gh is not installed") from e
     except subprocess.CalledProcessError:
         _run(run, ["gh", "repo", "create", slug, "--public"])  # absent -> create public
+        _dress(slug, homepage="", run=run)
         return
     try:
-        visibility = str(json.loads(proc.stdout or "{}").get("visibility", "")).lower()
-    except (ValueError, TypeError):
-        visibility = ""
+        info = json.loads(proc.stdout or "{}")
+    except ValueError:
+        info = {}
+    if not isinstance(info, dict):
+        info = {}
+    visibility = str(info.get("visibility", "")).lower()
     if visibility != "public":  # pre-existing private/internal repo -> make it fetchable
         _run(run, ["gh", "repo", "edit", slug, "--visibility", "public",
                    "--accept-visibility-change-consequences"])
+    # Dress only a repo we can SEE is undressed: the description must be present
+    # in the probe and empty. An unreadable probe proves nothing, and filling
+    # the description then could overwrite the owner's own words.
+    if "description" in info and not info["description"]:
+        _dress(slug, homepage=str(info.get("homepageUrl") or ""), run=run)
 
 
 # Build/cache artifacts that pile up in the worktree from running the bot during
