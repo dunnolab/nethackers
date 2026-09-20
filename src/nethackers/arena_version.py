@@ -118,6 +118,21 @@ ARENA_MAJOR_BY_DIGEST: dict[str, int] = {
     # identically to its record, every field, all 15 -- this time including the
     # agent-step counter that wobbles between runs. Also the linux/amd64 LEG (I7).
     "sha256:2976e77ca1a4e7f5b269b1f001cf870e95728439da45adca416a4a193bcb029a": 2,
+    # v0.33.0, rebuilt for the same reason as the three digests above: uv.lock is
+    # an arena input and the release moves the project's own version in it,
+    # 0.32.2 -> 0.33.0. Everything else that differs is host-side publishing --
+    # hubclient/publish.py (the storage repo's README and About fields, all `gh`
+    # calls) and one kwarg in cli.py's `submit` -- which no episode loads.
+    # arena/ and contracts/ are untouched (`git diff v0.32.2...HEAD --
+    # src/nethackers/arena src/nethackers/contracts` is empty). MEASURED: a
+    # registered knight program on the 15 published kni-hum-law-fem seeds matches
+    # its record seed for seed in progress, turns, milestone and status, and
+    # matches a same-day run under the digest above in depth and cause of death
+    # as well. Its agent-step counter is off by one on a single seed (12); two
+    # runs of the digest ABOVE differ from each other by one step on seeds 5 and
+    # 12, so that is the counter's run-to-run noise, not this rebuild. Also the
+    # linux/amd64 LEG (I7).
+    "sha256:76dea5e0da80a4fb9f05706fa3bfdf43c72925f8e892f80f28fe032502902f60": 2,
 }
 
 
