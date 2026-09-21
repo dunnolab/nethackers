@@ -172,6 +172,20 @@ ARENA_MAJOR_BY_DIGEST: dict[str, int] = {
     #     from the diff: the pipeline is provably identical, so no re-run could
     #     disconfirm it.
     "sha256:3bf9731637eb647ac07baaa6b59087012151a568b0ca2a8589ad1e086b0767a7": 2,
+    # v0.34.1, rebuilt for the same reason as the v0.33.x digests above: uv.lock
+    # is an arena input and the release moves the project's own version in it,
+    # 0.34.0 -> 0.34.1. Everything else that differs is host-side login UX --
+    # cli.py's device-flow prompt, the TUI's LoginModal and a new browser.py
+    # (best-effort "open this URL") -- none of which the arena's entrypoint
+    # (`python -m nethackers.arena.run`) imports. arena/ and contracts/ are
+    # untouched (`git diff v0.34.0...HEAD -- src/nethackers/arena
+    # src/nethackers/contracts` is empty), and so are nle-base/Dockerfile and
+    # arena/Dockerfile. No package version moves, so the installed environment
+    # is identical. Also the linux/amd64 LEG, not an index -- checked with
+    # scripts/check_one_manifest.sh (I7). Read from the diff, NOT measured: no
+    # scoring-path code changed, so a re-run has nothing to disconfirm. Same
+    # shape as the v0.33.1 entry.
+    "sha256:ddbe03a69604a6069a7436583c221e5f81fff2a668540474756f3968fc61d517": 2,
 }
 
 
