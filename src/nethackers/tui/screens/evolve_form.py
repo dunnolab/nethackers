@@ -19,6 +19,7 @@ cold-start case.
 """
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -28,6 +29,7 @@ from textual.app import ComposeResult
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widgets import Button, Input, Label, Select, Static
+from textual.worker import Worker, WorkerState
 
 from nethackers.config import OFFLINE_OWNER, OFFLINE_TOKEN, load_stage
 from nethackers.containers import container_runtime
@@ -130,6 +132,7 @@ def _version_line(backend: str, cli: CliInfo) -> str:
 # explicit pin", same as "".
 _NO_SANDBOX_MODEL_VALUE = "__no_sandbox__"
 _NO_SANDBOX_MODEL_LABEL = "pull the sandbox to see models"
+_SPIN = "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏"   # one frame per 0.1 s tick
 
 
 class EvolveForm(Vertical):
@@ -186,6 +189,8 @@ class EvolveForm(Vertical):
        three states (dim/yellow/none) come entirely from inline markup. */
     EvolveForm #f_publish_warn { height: auto; padding: 0 2; margin-top: 1; }
     EvolveForm #f_model_custom { display: none; }  /* shown only for Custom… */
+    /* Textual's loading dots default to its blue accent; keep the lantern amber */
+    EvolveForm LoadingIndicator { color: #d2a24c; }
     """
 
     def __init__(self, hub: str, creds: Credentials | None, **kw: Any) -> None:
@@ -200,6 +205,11 @@ class EvolveForm(Vertical):
         # One ~1s container probe per operator, cached: switching operators back
         # and forth (or reopening) is then instant, not another probe.
         self._probe_cache: dict[str, tuple[CliInfo, list[ModelInfo] | None]] = {}
+        # The operator check in flight -- (operator, started) -- and its worker.
+        # The live "checking…" line and the pickers' loading state follow it.
+        self._checking: tuple[str, float] | None = None
+        self._check_worker: Worker | None = None
+        self._frame = 0   # spinner frame, advanced by _spin
 
     def compose(self) -> ComposeResult:
         yield Static("[dim]checking readiness…[/]", id="f_readiness")
@@ -258,6 +268,7 @@ class EvolveForm(Vertical):
     def on_mount(self) -> None:
         self.query_one("#f_readiness", Static).border_title = "What evolve needs"
         self._refresh_readiness()
+        self.set_interval(0.1, self._spin)
 
         # the two subwindows carry their own titles; their scroll panes are NOT
         # nav stops (their fields are), so blur them so a field never gets
@@ -343,12 +354,18 @@ class EvolveForm(Vertical):
 
     def _maybe_refresh_models(self, backend: str) -> None:
         # Cache hit -> apply instantly on the UI thread (no docker). Miss -> the
-        # off-thread probe below. Keeps operator switches snappy.
+        # off-thread probe, with a live "checking…" line replacing the previous
+        # operator's version and the model/effort pickers in Textual's loading
+        # state (which also disables them) until it lands.
         cached = self._probe_cache.get(backend)
         if cached is not None:
+            self._end_check()
             self._apply_discovery(backend, *cached)
-        else:
-            self._refresh_models(backend)
+            return
+        self._checking = (backend, time.monotonic())
+        self._set_pickers_loading(True)
+        self._spin()
+        self._check_worker = self._refresh_models(backend)
 
     @work(exclusive=True, thread=True, exit_on_error=False)
     def _refresh_models(self, backend: str) -> None:
@@ -371,6 +388,7 @@ class EvolveForm(Vertical):
                          models: list[ModelInfo] | None) -> None:
         if str(self.query_one("#f_op", Select).value) != backend:
             return   # operator changed since this fetch started -- stale, drop it
+        self._end_check()
         self.query_one("#f_op_version", Static).update(_version_line(backend, cli))
         if not cli.installed:
             # The mutator image is absent -- there is no live catalog AND the
@@ -393,6 +411,37 @@ class EvolveForm(Vertical):
         valid = {m.id for m in models} | {"", "__custom__"}
         sel.value = current if current in valid else ""
         self._set_effort_options(str(sel.value))   # efforts now reflect the live model
+
+    def _set_pickers_loading(self, on: bool) -> None:
+        self.query_one("#f_model", Select).loading = on
+        self.query_one("#f_effort", Select).loading = on
+
+    def _end_check(self) -> None:
+        self._checking = None
+        self._set_pickers_loading(False)
+
+    def _spin(self) -> None:
+        """The form's one spinner tick (0.1 s): the operator check's line
+        while a check is in flight."""
+        self._frame = (self._frame + 1) % len(_SPIN)
+        if self._checking is not None:
+            op, started = self._checking
+            self.query_one("#f_op_version", Static).update(
+                f"[#ffd54a]{_SPIN[self._frame]}[/] [dim]checking {op} in the sandbox… "
+                f"{int(time.monotonic() - started)}s[/]")
+
+    def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
+        # _refresh_models is exit_on_error=False: a probe that raises never
+        # reaches _apply_discovery, so end the check here too. Only for the
+        # CURRENT check's worker -- switching operators cancels the previous
+        # one (exclusive=True) while its successor is still checking.
+        if event.worker is not self._check_worker or self._checking is None:
+            return
+        if event.state in (WorkerState.ERROR, WorkerState.CANCELLED):
+            op = self._checking[0]
+            self._end_check()
+            self.query_one("#f_op_version", Static).update(
+                f"[#c04040]couldn't check {op} in the sandbox[/]")
 
     @work(exclusive=True, thread=True, exit_on_error=False)
     def _refresh_readiness(self) -> None:

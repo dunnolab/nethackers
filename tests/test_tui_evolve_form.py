@@ -964,3 +964,57 @@ def test_publish_warning_names_a_gh_that_did_not_answer(monkeypatch):
     warn = ef._publish_warning("castiel")
     assert "didn't answer" in warn
     assert "gh auth login" not in warn
+
+
+async def test_switching_operator_shows_a_live_check_and_loading_pickers(monkeypatch):
+    import threading
+    release = threading.Event()
+
+    def _slow_probe(backend, **k):
+        if backend == "codex":
+            release.wait(5)
+        return CliInfo(backend, True, f"{backend} 1.0", True), None
+
+    monkeypatch.setattr(ef, "probe_operator", _slow_probe)
+    app = _Host(None)
+    async with app.run_test(size=(100, 50)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()        # the mount check (claude) is instant
+        await pilot.pause()
+        form = app.query_one(ef.EvolveForm)
+        form.query_one("#f_op", Select).value = "codex"
+        await pilot.pause()
+        line = str(form.query_one("#f_op_version", Static).render())
+        assert "checking codex in the sandbox" in line   # said at once...
+        assert "claude 1.0" not in line                  # ...and the stale line is gone
+        assert form.query_one("#f_model", Select).loading is True
+        assert form.query_one("#f_effort", Select).loading is True
+        release.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert "codex 1.0" in str(form.query_one("#f_op_version", Static).render())
+        assert form.query_one("#f_model", Select).loading is False
+        assert form.query_one("#f_effort", Select).loading is False
+
+
+async def test_a_check_that_raises_clears_the_spinner(monkeypatch):
+    def _probe(backend, **k):
+        if backend == "codex":
+            raise RuntimeError("docker exploded")
+        return CliInfo(backend, True, f"{backend} 1.0", True), None
+
+    monkeypatch.setattr(ef, "probe_operator", _probe)
+    app = _Host(None)
+    async with app.run_test(size=(100, 50)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        form = app.query_one(ef.EvolveForm)
+        form.query_one("#f_op", Select).value = "codex"
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        line = str(form.query_one("#f_op_version", Static).render())
+        assert "couldn't check codex" in line
+        assert form.query_one("#f_model", Select).loading is False
+        assert form.query_one("#f_effort", Select).loading is False
