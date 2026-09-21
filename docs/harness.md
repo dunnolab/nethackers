@@ -370,31 +370,37 @@ secret, not because of the image layout.
 ## 3. Safety and sandboxing
 
 > **This section is the part most worth reusing** — including the parts where we
-> tell you our own boundary is thinner than it looks. An audit of this document
-> against the code (2026-09-08) found several places where an earlier draft
-> claimed protection the implementation does not provide. What follows is the
-> corrected version.
+> tell you our own boundary is thinner than it looks. It is kept honest against
+> the code: an audit (2026-09-08) removed claims an earlier draft made that the
+> implementation did not deliver, and the v0.34.0 hardening (2026-09-22) — a
+> sealed evaluator, host-side seed derivation, github-only fetch, and an opt-in
+> credential broker — is folded in below, with the limits that remain still
+> called out.
 
 ### The threat model, stated up front
 
-**Accident-grade, and scoped to the mutator.** The design this inherits was
-written for one surface: our own model's generated code, on our own machines. It
-defends against *thrashing and blast radius* — fork bombs, runaway memory, an
-agent that `rm -rf`s outside its worktree. It explicitly does **not** defend
-against a determined adversary. That ruled out microVMs and gVisor: isolation we
-didn't need at overhead we'd pay.
+**Accident-grade at heart, with the strangers' surface hardened.** The design
+this inherits was written for one surface: our own model's generated code, on our
+own machines. It defends against *thrashing and blast radius* — fork bombs,
+runaway memory, an agent that `rm -rf`s outside its worktree — not a determined
+adversary. That ruled out microVMs and gVisor: isolation we didn't need at
+overhead we'd pay.
 
-Two honest consequences of that scoping, which this document previously glossed:
+The one surface that runs *strangers'* code — bot evaluation — no longer inherits
+that model without controls. Since v0.34.0 it runs in a fully sealed box (see (a)
+below) and the hidden seeds never enter it. What is still true, and worth being
+plain about:
 
-- **The bot-evaluation surface inherits the threat model without inheriting the
-  controls.** It is also the one surface that runs *strangers'* code, where
-  "our own model, on our own machine" stops being true.
-- **Credentials are in reach** on the mutator surface, so "no secrets in reach"
-  is not accurate there either.
+- **A bot can still shape its own self-reported score.** It runs in-process with
+  the scorer (see (a)), which is the entire reason for the verified tier.
+- **Credentials are in reach on the mutator surface by default.** The broker that
+  removes them is opt-in, so "no secrets in reach" is not accurate there unless
+  you turn it on.
 
-If you are evaluating code from people you don't trust, on a machine that
-matters, **this design is not sufficient for you** — and that includes anyone
-running a public verifier on the same code path.
+If you are evaluating code from people you don't trust, on a machine that matters,
+treat the container as a blast-radius limiter, not a boundary against a kernel
+exploit — and that includes anyone running a public verifier on the same code
+path.
 
 ### Three surfaces that execute untrusted code
 
@@ -402,43 +408,57 @@ running a public verifier on the same code path.
 
 Every eval imports and runs a `bot.py` you may not have written.
 
-What [`eval/runner.py`](../src/nethackers/eval/runner.py) does:
+What [`eval/runner.py`](../src/nethackers/eval/runner.py) does — a **sealed box**:
 
 ```
-<docker|podman> run --rm --network none \
-  -e NETHACK_ARENA_SECRET=... \
-  -v <solution>:/sol:ro \
-  -v <tmpdir>:/out \
-  ghcr.io/dunnolab/nethackers-arena@sha256:...
+<docker|podman> run --rm -i \
+  --network none --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,size=512m \
+  --cap-drop ALL --security-opt no-new-privileges \
+  --pids-limit 256 --memory 4g --memory-swap 4g --cpus 2 \
+  --user 65534:65534 \
+  -v <solution>:/sol:ro -v <tmpdir>:/out \
+  --entrypoint timeout ghcr.io/dunnolab/nethackers-arena@sha256:... \
+  <wall-clock> python -m nethackers.arena.run --solution /sol --out /out/results.json ...
 ```
 
-- **`--network none`** — no egress. This one is real and it is the strongest
-  control on this surface.
-- **`/sol:ro`** — the solution is mounted read-only.
-- **A fresh host temp dir at `/out`**; the host reads only `results.json` back.
+The flag-set is [`sandbox_flags.offline_flags`](../src/nethackers/sandbox_flags.py):
+
+- **`--network none`** — no egress. The strongest single control here.
+- **`--read-only` root + a `noexec,nosuid` tmpfs at `/tmp`** — the only writable
+  path, and nothing written there can be executed.
+- **`--cap-drop ALL`, `--security-opt no-new-privileges`, `--user 65534:65534`**
+  (nobody) — the bot runs non-root, with no Linux capabilities and no way to
+  regain them.
+- **`--pids-limit 256`, `--memory 4g` (swap capped to it), `--cpus 2`**, and
+  **`--entrypoint timeout`** wrapping the run in a host-set wall-clock ceiling
+  (SIGKILL, so grandchildren die too). A fork bomb or memory runaway in a bot is
+  bounded now — the cgroup caps this surface used to lack.
+- **The hidden seeds never enter the box.** The secret is expanded to concrete
+  per-trajectory seeds *on the host*, and the resulting specs are piped to the
+  container's **stdin** (`-i`); its argv and environment carry only step/timeout
+  parameters — no secret, no `NETHACK_ARENA_SECRET`, nothing to read out of
+  `/proc`. (A public-seed `--batch` path that derives specs in-container from a
+  caller-supplied secret is kept for the mutator's own self-test; the trusted
+  eval path above uses stdin and never sees a secret.)
+- **`/sol:ro`**, and the host reads back only `/out/results.json` — through
+  [`arena/result_io.py`](../src/nethackers/arena/result_io.py), which refuses a
+  symlink, an oversize file, or anything that is not a JSON list, and never
+  imports or executes what a box wrote.
 
 Inside the container, [`arena/sandbox.py`](../src/nethackers/arena/sandbox.py)
-runs the bot in its own subprocess, which pops `NETHACK_ARENA_SECRET` from its
-environment, clears the write flag on observation arrays, and enforces per-action
-timeouts (`BotTimeout`).
+runs the bot in its own subprocess, clears the write flag on observation arrays,
+and enforces per-action timeouts (`BotTimeout`).
 
-**Now the limits, stated plainly, because the above reads stronger than it is:**
+**One limit remains on this surface, and it is the important one:**
 
 - **A bot can influence its own score.** The arena puts the solution directory at
-  the *front* of `sys.path` so `import bot` resolves, and it imports NLE lazily
+  the *front* of `sys.path` so `import bot` resolves, and imports NLE lazily
   afterwards. A solution that ships modules named like the ones the scorer imports
-  is therefore importable *by the scorer*, in-process. `:ro` does not help — this
-  is import, which only reads. **Treat every self-reported score as an unaudited
+  is therefore importable *by the scorer*, in-process — sealing the container does
+  not change that, since it is import happening inside the box, and `:ro` does not
+  help (import only reads). **Treat every self-reported score as an unaudited
   claim; that is exactly what the Public/Private tier split is for.**
-- **There are no resource limits on this surface at all.** No `--pids-limit`, no
-  `--memory`, no `--cpus`, no wall-clock `timeout`. The cgroup caps described
-  under (b) are on the *agent* container only. A fork bomb in a bot is a fork bomb
-  in your container, and `BotTimeout` kills only the direct child — grandchildren
-  survive until the container exits.
-- **The container runs as root** (no `USER` in the arena image), so in-container
-  isolation between the bot and the scorer is fault isolation, not a trust
-  boundary. The secret and the batch are readable from `/proc` regardless of the
-  environment pop.
 - **The digest pin is a default, not a guarantee.** An explicit `--image`,
   `NETHACKERS_ARENA_IMAGE`, or a repo checkout's `.env.stack` still wins over
   the pin, so a local `eval` can be pointed at unpinned bytes — including a
@@ -485,25 +505,40 @@ docker run --rm \
   lives only in cgroups.
 - **`--memory-swap` pinned to `--memory`**, else a runaway reaches ~2× by swapping.
 - **`no-new-privileges`**, and the entrypoint drops to a non-root `agent` user
-  (it starts as root to remap uids, then `gosu`-drops).
+  (it starts as root to remap uids, then `gosu`-drops). Unlike the sealed
+  evaluator in (a), this container does **not** `--cap-drop ALL`: the gosu
+  uid-remap needs `CAP_SETUID`/`SETGID` at startup, so the mutator's capability
+  posture is deliberately weaker than the arena's.
 - **`timeout 28800`** (8h) sends SIGTERM with no `--kill-after`, so it is a
   ceiling only insofar as the agent CLI honors SIGTERM.
+- **Instruction-bearing files are stripped from what the agent is handed.** The
+  `copytree` that assembles the worktree and `/refs/` drops `CLAUDE.md`,
+  `AGENTS.md`, `.mcp.json`, `.envrc`, and the `.claude`/`.codex`/`.cursor`/… dirs
+  ([`harness/refs.py`](../src/nethackers/harness/refs.py)), so a pulled program
+  cannot smuggle its own agent instructions or MCP servers into your run.
 
-**What this does not contain:**
+**What this does not contain (by default):**
 
-- **Open network egress.** The agent CLIs need their model APIs, so there is no
-  restriction at all. Egress allow-listing is designed but not implemented. This
-  is the largest hole in the sandbox.
-- **`/workspace` is not the only writable mount.** For **Codex**, the host's real
-  `~/.codex` is bind-mounted **read-write**. Codex reads its own config from
-  there on the host, so code running in the cage can influence what your *next
-  host-side* `codex` run does. For Claude on Linux only a read-only credentials
-  file is mounted; on macOS the OAuth token is passed as an environment variable
-  (visible in `docker inspect`). For OpenCode 2 a read-only copy of your provider
-  definitions is mounted, which may hold a literal key, and the keys it names
-  arrive as environment variables (also visible in `docker inspect`). An agent
-  that wanted to exfiltrate your coding-agent credentials could — and for Codex,
-  modify them.
+- **Open network egress.** The agent CLIs need their model APIs, so by default
+  there is no restriction. An egress allow-list is designed but not on by default;
+  the **credential-broker** path below is the one mode that does constrain egress
+  (to the broker alone). This is the largest hole in the default sandbox.
+- **Your coding-agent credentials are in reach.** By default `/workspace` is not
+  the only writable mount: for **Codex** the host's real `~/.codex` is bind-mounted
+  **read-write** (code in the cage can influence your *next host-side* `codex`
+  run); for **Claude** on Linux a read-only credentials file is mounted, and on
+  macOS the OAuth token is passed as an env var (visible in `docker inspect`); for
+  **OpenCode** a read-only copy of your provider definitions is mounted, and the
+  keys they name arrive as env vars. An agent that wanted to exfiltrate those
+  could — and for Codex, modify them.
+  **Opt-in mitigation:** `ContainerOperator(broker=True)` swaps the credential
+  mount for a host-side [`cred_broker.CredBroker`](../src/nethackers/harness/cred_broker.py)
+  — the container gets a placeholder key and a base-URL pointed back at the broker
+  over the host gateway, egress is constrained to it, and the real key is injected
+  host-side per request and never enters the container. It is off by default and
+  not yet wired to a CLI/TUI flag, and per-agent auth (Claude's OAuth vs an API
+  key, Codex's host) is still being verified live — so treat it as available, not
+  finished.
 - **Blast radius is not confined to the worktree.** Host-side steps after the run
   (`copytree` into the tree store, into the next `/refs`, and into the published
   repo) follow symlinks by default. Combined with register-all publishing, a
@@ -515,6 +550,20 @@ docker run --rm \
 `nethackers pull` clones a repo; nothing executes at clone time. The tree is then
 on disk, and the next `eval` runs it under (a).
 
+The fetch itself is hardened ([`hubclient/pull.py`](../src/nethackers/hubclient/pull.py),
+[`github_ref.py`](../src/nethackers/github_ref.py)):
+
+- **github-only, host-parsed.** Only `github.com/<owner>/<repo>[@<ref>]` is
+  accepted — the URL's host is *parsed* and compared, not substring-matched, so
+  `github.com.evil.com`, `github.com@evil`, `evil/github.com`, and scp forms
+  (`git@github.com:o/n`) are all refused. The **hub rejects a non-github reference
+  at registration** the same way, so a board row can only ever point at GitHub.
+- **A locked-down clone**, following the git advisory for cloning untrusted repos
+  (GHSA-vm9j-46j9-qvq4): `-c protocol.allow=never -c protocol.https.allow=always`
+  (https only — no `file://`, `ext::`, ssh transports), `-c core.symlinks=false`
+  (checkout writes no symlinks), `-c fetch.recurseSubmodules=false` (no submodule
+  fetch), and `--no-tags`.
+
 Note the CLI does **not** enforce that you pinned a commit — `pull owner/name@main`
 resolves a branch happily. The *hub* validates registered references as 40-hex
 commits that exist, so anything you fetch by way of a board row is pinned; a
@@ -524,15 +573,18 @@ hand-typed ref is whatever you typed.
 
 1. **Put resource caps on every container that runs code you didn't write** —
    `--pids-limit`, `--memory` + `--memory-swap`, `--cpus`, wall-clock `timeout`.
-   Note we do this on the agent and *not* on the evaluator; do not copy that.
+   We now do this on *both* the agent and the evaluator; an earlier version of
+   this list told you not to copy the evaluator because it had none — that gap is
+   closed.
 2. **Run bot evaluation with `--network none`.** Cheap, and removes a whole class
    of problem.
 3. **Don't put untrusted code on the interpreter's `sys.path` inside your
    scorer.** Load it out-of-process with the scorer's own modules resolved first,
    or accept that a submission can reach your scoring logic. This is the mistake
    worth not repeating.
-4. **Run the evaluator as a non-root user**, so in-container separation means
-   something.
+4. **Seal the evaluator**: non-root user, `--cap-drop ALL`, a `--read-only` root
+   with a `noexec,nosuid` tmpfs for scratch, and `no-new-privileges`. We do all of
+   this now; #3 is the part sealing does *not* fix, because it happens in-process.
 5. **Treat self-reported numbers as claims.** The literature on self-improving
    systems is a catalogue of harness exploits and scorer bugs; an independent
    re-run on seeds the author never saw is the only score worth ranking on.
@@ -540,6 +592,14 @@ hand-typed ref is whatever you typed.
    you move an agent's output around, especially before publishing it.
 7. **Be explicit about what you don't defend against**, and re-check it when you
    add a surface — this section was wrong until it was audited against the code.
+8. **Keep secrets out of the box.** If the scorer needs a secret (ours seeds the
+   games from one), expand it to the concrete values host-side and pipe only those
+   in over stdin — never on argv or in the environment, where any code in the
+   container can read them out of `/proc`.
+9. **Constrain what a fetch can be.** Parse the *host* of a submitted reference
+   (don't substring-match it), allow only the transport you mean, and disable
+   submodule and symlink checkout — an untrusted `git clone` is an execution
+   surface of its own.
 
 
 ## 4. Building your own harness
