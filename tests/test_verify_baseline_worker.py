@@ -15,7 +15,6 @@ import pytest
 from nethackers._image_pins import ARENA_IMAGE
 from nethackers.arena.seeds import secret_fingerprint
 from nethackers.contracts.models import Evidence, Objective, TrajectoryResult
-from nethackers.eval.runner import DEFAULT_MAX_PARALLEL_EVALS
 from nethackers.worker.verify import compute_hidden_baseline
 
 CONFIG = {"secret": "hidden-key", "seeds": [4839201, 1029384]}
@@ -216,13 +215,14 @@ def test_baseline_never_enters_the_participant_daemon_loop(monkeypatch):
 # ---------------------------------------------------------------------------
 # Parallelism: the arena caps concurrent episodes at
 # min(max_parallel_evals, len(batch)) worker PROCESSES, so this is effectively
-# "how many cores to use". It must be settable per box -- the eval node has 4
-# CPUs, a dev Mac has 16 -- and it must actually reach eval_batch rather than
+# "how many cores to use". Unset, it stays None all the way down, and
+# eval_batch sizes it from the machine the box runs on (the eval node has 4
+# CPUs, a dev Mac has 16); set, it must actually reach eval_batch rather than
 # silently inheriting a default.
 # ---------------------------------------------------------------------------
 
 
-def test_baseline_defaults_to_the_shared_default_parallelism():
+def test_baseline_leaves_unset_parallelism_to_the_machine():
     seen = {}
 
     def spy(tree, spec, image, *, now, secret, max_parallel_evals):
@@ -230,7 +230,7 @@ def test_baseline_defaults_to_the_shared_default_parallelism():
         return _evidence(spec)
 
     _run(_Client(), eval_fn=spy, identities=("val-dwa-law-fem",))
-    assert seen["n"] == DEFAULT_MAX_PARALLEL_EVALS
+    assert seen["n"] is None
 
 
 def test_baseline_parallelism_reaches_the_evaluator():
@@ -253,7 +253,7 @@ def test_cli_parallelism_defaults_and_overrides(monkeypatch):
                         lambda *a, **kw: seen.update(kw) or "succeeded")
     with pytest.raises(SystemExit):
         server.main(["--hub", "http://h", "--token", "vt", "--baseline"])
-    assert seen["max_parallel_evals"] == DEFAULT_MAX_PARALLEL_EVALS
+    assert seen["max_parallel_evals"] is None
 
     seen.clear()
     with pytest.raises(SystemExit):

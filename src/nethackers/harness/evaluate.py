@@ -18,7 +18,7 @@ def evaluate(
     runtime: str = "docker",
     runner=subprocess.run,
     on_episode: Callable[[dict], None] | None = None,
-    max_parallel_evals: int = 8,
+    max_parallel_evals: int | None = None,
 ) -> tuple[float, Evidence]:
     # ``runtime`` is the resolved container CLI (docker/podman -- issue #50),
     # threaded from ``run_loop`` so evolve's arena evals use the same binary the

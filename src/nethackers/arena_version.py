@@ -186,6 +186,23 @@ ARENA_MAJOR_BY_DIGEST: dict[str, int] = {
     # scoring-path code changed, so a re-run has nothing to disconfirm. Same
     # shape as the v0.33.1 entry.
     "sha256:ddbe03a69604a6069a7436583c221e5f81fff2a668540474756f3968fc61d517": 2,
+    # v0.34.2, rebuilt for the same reason as the v0.34.1 digest above: uv.lock
+    # is an arena input and the release moves the project's own version in it,
+    # 0.34.1 -> 0.34.2. Everything else that differs is host-side eval sizing --
+    # eval/runner.py, containers.py and sandbox_flags.py (the `docker run`
+    # flags the host wraps around this image), plus cli.py, harness/ and
+    # worker/ passing an unset --max-parallel-evals through -- none of which
+    # the arena's entrypoint (`python -m nethackers.arena.run`) imports.
+    # arena/ and contracts/ are untouched (`git diff v0.34.1...HEAD --
+    # src/nethackers/arena src/nethackers/contracts` is empty), and so are
+    # nle-base/Dockerfile and arena/Dockerfile. No package version moves, so
+    # the installed environment is identical. Also the linux/amd64 LEG, not an
+    # index -- checked with scripts/check_one_manifest.sh (I7). Read from the
+    # diff, NOT measured: no scoring-path code changed, so a re-run has nothing
+    # to disconfirm. (The new host flags are not scoring either: on the v0.34.0
+    # arena, episodes played under the old and the new caps came out
+    # identical.) Same shape as the v0.34.1 entry.
+    "sha256:fd68b5ef42f07c1448467ec31348b4682f8b71b6d7a9dee83242653c3374e40c": 2,
 }
 
 

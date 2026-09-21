@@ -153,11 +153,12 @@ nethackers-worker --token "$TOKEN"
 nethackers-worker --baseline --tree roots/autoascend --token "$TOKEN"
 ```
 
-`--max-parallel-evals` caps concurrent episodes per eval. The default (8) is a
-middle value: it oversubscribes a 4-CPU node and underuses a 16-core one, so tune
-it per box. More is not automatically faster — oversubscribing contends for CPU,
-and the arena's per-action timeout is wall-clock, so contention can depress the
-score itself.
+`--max-parallel-evals` caps concurrent episodes per eval. Unset, it is one per
+CPU the container runtime has, bounded by its memory (about 1 GB per episode,
+within three quarters of it) and by the batch, and a verifier identity batch is
+15. More is not automatically faster — oversubscribing contends for CPU, and the
+arena's per-action timeout is wall-clock, so contention can depress the score
+itself.
 
 ---
 

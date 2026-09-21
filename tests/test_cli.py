@@ -63,7 +63,7 @@ def test_cli_eval_invokes_eval_batch_with_resolved_objective(
     # sentinel (arena_image=None) resolves to the pinned ref, not the in-repo
     # :dev tag (see resolve_image's ladder).
     assert seen["image"] == _image_pins.ARENA_IMAGE
-    assert seen["max_parallel_evals"] == 8  # default, unset here
+    assert seen["max_parallel_evals"] is None  # unset: eval_batch sizes it from the machine
 
     out = json.loads(capsys.readouterr().out)
     assert out["mean_progress"] == 0.1

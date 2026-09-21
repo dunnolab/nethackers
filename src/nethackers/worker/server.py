@@ -19,7 +19,6 @@ import argparse
 import os
 import time
 
-from nethackers.eval.runner import DEFAULT_MAX_PARALLEL_EVALS
 from nethackers.hub.ids import AUTOASCEND_TREE
 from nethackers.hubclient.client import HubClient
 from nethackers.worker.verify import compute_hidden_baseline, verify_program
@@ -57,10 +56,10 @@ def _parser() -> argparse.ArgumentParser:
                         f"(default: {AUTOASCEND_TREE})")
     p.add_argument("--once", action="store_true", help="process one candidate pass then exit")
     p.add_argument("--limit", type=int, default=8)
-    p.add_argument("--max-parallel-evals", type=int, default=DEFAULT_MAX_PARALLEL_EVALS,
-                   help="episodes the arena runs at once (~cores used); tune per box: "
-                        f"the default {DEFAULT_MAX_PARALLEL_EVALS} oversubscribes a 4-CPU "
-                        "node and underuses a 16-core one")
+    p.add_argument("--max-parallel-evals", type=int, default=None,
+                   help="episodes the arena runs at once, one core each (default: one "
+                        "per CPU the container runtime has, bounded by its memory and "
+                        "the batch)")
     return p
 
 
