@@ -118,6 +118,23 @@ ARENA_MAJOR_BY_DIGEST: dict[str, int] = {
     # identically to its record, every field, all 15 -- this time including the
     # agent-step counter that wobbles between runs. Also the linux/amd64 LEG (I7).
     "sha256:2976e77ca1a4e7f5b269b1f001cf870e95728439da45adca416a4a193bcb029a": 2,
+    # v0.33.1, rebuilt for the same reason as the digests above: uv.lock is an
+    # arena input and the release moves the project's own version in it,
+    # 0.33.0 -> 0.33.1. EXACTLY three files differ from the digest above and not
+    # one of them is on the scoring path: the website page
+    # (src/nethackers/hub/web/index.html -- board copy, served by the hub, never
+    # imported by an episode), pyproject.toml, and that single uv.lock line. No
+    # package version moves, so the installed environment is identical. arena/
+    # and contracts/ are untouched (`git diff v0.33.0...HEAD --
+    # src/nethackers/arena src/nethackers/contracts` is empty), and so are
+    # nle-base/Dockerfile and arena/Dockerfile. Also the linux/amd64 LEG, not an
+    # index -- checked with scripts/check_one_manifest.sh -- so the reference
+    # architecture is preserved (I7). Read from the diff, NOT measured: the
+    # three digests above were re-run against a knight program because each
+    # carried real host-side code changes; this one carries none, so there is no
+    # code path whose behaviour a re-run could disconfirm. Same shape as the
+    # v0.31.1 entry, which was also read from the diff.
+    "sha256:43c22a631d8a9cab72083743b37516d06938edecaba525cd425e8ee01d05043a": 2,
     # v0.33.0, rebuilt for the same reason as the three digests above: uv.lock is
     # an arena input and the release moves the project's own version in it,
     # 0.32.2 -> 0.33.0. Everything else that differs is host-side publishing --
