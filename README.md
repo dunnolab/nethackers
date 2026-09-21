@@ -322,10 +322,6 @@ host. GitHub is all three, which keeps the hub small enough to be honest about.
   `nethack`/`nethackers`, and adds a short README if there is none — it never
   overwrites a description, website or README you wrote, and all of it is yours
   to edit or delete.
-- **Lineage is recorded, not yet used.** An `evolve` registration carries its
-  parent's digest; `submit` and `register` send none. The hub stores those edges
-  but no endpoint reads them today, so treat ancestry as data being collected for
-  later, not as a graph you can query.
 - **CI is the deploy lever.** Pushing a `vX.Y.Z` tag builds the hub image, pushes
   it to GHCR, and flips production by digest with a health check and automatic
   rollback (skippable with `[skip hub-deploy]` in the tagged commit message). The sandbox images are built by workflow and pinned by digest into
