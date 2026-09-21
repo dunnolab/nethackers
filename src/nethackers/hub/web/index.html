@@ -322,6 +322,12 @@ table.dtable caption{ text-align:left; background:var(--indigo); color:#fff; fon
 .dtable td.a{ text-align:center; font-weight:700; white-space:nowrap; }
 .dtable td.a.z{ color:var(--red); }
 .dtable tbody tr:nth-child(even) td{ background:#f6f6fa; }
+/* state-of-the-dungeon table: the first column names a line of attack and must
+   not break -- auto layout otherwise drops the year of "AutoAscend (2021)" onto a
+   second line once the result column grows. Sized to content rather than a fixed
+   percentage, which would need re-guessing at every viewport; .tablewrap scrolls
+   it when narrow. */
+.state td:first-child{ white-space:nowrap; }
 /* contests table: fixed column widths so the first column stops wrapping to
    one word per line, and our own row reads as the subject, not an also-ran */
 table.contests{ table-layout:fixed; }
@@ -427,6 +433,8 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
   .layout{ grid-template-columns:1fr; }
   .sidebar{ border-right:0; border-bottom:1px solid var(--rule-soft); }
   .cards{ grid-template-columns:1fr; }
+  /* on a phone a rigid first column starves the result column; let it wrap */
+  .state td:first-child{ white-space:normal; }
 }
   /* --- The Nethack Dictionary: audio-reactive dungeon wall around the page frame --- */
   #dictviz{ position:fixed; inset:0; width:100%; height:100%; z-index:0; pointer-events:none; display:block; }
@@ -670,27 +678,31 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           generated levels, seizing the <span class="ref" data-k="amulet">Amulet of Yendor</span>, and escaping through five final planes: tens of
           thousands of turns under <span class="ref" data-k="permadeath">permadeath</span>, randomized item identity, and a knowledge burden its own developers
           say takes years to master.</p>
-        <p>Humans win rarely overall, but expert play is <b>repeatable</b>: only 0.4% of 8.6&nbsp;million public
-          games ascend, yet the record streak is <b>61 wins in a row</b> and the strongest players ascend in
-          70&ndash;90% of their recorded games. Autonomous play remains far behind. The <b>entire</b> history of
-          autonomous wins is three games, in 2015, by one
+        <p>The <b>entire</b> history of autonomous wins is three games, in 2015, by one
           hand-coded bot, on a version whose winning exploit was patched out that same year. On modern
           NetHack, <b>no program has ever won.</b></p>
 
-        <table class="dtable">
+        <div class="tablewrap noframe"><table class="dtable state">
           <caption>THE STATE OF THE DUNGEON &mdash; every line of attack, ascensions on NLE's NetHack 3.6.6</caption>
           <thead><tr><th>Line of attack</th><th>Best known result</th><th style="text-align:center">Asc.</th></tr></thead>
           <tbody>
-            <tr><td>Humans, all logged games</td><td>median score 836 ("Beginner"); ascension is death-cause #15</td><td class="a">0.4%</td></tr>
+            <tr><td>Humans, all logged games</td><td>&mdash;</td><td class="a">0.4%</td></tr>
             <tr><td>Humans, experts</td><td>15.9% win rate, 47&ndash;71% in form; record streak 61</td><td class="a">reliable</td></tr>
             <tr><td>Symbolic &mdash; <span class="ref" data-k="bothack">BotHack</span> (2015)</td><td>won on v3.4.3 via a <span class="ref" data-k="pudding">pudding-farming</span> exploit, removed in 3.6</td><td class="a">3*</td></tr>
-            <tr><td>Symbolic &mdash; <span class="ref" data-k="challenge">AutoAscend</span> (2021)</td><td>challenge median 5,300; no successor in 5 years; <span class="ref" data-k="medusa">Medusa</span> in 0 of 109,545 games</td><td class="a z">0</td></tr>
-            <tr><td>Learned &mdash; <span class="ref" data-k="ilscaling">imitation + RL</span> (2021&ndash;)</td><td>plateaus below the very bot it imitates</td><td class="a z">0</td></tr>
-            <tr><td>LLM direct play (2026)</td><td>6.8% progression while saturating every other game in <span class="ref" data-k="balrog">BALROG</span></td><td class="a z">0</td></tr>
+            <tr><td>Symbolic &mdash; <span class="ref" data-k="challenge">AutoAscend</span> (2021)</td><td><b>7.8%</b> <span class="ref" data-k="progression">progression</span> &mdash; the floor this board measures; <span class="ref" data-k="medusa">Medusa</span> in 0 of 109,545 games</td><td class="a z">0</td></tr>
+            <tr><td>Learned &mdash; <span class="ref" data-k="ilscaling">imitation</span> (2021&ndash;)</td><td>scaling flattens <b>below</b> the very bot it imitates</td><td class="a z">0</td></tr>
+            <tr><td>Learned &mdash; <span class="ref" data-k="pufferrl">RL</span> (2026)</td><td><b>11.78%</b> <span class="ref" data-k="progression">progression</span> score-trained, <b>16.98%</b> depth-trained &mdash; first to beat AutoAscend since 2021</td><td class="a z">0</td></tr>
+            <tr><td>LLM direct play (2026)</td><td><b>13.2%</b> <span class="ref" data-k="progression">progression</span> in <span class="ref" data-k="balrog">BALROG</span></td><td class="a z">0</td></tr>
           </tbody>
-        </table>
+        </table></div>
         <p class="dfn">Every machine line: <b>zero ascensions on NetHack&nbsp;3.6.6</b>, the NLE research
-          standard. *BotHack's three wins were on the older 3.4.3, via an exploit the developers then removed.</p>
+          standard. <span class="ref" data-k="progression">Progression</span> is one 0&ndash;1 metric throughout, but each line is
+          measured on its own seeds and episode counts, so read it as indicative, not head-to-head.
+          *BotHack's three wins were on the older 3.4.3, via an exploit the developers then removed.</p>
+        <p>One number did just move. In September 2026 an <span class="ref" data-k="pufferrl">RL agent beat
+          AutoAscend</span> for the first time since 2021 &mdash; roughly doubling its challenge median, with
+          depth-trained policies reaching the Castle, deeper than AutoAscend has ever gone. On
+          <span class="ref" data-k="progression">progression</span> that is 16.98% against AutoAscend's 7.8%.</p>
 
         <div class="subh">Why now</div>
         <p>In the last couple of years, coding agents that write and refine programs in a loop have started cracking
@@ -704,7 +716,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           <span class="ref" data-k="grandchallenge">a grand challenge for AI</span>, and it is still unsolved years
           later; NLE co-author <span class="ref" data-k="rockt">Tim Rockt&auml;schel marks the anniversary</span> each year with "AI still
           can't learn to play NetHack." It is the hardest game in the <span class="ref" data-k="balrog">BALROG</span>
-          suite, the one frontier models fail while saturating the rest. Whether the approach cracking everything
+          suite, and the one frontier models are worst at by a wide margin. Whether the approach cracking everything
           else can crack this one, <b>nobody knows</b>.</p>
         <p>That is what NetHackers is for: an open attempt to find out <b>together</b>. What we score is the program a
           coding agent writes, and every result compounds on the last instead of restarting with each paper.</p>
@@ -903,10 +915,25 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
         </table></div>
 
         <div class="subh">How does this compare to ARC-AGI?</div>
-        <p><span class="ref" data-k="arcagi">ARC-AGI</span> removes prior knowledge to test whether you can
-          <b>invent</b> a rule from a few examples. NetHack hands you all the knowledge up front and tests whether you
-          can <b>use</b> it for a hundred thousand steps without falling apart.
-          <span class="todo">[TO BE EXPANDED]</span></p>
+        <p>They ask opposite questions about the same gap.</p>
+
+        <!-- A drawing of the ARC-AGI contrast belongs here; five candidates were tried and
+           none landed. Deferred on purpose -- the prose stands on its own. -->
+
+        <p><span class="ref" data-k="arcagi">ARC-AGI</span> limits what the solver is told: infer a transformation
+          from a few examples, then apply it to a new input. It measures how efficiently a system adapts when task
+          evidence is deliberately scarce.</p>
+        <p>NetHackers makes the inverse choice. NetHack's rules are public &mdash; you can read the implementation,
+          consult decades of wiki knowledge, study every bot that came before, and run the game as often as you like.
+          Knowledge from earlier attempts is something to keep and exploit, not something to withhold. The question is
+          how much competence a process can build out of all that.</p>
+        <p>Having the rules still leaves the decisions. A running program sees only what it has explored. A simulator
+          does not hand you a tractable strategy &mdash; you still have to choose what to consider and what to ignore.
+          And choices interact across tens of thousands of turns, where progress now can consume what you needed
+          later.</p>
+        <p>The two are <b>complementary</b>. A system can recognize a new pattern from three examples and still fail
+          to build and maintain a large, reliable controller; a strong NetHack specialist would say little about
+          adapting to unrelated tasks.</p>
 
         <div class="subh">Why AutoAscend?</div>
         <p>Because it is a strong starting point, not a finished answer.
@@ -931,12 +958,6 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
           volunteer machine cannot hold a secret. Cycles were never the scarce thing anyway; a full private pass is
           roughly a thousand episodes, hours on one box. What is scarce is good programs, and the agent tokens to find
           them. So the hub hands out no work at all: you search on your own machine, and we keep the link.</p>
-
-        <div class="subh">Fine. Does solving it mean AGI?</div>
-        <p>We drew a flow chart to settle it. It is not printed here, but it is not far away either &mdash;
-          there is something under the top of this page, and the button beside that first heading will
-          let you scrape the page off it. <span class="mono">#agi</span> at the extended-command prompt
-          does the same thing, for anyone who would rather ask the dungeon.</p>
 
       </section>
 
@@ -1265,9 +1286,10 @@ const REFS={
   "dungeons-private":{t:"Private Dungeons",d:"<b>15 secret seeds per identity</b>, one dungeon each. The hub holds them and never publishes them. A trusted verifier runs each program on dungeons it has <b>never seen</b>, so no one can write a program against them.",s:[]},
   /* --- citations --- */
   nle:{t:"The NetHack Learning Environment",d:"The paper that standardized NetHack for ML research and pinned version 3.6.6. Its authors judged a hand-crafted bot that solves NetHack &quot;very unlikely.&quot;",s:[["Kuttler et al., NeurIPS 2020",ARX+"2006.13760"]]},
-  challenge:{t:"NeurIPS 2021 NetHack Challenge",d:"483 entrants, <b>zero ascensions</b> in over 500,000 evaluation games. The symbolic AutoAscend won at a median score of 5,300.",s:[["Hambro et al., 2022",ARX+"2203.11889"]]},
-  balrog:{t:"BALROG benchmark",d:"Benchmarks agentic LLMs/VLMs across games. NetHack &quot;progression&quot; is a 0&ndash;1 score; frontier models sit near <b>6.8%</b> here while saturating easier games (a knowing&ndash;doing gap).",s:[["Paglieri et al., 2024",ARX+"2411.13543"],["balrogai.com","https://balrogai.com"]]},
+  challenge:{t:"NeurIPS 2021 NetHack Challenge",d:"483 entrants, <b>zero ascensions</b> in over 500,000 evaluation games. The symbolic AutoAscend won at a median score of 5,300 &mdash; unbeaten for five years.",s:[["Hambro et al., 2022",ARX+"2203.11889"]]},
+  balrog:{t:"BALROG benchmark",d:"Benchmarks agentic LLMs/VLMs across games. NetHack &quot;progression&quot; is a 0&ndash;1 score; the best model sits at <b>13.2%</b> (GPT-6-Astra-Max, September 2026) &mdash; its worst game in the suite, while that same model scores <b>100%</b> on two of the others (a knowing&ndash;doing gap).",s:[["Paglieri et al., 2024",ARX+"2411.13543"],["balrogai.com","https://balrogai.com"]]},
   ilscaling:{t:"Imitation scaling laws",d:"Imitation-learning scaling on NetHack flattens well before expert play; learned agents plateau <b>below</b> the very bot they imitate.",s:[["Tuyls et al., 2023",ARX+"2307.09423"]]},
+  pufferrl:{t:"RL beats AutoAscend (2026)",d:"A PufferAI-trained agent reached a median NetHack Challenge score of <b>11,516</b> over 8,064 games &mdash; <b>2.08&times;</b> AutoAscend's median in that same evaluation, and the first time RL passed it since 2021. Separate depth-trained policies reach Medusa and the Castle. <b>No ascension</b>, and Medusa is not slain.",s:[["Sanders, 2026","https://x.com/finlay_sanders/status/2099518352536305850"],["fast-nle","https://github.com/FinlaySanders/fast-nle"]]},
   bothack:{t:"BotHack (2015)",d:"The only autonomous ascensions in NetHack's history: <b>3 games</b>, on NetHack 3.4.3, via a pudding-farming exploit removed in 3.6.",s:[["Krajicek, 2015","https://github.com/krajj7/BotHack"]]},
   satlution:{t:"SATLUTION",d:"Coding agents evolved SAT solvers <b>past human competition winners</b> &mdash; evidence that agents can engineer programs beyond human level.",s:[["Yu et al., 2025",ARX+"2509.07367"]]},
   funsearch:{t:"FunSearch",d:"LLM-guided program search that discovered new mathematical constructions.",s:[["Romera-Paredes et al., Nature 2024","https://www.nature.com/articles/s41586-023-06924-6"]]},
@@ -1280,7 +1302,7 @@ const REFS={
   boinc:{t:"BOINC / volunteer computing",d:"The platform behind SETI@home and its successors. A project signs its own application with a key kept off the network, ships it to volunteer machines, and validates results by <b>replication</b> &mdash; running each job on two hosts and comparing. Volunteers donate cycles; they never contribute code.",s:[["BOINC","https://boinc.berkeley.edu/"],["Anderson, 2019",ARX+"1903.01699"]]},
   aspire:{t:"ASPIRE",d:"A self-improving robotics system that diagnoses failed rollouts, rewrites code-as-policy programs, validates the repairs, and saves successful behaviors as reusable skills for new long-horizon tasks.",s:[["NVIDIA GEAR","https://research.nvidia.com/labs/gear/aspire/"]]},
   codepolicies:{t:"Code as Policies",d:"Robot policies expressed as executable programs: language models compose perception and control APIs, feedback loops, and recursively defined helper functions into embodied behavior.",s:[["Liang et al., 2022","https://code-as-policies.github.io/"]]},
-  autoascend:{t:"AutoAscend",d:"The hand-engineered symbolic winner of the NeurIPS 2021 NetHack Challenge. NetHackers uses it as the reference floor and cold-start seed, not as a solved agent.",s:[["AutoAscend source","https://github.com/maciej-sypetkowski/autoascend"],["Challenge report","https://nethackchallenge.com/report.html"]]},
+  autoascend:{t:"AutoAscend",d:"The hand-engineered symbolic winner of the NeurIPS 2021 NetHack Challenge. NetHackers uses it as the reference floor and cold-start seed, not as a solved agent. On this board's 73 identities it reaches <b>7.8% progression</b> over 1,095 episodes.",s:[["AutoAscend source","https://github.com/maciej-sypetkowski/autoascend"],["Challenge report","https://nethackchallenge.com/report.html"]]},
   recursiveco:{t:"Recursive",d:"Richard Socher's frontier AI startup, launched in 2026 with a stated mission to build safe, open-ended, recursively self-improving AI for automated knowledge discovery.",s:[["Recursive","https://www.recursive.com/"]]},
   ricursive:{t:"Ricursive Intelligence",d:"A frontier AI lab building a self-improvement loop between AI chip design and the AI systems that design those chips.",s:[["Ricursive Intelligence","https://www.ricursive.com/"]]},
   discoveryloop:{t:"Discovery Loop",d:"A research startup automating complete experimental loops: propose, run, evaluate, and learn across thousands of parallel experiments, beginning with machine-learning research and its own technology stack.",s:[["Discovery Loop","https://www.discoveryloop.com/"]]},
