@@ -103,7 +103,7 @@ async def test_login_modal_show_displays_code_and_copies_it(monkeypatch):
         modal = LoginModal()
         host.push_screen(modal)
         await pilot.pause()
-        modal._show("https://github.com/login/device", "WDJB-MJHT")
+        modal._show("https://github.com/login/device", "WDJB-MJHT", True)
         for _ in range(200):
             await asyncio.sleep(0.01)
             if "code" in copied:
@@ -134,7 +134,7 @@ async def test_login_modal_shows_code_without_waiting_for_clipboard(monkeypatch)
         host.push_screen(modal)
         await pilot.pause()
         started = asyncio.get_running_loop().time()
-        modal._show("https://github.com/login/device", "WDJB-MJHT")
+        modal._show("https://github.com/login/device", "WDJB-MJHT", True)
         assert asyncio.get_running_loop().time() - started < 0.25
         await pilot.pause()
         panel = str(modal.query_one("#login_panel", Static).render())
@@ -142,33 +142,151 @@ async def test_login_modal_shows_code_without_waiting_for_clipboard(monkeypatch)
         release.set()
 
 
-async def test_login_modal_url_is_clickable_hyperlink(monkeypatch):
-    """The URL in the modal is an OSC 8 terminal hyperlink, not plain styled
-    text -- so it is clickable inside the full-screen app, where the terminal's
-    own URL auto-detection never fires."""
-    import io
+# --- LoginModal: Enter opens the authorize URL in the browser (gh-style) ----
 
-    from rich.console import Console
+_URL = "https://github.com/login/device"
 
+
+def _panel(modal):
+    return str(modal.query_one("#login_panel", Static).render())
+
+
+async def _until(cond):
+    for _ in range(200):  # the browser/clipboard workers run on threads (up to ~2s)
+        if cond():
+            return
+        await asyncio.sleep(0.01)
+
+
+def _no_flow_no_clipboard(monkeypatch):
     monkeypatch.setattr(login_mod.LoginModal, "_flow", lambda self: None)  # no auto-flow
     monkeypatch.setattr(login_mod.clipboard, "copy", lambda _s: False)
 
-    url = "https://github.com/login/device"
+
+def _fake_browser(monkeypatch, *, opens=True):
+    opened = []
+    monkeypatch.setattr(login_mod.browser, "open_url", lambda url: opened.append(url) or opens)
+    return opened
+
+
+async def test_login_modal_enter_opens_the_url_in_the_browser(monkeypatch):
+    _no_flow_no_clipboard(monkeypatch)
+    opened = _fake_browser(monkeypatch)
+
     host = _Host()
     async with host.run_test() as pilot:
         modal = LoginModal()
         host.push_screen(modal)
         await pilot.pause()
-        modal._show(url, "WDJB-MJHT")
+        modal._show(_URL, "WDJB-MJHT", True)
         await pilot.pause()
-        renderable = modal.query_one("#login_panel", Static).render()
+        panel = _panel(modal)
+        await pilot.press("enter")
+        await _until(lambda: opened)
 
-    buf = io.StringIO()
-    Console(file=buf, force_terminal=True, width=100).print(renderable)
-    out = buf.getvalue()
+    assert opened == [_URL]
+    assert "Enter" in panel and _URL in panel  # the panel says what Enter does
 
-    assert "\x1b]8;" in out              # an OSC 8 hyperlink is emitted at all
-    assert f";{url}\x1b\\" in out        # ...and its target is the verification URL
+
+async def test_login_modal_enter_before_the_code_opens_nothing(monkeypatch):
+    _no_flow_no_clipboard(monkeypatch)
+    opened = _fake_browser(monkeypatch)
+
+    host = _Host()
+    async with host.run_test() as pilot:
+        host.push_screen(LoginModal())
+        await pilot.pause()
+        await pilot.press("enter")  # still "requesting a device code…"
+        await pilot.pause()
+
+    assert opened == []
+
+
+async def test_login_modal_without_a_browser_shows_the_url_and_enter_opens_nothing(monkeypatch):
+    # e.g. the TUI over plain SSH: no display, so point at the URL to open by hand
+    _no_flow_no_clipboard(monkeypatch)
+    opened = _fake_browser(monkeypatch)
+
+    host = _Host()
+    async with host.run_test() as pilot:
+        modal = LoginModal()
+        host.push_screen(modal)
+        await pilot.pause()
+        modal._show(_URL, "WDJB-MJHT", False)
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+        panel = _panel(modal)
+
+    assert opened == []
+    assert _URL in panel and "WDJB-MJHT" in panel
+
+
+async def test_login_modal_enter_opens_nothing_after_the_login_failed(monkeypatch):
+    _no_flow_no_clipboard(monkeypatch)
+    opened = _fake_browser(monkeypatch)
+
+    host = _Host()
+    async with host.run_test() as pilot:
+        modal = LoginModal()
+        host.push_screen(modal)
+        await pilot.pause()
+        modal._show(_URL, "WDJB-MJHT", True)
+        modal._fail("device flow: expired_token")  # that code is dead now
+        await pilot.pause()
+        await pilot.press("enter")
+        await pilot.pause()
+
+    assert opened == []
+
+
+async def test_login_modal_browser_failure_points_at_the_url(monkeypatch):
+    _no_flow_no_clipboard(monkeypatch)
+    opened = _fake_browser(monkeypatch, opens=False)
+
+    host = _Host()
+    async with host.run_test() as pilot:
+        modal = LoginModal()
+        host.push_screen(modal)
+        await pilot.pause()
+        modal._show(_URL, "WDJB-MJHT", True)
+        await pilot.pause()
+        await pilot.press("enter")
+        await _until(lambda: "couldn't open" in _panel(modal).lower())
+        panel = _panel(modal)
+
+    assert opened == [_URL]
+    assert "couldn't open" in panel.lower() and _URL in panel
+
+
+async def test_login_modal_late_clipboard_copy_keeps_the_browser_failure(monkeypatch):
+    # The clipboard worker can finish after Enter already failed to open a
+    # browser; its "(copied)" repaint must not bring "Press Enter" back.
+    monkeypatch.setattr(login_mod.LoginModal, "_flow", lambda self: None)
+    release = threading.Event()
+
+    def slow_copy(_text):
+        release.wait(timeout=2)
+        return True
+
+    monkeypatch.setattr(login_mod.clipboard, "copy", slow_copy)
+    _fake_browser(monkeypatch, opens=False)
+
+    host = _Host()
+    async with host.run_test() as pilot:
+        modal = LoginModal()
+        host.push_screen(modal)
+        await pilot.pause()
+        modal._show(_URL, "WDJB-MJHT", True)
+        await pilot.pause()
+        await pilot.press("enter")
+        await _until(lambda: "couldn't open" in _panel(modal).lower())
+        release.set()
+        await _until(lambda: "copied to clipboard" in _panel(modal))
+        panel = _panel(modal)
+
+    assert "copied to clipboard" in panel
+    assert "couldn't open" in panel.lower()
 
 
 # --- app wiring: login adopts the credential + repaints the idbar; logout clears

@@ -85,7 +85,7 @@ from rich.panel import Panel
 from rich.text import Text
 from rich_argparse import RichHelpFormatter
 
-from nethackers import clipboard, config, crashfile
+from nethackers import browser, clipboard, config, crashfile
 from nethackers.config import Stage, load_stage
 from nethackers.containers import container_runtime
 from nethackers.diagnostics import (
@@ -148,26 +148,35 @@ _time_now = time.time
 
 
 def _login_prompt(verification_uri: str, user_code: str) -> None:
-    """Styled device-flow prompt: the URL and the code on their own lines in a
-    bordered panel, printed to stderr so ``-o json`` / pipes stay clean. The
-    code is copied to the clipboard (best effort) so it can be pasted, not
-    retyped."""
+    """Styled device-flow prompt, the ``gh auth login`` way: the one-time code
+    in a bordered panel (copied to the clipboard, best effort, so it can be
+    pasted, not retyped), then "Press Enter to open <url> in your browser" --
+    and on Enter, the browser. All on stderr so ``-o json`` / pipes stay clean.
+    ``device_login`` starts polling once this returns, as gh does.
+
+    No clickable (OSC 8) link: only some terminals honor one. The URL is plain
+    text, and it is all there is when Enter could open nothing -- stdin or
+    stderr isn't a terminal (agents, pipes) or there is no browser here
+    (``browser.can_open``: plain SSH to a server) -- so then this doesn't wait."""
     copied = clipboard.copy(user_code)
     body = Text()
-    body.append("1  Open this URL in your browser\n", style="dim")
-    # An OSC 8 hyperlink (rich's ``link`` style) -> the terminal makes the URL
-    # itself clickable; a bare styled URL inside a panel is not reliably
-    # auto-detected. Only the URL text is linked, not the indent/newlines.
-    body.append("     ")
-    body.append(verification_uri, style=f"bold cyan link {verification_uri}")
-    body.append("\n\n")
-    body.append("2  Enter this code", style="dim")
+    body.append("Your one-time code", style="dim")
     if copied:
         body.append("   (copied to clipboard)", style="green")
-    body.append("\n     ", style="dim")
+    body.append("\n     ")
     body.append(user_code, style="bold yellow")
     err.print(Panel(body, title="[b green]Authorize NetHackers[/]",
                     border_style="green", expand=False, padding=(1, 2)))
+    url = Text(verification_uri, style="bold cyan")
+    interactive = sys.stdin is not None and sys.stdin.isatty() and err.is_terminal
+    if not (interactive and browser.can_open()):
+        err.print(Text.assemble("Open ", url, " in a browser and enter the code."))
+        return
+    err.input(Text.assemble("Press ", ("Enter", "bold"), " to open ", url,
+                            " in your browser… "), stream=sys.stdin)
+    if not browser.open_url(verification_uri):
+        err.print(Text.assemble(("Couldn't open a browser", "yellow"), " — go to ", url,
+                                " and enter the code."))
 
 
 def _load_creds() -> Credentials | None:
