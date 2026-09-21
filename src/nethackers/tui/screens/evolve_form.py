@@ -34,7 +34,7 @@ from textual.worker import Worker, WorkerState
 from nethackers.config import OFFLINE_OWNER, OFFLINE_TOKEN, load_stage
 from nethackers.containers import container_runtime
 from nethackers.harness.discovery import CliInfo, ModelInfo, probe_operator
-from nethackers.harness.launch import EvolveParams, prepare_evolve
+from nethackers.harness.launch import EvolveParams, EvolvePlan, prepare_evolve
 from nethackers.harness.models import EFFORTS, MODELS
 from nethackers.harness.sandbox_preflight import (
     ensure_image,
@@ -210,6 +210,10 @@ class EvolveForm(Vertical):
         self._checking: tuple[str, float] | None = None
         self._check_worker: Worker | None = None
         self._frame = 0   # spinner frame, advanced by _spin
+        # Start's progress row: (steps done, step in progress) while it runs.
+        # A pull in flight owns #f_pull; the steps row resumes after it.
+        self._start_steps: tuple[list[str], str] | None = None
+        self._pulling = False
 
     def compose(self) -> ComposeResult:
         yield Static("[dim]checking readiness…[/]", id="f_readiness")
@@ -269,6 +273,9 @@ class EvolveForm(Vertical):
         self.query_one("#f_readiness", Static).border_title = "What evolve needs"
         self._refresh_readiness()
         self.set_interval(0.1, self._spin)
+        # Advisory publish-readiness (spec 5.6), off the UI thread: `gh api user`
+        # is a network call. Shown from the moment the form opens; Start never waits.
+        self._check_publish(self._owner())
 
         # the two subwindows carry their own titles; their scroll panes are NOT
         # nav stops (their fields are), so blur them so a field never gets
@@ -429,6 +436,11 @@ class EvolveForm(Vertical):
             self.query_one("#f_op_version", Static).update(
                 f"[#ffd54a]{_SPIN[self._frame]}[/] [dim]checking {op} in the sandbox… "
                 f"{int(time.monotonic() - started)}s[/]")
+        if self._start_steps is not None and not self._pulling:
+            done, current = self._start_steps
+            parts = [f"[green]✓[/] {step}" for step in done]
+            parts.append(f"[#ffd54a]{_SPIN[self._frame]}[/] {current}…")
+            self.query_one("#f_pull", Static).update("  ·  ".join(parts))
 
     def on_worker_state_changed(self, event: Worker.StateChanged) -> None:
         # _refresh_models is exit_on_error=False: a probe that raises never
@@ -546,6 +558,9 @@ class EvolveForm(Vertical):
             tier=self._network_tier(),
         )
 
+    def _owner(self) -> str:
+        return self._creds.login if self._creds else OFFLINE_OWNER
+
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id != "f_start":
             return
@@ -554,86 +569,106 @@ class EvolveForm(Vertical):
         except ValueError as exc:
             self.query_one("#f_err", Static).update(f"[red]{exc}[/red]")
             return
-        # The mutator always runs sandboxed -- surface a missing container
-        # runtime / login here (same preflight the CLI uses), not as a
-        # mid-run crash inside the pushed monitor.
-        msg = sandbox_preflight(params.operator)
-        if msg is not None:
-            self.query_one("#f_err", Static).update(msg)
-            return
-        # Publish-readiness pre-check (spec 5.6): advisory only -- it NEVER
-        # gates the launch below. Written into its own #f_publish_warn (not
-        # #f_err) so it's still on screen after Start, through provisioning
-        # and the run -- a win is kept as a local elite either way.
-        self.query_one("#f_publish_warn", Static).update(_publish_warning(params.owner))
-        # Both sandbox images are auto-provisioned: if either isn't built/
-        # pulled yet, acquire it (off the UI thread, streaming typed progress
-        # into #f_pull -- see _apply_pull) and launch once ready -- the user
-        # never runs `make`/`docker pull`. The arena image needs this exactly
-        # as much as the mutator: run_loop scores every iteration through it
-        # (harness/evaluate.py), so provisioning it only here -- not mid-loop
-        # -- keeps a missing/stale arena image a fail-fast Start-time error
-        # instead of a confusing mid-run stall. Already present -> launch
-        # straight.
-        # Resolve the container runtime once (docker OR podman -- issue #50);
-        # sandbox_preflight above already confirmed one is usable, so this is
-        # non-None. Threads into the presence checks, the provision worker AND
-        # `params.runtime` so the whole Start path -- the launched RUN included
-        # -- uses the same detected binary. That last one is what issue #54 was:
-        # `EvolveParams.runtime` defaults to "docker" and only the CLI evolve
-        # handler used to override it, so a podman-only host passed every check
-        # here and then launched a run whose `ContainerOperator` and arena evals
-        # (both read `params.runtime`, see harness/launch.py) exec'd a `docker`
-        # that isn't installed.
-        runtime = container_runtime() or "docker"
-        params.runtime = runtime
-        if image_present(params.mutator_image, runtime=runtime) and \
-                image_present(params.image, runtime=runtime):
-            self._launch(params, runtime)
-        else:
-            self.query_one("#f_pull", Static).update(
-                "[yellow]setting up the sandbox[/] (first run — a few minutes)…")
-            self._provision_then_launch(params, runtime)
+        # Acknowledge at once, then do the slow part -- the docker checks, first-use
+        # image pulls, the run's setup -- in ONE worker, so the UI never freezes.
+        # Failures come back to #f_err on this form; success opens the monitor.
+        self.query_one("#f_err", Static).update("")
+        self._set_starting(True)
+        self._start_steps = ([], "Docker")
+        self._spin()
+        self._check_publish(params.owner)      # advisory, in the background
+        cached = self._probe_cache.get(params.operator)
+        version = cached[0].version if cached is not None else None
+        self._start_worker(params, version)
 
-    def _launch(self, params: EvolveParams, runtime: str) -> None:
-        # Both images are present by now, on either path here. The agent scores
-        # its own candidates inside the mutator: on another platform than the
-        # arena it would optimize games the arena never plays.
-        msg = sandbox_platform_mismatch(params.image, params.mutator_image, runtime=runtime)
-        if msg is not None:
-            self.query_one("#f_err", Static).update(Text.from_markup(msg))
-            return
-        plan = prepare_evolve(params)
-        cast("NetHackersApp", self.app).start_run(plan)  # background run + open its monitor
+    def _set_starting(self, on: bool) -> None:
+        btn = self.query_one("#f_start", Button)
+        btn.disabled = on
+        btn.label = "Starting…" if on else "Start"
 
-    @work(exclusive=True, thread=True)
-    def _provision_then_launch(self, params: EvolveParams, runtime: str = "docker") -> None:
-        """Acquire whichever sandbox image(s) Start found missing, then
-        launch. Runs off the UI thread (``@work(thread=True)``) -- every
-        widget touch below is marshaled back onto it via ``call_from_thread``.
-        ``ensure_image``'s ``on_event`` callback fires from THIS worker
-        thread (it's called synchronously inside ``ensure_image``, which we
-        called), never the UI thread, so it must never touch ``#f_pull``
-        directly -- only ever through ``_apply_pull`` via ``call_from_thread``
-        (spec S5.5/5.8's typed pull-progress seam, replacing the old raw
-        ``on_line`` text dump into ``#f_err``)."""
-        for ref, kind in ((params.mutator_image, "mutator"), (params.image, "arena")):
-            err = ensure_image(
-                ref, kind, runtime=runtime,
-                on_event=lambda e: self.app.call_from_thread(self._apply_pull, e))
-            if err is not None:
-                # Rich markup, with any raw build lines in it escaped for Rich: read it
-                # with Rich as the CLI does, since Textual's own parser takes some of
-                # those brackets (`[ 45%]`, `[Warning]`) for tags.
-                self.app.call_from_thread(
-                    lambda e=err: self.query_one("#f_err", Static).update(Text.from_markup(e)))
+    @work(exclusive=True, thread=True, group="start", exit_on_error=False)
+    def _start_worker(self, params: EvolveParams, version: str | None) -> None:
+        """Everything Start needs after validation, off the UI thread: the
+        sandbox preflight, the container runtime, both sandbox images (pulled or
+        built on first use), the platform guard, then prepare_evolve -- reusing
+        the operator version the form's own check already found, instead of two
+        more emulated `docker run`s. Every widget touch goes through
+        call_from_thread."""
+        call = self.app.call_from_thread
+        try:
+            msg = sandbox_preflight(params.operator)
+            if msg is not None:
+                call(self._start_failed, msg)
                 return
-        self.app.call_from_thread(self._launch, params, runtime)
+            # Resolve the container runtime once (docker OR podman -- issue #50);
+            # sandbox_preflight above already confirmed one is usable, so this is
+            # non-None. Threads into the presence checks, the provision worker AND
+            # `params.runtime` so the whole Start path -- the launched RUN included
+            # -- uses the same detected binary. That last one is what issue #54 was:
+            # `EvolveParams.runtime` defaults to "docker" and only the CLI evolve
+            # handler used to override it, so a podman-only host passed every check
+            # here and then launched a run whose `ContainerOperator` and arena evals
+            # (both read `params.runtime`, see harness/launch.py) exec'd a `docker`
+            # that isn't installed.
+            runtime = container_runtime() or "docker"
+            params.runtime = runtime
+            call(self._start_step, ["Docker"], "sandbox")
+            for ref, kind in ((params.mutator_image, "mutator"), (params.image, "arena")):
+                if image_present(ref, runtime=runtime):
+                    continue
+                err = ensure_image(ref, kind, runtime=runtime,
+                                   on_event=lambda e: call(self._apply_pull, e))
+                if err is not None:
+                    call(self._start_failed, Text.from_markup(err))
+                    return
+            mismatch = sandbox_platform_mismatch(params.image, params.mutator_image,
+                                                 runtime=runtime)
+            if mismatch is not None:
+                call(self._start_failed, Text.from_markup(mismatch))
+                return
+            call(self._start_step, ["Docker", "sandbox"], "preparing run")
+            if version:
+                plan = prepare_evolve(
+                    params, operator_version_resolver=lambda _op, _img: version)
+            else:
+                plan = prepare_evolve(params)
+        except Exception as exc:   # never leave the button stuck on "Starting…"
+            call(self._start_failed, Text(f"couldn't start: {exc}", style="red"))
+            return
+        call(self._start_succeeded, plan)
+
+    def _start_step(self, done: list[str], current: str) -> None:
+        self._start_steps = (done, current)
+        self._pulling = False
+        self._spin()
+
+    def _start_failed(self, message: str | Text) -> None:
+        self._start_steps = None
+        self._pulling = False
+        self.query_one("#f_pull", Static).update("")
+        self.query_one("#f_err", Static).update(message)
+        self._set_starting(False)
+
+    def _start_succeeded(self, plan: EvolvePlan) -> None:
+        self._start_steps = None
+        self._pulling = False
+        self.query_one("#f_pull", Static).update("")
+        self._set_starting(False)
+        cast("NetHackersApp", self.app).start_run(plan)   # background run + open its monitor
+
+    @work(exclusive=True, thread=True, group="publish", exit_on_error=False)
+    def _check_publish(self, owner: str) -> None:
+        # Advisory only (spec 5.6): never gates a launch, so it never blocks one.
+        text = _publish_warning(owner)
+        self.app.call_from_thread(self._show_publish_warning, text)
+
+    def _show_publish_warning(self, text: str) -> None:
+        self.query_one("#f_publish_warn", Static).update(text)
 
     def _apply_pull(self, event: PullEvent) -> None:
         """Phase-driven ``#f_pull`` update from one ``PullEvent`` -- always
         invoked on the UI thread via ``call_from_thread`` (see
-        ``_provision_then_launch``), never called directly from the worker.
+        ``_start_worker``), never called directly from the worker.
 
         Consent framing (spec 5.8/5.5): the Start click IS the consent to
         pull, so ``"start"`` discloses exactly what's being acquired --
@@ -644,10 +679,12 @@ class EvolveForm(Vertical):
         ``None`` there), so those events just leave "start"'s text standing.
         ``"done"`` is a ✓ line for that kind. ``"error"`` goes to ``#f_err``
         -- the genuine-error surface -- instead of here: ``#f_pull`` is
-        progress-only, and ``_provision_then_launch`` writes the real,
+        progress-only, and ``_start_worker`` writes the real,
         one-command-fix error text (``ensure_image``'s return value) into
         ``#f_err`` right after this fires, superseding whatever's written
         below."""
+        # a pull in flight owns #f_pull; _spin's steps row resumes once it's done
+        self._pulling = event.phase in ("start", "layer")
         from nethackers import diagnostics
         short_ref = diagnostics._short_digest(event.ref)
         if event.phase == "start":

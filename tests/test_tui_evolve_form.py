@@ -63,6 +63,14 @@ class _Plan:
         return []
 
 
+async def _press_start(app, pilot) -> None:
+    """Press Start and let its worker (and the background publish check) finish."""
+    app.query_one("#f_start", Button).press()
+    await pilot.pause()
+    await app.workers.wait_for_complete()
+    await pilot.pause()
+
+
 @pytest.fixture(autouse=True)
 def _sandbox_preflight_ok(monkeypatch):
     # the form runs the sandbox preflight + image check before prepare_evolve;
@@ -86,8 +94,7 @@ async def test_start_builds_params_and_starts_a_run(monkeypatch):
     async with app.run_test(size=(100, 40)) as pilot:
         # objective is chosen from the filter+list; set the selection directly
         app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
-        app.query_one("#f_start", Button).press()
-        await pilot.pause()
+        await _press_start(app, pilot)
 
         assert seen["params"].objective == "wiz-elf-cha-mal"
         assert seen["params"].owner == "castiel"
@@ -113,8 +120,7 @@ async def test_start_pins_model_and_effort_from_the_pickers(monkeypatch):
         form.query_one("#f_model", Select).value = "gpt-5.6-sol"
         form.query_one("#f_effort", Select).value = "max"
         await pilot.pause()
-        app.query_one("#f_start", Button).press()
-        await pilot.pause()
+        await _press_start(app, pilot)
         assert seen["params"].operator == "codex"
         assert seen["params"].model == "gpt-5.6-sol"
         assert seen["params"].effort == "max"
@@ -164,8 +170,7 @@ async def test_custom_model_reveals_freetext_and_flows_through(monkeypatch):
         await pilot.pause()
         assert custom.display is True
         custom.value = "my-exp-model-42"
-        app.query_one("#f_start", Button).press()
-        await pilot.pause()
+        await _press_start(app, pilot)
         assert seen["params"].model == "my-exp-model-42"
 
 
@@ -194,8 +199,7 @@ async def test_preflight_failure_shows_error_no_start(monkeypatch):
     app = _Host(None)
     async with app.run_test(size=(100, 40)) as pilot:
         app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
-        app.query_one("#f_start", Button).press()
-        await pilot.pause()
+        await _press_start(app, pilot)
         assert "called" not in seen        # prepare_evolve blocked by the preflight
         assert app.started is None          # no run started
         err_text = str(app.query_one("#f_err", Static).render()).lower()
@@ -225,8 +229,7 @@ async def test_platform_mismatch_shows_error_no_start(monkeypatch):
     app = _Host(None)
     async with app.run_test(size=(100, 40)) as pilot:
         app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
-        app.query_one("#f_start", Button).press()
-        await pilot.pause()
+        await _press_start(app, pilot)
         assert "called" not in seen         # prepare_evolve blocked by the guard
         assert app.started is None
         assert calls == [{"runtime": "podman", "acquired": []}]
@@ -446,14 +449,14 @@ async def test_missing_image_builds_then_launches(monkeypatch):
 # provisioning. Start is the consent to pull -- it discloses image + short
 # digest + "one-time pull" + a layers m/n meter. Size/GB is deferred by
 # ruling and must never appear. `ensure_image` is faked at `ef.ensure_image`
-# -- the exact name `_provision_then_launch` calls (a bare global lookup at
+# -- the exact name `_start_worker` calls (a bare global lookup at
 # call time, not a bound default captured at def-time -- the "bound-default
 # trap" to watch for), so patching it here is the seam the form actually
 # dereferences; `provisioned`/`calls` below confirm the fake was really hit.
 # ---------------------------------------------------------------------------
 
 async def test_provisioning_renders_typed_pull_progress_not_raw_text(monkeypatch):
-    """Drive `_provision_then_launch` with `ensure_image` faked to emit a
+    """Drive `_start_worker` with `ensure_image` faked to emit a
     scripted start -> layer -> layer -> done sequence for a realistic
     long-digest ref, and check what `#f_pull` shows at each phase (captured
     via a spy on the real `_apply_pull`, called -- like production -- only on
@@ -535,7 +538,7 @@ async def test_pull_error_phase_writes_to_f_err_not_f_pull(monkeypatch):
     """A mid-pull `error`-phase `PullEvent` must surface in #f_err -- the
     genuine-error surface -- not linger in #f_pull. The authoritative,
     one-command-fix message is `ensure_image`'s own return value (mirroring
-    the CLI's error mapping), which `_provision_then_launch` writes into
+    the CLI's error mapping), which `_start_worker` writes into
     #f_err right after -- so that's the final state this checks."""
     monkeypatch.setattr(ef, "prepare_evolve", lambda *a, **k: _Plan())
     monkeypatch.setattr(ef, "image_present", lambda *a, **k: False)
@@ -792,8 +795,7 @@ async def test_publish_warning_shows_gh_unauthed_but_run_still_launches(monkeypa
     app = _Host(Credentials("castiel", "tok"))
     async with app.run_test(size=(100, 40)) as pilot:
         app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
-        app.query_one("#f_start", Button).press()
-        await pilot.pause()
+        await _press_start(app, pilot)
         warn = str(app.query_one("#f_publish_warn", Static).render())
         assert "wins won't publish" in warn
         assert "gh auth login" in warn
@@ -808,8 +810,7 @@ async def test_publish_warning_shows_gh_missing_install_hint(monkeypatch):
     app = _Host(Credentials("castiel", "tok"))
     async with app.run_test(size=(100, 40)) as pilot:
         app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
-        app.query_one("#f_start", Button).press()
-        await pilot.pause()
+        await _press_start(app, pilot)
         warn = str(app.query_one("#f_publish_warn", Static).render())
         assert "wins won't publish" in warn
         assert "install the github cli" in warn.lower()
@@ -824,8 +825,7 @@ async def test_no_publish_warning_when_gh_authed(monkeypatch):
     app = _Host(Credentials("castiel", "tok"))
     async with app.run_test(size=(100, 40)) as pilot:
         app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
-        app.query_one("#f_start", Button).press()
-        await pilot.pause()
+        await _press_start(app, pilot)
         warn = str(app.query_one("#f_publish_warn", Static).render()).strip()
         assert warn == ""
         assert isinstance(app.started, _Plan)
@@ -842,8 +842,7 @@ async def test_publish_warning_shows_offline_note_when_not_logged_in(monkeypatch
     app = _Host(None)   # no creds -> owner defaults to OFFLINE_OWNER
     async with app.run_test(size=(100, 40)) as pilot:
         app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
-        app.query_one("#f_start", Button).press()
-        await pilot.pause()
+        await _press_start(app, pilot)
         warn = str(app.query_one("#f_publish_warn", Static).render())
         assert "running offline" in warn
         assert "nethackers login" in warn
@@ -876,8 +875,7 @@ async def test_network_toggle_defaults_to_self_reported(monkeypatch):
         assert "sealed" in help_text
 
         form._objective = "wiz-elf-cha-mal"
-        app.query_one("#f_start", Button).press()
-        await pilot.pause()
+        await _press_start(app, pilot)
         assert seen["params"].tier == "self-reported"       # flows through to EvolveParams
 
 
@@ -897,8 +895,7 @@ async def test_selecting_verified_sets_tier(monkeypatch):
         assert form._network_tier() == "verified"
 
         form._objective = "wiz-elf-cha-mal"
-        app.query_one("#f_start", Button).press()
-        await pilot.pause()
+        await _press_start(app, pilot)
         assert seen["params"].tier == "verified"
 
 
@@ -953,8 +950,7 @@ async def test_start_falls_back_to_docker_when_no_runtime_is_detected(monkeypatc
     app = _Host(Credentials("castiel", "tok"))
     async with app.run_test(size=(100, 40)) as pilot:
         app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
-        app.query_one("#f_start", Button).press()
-        await pilot.pause()
+        await _press_start(app, pilot)
 
         assert seen["params"].runtime == "docker"
 
@@ -1018,3 +1014,85 @@ async def test_a_check_that_raises_clears_the_spinner(monkeypatch):
         assert "couldn't check codex" in line
         assert form.query_one("#f_model", Select).loading is False
         assert form.query_one("#f_effort", Select).loading is False
+
+
+# ---------------------------------------------------------------------------
+# Start acknowledges at once and runs off the UI thread (spec 5.5/5.8): the
+# sandbox preflight, first-use image pulls, and prepare_evolve now run in ONE
+# thread worker instead of freezing the UI for ~4s. Start disables itself as
+# "Starting…", the steps row ticks through Docker -> sandbox -> preparing run,
+# and the form reuses the operator version its own on-mount check already
+# found instead of a second emulated `docker run`.
+# ---------------------------------------------------------------------------
+
+async def test_start_acknowledges_at_once_and_keeps_the_ui_responsive(monkeypatch):
+    import threading
+    release = threading.Event()
+
+    def _slow_prepare(params, **k):
+        release.wait(5)
+        return _Plan()
+
+    monkeypatch.setattr(ef, "prepare_evolve", _slow_prepare)
+    app = _Host(None)
+    async with app.run_test(size=(100, 40)) as pilot:
+        form = app.query_one(ef.EvolveForm)
+        form._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause(0.3)
+        btn = app.query_one("#f_start", Button)
+        assert btn.disabled is True and "Starting" in str(btn.label)
+        steps = str(form.query_one("#f_pull", Static).render())
+        assert "✓ Docker" in steps and "✓ sandbox" in steps and "preparing run" in steps
+        assert app.started is None                        # still preparing, UI alive
+        release.set()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        assert isinstance(app.started, _Plan)
+        assert btn.disabled is False and str(btn.label) == "Start"
+        assert str(form.query_one("#f_pull", Static).render()).strip() == ""
+
+
+async def test_start_reuses_the_checked_operator_version(monkeypatch):
+    seen: dict = {}
+
+    def _prepare(params, **kw):
+        seen["kw"] = kw
+        return _Plan()
+
+    monkeypatch.setattr(ef, "prepare_evolve", _prepare)
+    app = _Host(None)
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()   # the mount check caches claude's CliInfo
+        await pilot.pause()
+        app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
+        await _press_start(app, pilot)
+        resolver = seen["kw"]["operator_version_resolver"]
+        assert resolver("claude", "any-image") == "claude 9.9.9"   # no second docker run
+
+
+async def test_an_exception_while_starting_restores_the_button(monkeypatch):
+    def _boom(params, **k):
+        raise RuntimeError("disk full")
+
+    monkeypatch.setattr(ef, "prepare_evolve", _boom)
+    app = _Host(None)
+    async with app.run_test(size=(100, 40)) as pilot:
+        app.query_one(ef.EvolveForm)._objective = "wiz-elf-cha-mal"
+        await _press_start(app, pilot)
+        assert "disk full" in str(app.query_one("#f_err", Static).render())
+        btn = app.query_one("#f_start", Button)
+        assert btn.disabled is False and str(btn.label) == "Start"
+        assert app.started is None
+
+
+async def test_the_publish_check_runs_when_the_form_opens(monkeypatch):
+    monkeypatch.setattr(ef, "gh_state", lambda: (None, "unauthed"))
+    app = _Host(Credentials("castiel", "tok"))
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        warn = str(app.query_one("#f_publish_warn", Static).render())
+        assert "wins won't publish" in warn        # shown before any Start
