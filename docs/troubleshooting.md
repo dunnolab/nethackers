@@ -222,11 +222,15 @@ debugging the machinery, check:
 
 ### Runs are slower than they should be
 
-`--max-parallel-evals` (default 8) caps concurrent episodes. It oversubscribes a
-4-CPU box and underuses a 16-core one, so tune it per machine. Raising it is not
-automatically faster: oversubscription contends for CPU, and the arena's
-per-action timeout is wall-clock, so heavy contention can cut normal actions and
-depress the score itself.
+By default the arena runs one episode per CPU your container runtime has, as
+many as three quarters of its memory holds at about 1 GB each, and never more
+than the batch. On a Mac those are the CPUs and memory given to Docker Desktop
+(Settings → Resources), not the Mac's own. `--max-parallel-evals` overrides the
+default. Raising it past the machine is not automatically faster:
+oversubscription contends for CPU, and the arena's per-action timeout is
+wall-clock, so heavy contention can cut normal actions and depress the score
+itself. Asking for more episodes than the memory holds prints a warning, since
+an episode killed for memory scores 0.
 
 ---
 

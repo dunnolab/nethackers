@@ -72,7 +72,7 @@ def test_evolve_parses_and_invokes_loop(tmp_path, monkeypatch):
     assert rc == 0
     assert captured["objective"] == "val-dwa-law-fem"
     assert captured["iterations"] == 1
-    assert captured["max_parallel_evals"] == 8  # default, unset here
+    assert captured["max_parallel_evals"] is None  # unset: sized from the machine per eval
 
 
 def test_evolve_passes_max_parallel_evals(tmp_path, monkeypatch):

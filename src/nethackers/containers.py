@@ -161,3 +161,36 @@ def nonroot_userns_args(runtime: str, *, run=subprocess.run) -> list[str]:
     if getattr(proc, "returncode", 1) != 0:
         return []
     return list(_KEEP_ID_ARGS) if (getattr(proc, "stdout", "") or "").strip() == "true" else []
+
+
+# `info` templates for the CPU count and total memory (bytes) the runtime can
+# give its containers: docker's top-level fields, then podman's Host block.
+# Each runtime exits non-zero on the other's fields (see nonroot_userns_args).
+_CAPACITY_FORMATS = ("{{.NCPU}} {{.MemTotal}}", "{{.Host.CPUs}} {{.Host.MemTotal}}")
+
+
+def runtime_capacity(runtime: str, *, run=subprocess.run) -> tuple[int, int] | None:
+    """``(cpus, memory_bytes)`` that ``runtime`` can give its containers --
+    Docker Desktop's VM on a Mac, the host itself on Linux -- or ``None`` when
+    it can't be read. Probes the fields rather than matching on the binary's
+    name, so a ``docker`` binary that is really podman's shim answers too.
+
+    Any failure returns ``None`` and the caller keeps its fixed fallback, the
+    same degrade-to-today rule as ``nonroot_userns_args``. Not memoized, like
+    ``probe_container_runtime``: one fast ``info`` call per eval. ``run`` is
+    injectable so tests never shell out."""
+    for fmt in _CAPACITY_FORMATS:
+        try:
+            proc = run([runtime, "info", "--format", fmt],
+                       capture_output=True, text=True, timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            return None
+        if getattr(proc, "returncode", 1) != 0:
+            continue
+        try:
+            cpus, memory = (int(v) for v in (getattr(proc, "stdout", "") or "").split())
+        except ValueError:
+            continue
+        if cpus > 0 and memory > 0:
+            return cpus, memory
+    return None

@@ -453,8 +453,9 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
     e.add_argument("--objective", required=True, help="A catalog objective name.")
     e.add_argument("--image", default=stage.arena_image, help="Arena image to run.")
     e.add_argument(
-        "--max-parallel-evals", type=int, default=8,
-        help="Cap on episodes the arena runs concurrently (default: %(default)s).",
+        "--max-parallel-evals", type=int, default=None,
+        help="Cap on episodes the arena runs concurrently (default: one per CPU the "
+             "container runtime has, bounded by its memory and the batch).",
     )
 
     mo = sub.add_parser(
@@ -505,8 +506,9 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
         help="Improvement rounds to run: each picks a random cell and mutates "
              "its elite (default: %(default)s).")
     evolve.add_argument(
-        "--max-parallel-evals", type=int, default=8,
-        help="Cap on episodes the arena runs concurrently per eval (default: %(default)s).",
+        "--max-parallel-evals", type=int, default=None,
+        help="Cap on episodes the arena runs concurrently per eval (default: one per "
+             "CPU the container runtime has, bounded by its memory and the batch).",
     )
     evolve.add_argument("--image", default=stage.arena_image)
     evolve.add_argument(
@@ -614,8 +616,9 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
     sm.add_argument("--objective", required=True,
                     help="A catalog objective name to evaluate on (self-reported score).")
     sm.add_argument("--image", default=stage.arena_image, help="Arena image to run.")
-    sm.add_argument("--max-parallel-evals", type=int, default=8,
-                    help="Cap on concurrent episodes (default: %(default)s).")
+    sm.add_argument("--max-parallel-evals", type=int, default=None,
+                    help="Cap on concurrent episodes (default: one per CPU the container "
+                         "runtime has, bounded by its memory and the batch).")
 
     return parser
 

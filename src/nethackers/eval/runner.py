@@ -25,8 +25,10 @@ from __future__ import annotations
 
 import hashlib
 import json
+import math
 import re
 import subprocess
+import sys
 import tempfile
 import threading
 from collections import deque
@@ -37,7 +39,12 @@ from pathlib import Path
 from nethackers import _image_pins, image_inputs
 from nethackers.arena.result_io import read_result_json
 from nethackers.arena.seeds import trajectory_spec
-from nethackers.containers import container_name, container_runtime, label_args
+from nethackers.containers import (
+    container_name,
+    container_runtime,
+    label_args,
+    runtime_capacity,
+)
 from nethackers.contracts.models import Evidence, Objective, ObjectiveSpec, TrajectoryResult
 from nethackers.sandbox_flags import offline_flags
 from nethackers.solution_root import require_solution_root
@@ -161,17 +168,60 @@ def _default_image_digest(image: str, *, runtime: str | None = None) -> str:
     return out.stdout.strip()
 
 
-# How many of a batch's episodes the arena container runs at once. The arena
-# caps workers at ``min(max_parallel_evals, len(batch))`` PROCESSES, and the
-# container gets no ``--cpus``, so this is effectively "how many host cores to
-# use". 8 is a safe middle default; the right value is per-box (the eval node
-# has 4 CPUs, a dev Mac has 16), which is why callers can override it.
+# How many of a batch's episodes the arena container runs at once when the
+# caller doesn't say AND the container runtime can't be asked what it has.
+# Normally the default comes from the machine instead -- see ``_size_box``.
 #
 # Not purely a speed knob: ``action_timeout_seconds`` is WALL-CLOCK
 # (``arena/sandbox.py``'s ``connection.poll``), so oversubscribing a host can
 # cut normal actions and depress the score -- see the ACTION_TIMEOUT_SECONDS
 # note in ``hub/objectives.py`` for the time this corrupted the hub baseline.
 DEFAULT_MAX_PARALLEL_EVALS = 8
+
+# Memory budgeted per concurrent episode. The largest AutoAscend episode (bot
+# plus NLE worker) peaked at 640 MB on full-length games (2026-09-21); an
+# episode killed for memory is scored 0 without any error, so this errs high.
+_EPISODE_MEMORY = 1 << 30
+# `--pids-limit` per concurrent episode: ~3 tasks each (42 at 8 wide, 62 at
+# 15), so 32 still stops a fork bomb fast. At 8 wide it's the old fixed 256.
+_PIDS_PER_EPISODE = 32
+
+
+def _size_box(batch_size: int, requested: int | None,
+              capacity: tuple[int, int] | None) -> tuple[int, int, str | None]:
+    """``(episodes, memory_bytes, warning)`` for the sealed box: how many of
+    the batch's episodes it runs at once and how much memory it may use.
+
+    One box runs ``episodes`` side by side -- each an NLE worker process plus
+    its bot process -- so its caps must come from that count and from the
+    machine, never be fixed: 0.34.0's fixed ``--cpus 2`` held 8 episodes to a
+    quarter core each (3.7x slower), and its fixed ``--memory 4g`` OOM-killed
+    bots at 15. ``capacity`` is ``runtime_capacity``'s ``(cpus,
+    memory_bytes)`` -- what the runtime can actually give containers, the
+    Docker Desktop VM on a Mac -- or ``None`` when it couldn't be read, which
+    falls back to today's fixed default. ``requested`` (an explicit
+    ``--max-parallel-evals``) always wins; ``warning`` is set when it asks for
+    more memory than the box may use."""
+    if capacity is None:
+        episodes = requested if requested is not None else DEFAULT_MAX_PARALLEL_EVALS
+        episodes = max(1, min(episodes, batch_size))
+        return episodes, episodes * _EPISODE_MEMORY, None
+    cpus, memory = capacity
+    box_memory = memory * 3 // 4   # a quarter stays with the OS, the daemon, the mutator
+    if requested is None:
+        # Parallelism is bounded by the box's memory, not the machine's, so
+        # the default can never trip the warning below.
+        episodes = max(1, min(cpus, box_memory // _EPISODE_MEMORY, batch_size))
+        return episodes, box_memory, None
+    episodes = max(1, min(requested, batch_size))
+    warning = None
+    if episodes * _EPISODE_MEMORY > box_memory:
+        warning = (f"{episodes} episodes at once are budgeted "
+                   f"{episodes * _EPISODE_MEMORY / (1 << 30):.0f} GiB, but the arena may use "
+                   f"{box_memory / (1 << 30):.1f} of this machine's {memory / (1 << 30):.1f} "
+                   f"GiB; an episode that runs out of memory scores 0 -- lower "
+                   f"--max-parallel-evals")
+    return episodes, box_memory, warning
 
 # An outer wall-clock DoS bound the per-action timeout doesn't give (spec
 # sec3b, threat 4): the per-action hang-guard (arena/sandbox.py's
@@ -181,6 +231,11 @@ DEFAULT_MAX_PARALLEL_EVALS = 8
 # step/no-progress ceilings, or never. `timeout` is in-image coreutils, run
 # INSIDE the container so it applies even though the container itself is
 # invoked with `check=True`/no host-side timeout.
+#
+# Per wave, not per batch: each worker runs its share of the batch one
+# episode after another, and a timeout loses the whole batch (results.json is
+# written only after the last episode), so one fixed bound failed every batch
+# long enough -- and a 6-identity cold-start union is already 90 episodes.
 WALL_TIMEOUT_S = 3600
 
 
@@ -215,7 +270,7 @@ def eval_batch(
     image_digest_resolver=None,
     on_episode: Callable[[dict], None] | None = None,
     popen=subprocess.Popen,
-    max_parallel_evals: int = DEFAULT_MAX_PARALLEL_EVALS,
+    max_parallel_evals: int | None = None,
 ) -> Evidence:
     """Evaluate ``solution_path`` against ``image`` for ``spec``'s published
     ``(seed, character)`` batch and return the resulting ``Evidence``.
@@ -225,15 +280,17 @@ def eval_batch(
     defaulting to ``"docker"``; ``cli.py``'s handler passes
     ``container_runtime()``) sealed by ``offline_flags()`` (spec sec3b,
     threat 4: no network, read-only rootfs, every capability dropped, no
-    privilege escalation, resource caps, a non-root user), with the solution
+    privilege escalation, resource caps sized per concurrent episode, a
+    non-root user), with the solution
     bind-mounted read-only at ``/sol`` and a fresh host temp directory
     bind-mounted at ``/out``. ``--entrypoint timeout`` OVERRIDES the image's
     baked entrypoint (``python -m nethackers.arena.run``) with bare
     ``timeout`` (coreutils, present in the debian-slim base), and the
     post-image command re-states the full invocation as ``timeout``'s own
-    argv -- ``str(WALL_TIMEOUT_S), "python", "-m", "nethackers.arena.run",
-    ...`` -- so the wall-clock bound (``WALL_TIMEOUT_S``, an outer DoS bound
-    the per-action timeout doesn't give) WRAPS the whole python process,
+    argv -- ``str(WALL_TIMEOUT_S * waves), "python", "-m",
+    "nethackers.arena.run", ...`` -- so the wall-clock bound
+    (``WALL_TIMEOUT_S`` per wave, an outer DoS bound the per-action timeout
+    doesn't give) WRAPS the whole python process,
     rather than being appended as bogus CMD args to it (which argparse
     rejects outright, failing every real call -- a regression only a real
     docker daemon caught). ``timeout`` passes stdin through to the wrapped
@@ -249,9 +306,10 @@ def eval_batch(
     keeps the pipe open; ``runner(..., input=...)`` on the non-streaming
     path, ``_stream_episodes``'s own threaded write on the streaming one).
     The container's argv/env carry only ``spec``'s step/timeout parameters
-    and ``--max-parallel-evals`` (``max_parallel_evals``, default 8) -- the
-    cap on how many of the batch's episodes the container runs concurrently
-    -- never a seed or the secret that derived it.
+    and ``--max-parallel-evals`` -- how many of the batch's episodes the
+    container runs concurrently, ``max_parallel_evals`` or, when that is
+    ``None``, sized from the machine by ``_size_box`` -- never a seed or the
+    secret that derived it.
     Reads back ``/out/results.json`` defensively via ``read_result_json``
     (spec sec3b, INV4 -- the box's output is HOSTILE data: rejects a symlink
     escape, an oversized file, or malformed/non-list JSON) into a
@@ -329,6 +387,14 @@ def eval_batch(
                 for seed, character in spec.batch
             ]
         )
+        # The box runs `episodes` at once and each worker takes `waves` turns
+        # through the batch; the resource caps and the wall-clock bound scale
+        # with them (see _size_box).
+        episodes, box_memory, warning = _size_box(
+            len(spec.batch), max_parallel_evals, runtime_capacity(runtime))
+        if warning:
+            print(f"arena · warning: {warning}", file=sys.stderr, flush=True)
+        waves = max(1, math.ceil(len(spec.batch) / episodes))
         cmd = [
             runtime, "run", *platform, "--rm", "-i",  # -i: keep stdin open for the specs
             "--name", container_name("arena"), *label_args(),
@@ -337,8 +403,12 @@ def eval_batch(
             # capability dropped, no privilege escalation, and resource caps
             # -- a malicious or merely buggy submission (fork bomb, OOM, a
             # reverse shell) dies inside the container instead of touching
-            # the host or the network.
-            *offline_flags(),
+            # the host or the network. The caps are per concurrent episode.
+            *offline_flags(
+                cpus=episodes,   # one core each: worker and bot take turns
+                memory=f"{box_memory >> 20}m",
+                pids=_PIDS_PER_EPISODE * episodes,
+            ),
             # Silence AutoAscend's numpy RuntimeWarning flood at interpreter
             # startup, for every process in the container (a plain in-arena
             # filter didn't hold -- NLE/AutoAscend resets it). No secret on
@@ -367,12 +437,12 @@ def eval_batch(
             # [args...]`) since overriding the entrypoint above means this
             # image no longer runs `python -m nethackers.arena.run` on its
             # own -- something has to say so explicitly now.
-            str(WALL_TIMEOUT_S), "python", "-m", "nethackers.arena.run",
+            str(WALL_TIMEOUT_S * waves), "python", "-m", "nethackers.arena.run",
             "--solution", "/sol",
             "--max-steps", str(spec.max_steps),
             "--no-progress-timeout", str(spec.no_progress_timeout),
             "--action-timeout", str(spec.action_timeout_seconds),
-            "--max-parallel-evals", str(max_parallel_evals),
+            "--max-parallel-evals", str(episodes),
             "--out", "/out/results.json",
         ]
         if on_episode is None:

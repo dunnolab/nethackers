@@ -12,6 +12,7 @@ launches a container, it locates the host directory bind-mounted at
 results.json there itself -- one dict per batch episode, in batch order.
 """
 
+import dataclasses
 import io
 import json
 import os
@@ -152,7 +153,7 @@ def test_eval_batch_wraps_container_results_into_evidence(tmp_path):
     assert cmd[cmd.index("--network") + 1] == "none"
     for need in [
         "--read-only", "--cap-drop", "ALL", "--security-opt",
-        "no-new-privileges", "--pids-limit", "--memory", "--cpus",
+        "no-new-privileges", "--pids-limit", "--memory", "--cpu-quota",
         "--user", "timeout",
     ]:
         assert need in cmd, need
@@ -343,7 +344,7 @@ def test_eval_batch_passes_max_parallel_evals(tmp_path):
 
     eval_batch(
         sol,
-        _SPEC,
+        _batch_of(15),
         "img:dev",
         now="2026-08-09T00:00:00Z",
         runner=_make_fake_docker_run(calls),
@@ -354,6 +355,113 @@ def test_eval_batch_passes_max_parallel_evals(tmp_path):
     cmd = calls[0]
     assert "--max-parallel-evals" in cmd
     assert cmd[cmd.index("--max-parallel-evals") + 1] == "5"
+
+
+def _batch_of(n):
+    return dataclasses.replace(_SPEC, batch=tuple((i, "val-dwa-law-fem") for i in range(n)))
+
+
+def _flag(cmd, name):
+    return cmd[cmd.index(name) + 1]
+
+
+GiB = 1 << 30
+
+
+def _run_sized(tmp_path, monkeypatch, *, batch, capacity, requested=None):
+    """eval_batch on a machine that reports ``capacity`` = (cpus, memory
+    bytes), or None for a runtime that couldn't be asked; returns the argv."""
+    sol = tmp_path / "sol"
+    sol.mkdir()
+    (sol / "bot.py").write_text("x")
+    asked = []
+    monkeypatch.setattr(eval_runner, "runtime_capacity",
+                        lambda runtime: asked.append(runtime) or capacity)
+    calls = []
+    eval_batch(sol, _batch_of(batch), "img:dev", now="t", runner=_make_fake_docker_run(calls),
+               image_digest_resolver=lambda img: "img@sha256:deadbeef",
+               max_parallel_evals=requested)
+    assert asked == ["docker"]   # the runtime that will run the box is the one asked
+    return calls[0]
+
+
+def _assert_box(cmd, *, episodes, memory):
+    assert _flag(cmd, "--max-parallel-evals") == str(episodes)
+    assert "--cpus" not in cmd   # refused above the daemon's CPU count -- see sandbox_flags
+    assert int(_flag(cmd, "--cpu-quota")) == episodes * int(_flag(cmd, "--cpu-period"))
+    assert _flag(cmd, "--memory") == _flag(cmd, "--memory-swap") == f"{memory >> 20}m"
+    assert _flag(cmd, "--pids-limit") == str(episodes * eval_runner._PIDS_PER_EPISODE)
+
+
+@pytest.mark.parametrize(
+    "capacity, batch, episodes, memory",
+    [
+        ((16, 32 * GiB), 15, 15, 24 * GiB),   # a big Mac: the whole identity batch at once
+        ((16, 8 * GiB), 15, 6, 6 * GiB),      # many cores, little memory: memory decides
+        ((4, 32 * GiB), 15, 4, 24 * GiB),     # the 4-CPU eval node: cores decide
+        ((10, 16 * GiB), 2, 2, 12 * GiB),     # a batch smaller than the machine
+    ],
+)
+def test_unset_parallelism_is_sized_from_the_machine(tmp_path, monkeypatch, capsys,
+                                                     capacity, batch, episodes, memory):
+    """Unset --max-parallel-evals means: one episode per CPU the runtime has,
+    as many as 3/4 of its memory holds at 1 GiB each, never more than the
+    batch -- and the box's caps follow from that count. v0.34.0 instead fixed
+    the box at --cpus 2 / --memory 4g on every machine: 8 episodes shared 2
+    cores (3.7x slower, measured), and 15 OOM-killed bots, which the arena
+    scores as bot_error at progress 0 while the eval exits 0."""
+    cmd = _run_sized(tmp_path, monkeypatch, batch=batch, capacity=capacity)
+    _assert_box(cmd, episodes=episodes, memory=memory)
+    assert capsys.readouterr().err == ""   # the machine's own size never warns
+
+
+def test_an_explicit_request_wins_over_the_machine(tmp_path, monkeypatch, capsys):
+    # 8 on a 4-CPU box oversubscribes on purpose; the quota form is what lets
+    # docker accept 8 cores' worth there at all.
+    cmd = _run_sized(tmp_path, monkeypatch, batch=15, capacity=(4, 32 * GiB), requested=8)
+    _assert_box(cmd, episodes=8, memory=24 * GiB)
+    assert capsys.readouterr().err == ""
+
+
+def test_a_request_the_memory_cannot_hold_warns(tmp_path, monkeypatch, capsys):
+    cmd = _run_sized(tmp_path, monkeypatch, batch=15, capacity=(16, 8 * GiB), requested=15)
+    _assert_box(cmd, episodes=15, memory=6 * GiB)
+    err = capsys.readouterr().err
+    assert "15 episodes" in err and "scores 0" in err and "--max-parallel-evals" in err
+
+
+@pytest.mark.parametrize("requested, episodes", [(None, 8), (5, 5)])
+def test_an_unreadable_machine_falls_back_to_the_fixed_default(tmp_path, monkeypatch,
+                                                              requested, episodes):
+    cmd = _run_sized(tmp_path, monkeypatch, batch=15, capacity=None, requested=requested)
+    _assert_box(cmd, episodes=episodes, memory=episodes * GiB)
+
+
+@pytest.mark.parametrize(
+    "batch, parallel, waves",
+    [
+        (90, 8, 12),    # a 6-identity cold-start union: each worker runs 12 in turn
+        (15, 8, 2),
+        (15, 15, 1),
+        (0, 8, 1),      # an empty batch still gets a finite bound (`timeout 0` means none)
+    ],
+)
+def test_the_wall_clock_bound_is_per_wave(tmp_path, batch, parallel, waves):
+    """The outer `timeout` wraps the WHOLE batch and is all-or-nothing --
+    results.json is written only after the last episode -- so a fixed bound
+    kills every batch that is long enough, losing all of it. Each worker runs
+    its share one episode after another, so the bound is per wave."""
+    sol = tmp_path / "sol"
+    sol.mkdir()
+    (sol / "bot.py").write_text("x")
+    calls = []
+
+    eval_batch(sol, _batch_of(batch), "img:dev", now="t", runner=_make_fake_docker_run(calls),
+               image_digest_resolver=lambda img: "img@sha256:deadbeef",
+               max_parallel_evals=parallel)
+
+    cmd = calls[0]
+    assert cmd[cmd.index("img:dev") + 1] == str(waves * eval_runner.WALL_TIMEOUT_S)
 
 
 def test_eval_batch_streams_per_episode_when_on_episode_given(tmp_path):

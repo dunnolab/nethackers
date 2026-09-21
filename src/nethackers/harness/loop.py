@@ -143,7 +143,7 @@ def run_loop(
     from_seed: bool = False,
     tier: str = "self-reported",
     fetch: Callable[[dict, Path], Path | None] = select.pull_fetch,
-    max_parallel_evals: int = 8,
+    max_parallel_evals: int | None = None,
     max_consecutive_errors: int = 3,
     sleep: Callable[[float], None] = time.sleep,
     stop: threading.Event | None = None,
