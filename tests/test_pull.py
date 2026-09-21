@@ -5,8 +5,8 @@ network access are involved.
 
 import pytest
 
-from nethackers.hubclient.pull import pull
 from nethackers.github_ref import NonGitHubRef
+from nethackers.hubclient.pull import pull
 
 
 def test_pull_builds_clone_and_checkout(tmp_path):

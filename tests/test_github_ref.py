@@ -1,5 +1,7 @@
 import pytest
-from nethackers.github_ref import normalize_github_ref, NonGitHubRef
+
+from nethackers.github_ref import NonGitHubRef, normalize_github_ref
+
 
 @pytest.mark.parametrize("good", [
     "github.com/sam/nethacker",

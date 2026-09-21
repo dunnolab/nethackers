@@ -1,5 +1,6 @@
 from nethackers.sandbox_flags import offline_flags, online_flags
 
+
 def test_offline_is_fully_sealed():
     f = offline_flags()
     for need in ["--network", "none", "--read-only", "--cap-drop", "ALL",

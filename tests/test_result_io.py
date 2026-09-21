@@ -1,6 +1,10 @@
-import json, os, pytest
-from pathlib import Path
-from nethackers.arena.result_io import read_result_json, ResultError
+import json
+import os
+
+import pytest
+
+from nethackers.arena.result_io import ResultError, read_result_json
+
 
 def test_reads_valid_list(tmp_path):
     (tmp_path / "results.json").write_text(json.dumps([{"progress": 0.1}]))

@@ -30,7 +30,8 @@ class _FakeUpstreamHandler(BaseHTTPRequestHandler):
     ever broke, rather than a constant that never could either way."""
 
     def _respond(self) -> None:
-        self.server.owner.last_headers = {k.lower(): v for k, v in self.headers.items()}
+        self.server.owner.last_headers = {  # type: ignore[attr-defined]
+            k.lower(): v for k, v in self.headers.items()}
         length = int(self.headers.get("Content-Length") or 0)
         received = self.rfile.read(length) if length else b""
         body = json.dumps({

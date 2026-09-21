@@ -17,7 +17,9 @@ def normalize_github_ref(repo: str) -> str:
     if not raw:
         raise NonGitHubRef("empty repo reference")
     # scp form (git@github.com:owner/name) and other schemes are refused outright.
-    if "@" in raw.split("/", 1)[0] or raw.startswith(("git@", "ssh://", "git://", "file://", "ext::")):
+    if "@" in raw.split("/", 1)[0] or raw.startswith(
+        ("git@", "ssh://", "git://", "file://", "ext::")
+    ):
         raise NonGitHubRef(f"unsupported reference form: {repo!r}")
     if raw.startswith(("http://", "https://")):
         parts = urlsplit(raw)
