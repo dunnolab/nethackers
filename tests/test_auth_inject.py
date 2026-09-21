@@ -213,7 +213,7 @@ def test_claude_uses_broker_base_and_placeholder():
     args = auth_broker_args("claude", broker_base="http://host.docker.internal:5000")
     joined = " ".join(args)
     assert "ANTHROPIC_BASE_URL=http://host.docker.internal:5000" in joined
-    assert "ANTHROPIC_API_KEY=proxy-managed" in joined
+    assert "CLAUDE_CODE_OAUTH_TOKEN=proxy-managed" in joined
     assert "-v" not in args                       # no credential mount
     assert "REAL" not in joined                    # no real key crosses the boundary
 
@@ -251,8 +251,8 @@ def test_broker_credential_claude_linux_reads_credentials_json(tmp_path):
         json.dumps({"claudeAiOauth": {"accessToken": "tok-linux"}})
     )
     header_name, header_value = broker_credential("claude", system="Linux", home=tmp_path)
-    assert header_name == "x-api-key"
-    assert header_value == "tok-linux"
+    assert header_name == "Authorization"
+    assert header_value == "Bearer tok-linux"
 
 
 def test_broker_credential_claude_macos_reads_keychain():
@@ -268,8 +268,8 @@ def test_broker_credential_claude_macos_reads_keychain():
     header_name, header_value = broker_credential(
         "claude", system="Darwin", home=Path("/h"), run=fake_run,
     )
-    assert header_name == "x-api-key"
-    assert header_value == "tok-mac"
+    assert header_name == "Authorization"
+    assert header_value == "Bearer tok-mac"
 
 
 def test_broker_credential_claude_linux_missing_creds_raises(tmp_path):

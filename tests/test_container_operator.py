@@ -468,7 +468,7 @@ def _broker_op(tmp_path, harness="claude", **kw):
         harness=harness, image="img:test", system="Linux", home=tmp_path,
         broker=True,
         cred_broker_factory=fake_factory,
-        broker_credential=lambda *a, **kw: ("x-api-key", "REAL-SECRET-VALUE"),
+        broker_credential=lambda *a, **kw: ("Authorization", "Bearer REAL-SECRET-VALUE"),
         **kw,
     )
     return op, holder
@@ -486,7 +486,7 @@ def test_broker_path_claude_env_and_add_host_no_mount(tmp_path):
     cmd = seen["cmd"]
     joined = " ".join(cmd)
     assert "ANTHROPIC_BASE_URL=http://host.docker.internal:9999" in joined
-    assert "ANTHROPIC_API_KEY=proxy-managed" in joined
+    assert "CLAUDE_CODE_OAUTH_TOKEN=proxy-managed" in joined   # OAuth mode, not x-api-key
     assert "--add-host" in cmd
     assert cmd[cmd.index("--add-host") + 1] == "host.docker.internal:host-gateway"
     assert "REAL-SECRET-VALUE" not in joined   # real key never reaches argv
@@ -494,8 +494,8 @@ def test_broker_path_claude_env_and_add_host_no_mount(tmp_path):
     v_values = [v for flag, v in zip(cmd, cmd[1:], strict=False) if flag == "-v"]
     assert v_values == [f"{wt}:/workspace"]
     assert holder["broker"].upstream_base == "https://api.anthropic.com"
-    assert holder["broker"].header_name == "x-api-key"
-    assert holder["broker"].header_value == "REAL-SECRET-VALUE"
+    assert holder["broker"].header_name == "Authorization"
+    assert holder["broker"].header_value == "Bearer REAL-SECRET-VALUE"
     assert holder["broker"].started is True
     assert holder["broker"].stopped is True
 

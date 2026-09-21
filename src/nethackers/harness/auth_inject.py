@@ -46,20 +46,17 @@ for Codex) rather than duplicating them. ``ContainerOperator``'s ``broker``
 flag chooses between the two; the mount stays the default -- see its
 docstring for why.
 
-Two things this pairing does NOT resolve, both live-verification concerns
-(PARKED, not a correctness claim of this module):
+**Claude broker auth is verified live.** Claude Code authenticates its OAuth
+token as ``Authorization: Bearer`` (not ``x-api-key``), paired with an
+``anthropic-beta`` list -- including an ``oauth-*`` flag -- that the CLI emits
+itself. So the broker path runs the caged CLI in OAuth mode
+(``CLAUDE_CODE_OAUTH_TOKEN`` placeholder, not ``ANTHROPIC_API_KEY``): it sends
+``Bearer <placeholder>`` plus those beta headers, and ``CredBroker`` replaces
+only the ``Authorization`` value with the real Bearer, forwarding the beta and
+version headers unchanged. Confirmed end-to-end against api.anthropic.com.
 
-- **Scheme mismatch for Claude.** The broker path's placeholder is
-  API-key-shaped (``ANTHROPIC_API_KEY`` / ``x-api-key`` header, Anthropic's
-  API-key convention -- see ``harness/discovery.py``'s own
-  ``_claude_auth_headers``), but the credential ``broker_credential`` reads
-  host-side is the Claude Code OAuth access token -- Bearer-shaped, and
-  normally paired with an ``anthropic-beta`` header ``CredBroker`` has no way
-  to also inject (it forwards exactly one header). Forwarding that token
-  under ``x-api-key`` may not authenticate; a host with a real
-  ``ANTHROPIC_API_KEY`` of its own would match cleanly and is the easy fix,
-  but reading that env var host-side wasn't part of this task's ask, so this
-  module doesn't guess at it.
+One live-verification concern remains (PARKED, not a correctness claim here):
+
 - **Codex token staleness.** ``~/.codex/auth.json``'s OAuth ``access_token``
   (the fallback when there's no stable ``OPENAI_API_KEY`` login) rotates;
   ``broker_credential`` reads it once, at container start, and the broker
@@ -79,7 +76,8 @@ with -- a literal or env-sourced ``apiKey`` (a ``{file:...}`` key, or no key
 at all, is left alone); an explicit ``options.baseURL``, or absent one,
 Anthropic's/OpenAI's own default host for those two provider names
 specifically (Anthropic gets ``x-api-key``, everything else
-``Authorization: Bearer``, per the Claude scheme-mismatch caveat above).
+``Authorization: Bearer`` -- these are provider API keys from the config,
+not Claude Code's OAuth token).
 ``opencode2_broker_docker_args`` then writes the cage config with each
 brokered provider's ``baseURL``/``apiKey`` replaced by the broker's own base
 URL and the ``"proxy-managed"`` placeholder -- forwarding by name only the
@@ -172,7 +170,14 @@ def auth_broker_args(harness: str, *, broker_base: str) -> list[str]:
     instead of ``auth_docker_args``'s mount (the default).
     """
     if harness == "claude":
-        return ["-e", f"ANTHROPIC_BASE_URL={broker_base}", "-e", "ANTHROPIC_API_KEY=proxy-managed"]
+        # OAuth mode via CLAUDE_CODE_OAUTH_TOKEN (not ANTHROPIC_API_KEY): Claude
+        # Code then sends `Authorization: Bearer <placeholder>` plus the oauth-*
+        # anthropic-beta headers its token requires, and the broker replaces only
+        # the Authorization value with the real Bearer (broker_credential). The
+        # beta/version headers come from Claude and forward through the broker
+        # unchanged -- verified with a live round-trip to api.anthropic.com.
+        return ["-e", f"ANTHROPIC_BASE_URL={broker_base}",
+                "-e", "CLAUDE_CODE_OAUTH_TOKEN=proxy-managed"]
 
     if harness == "codex":
         return ["-e", f"OPENAI_BASE_URL={broker_base}", "-e", "OPENAI_API_KEY=proxy-managed"]
@@ -201,18 +206,19 @@ def broker_credential(
     placeholder stands in for, read host-side via the exact same login
     ``auth_docker_args`` mounts (never a duplicate/second read of it).
 
-    ``header_name`` matches what the broker path's OWN placeholder env
-    actually sends upstream (``x-api-key`` for Claude's
-    ``ANTHROPIC_API_KEY``, ``Authorization`` for Codex's ``OPENAI_API_KEY``)
-    -- not necessarily the scheme the real credential was issued under. See
-    the module docstring's Broker section for the mismatch this creates for
-    a Claude Code OAuth login, and the staleness caveat for a Codex OAuth
-    session. Raises ``AuthUnavailable`` on the exact same "no login here"
-    conditions ``auth_docker_args`` does.
+    ``header_name`` is the header the caged CLI's placeholder makes it send,
+    which ``CredBroker`` then replaces with the real value: ``Authorization``
+    (a Bearer) for both Claude's OAuth token and Codex. See the module
+    docstring's Broker section for the Codex token-staleness caveat. Raises
+    ``AuthUnavailable`` on the exact same "no login here" conditions
+    ``auth_docker_args`` does.
     """
     if harness == "claude":
+        # Claude Code sends its OAuth token as a Bearer, not x-api-key, so the
+        # broker replaces the Authorization header the caged CLI sends (a
+        # placeholder Bearer) with the real one. Verified live.
         token = _claude_macos_token(run) if system == "Darwin" else _claude_linux_token(home)
-        return "x-api-key", token
+        return "Authorization", f"Bearer {token}"
 
     if harness == "codex":
         return "Authorization", f"Bearer {_codex_token(home)}"
