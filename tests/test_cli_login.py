@@ -67,24 +67,87 @@ def test_login_github_unreachable_message_names_github_not_the_hub(monkeypatch, 
     assert "docker compose" not in err
 
 
-def test_login_prompt_emits_clickable_hyperlink(monkeypatch):
-    """The verification URL is emitted as an OSC 8 terminal hyperlink -- so a
-    click opens the browser -- not merely styled text the terminal might fail to
-    auto-detect (it does, inside the bordered panel)."""
+_DEVICE_URL = "https://github.com/login/device"
+
+
+def _plain(ansi):
+    from rich.text import Text
+
+    return Text.from_ansi(ansi).plain
+
+
+class _Stdin:
+    """Stand-in stdin whose ``readline`` (the user pressing Enter) records
+    what was already on screen while the prompt waited."""
+
+    def __init__(self, tty, screen, events):
+        self._tty, self._screen, self._events = tty, screen, events
+
+    def isatty(self):
+        return self._tty
+
+    def readline(self):
+        self._events.append(("enter", _plain(self._screen.getvalue())))
+        return "\n"
+
+
+def _prompt(monkeypatch, *, stdin_tty=True, stderr_tty=True, can_open=True, opens=True):
+    """Run ``cli._login_prompt`` against a fake terminal and browser; return
+    the final screen text and the ordered Enter/open events."""
     import io
 
     from rich.console import Console
 
-    buf = io.StringIO()
-    monkeypatch.setattr(cli, "err", Console(file=buf, force_terminal=True, width=100))
-    monkeypatch.setattr(cli.clipboard, "copy", lambda _s: False)  # don't touch the real clipboard
+    screen = io.StringIO()
+    events = []
+    monkeypatch.setattr(cli, "err", Console(file=screen, force_terminal=stderr_tty, width=100))
+    monkeypatch.setattr(cli.clipboard, "copy", lambda _s: True)  # never the real clipboard
+    stdin = None if stdin_tty is None else _Stdin(stdin_tty, screen, events)
+    monkeypatch.setattr(cli.sys, "stdin", stdin)  # None: fd 0 closed at startup
+    monkeypatch.setattr(cli.browser, "can_open", lambda: can_open)
+    monkeypatch.setattr(
+        cli.browser, "open_url", lambda url: events.append(("open", url)) or opens
+    )
+    cli._login_prompt(_DEVICE_URL, "WDJB-MJHT")
+    return _plain(screen.getvalue()), events
 
-    url = "https://github.com/login/device"
-    cli._login_prompt(url, "WDJB-MJHT")
-    out = buf.getvalue()
 
-    assert "\x1b]8;" in out              # an OSC 8 hyperlink is emitted at all
-    assert f";{url}\x1b\\" in out        # ...and its target is the verification URL
+def test_login_prompt_shows_the_code_then_opens_the_browser_on_enter(monkeypatch):
+    # gh-style: the code is on screen first, the prompt waits for Enter, and
+    # only then does the browser open -- device_login polls after this returns.
+    _, events = _prompt(monkeypatch)
+
+    (step, on_screen), opened = events
+    assert step == "enter" and opened == ("open", _DEVICE_URL)
+    assert "WDJB-MJHT" in on_screen
+    assert "Enter" in on_screen and _DEVICE_URL in on_screen
+
+
+@pytest.mark.parametrize(
+    ("stdin_tty", "stderr_tty", "can_open"),
+    [
+        (False, True, True),  # stdin is a pipe / an agent: nobody to press Enter
+        (None, True, True),  # stdin closed (`<&-`): Python leaves sys.stdin None
+        (True, False, True),  # stderr redirected: the prompt would be invisible
+        (True, True, False),  # no browser here (plain SSH): Enter could open nothing
+    ],
+)
+def test_login_prompt_shows_the_url_without_waiting_when_it_cannot_open(
+    monkeypatch, stdin_tty, stderr_tty, can_open
+):
+    screen, events = _prompt(
+        monkeypatch, stdin_tty=stdin_tty, stderr_tty=stderr_tty, can_open=can_open
+    )
+
+    assert events == []  # never waited for Enter, never tried a browser
+    assert "WDJB-MJHT" in screen and _DEVICE_URL in screen  # all it takes by hand
+
+
+def test_login_prompt_points_at_the_url_when_the_browser_fails_to_open(monkeypatch):
+    screen, events = _prompt(monkeypatch, opens=False)
+
+    (_, before_enter), _ = events
+    assert _DEVICE_URL in screen[len(before_enter):]  # shown again after the failed open
 
 
 def test_login_passes_device_login_token_through_to_whoami_and_save(monkeypatch):
