@@ -122,6 +122,17 @@ def test_submit_gh_unauthed(monkeypatch, tmp_path, capsys):
     assert "gh not authed" in err and "gh auth login" in err
 
 
+def test_submit_gh_did_not_answer(monkeypatch, tmp_path, capsys):
+    # gh timed out: neither "not installed" nor "not authed" -- say what happened.
+    _login(monkeypatch, tmp_path)
+    monkeypatch.setattr(cli, "gh_state", lambda: (None, "unknown"))
+    rc = cli.main(["submit", "x", "--objective", "random"])
+    assert rc == 1
+    err = capsys.readouterr().err
+    assert "didn't answer" in err
+    assert "not authed" not in err and "not installed" not in err
+
+
 def test_submit_gh_account_mismatch(monkeypatch, tmp_path, capsys):
     _login(monkeypatch, tmp_path, login="sam")
     monkeypatch.setattr(cli, "gh_state", lambda: ("eve", "authed"))

@@ -957,3 +957,10 @@ async def test_start_falls_back_to_docker_when_no_runtime_is_detected(monkeypatc
         await pilot.pause()
 
         assert seen["params"].runtime == "docker"
+
+
+def test_publish_warning_names_a_gh_that_did_not_answer(monkeypatch):
+    monkeypatch.setattr(ef, "gh_state", lambda: (None, "unknown"))
+    warn = ef._publish_warning("castiel")
+    assert "didn't answer" in warn
+    assert "gh auth login" not in warn

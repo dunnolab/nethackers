@@ -39,16 +39,22 @@ def _run(run: Run, cmd: list[str], *, check: bool = True) -> subprocess.Complete
         raise PublishError(f"`{' '.join(cmd[:3])}` failed: {detail}") from e
 
 
+GH_TIMEOUT = 10  # seconds -- the codebase's convention for subprocess calls
+
+
 def gh_login(run: Run = subprocess.run) -> str | None:
     """The GitHub login `gh` is authenticated as, or ``None`` if `gh` is
     missing or not logged in.
 
     Never raises for the not-installed / not-authed case -- the caller turns
-    ``None`` into a friendly "set up gh" message rather than a crash.
+    ``None`` into a friendly "set up gh" message rather than a crash. `gh api
+    user` calls the GitHub API, so it gets ``GH_TIMEOUT``; a `gh` that doesn't
+    answer raises ``subprocess.TimeoutExpired``, which ``gh_state`` reports as
+    its own state (it is neither "missing" nor "not logged in").
     """
     try:
         proc = run(["gh", "api", "user", "-q", ".login"], check=True,
-                   capture_output=True, text=True)
+                   capture_output=True, text=True, timeout=GH_TIMEOUT)
     except (FileNotFoundError, subprocess.CalledProcessError):
         return None
     login = proc.stdout.strip()
@@ -56,12 +62,16 @@ def gh_login(run: Run = subprocess.run) -> str | None:
 
 
 def gh_state(*, run: Run = subprocess.run, which=shutil.which) -> tuple[str | None, str]:
-    """(login, state) where state is 'authed' / 'missing' / 'unauthed' -- so a
-    caller can tell "install gh" from "run gh auth login" (different fixes;
-    conflating them is a top onboarding confusion). Never raises. See spec §5.6."""
+    """(login, state) where state is 'authed' / 'missing' / 'unauthed' /
+    'unknown' -- so a caller can tell "install gh" from "run gh auth login"
+    (different fixes; conflating them is a top onboarding confusion), and a `gh`
+    that didn't answer in time from both. Never raises. See spec §5.6."""
     if which("gh") is None:
         return None, "missing"
-    login = gh_login(run=run)
+    try:
+        login = gh_login(run=run)
+    except subprocess.TimeoutExpired:
+        return None, "unknown"
     return (login, "authed") if login is not None else (None, "unauthed")
 
 

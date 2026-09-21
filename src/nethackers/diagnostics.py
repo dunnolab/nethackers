@@ -305,6 +305,10 @@ def _check_gh(
                            detail="gh is installed but not authed",
                            fix="run `gh auth login` (separate from `nethackers login`)",
                            capabilities=caps)
+    if state == "unknown":
+        return CheckResult(id="gh", status="warn", severity=severity,
+                           detail="gh didn't answer within 10s",
+                           fix="check your network, then retry", capabilities=caps)
     return CheckResult(id="gh", status="fail", severity=severity, detail="gh is not installed",
                        fix="install the GitHub CLI (`gh`), then run `gh auth login`",
                        capabilities=caps)

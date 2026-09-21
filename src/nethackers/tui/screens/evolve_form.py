@@ -96,6 +96,8 @@ def _publish_warning(owner: str) -> str:
     if state == "unauthed":
         return ("[yellow]wins won't publish[/] — run `gh auth login` "
                 "(separate from `nethackers login`)")
+    if state == "unknown":
+        return "[dim]couldn't check GitHub publishing — `gh` didn't answer[/]"
     return ""  # authed -- nothing to warn about
 
 

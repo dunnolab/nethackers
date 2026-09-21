@@ -46,3 +46,9 @@ def test_evolve_warns_when_gh_missing(monkeypatch, capsys):
 def test_evolve_quiet_when_gh_authed(monkeypatch, capsys):
     err = _run_evolve(monkeypatch, capsys, ("octocat", "authed"))
     assert "wins won't publish" not in err
+
+
+def test_evolve_says_gh_did_not_answer_when_it_times_out(monkeypatch, capsys):
+    err = _run_evolve(monkeypatch, capsys, (None, "unknown"))
+    assert "didn't answer" in err
+    assert "gh auth login" not in err
