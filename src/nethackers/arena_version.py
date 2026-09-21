@@ -150,6 +150,28 @@ ARENA_MAJOR_BY_DIGEST: dict[str, int] = {
     # 12, so that is the counter's run-to-run noise, not this rebuild. Also the
     # linux/amd64 LEG (I7).
     "sha256:76dea5e0da80a4fb9f05706fa3bfdf43c72925f8e892f80f28fe032502902f60": 2,
+    # v0.34.0 (secure untrusted code + OpenCode 1.x). The FIRST rebuild that
+    # touches the arena SCORING PATH itself, not just uv.lock/version -- three
+    # files under the image differ from the digest above: arena/run.py,
+    # arena/result_io.py (new) and contracts/models.py. SCORES DO NOT MOVE, and
+    # this is a STRUCTURAL proof, not a measurement:
+    #   - run.py is a pure refactor: run_batch's body from the spec onward was
+    #     lifted verbatim into run_prepared (identical Objective(...), identical
+    #     run_trajectory, identical fan-out). run_batch now derives the spec then
+    #     calls run_prepared; a new stdin path feeds host-pre-derived specs into
+    #     that SAME run_prepared. For any (seed, character) the spec -> objective
+    #     -> episode -> score pipeline is byte-identical; only the spec's INPUT
+    #     SOURCE changed (stdin vs in-container secret derivation, threat 3/INV3).
+    #   - the round-trip is lossless: TrajectorySpec.to_dict()=asdict and
+    #     from_dict()=cls(**value) over int-seed/str fields, so the reconstructed
+    #     spec equals the one --batch derives from the same seed.
+    #   - result_io.py only refuses a symlink/oversize/non-list results file --
+    #     output a legitimate bot never writes; a normal results.json reads the
+    #     same. nle-base/Dockerfile and arena/Dockerfile are unchanged; uv.lock is
+    #     the version-only 0.33.1 -> 0.34.0 line. The linux/amd64 LEG (I7). Read
+    #     from the diff: the pipeline is provably identical, so no re-run could
+    #     disconfirm it.
+    "sha256:3bf9731637eb647ac07baaa6b59087012151a568b0ca2a8589ad1e086b0767a7": 2,
 }
 
 
