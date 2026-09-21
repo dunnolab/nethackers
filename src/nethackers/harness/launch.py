@@ -85,12 +85,21 @@ class EvolveParams:
     workdir: str = field(default_factory=_default_workdir)
     run_name: str | None = None
     from_seed: bool = False  # skip SELECT; cold-start from `seed` directly
+    # Network tier the cold-start SELECT reads elites/the board from --
+    # "self-reported" is the fast default; "verified" opts into the trusted
+    # (worker-scored) network instead, e.g. for a hardened cold start.
+    tier: str = "self-reported"
     offline: bool = False  # explicit no-publish/no-register gate (hub is still read for seeding)
     model: str | None = None   # pin the operator's model (None = harness default)
     effort: str | None = None  # reasoning effort level (None = harness default)
     mutator_image: str = field(
         default_factory=lambda: resolve_image(load_stage().mutator_image, "mutator"))
     repo_name: str = field(default_factory=lambda: load_stage().repo_name)  # <owner>/<repo_name>
+    # Opt into ContainerOperator's credential-broker path (§3d, INV2) instead
+    # of its default credential mount. False keeps every existing run
+    # byte-identical; live per-agent broker auth is unverified, so this isn't
+    # switched on by default -- see container_operator.py's module docstring.
+    broker: bool = False
 
 
 @dataclass
@@ -241,6 +250,7 @@ def prepare_evolve(
     operator: Any = ContainerOperator(
         harness=params.operator, image=params.mutator_image,
         model=params.model, effort=params.effort, run_id=rid, docker=params.runtime,
+        broker=params.broker,
         # Rootless podman maps the host user to container uid 0, so the cage's
         # bind-mounted /workspace stats as root-owned inside and the
         # entrypoint's drop to the non-root `agent` can't write it (#54).
@@ -268,7 +278,7 @@ def prepare_evolve(
             tree_store=store, operator=operator,
             hub=hub, image=params.image, token=params.token,
             owner=params.owner, iterations=params.iterations,
-            from_seed=params.from_seed, rng=random.Random(rid),
+            from_seed=params.from_seed, tier=params.tier, rng=random.Random(rid),
             max_parallel_evals=params.max_parallel_evals, stop=callbacks.get("stop"),
             runtime=params.runtime,
             now_fn=_now, report=report, on_episode=callbacks["on_episode"],

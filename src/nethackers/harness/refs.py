@@ -12,6 +12,25 @@ from pathlib import Path
 
 from nethackers.hubclient.publish import _junk_ignore
 
+# Instruction-bearing files/dirs a pulled tree may carry: coding-agent config
+# and rule files that a prompt-injection attack could plant to hijack the
+# mutator's agent (spec §3d). Stripped -- not just hidden -- before the agent
+# ever reads the tree; README.md and ordinary code are untouched.
+_AGENT_CONFIG_NAMES = (
+    "CLAUDE.md", "AGENTS.md", ".mcp.json", ".envrc",
+    ".claude", ".codex", ".cursor", ".cursorrules", ".vscode",
+)
+AGENT_CONFIG_IGNORE = shutil.ignore_patterns(*_AGENT_CONFIG_NAMES)
+
+
+def _mutator_ignore(dir: str, names: list[str]) -> set[str]:
+    """Combined ``shutil.copytree`` ignore for every copy that feeds the
+    mutator's coding agent (worktree + /refs/): build junk (``_junk_ignore``)
+    union agent-config/instruction files (``AGENT_CONFIG_IGNORE``). A single
+    ``ignore=`` callable is all ``copytree`` accepts, so the two patterns are
+    combined here rather than applied separately."""
+    return set(_junk_ignore(dir, names)) | set(AGENT_CONFIG_IGNORE(dir, names))
+
 
 @dataclass
 class Attempt:
@@ -65,12 +84,12 @@ def _render_attempts(attempts: list[Attempt], identities: list[str]) -> str:
 def assemble(dest: Path, *, parent: Path, parent_eval: str | None,
              attempts: list[Attempt], identities: list[str]) -> None:
     dest.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(parent, dest / "parent", ignore=_junk_ignore)
+    shutil.copytree(parent, dest / "parent", ignore=_mutator_ignore)
     if parent_eval is not None:
         (dest / "parent-eval.json").write_text(parent_eval)
     for a in attempts:
         adir = dest / "attempts" / a.label
-        shutil.copytree(a.tree, adir, ignore=_junk_ignore)
+        shutil.copytree(a.tree, adir, ignore=_mutator_ignore)
         if a.eval_json:
             (adir / "eval.json").write_text(a.eval_json)
     (dest / "attempts.md").write_text(_render_attempts(attempts, identities))

@@ -1,4 +1,5 @@
 # tests/test_container_operator.py
+import json
 import os
 import subprocess
 import threading
@@ -73,8 +74,10 @@ def test_opencode2_in_cage_runs_json_and_auto_approves():
     assert a[a.index("--format") + 1] == "json"
     assert "--thinking" in a
     assert "--auto" in a
-    assert "--standalone" in a
-    assert a[a.index("--model") + 1] == "gpt-x#high"
+    assert "--standalone" not in a  # dropped in opencode-ai@1.x
+    # effort rides a dedicated --variant flag now, not a `model#variant` suffix
+    assert a[a.index("--model") + 1] == "gpt-x"
+    assert a[a.index("--variant") + 1] == "high"
 
 
 def test_opencode2_brief_goes_on_stdin_not_in_argv():
@@ -422,6 +425,294 @@ def test_stop_reliably_kills_even_when_run_operators_watcher_wins_the_race(
     )
 
 
+# --- selectable credential broker path (§3d, INV2) -------------------------
+#
+# `broker=True` swaps the credential MOUNT for base-URL env args pointing at
+# a `CredBroker` this module starts/stops around the container's lifetime.
+# Both the broker factory and the host-side credential read are injected
+# fakes -- no real server, no real Keychain/`.codex`/`.credentials.json`
+# touched by these tests.
+
+class _FakeBroker:
+    """Stands in for `cred_broker.CredBroker`: records ctor args, fakes
+    start()/stop() so no real socket/thread is ever created in a test.
+    `port` defaults to the single-broker tests' existing hardcoded 9999; the
+    multi-broker (opencode2) tests further down pass a distinct one per
+    instance so two concurrently-"started" fakes are tellable apart."""
+
+    def __init__(self, upstream_base, header_name, header_value, port=9999):
+        self.upstream_base = upstream_base
+        self.header_name = header_name
+        self.header_value = header_value
+        self.port = port
+        self.started = False
+        self.stopped = False
+
+    def start(self):
+        self.started = True
+        return f"http://127.0.0.1:{self.port}"
+
+    def stop(self):
+        self.stopped = True
+
+
+def _broker_op(tmp_path, harness="claude", **kw):
+    holder = {}
+
+    def fake_factory(upstream_base, header_name, header_value):
+        b = _FakeBroker(upstream_base, header_name, header_value)
+        holder["broker"] = b
+        return b
+
+    op = ContainerOperator(
+        harness=harness, image="img:test", system="Linux", home=tmp_path,
+        broker=True,
+        cred_broker_factory=fake_factory,
+        broker_credential=lambda *a, **kw: ("x-api-key", "REAL-SECRET-VALUE"),
+        **kw,
+    )
+    return op, holder
+
+
+def test_broker_path_claude_env_and_add_host_no_mount(tmp_path):
+    seen = {}
+    op, holder = _broker_op(tmp_path, harness="claude")
+    wt = tmp_path / "work" / "iter-1"
+    wt.mkdir(parents=True)
+    op._popen = lambda cmd, **kw: seen.setdefault("cmd", cmd) and FakePopen(cmd, **kw)
+
+    op.run(wt, "BRIEF-TEXT")
+
+    cmd = seen["cmd"]
+    joined = " ".join(cmd)
+    assert "ANTHROPIC_BASE_URL=http://host.docker.internal:9999" in joined
+    assert "ANTHROPIC_API_KEY=proxy-managed" in joined
+    assert "--add-host" in cmd
+    assert cmd[cmd.index("--add-host") + 1] == "host.docker.internal:host-gateway"
+    assert "REAL-SECRET-VALUE" not in joined   # real key never reaches argv
+    # no credential mount -- the only -v left is the workspace mount
+    v_values = [v for flag, v in zip(cmd, cmd[1:], strict=False) if flag == "-v"]
+    assert v_values == [f"{wt}:/workspace"]
+    assert holder["broker"].upstream_base == "https://api.anthropic.com"
+    assert holder["broker"].header_name == "x-api-key"
+    assert holder["broker"].header_value == "REAL-SECRET-VALUE"
+    assert holder["broker"].started is True
+    assert holder["broker"].stopped is True
+
+
+def test_broker_path_codex_env_and_add_host_no_mount(tmp_path):
+    seen = {}
+    op, holder = _broker_op(tmp_path, harness="codex")
+    wt = tmp_path / "work" / "iter-1"
+    wt.mkdir(parents=True)
+    op._popen = lambda cmd, **kw: seen.setdefault("cmd", cmd) and FakePopen(cmd, **kw)
+
+    op.run(wt, "BRIEF-TEXT")
+
+    cmd = seen["cmd"]
+    joined = " ".join(cmd)
+    assert "OPENAI_BASE_URL=http://host.docker.internal:9999" in joined
+    assert "OPENAI_API_KEY=proxy-managed" in joined
+    assert "--add-host" in cmd
+    assert "REAL-SECRET-VALUE" not in joined
+    v_values = [v for flag, v in zip(cmd, cmd[1:], strict=False) if flag == "-v"]
+    assert v_values == [f"{wt}:/workspace"]
+    assert holder["broker"].upstream_base == "https://api.openai.com"
+    assert holder["broker"].started is True
+    assert holder["broker"].stopped is True
+
+
+def test_broker_stopped_even_if_the_run_raises(tmp_path):
+    op, holder = _broker_op(tmp_path, harness="codex")
+    wt = tmp_path / "work" / "iter-1"
+    wt.mkdir(parents=True)
+
+    def boom(cmd, **kw):
+        raise RuntimeError("boom")
+    op._popen = boom
+
+    with pytest.raises(RuntimeError):
+        op.run(wt, "BRIEF-TEXT")
+
+    assert holder["broker"].started is True
+    assert holder["broker"].stopped is True
+
+
+def test_broker_off_by_default_keeps_the_mount_and_no_add_host(tmp_path):
+    # Regression pin: constructing/running WITHOUT `broker=` at all must stay
+    # byte-identical to the pre-broker mount path -- nothing above may change
+    # default behavior.
+    seen = {}
+    op = ContainerOperator(harness="codex", image="img:test", system="Linux", home=tmp_path)
+    (tmp_path / ".codex").mkdir()
+    wt = tmp_path / "work" / "iter-1"
+    wt.mkdir(parents=True)
+    op._popen = lambda cmd, **kw: seen.setdefault("cmd", cmd) and FakePopen(cmd, **kw)
+
+    op.run(wt, "BRIEF-TEXT")
+
+    cmd = seen["cmd"]
+    assert "--add-host" not in cmd
+    assert f"{tmp_path}/.codex:/home/agent/.codex" in cmd
+    assert "OPENAI_BASE_URL" not in " ".join(cmd)
+
+
+def test_build_docker_argv_extra_args_precede_the_image():
+    a = _argv("codex", extra_args=["--add-host", "host.docker.internal:host-gateway"])
+    assert "--add-host" in a
+    assert a.index("--add-host") < a.index("nethackers/mutator:test")
+    assert a[a.index("--add-host") + 1] == "host.docker.internal:host-gateway"
+
+
+def test_build_docker_argv_no_extra_args_by_default():
+    a = _argv("codex")
+    assert "--add-host" not in a
+
+
+# --- opencode2 multi-broker path (§3d, INV2) --------------------------------
+#
+# opencode2 is multi-provider: unlike claude/codex's single `broker_proc`,
+# `broker=True` here starts one `CredBroker` PER BROKERABLE PROVIDER
+# (`auth_inject.opencode2_broker_targets`) and rewrites the cage config to
+# point each at its own broker (`opencode2_broker_docker_args`). A config
+# with no brokerable provider falls back to the plain credential mount
+# instead of starting zero brokers around an empty broker config.
+
+def _opencode_global_config(home: Path, doc: dict, name: str = "opencode.json") -> None:
+    path = home / ".config" / "opencode" / name
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(doc))
+
+
+def _read_mounted_opencode_config(cmd: list[str], name: str = "opencode.json") -> dict:
+    suffix = f":/home/agent/.config/opencode/{name}:ro"
+    for flag, value in zip(cmd, cmd[1:], strict=False):
+        if flag == "-v" and value.endswith(suffix):
+            return json.loads(Path(value.removesuffix(suffix)).read_text())
+    raise AssertionError(f"no opencode cage config mounted for {name} in {cmd}")
+
+
+def _numbered_broker_factory(holder: list):
+    """Like the single-broker tests' inline `fake_factory`, but for
+    opencode2's N-brokers-per-run path: every call gets its own `_FakeBroker`
+    on a distinct port (9001, 9002, ...) so a test can tell which broker
+    served which provider, and appends each to `holder` -- there's no single
+    `holder["broker"]` slot once a run can start more than one."""
+    def factory(upstream_base, header_name, header_value):
+        b = _FakeBroker(upstream_base, header_name, header_value, port=9000 + len(holder) + 1)
+        holder.append(b)
+        return b
+    return factory
+
+
+def test_broker_path_opencode2_starts_one_broker_per_brokerable_provider(monkeypatch, tmp_path):
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    monkeypatch.setenv("LEFTOVER_TOKEN", "leftover-value")
+    _opencode_global_config(tmp_path, {
+        "provider": {
+            "anthropic": {"options": {"apiKey": "sk-ant-real"}},
+            "custom": {"options": {"apiKey": "sk-custom-real",
+                                   "baseURL": "https://api.custom.example/v1"}},
+            # not brokerable (a {file:} key) but carries its own env ref --
+            # exercises that non-brokered forwarding still works end-to-end
+            # alongside two brokered providers in the same run.
+            "leftover": {"options": {"apiKey": "{file:~/.secrets/k}"},
+                        "env": ["LEFTOVER_TOKEN"]},
+        },
+    })
+    brokers: list = []
+    op = ContainerOperator(
+        harness="opencode2", image="img:test", system="Linux", home=tmp_path,
+        broker=True, cred_broker_factory=_numbered_broker_factory(brokers),
+    )
+    seen = {}
+    op._popen = lambda cmd, **kw: seen.setdefault("cmd", cmd) and FakePopen(cmd, **kw)
+    wt = tmp_path / "work" / "iter-1"
+    wt.mkdir(parents=True)
+
+    op.run(wt, "BRIEF-TEXT")
+
+    assert len(brokers) == 2   # one per BROKERABLE provider -- "leftover" is not one
+    by_upstream = {b.upstream_base: b for b in brokers}
+    assert by_upstream["https://api.anthropic.com"].header_name == "x-api-key"
+    assert by_upstream["https://api.anthropic.com"].header_value == "sk-ant-real"
+    assert by_upstream["https://api.custom.example/v1"].header_name == "Authorization"
+    assert by_upstream["https://api.custom.example/v1"].header_value == "Bearer sk-custom-real"
+    assert all(b.started for b in brokers)
+    assert all(b.stopped for b in brokers)
+
+    cmd = seen["cmd"]
+    joined = " ".join(cmd)
+    assert "sk-ant-real" not in joined
+    assert "sk-custom-real" not in joined
+    assert cmd.count("--add-host") == 1     # one add-host, not one per broker
+    assert "host.docker.internal:host-gateway" in cmd
+    assert "LEFTOVER_TOKEN" in cmd          # non-brokered provider still forwarded by name
+    assert "leftover-value" not in joined   # ...but only by name, never its value
+
+    mounted = _read_mounted_opencode_config(cmd)
+    anthropic_opts = mounted["provider"]["anthropic"]["options"]
+    custom_opts = mounted["provider"]["custom"]["options"]
+    assert anthropic_opts["apiKey"] == "proxy-managed"
+    assert custom_opts["apiKey"] == "proxy-managed"
+    assert anthropic_opts["baseURL"].startswith("http://host.docker.internal:")
+    assert custom_opts["baseURL"].startswith("http://host.docker.internal:")
+    assert anthropic_opts["baseURL"] != custom_opts["baseURL"]   # each got its OWN broker
+    assert mounted["provider"]["leftover"]["options"]["apiKey"] == "{file:~/.secrets/k}"
+
+
+def test_broker_path_opencode2_falls_back_to_mount_when_nothing_is_brokerable(
+    monkeypatch, tmp_path,
+):
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    _opencode_global_config(tmp_path, {
+        "provider": {"custom": {"options": {"apiKey": "{file:~/.secrets/k}"}}},
+    })
+    brokers: list = []
+    op = ContainerOperator(
+        harness="opencode2", image="img:test", system="Linux", home=tmp_path,
+        broker=True, cred_broker_factory=_numbered_broker_factory(brokers),
+    )
+    seen = {}
+    op._popen = lambda cmd, **kw: seen.setdefault("cmd", cmd) and FakePopen(cmd, **kw)
+    wt = tmp_path / "work" / "iter-1"
+    wt.mkdir(parents=True)
+
+    op.run(wt, "BRIEF-TEXT")
+
+    assert brokers == []                    # zero brokerable providers -- zero brokers started
+    cmd = seen["cmd"]
+    assert "--add-host" not in cmd
+    mounted = _read_mounted_opencode_config(cmd)
+    assert mounted == {"provider": {"custom": {"options": {"apiKey": "{file:~/.secrets/k}"}}}}
+
+
+def test_broker_path_opencode2_stops_all_brokers_even_if_the_run_raises(monkeypatch, tmp_path):
+    monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
+    _opencode_global_config(tmp_path, {
+        "provider": {
+            "anthropic": {"options": {"apiKey": "sk-ant"}},
+            "custom": {"options": {"apiKey": "sk-custom",
+                                   "baseURL": "https://api.custom.example/v1"}},
+        },
+    })
+    brokers: list = []
+    op = ContainerOperator(
+        harness="opencode2", image="img:test", system="Linux", home=tmp_path,
+        broker=True, cred_broker_factory=_numbered_broker_factory(brokers),
+    )
+
+    def boom(cmd, **kw):
+        raise RuntimeError("boom")
+    op._popen = boom
+    wt = tmp_path / "work" / "iter-1"
+    wt.mkdir(parents=True)
+
+    with pytest.raises(RuntimeError):
+        op.run(wt, "BRIEF-TEXT")
+
+    assert len(brokers) == 2
+    assert all(b.started and b.stopped for b in brokers)
 # --- rootless-podman userns args (issue #54) --------------------------------
 # `nonroot_userns_args` (containers.py) decides WHETHER these are needed by
 # probing the runtime; build_docker_argv/ContainerOperator only carry them, so

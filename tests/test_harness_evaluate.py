@@ -7,7 +7,7 @@ from nethackers.harness.seeds import dev_spec
 
 
 def _fake_runner(results):
-    def fake(cmd, check):
+    def fake(cmd, check, input=None):
         host_out = next(v.removesuffix(":/out") for v in cmd if v.endswith(":/out"))
         Path(host_out, "results.json").write_text(json.dumps(results))
     return fake

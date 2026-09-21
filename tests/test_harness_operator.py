@@ -157,14 +157,28 @@ def test_opencode2_cmd_is_headless_auto_approved_and_pinned():
     assert cmd[cmd.index("--format") + 1] == "json"
     assert "--thinking" in cmd
     assert "--auto" in cmd
-    assert "--standalone" in cmd
-    assert cmd[cmd.index("--model") + 1] == "openai/gpt-5#high"
+    assert "--standalone" not in cmd  # dropped in opencode-ai@1.x
+    # effort is a dedicated --variant flag now, not a `model#variant` suffix
+    assert cmd[cmd.index("--model") + 1] == "openai/gpt-5"
+    assert cmd[cmd.index("--variant") + 1] == "high"
 
 
 def test_opencode2_cmd_leaves_model_and_variant_unpinned_by_default():
     cmd = _opencode2_cmd("opencode2", None, None)
     assert "--model" not in cmd
+    assert "--variant" not in cmd
     assert "--thinking" in cmd
+
+
+def test_opencode2_cmd_maps_a_legacy_hash_variant_onto_the_variant_flag():
+    # A model still carrying the beta's `provider/model#variant` suffix is
+    # split: base to --model, embedded variant to --variant. An explicit
+    # effort wins over an embedded one.
+    cmd = _opencode2_cmd("opencode2", "openai/gpt-5#high", None)
+    assert cmd[cmd.index("--model") + 1] == "openai/gpt-5"
+    assert cmd[cmd.index("--variant") + 1] == "high"
+    cmd = _opencode2_cmd("opencode2", "openai/gpt-5#high", "max")
+    assert cmd[cmd.index("--variant") + 1] == "max"
 
 
 def test_run_operator_feeds_stdin_text_and_closes_it(tmp_path):

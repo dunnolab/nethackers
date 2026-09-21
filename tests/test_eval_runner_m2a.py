@@ -12,6 +12,7 @@ launches a container, it locates the host directory bind-mounted at
 results.json there itself -- one dict per batch episode, in batch order.
 """
 
+import io
 import json
 import os
 import subprocess
@@ -20,6 +21,7 @@ from pathlib import Path
 import pytest
 
 from nethackers import _image_pins
+from nethackers.arena.seeds import trajectory_spec
 from nethackers.contracts.models import ObjectiveSpec
 from nethackers.eval import runner as eval_runner
 from nethackers.eval.runner import _default_image_digest, eval_batch
@@ -70,15 +72,20 @@ _RESULTS = [
 ]
 
 
-def _make_fake_docker_run(calls):
-    """Build a fake ``runner``: records the ``cmd`` it was called with, then
-    -- instead of launching a container -- writes a results.json directly
-    into the host directory the real docker command would have bind-mounted
-    at /out (found via the "-v <host>:/out" argument)."""
+def _make_fake_docker_run(calls, inputs=None):
+    """Build a fake ``runner``: records the ``cmd`` it was called with (and,
+    when ``inputs`` is given, the piped ``input=`` payload too -- the
+    pre-derived specs eval_batch now feeds the container over stdin instead
+    of a secret on argv/env), then -- instead of launching a container --
+    writes a results.json directly into the host directory the real docker
+    command would have bind-mounted at /out (found via the "-v <host>:/out"
+    argument)."""
 
-    def fake(cmd, check):
+    def fake(cmd, check=True, input=None):
         calls.append(cmd)
         assert check is True
+        if inputs is not None:
+            inputs.append(input)
         host_out = next(v.removesuffix(":/out") for v in cmd if v.endswith(":/out"))
         Path(host_out, "results.json").write_text(json.dumps(_RESULTS))
 
@@ -124,17 +131,65 @@ def test_eval_batch_wraps_container_results_into_evidence(tmp_path):
     assert ev.objective.no_progress_timeout == _SPEC.no_progress_timeout
     assert ev.objective.action_timeout_seconds == _SPEC.action_timeout_seconds
 
-    # Command-building: --network none, solution mounted read-only, and the
-    # batch passed as [[seed, character], ...] JSON (not --character/--seeds).
+    # Command-building: sealed box (offline_flags, threat 4), solution
+    # mounted read-only, and no per-episode seed data on argv at all -- the
+    # concrete specs are derived host-side and piped in over stdin instead
+    # (Task 7, threat 3 a,b -- see test_eval_batch_never_puts_the_secret_
+    # in_the_container below for that wiring).
     cmd = calls[0]
     # No --platform here: "img:dev" is an override, not the pin. See
     # test_platform_flag_is_scoped_to_the_pinned_arena_image below.
-    assert cmd[:5] == ["docker", "run", "--rm", "--network", "none"]
+    assert cmd[:2] == ["docker", "run"]
+    assert "-i" in cmd  # keeps stdin open so the container can read the specs
     assert f"{sol}:/sol:ro" in cmd
-    expected_batch_arg = json.dumps([[seed, char] for seed, char in _SPEC.batch])
-    assert cmd[cmd.index("--batch") + 1] == expected_batch_arg
+    assert "--batch" not in cmd
     assert "--character" not in cmd
     assert "--seeds" not in cmd
+    # Sealed box (spec sec3b, threat 4): --network none now lives inside
+    # offline_flags() (after --name/--label), alongside the read-only
+    # rootfs, dropped capabilities, no-new-privileges, and resource caps --
+    # plus an in-image wall-clock timeout as an outer DoS bound.
+    assert cmd[cmd.index("--network") + 1] == "none"
+    for need in [
+        "--read-only", "--cap-drop", "ALL", "--security-opt",
+        "no-new-privileges", "--pids-limit", "--memory", "--cpus",
+        "--user", "timeout",
+    ]:
+        assert need in cmd, need
+
+
+def test_arena_run_is_wrapped_by_an_entrypoint_override_timeout(tmp_path):
+    """CRITICAL fix-round-1 #1: the wall-clock timeout must WRAP the arena
+    entrypoint via ``--entrypoint timeout``, not sit as a trailing CMD arg
+    after the image -- the latter shape gets swallowed as bogus argv to the
+    image's baked ``python -m nethackers.arena.run`` entrypoint, which
+    argparse rejects ("unrecognized arguments: timeout 3600"), failing
+    EVERY real ``eval_batch`` call (self-report eval/submit, evolve scoring,
+    the verified-tier worker). Only a real docker daemon caught that
+    regression -- every other test in this file stayed green -- so this
+    structural check on the fake-captured argv is the enforceable
+    regression gate until Task 8 rebuilds+re-pins the arena image for a
+    real docker-gated smoke."""
+    sol = tmp_path / "sol"
+    sol.mkdir()
+    (sol / "bot.py").write_text("x")
+    calls: list = []
+
+    eval_batch(sol, _SPEC, "img:dev", now="t",
+               runner=_make_fake_docker_run(calls),
+               image_digest_resolver=lambda img: "img@sha256:deadbeef")
+
+    cmd = calls[0]
+    # --entrypoint OVERRIDES the image's baked entrypoint with bare `timeout`...
+    assert cmd[cmd.index("--entrypoint") + 1] == "timeout"
+    # ...so the post-image command must re-state the FULL invocation as
+    # timeout's own argv (`timeout <seconds> python -m nethackers.arena.run
+    # --solution /sol ...`) -- NOT `--solution /sol ...` right after the
+    # image, which is exactly the regression shape this test pins against.
+    image_idx = cmd.index("img:dev")
+    assert cmd[image_idx + 1] == str(eval_runner.WALL_TIMEOUT_S)
+    assert cmd[image_idx + 2 : image_idx + 5] == ["python", "-m", "nethackers.arena.run"]
+    assert cmd[image_idx + 5] == "--solution"
 
 
 @pytest.mark.parametrize(
@@ -164,11 +219,15 @@ def test_platform_flag_is_scoped_to_the_pinned_arena_image(tmp_path, image, expe
     cmd = calls[0]
     assert ("--platform" in cmd) is expect_platform
     if expect_platform:
-        assert cmd[:7] == [
-            "docker", "run", "--platform", "linux/amd64", "--rm", "--network", "none",
-        ]
+        assert cmd[:4] == ["docker", "run", "--platform", "linux/amd64"]
+        assert cmd[4] == "--rm"
     else:
-        assert cmd[:5] == ["docker", "run", "--rm", "--network", "none"]
+        assert cmd[:2] == ["docker", "run"]
+        assert cmd[2] == "--rm"
+    # Sealed regardless of the platform flag's presence -- see
+    # test_eval_batch_wraps_container_results_into_evidence for the full
+    # sealed-flag membership check.
+    assert cmd[cmd.index("--network") + 1] == "none"
 
 
 def test_already_pinned_refs_skip_the_runtime_round_trip():
@@ -312,17 +371,36 @@ def test_eval_batch_streams_per_episode_when_on_episode_given(tmp_path):
         "arena · episode 2/2 (wiz-elf-cha-mal): progress=1.0 ascended turns=20 depth=30\n",
     ]
 
+    class _FakeStdin:
+        """A ``.write()``/``.close()`` sink that keeps its content readable
+        after ``close()`` -- unlike a real ``io.StringIO``, whose buffer is
+        gone once closed -- so the test can inspect what got written."""
+
+        def __init__(self) -> None:
+            self.value = ""
+
+        def write(self, data: str) -> None:
+            self.value += data
+
+        def close(self) -> None:
+            pass
+
     class _FakeProc:
         def __init__(self, out_dir: str) -> None:
             Path(out_dir, "results.json").write_text(json.dumps(_RESULTS))
             self.stderr = iter(lines)
+            self.stdin = _FakeStdin()  # the streaming path writes specs here too
 
         def wait(self) -> int:
             return 0
 
-    def fake_popen(cmd, *, stdout, stderr, text, bufsize):
+    procs: list = []
+
+    def fake_popen(cmd, *, stdin, stdout, stderr, text, bufsize):
         out_dir = next(v.removesuffix(":/out") for v in cmd if v.endswith(":/out"))
-        return _FakeProc(out_dir)
+        proc = _FakeProc(out_dir)
+        procs.append(proc)
+        return proc
 
     ev = eval_batch(
         sol, _SPEC, "img:dev", now="2026-08-09T00:00:00Z",
@@ -337,6 +415,12 @@ def test_eval_batch_streams_per_episode_when_on_episode_given(tmp_path):
     assert events[1]["progress"] == 1.0 and events[1]["depth"] == 30
     # Authoritative aggregate still comes from results.json.
     assert ev.episodes == 2 and ev.ascensions == 1
+    # The streaming (Popen) path feeds the container the same pre-derived
+    # specs the non-streaming (runner) path does -- only the invocation
+    # mechanism differs, not what the container receives.
+    streamed_payload = json.loads(procs[0].stdin.value)
+    assert streamed_payload[0]["character"] == "val-dwa-law-fem"
+    assert "core_seed" in streamed_payload[0]["spec"]
 
 
 def test_eval_batch_attaches_docker_stderr_on_nonzero_exit(tmp_path):
@@ -352,10 +436,11 @@ def test_eval_batch_attaches_docker_stderr_on_nonzero_exit(tmp_path):
     class _FailProc:
         def __init__(self) -> None:
             self.stderr = iter(lines)
+            self.stdin = io.StringIO()
         def wait(self) -> int:
             return 125
 
-    def fake_popen(cmd, *, stdout, stderr, text, bufsize):
+    def fake_popen(cmd, *, stdin, stdout, stderr, text, bufsize):
         return _FailProc()
 
     with pytest.raises(subprocess.CalledProcessError) as ei:
@@ -366,29 +451,54 @@ def test_eval_batch_attaches_docker_stderr_on_nonzero_exit(tmp_path):
     assert "pull access denied" in (ei.value.stderr or "")
 
 
-def test_eval_batch_passes_secret_via_env_not_argv(tmp_path):
+def test_eval_batch_never_puts_the_secret_in_the_container(tmp_path):
+    """threat 3 (a),(b) / INV3: the secret must reach neither the container's
+    argv nor its environment -- eval_batch now derives the concrete
+    per-trajectory seeds HOST-side and pipes only those, pre-derived, in over
+    stdin. This is the trusted path worker/verify.py uses with the (hidden)
+    verified-tier secret, so a leak here is the whole point of Task 7."""
     sol = tmp_path / "sol"
     sol.mkdir()
     (sol / "bot.py").write_text("x")
-    calls = []
+    calls: list = []
+    inputs: list = []
+
     eval_batch(
         sol, _SPEC, "img:dev", now="2026-09-03T00:00:00Z",
-        runner=_make_fake_docker_run(calls),
+        runner=_make_fake_docker_run(calls, inputs),
         image_digest_resolver=lambda img: "img@sha256:deadbeef",
-        secret="s3cr3t",
+        secret="TOPSECRET",
     )
+
     cmd = calls[0]
-    assert "-e" in cmd and "NETHACK_ARENA_SECRET=s3cr3t" in cmd
-    assert "--secret" not in cmd            # never on argv
-    assert cmd[cmd.index("--evaluation-id") + 1] == "local"
+    joined = " ".join(cmd)
+    assert "TOPSECRET" not in joined
+    assert "NETHACK_ARENA_SECRET" not in joined
+    assert "--secret" not in cmd
+    assert "--batch" not in cmd
+    assert "--evaluation-id" not in cmd
+
+    # The concrete seeds arrive only on stdin, as pre-derived specs -- and are
+    # the SAME seeds a container-side derivation would have produced (INV3:
+    # same secret + seed => same games -- moving the derivation host-side
+    # must not change scoring).
+    payload = json.loads(inputs[0])
+    assert [entry["character"] for entry in payload] == list(_SPEC.characters())
+    for (seed, _char), entry in zip(_SPEC.batch, payload, strict=True):
+        assert entry["spec"] == trajectory_spec("TOPSECRET", "local", seed).to_dict()
 
 
-def test_eval_batch_defaults_secret_to_public(tmp_path):
+def test_eval_batch_derives_seeds_with_the_default_public_secret(tmp_path):
     sol = tmp_path / "sol"
     sol.mkdir()
     (sol / "bot.py").write_text("x")
-    calls = []
+    calls: list = []
+    inputs: list = []
+
     eval_batch(sol, _SPEC, "img:dev", now="2026-09-03T00:00:00Z",
-               runner=_make_fake_docker_run(calls),
+               runner=_make_fake_docker_run(calls, inputs),
                image_digest_resolver=lambda img: "img@sha256:deadbeef")
-    assert "NETHACK_ARENA_SECRET=public" in calls[0]
+
+    assert "NETHACK_ARENA_SECRET" not in " ".join(calls[0])
+    payload = json.loads(inputs[0])
+    assert payload[0]["spec"] == trajectory_spec("public", "local", _SPEC.batch[0][0]).to_dict()

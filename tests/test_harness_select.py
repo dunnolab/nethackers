@@ -16,7 +16,8 @@ def test_per_identity_elites_returns_global_top_with_resolved_tree(tmp_path):
     lo_a = {**entry_a, "program_id": "prog_" + "c" * 32, "score": 0.1,
             "reference": {"repo": "github.com/x/repo", "commit": "c" * 40}}
     class _Hub:
-        def elites(self, objective):
+        def elites(self, objective, tier="self-reported"):
+            assert tier == "self-reported"
             return {id_a: [lo_a, entry_a], id_b: []}.get(objective, [])
     def fetch(entry, dest):
         dest = Path(dest)
@@ -32,6 +33,20 @@ def test_per_identity_elites_returns_global_top_with_resolved_tree(tmp_path):
     assert (tree / "bot.py").exists()
 
 
+def test_per_identity_elites_requests_the_given_tier():
+    # Task 12: `tier` threads straight through to `hub.elites` -- lets
+    # cold-start pull cell seeds from the verified network instead of the
+    # default self-reported one.
+    from nethackers.harness import select
+    seen = []
+    class Hub:
+        def elites(self, scope, tier="self-reported"):
+            seen.append((scope, tier))
+            return []
+    select.per_identity_elites(Hub(), ("val-dwa-law-fem",), store=object(), tier="verified")
+    assert seen == [("val-dwa-law-fem", "verified")]
+
+
 def test_per_identity_elites_uses_another_owners_global_leader(tmp_path):
     # Cold-start follows the public per-identity leaderboard. Ownership does
     # not change which rank-1 program becomes the cell's starting parent.
@@ -43,7 +58,8 @@ def test_per_identity_elites_uses_another_owners_global_leader(tmp_path):
     mine = {"program_id": "prog_m", "score": 0.1, "owner": "dev",
             "reference": {"repo": "github.com/dev/repo", "commit": "f" * 40}}
     class _Hub:
-        def elites(self, objective):
+        def elites(self, objective, tier="self-reported"):
+            assert tier == "self-reported"
             return {ident: [stranger, mine]}.get(objective, [])
     def fetch(entry, dest):
         dest = Path(dest)

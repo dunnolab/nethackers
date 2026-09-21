@@ -27,11 +27,12 @@ from __future__ import annotations
 
 import math
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, Protocol
 
 from nethackers.arena_version import ARENA_MAJOR, major_for
 from nethackers.contracts.models import Evidence, ObjectiveSpec
+from nethackers.github_ref import NonGitHubRef, normalize_github_ref
 from nethackers.hub.atoms import evidence_to_atoms
 from nethackers.hub.auth import AuthProvider, owns_repo
 from nethackers.hub.ids import program_id as _program_id
@@ -70,6 +71,17 @@ class CommitChecker(Protocol):
 
 class RegisterError(Exception):
     """Base for every register-ladder rejection."""
+
+
+class NonGitHubRepo(RegisterError):
+    """Identity: ``reference.repo`` isn't an unambiguous github.com/<owner>/<name>.
+
+    Translates ``github_ref.NonGitHubRef`` (a bare ``ValueError`` -- that leaf
+    module imports neither ``hub`` nor ``hubclient``, so it can't subclass
+    this) into the register ladder's own exception hierarchy, so
+    ``hub/api.py``'s existing ``except RegisterError`` maps it to a clean 400
+    instead of an unhandled 500.
+    """
 
 
 class WrongOwner(RegisterError):
@@ -185,6 +197,19 @@ def register(
     """
     # 1. identity -- the token's login owns the repo.
     login = auth.resolve(token)
+    # reference host -- must be an unambiguous github.com/<owner>/<name>
+    # (raises NonGitHubRepo). Normalizing here, before owns_repo/commit_exists
+    # ever run, is the authoritative server-side gate: owns_repo only compares
+    # the owner segment (blind to host), so a non-github URL sharing the
+    # caller's login as its owner segment would otherwise sail through.
+    # github_ref.py's leaf NonGitHubRef is translated to our own
+    # NonGitHubRepo(RegisterError) so hub/api.py's existing "except
+    # RegisterError" maps this to a 400 like every other rejection here,
+    # instead of an unhandled 500.
+    try:
+        reference = replace(reference, repo=normalize_github_ref(reference.repo))
+    except NonGitHubRef as e:
+        raise NonGitHubRepo(str(e)) from e
     segments = reference.repo.rstrip("/").split("/")
     if len(segments) < 2 or not owns_repo(login, reference.repo):
         raise WrongOwner(f"{login!r} does not own {reference.repo!r}")

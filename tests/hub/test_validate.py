@@ -23,6 +23,8 @@ from nethackers.hub.objectives import CATALOG, build_union_spec
 from nethackers.hub.store import Store
 from nethackers.hub.validate import (
     MissingCommit,
+    NonGitHubRepo,
+    RegisterError,
     SolutionReference,
     UnclassifiedArena,
     WrongArenaMajor,
@@ -178,6 +180,34 @@ def test_wrong_owner(tmp_path):
             git=_Git(),
             now="n",
         )
+
+
+def test_register_rejects_non_github_host(tmp_path):
+    # A host that isn't github.com must never enter the hub -- even though
+    # owns_repo is a pure string check on the owner segment (blind to host,
+    # so "sam" "owns" "https://evil.example/sam/x" too) and the fake git
+    # reports the commit exists. Both would let this reference sail through
+    # every other check, so raising here proves the host gate runs BEFORE
+    # them, not that it merely happens to be caught by one of them.
+    #
+    # register() raises its own NonGitHubRepo, not github_ref.py's leaf
+    # NonGitHubRef -- NonGitHubRepo is a RegisterError subclass, so
+    # hub/api.py's existing "except RegisterError" maps this to a clean 400
+    # instead of an unhandled 500 for a bare ValueError.
+    assert issubclass(NonGitHubRepo, RegisterError)
+    s = _store(tmp_path)
+    with pytest.raises(NonGitHubRepo):
+        register(
+            s,
+            LocalStubAuth({"t": "sam"}),
+            token="t",
+            reference=SolutionReference("https://evil.example/sam/x", SHA),
+            manifest=MANIFEST,
+            evidence=_evidence(),
+            git=_Git(exists=True),
+            now="n",
+        )
+    assert s.get_solution("https://evil.example/sam/x@" + SHA) is None
 
 
 def test_bad_sha(tmp_path):

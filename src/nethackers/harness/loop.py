@@ -141,6 +141,7 @@ def run_loop(
     owner: str,
     iterations: int,
     from_seed: bool = False,
+    tier: str = "self-reported",
     fetch: Callable[[dict, Path], Path | None] = select.pull_fetch,
     max_parallel_evals: int = 8,
     max_consecutive_errors: int = 3,
@@ -299,7 +300,7 @@ def run_loop(
     elites: dict[str, tuple[dict, Path]] = (
         {} if from_seed
         else select.per_identity_elites(hub, tuple(identities),
-                                        store=tree_store, fetch=fetch))
+                                        store=tree_store, fetch=fetch, tier=tier))
     owned: dict[str, tuple[Path, list[str]]] = {}
     for ident, (entry, tree_path) in elites.items():
         # program_id (not solution_digest -- /elites rows don't carry that;
@@ -349,7 +350,7 @@ def run_loop(
     # a single-identity objective (no union cell), or an empty board.
     if not from_seed and len(identities) > 1:
         champ = select.overall_champion(
-            hub, objective, store=tree_store, fetch=fetch)
+            hub, objective, store=tree_store, fetch=fetch, tier=tier)
         if champ is not None:
             entry, tree_path = champ
             report(f"cold-start · scoring union champion {entry['program_id'][:8]} "
@@ -390,7 +391,11 @@ def run_loop(
             worktree = workdir / f"iter-{k}"
             if worktree.exists():
                 shutil.rmtree(worktree)
-            shutil.copytree(cell.tree, worktree)
+            # ignore=refs._mutator_ignore: strip build junk AND instruction-
+            # bearing agent config (CLAUDE.md, .claude/, ...) before the
+            # mutator's coding agent ever reads this tree (spec §3d) --
+            # defuses prompt-injection carried in a pulled program.
+            shutil.copytree(cell.tree, worktree, ignore=refs._mutator_ignore)
 
             # Hand the TRAINING seeds in as data (spec §3.6): the mutator image
             # has no harness/seeds.py to derive them. parent_means/parent_overall:

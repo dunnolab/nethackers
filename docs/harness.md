@@ -269,10 +269,13 @@ Inside the sandbox `localhost` is the container itself, so a model server runnin
 on your own machine needs `http://host.docker.internal:PORT/v1` under Docker
 Desktop. Plain Docker on Linux doesn't provide that name.
 
-**Reasoning effort is a model variant.** OpenCode has no effort flag, so an
-effort needs a pinned model: `evolve --operator opencode2` refuses `--effort`
-without `--model`, and the evolve form offers no effort level while the model is
-"Harness default". Pinning `--model provider/model#variant` directly works too.
+**Reasoning effort is a model variant.** OpenCode expresses reasoning effort as
+a per-model *variant* (the `--variant` flag, e.g. high/max), not a free-standing
+effort flag, so an effort needs a pinned model: `evolve --operator opencode2`
+refuses `--effort` without `--model`, and the evolve form offers no effort level
+while the model is "Harness default". The chosen effort is passed straight
+through as the model's `--variant` (a legacy `provider/model#variant` string is
+accepted too and split into the same pair).
 
 **Two mechanics differ from the other agents:**
 
@@ -283,10 +286,12 @@ without `--model`, and the evolve form offers no effort level while the model is
   fresh container `opencode2 models` prints nothing, so the check polls until two
   readings agree — about 3 seconds, 15 at most.
 
-**It's a beta, pinned.** The image installs one exact build,
-`@opencode-ai/cli@0.0.0-beta-19271`, next to pinned Claude Code and Codex versions.
-Moving to a newer build is an edit to `Dockerfile.mutator`, which rebuilds the image.
-Everything above was checked against that build.
+**It's pinned.** The image installs one exact build, `opencode-ai@1.18.31`, next
+to pinned Claude Code and Codex versions. Upstream renamed the binary
+`opencode2` → `opencode` in this line; the sandbox keeps the `opencode2` name
+via a symlink so the operator id is stable. Moving to a newer build is an edit to
+`Dockerfile.mutator`, which rebuilds the image. Everything above was checked
+against that build.
 
 ### Two design choices worth stealing
 

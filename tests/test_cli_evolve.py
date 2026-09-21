@@ -24,6 +24,34 @@ def _sandbox_preflight_ok(monkeypatch):
     monkeypatch.setattr(cli, "image_present", lambda *a, **kw: True)   # sandbox image ready
 
 
+@pytest.fixture
+def run_cli_capturing_params(monkeypatch):
+    # Replaces prepare_evolve wholesale (not just run_loop), so we can inspect
+    # the exact EvolveParams the evolve handler built -- e.g. `tier` -- without
+    # any of prepare_evolve's real side effects (run dir, hub auth, seed-tree
+    # resolution). The fake plan's `.run` is only reached because the headless
+    # (non-tty) branch below always calls it.
+    captured = {}
+
+    def fake_prepare_evolve(params, **kwargs):
+        captured["params"] = params
+
+        class _FakePlan:
+            def run(self, callbacks, report=lambda _m: None):
+                return []
+
+        return _FakePlan()
+
+    monkeypatch.setattr(cli, "prepare_evolve", fake_prepare_evolve, raising=False)
+
+    def _run_capturing(argv):
+        rc = cli._run(argv)
+        assert rc == 0
+        return captured["params"]
+
+    return _run_capturing
+
+
 def test_evolve_parses_and_invokes_loop(tmp_path, monkeypatch):
     seed = tmp_path / "seed"
     seed.mkdir()
@@ -218,3 +246,12 @@ def test_evolve_skips_preflight_without_a_pinned_model(tmp_path, monkeypatch):
     rc = cli._run(["evolve", "val-dwa-law-fem", "--seed", str(seed), "--from-seed",
                    "--workdir", str(tmp_path / "w")])       # no --model
     assert rc == 0 and fired["preflight"] is False          # guarded by `if args.model`
+
+
+def test_verified_flag_sets_tier(run_cli_capturing_params):
+    p_default = run_cli_capturing_params(
+        ["evolve", "val-dwa-law-fem", "--seed", "roots/autoascend"])
+    p_verified = run_cli_capturing_params(
+        ["evolve", "val-dwa-law-fem", "--seed", "roots/autoascend", "--verified"])
+    assert p_default.tier == "self-reported"
+    assert p_verified.tier == "verified"
