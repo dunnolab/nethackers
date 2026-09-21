@@ -10,10 +10,10 @@ ARENA_IMAGE = (
 )
 MUTATOR_IMAGE = (
     "ghcr.io/dunnolab/nethackers-mutator@sha256:"
-    "491b0fa1512d0b6a370dff8000a9937091f85b0a354320553a2bb55619d274bd"
+    "cb916b9fc503a293184b87e9bc31d716b16235563e3de62b763f8a475b338672"
 )
 NLE_BASE_IMAGE = (
     "ghcr.io/dunnolab/nethackers-nle-base@sha256:"
     "7c9cd4d1ac2697ab302f6873b7225c6f73257c3fce57c5d842c175c844f3349f"
 )
-MUTATOR_INPUTS = "sha256:7f24ccb8f96323800913fe9f373ac7be4f1d6bcb1986318e130b04a5fe2a3d5f"
+MUTATOR_INPUTS = "sha256:b6585dbe48be2359cd5034ef92499f55648ae6b5aef73a45a8336d0e60da3705"
