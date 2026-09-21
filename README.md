@@ -127,41 +127,40 @@ Three things execute code that neither you nor we wrote or reviewed:
 
 What we do about it:
 
-- **The bot evaluator is a sealed box.** Every eval runs in a container with
-  `--network none`, a **read-only** root filesystem (scratch is a `noexec,nosuid`
-  tmpfs), **every Linux capability dropped**, `no-new-privileges`, a **non-root**
-  user, and pid/memory/CPU caps — with the bot mounted read-only. And the hidden
-  seeds never enter it: the secret is expanded to concrete per-game seeds on the
-  host and piped in over stdin, so it is never on the container's argv or in its
-  environment.
+- **The bot evaluator is a sealed box.** Every eval runs in a container with no
+  network (`--network none`), a read-only root filesystem, a `noexec,nosuid`
+  tmpfs for scratch, every Linux capability dropped, `no-new-privileges`, a
+  non-root user, and pid/memory/CPU caps. The bot is mounted read-only, and the
+  hidden seeds never enter the container: the secret is expanded to concrete
+  per-game seeds on the host and piped in over stdin, so it is never on the
+  container's argv or in its environment.
 - **Fetching is github-only and hardened.** `pull` and hub registration accept
-  only `github.com/<owner>/<repo>@<commit>` references — the host is *parsed*, not
-  string-matched, so lookalikes like `github.com.evil.com` or `git@github.com:...`
-  are refused — and the clone allows only https, with submodules, symlink
-  checkout, and tags disabled.
+  only `github.com/<owner>/<repo>@<commit>` references. The host is parsed rather
+  than string-matched, so lookalikes like `github.com.evil.com` or
+  `git@github.com:...` are refused, and the clone allows only https, with
+  submodules, symlink checkout, and tags disabled.
 - **The coding agent runs in a container** with `no-new-privileges`, pid/memory
   (swap-capped)/CPU limits, a non-root user (it starts as root only to remap uids,
   then drops), and a wall-clock `timeout`. Instruction-bearing files (`CLAUDE.md`,
   `AGENTS.md`, `.mcp.json`, …) are stripped from the tree it is handed, and an
-  **opt-in credential broker** can keep your model key out of the container
-  entirely.
+  opt-in credential broker can keep your model key out of the container entirely.
 
-What we don't do — just as plainly:
+What we don't do:
 
 - **A bot can still influence its own score.** The scorer runs the bot in-process
   with the solution on its `sys.path`, so a self-reported number is a claim you
-  take on trust. Sealing the container does not change that — it is exactly why
-  the **Private Dungeons** (verified) tier exists.
+  take on trust. Sealing the container does not change that. It is why the Private
+  Dungeons (verified) tier exists.
 - **The credential broker is opt-in.** By default the agent's container still has
-  your coding-agent credentials mounted (for Codex, writable) and **open network
-  egress** — the agent CLIs need their model APIs, and egress allow-listing is
+  your coding-agent credentials mounted (for Codex, writable) and open network
+  egress. The agent CLIs need their model APIs, and egress allow-listing is
   designed but not on by default.
-- The threat model is **accident-grade**: it defends against a runaway or confused
-  agent and the blast radius of one, **not** a determined adversary. A container
-  is not a boundary against a kernel exploit. If you are evaluating code you have
+- **The threat model is accident-grade.** It defends against a runaway or confused
+  agent and the blast radius of one, not a determined adversary. A container is
+  not a boundary against a kernel exploit. If you are evaluating code you have
   reason to distrust, run it on a machine you are willing to lose.
 
-Details, per-surface, in [`docs/harness.md`](docs/harness.md#3-safety-and-sandboxing) —
+Details, per-surface, are in [`docs/harness.md`](docs/harness.md#3-safety-and-sandboxing),
 written to be reused by anyone building a harness of their own.
 
 ## Install

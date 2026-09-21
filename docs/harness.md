@@ -399,7 +399,7 @@ against a kernel exploit — that goes for anyone running a public verifier too.
 
 Every eval imports and runs a `bot.py` you may not have written.
 
-What [`eval/runner.py`](../src/nethackers/eval/runner.py) does — a **sealed box**:
+[`eval/runner.py`](../src/nethackers/eval/runner.py) runs the bot as a sealed box:
 
 ```
 <docker|podman> run --rm -i \
@@ -424,15 +424,15 @@ The flag-set is [`sandbox_flags.offline_flags`](../src/nethackers/sandbox_flags.
 - **`--pids-limit 256`, `--memory 4g` (swap capped to it), `--cpus 2`**, and
   **`--entrypoint timeout`** wrapping the run in a host-set wall-clock ceiling
   (SIGKILL, so grandchildren die too). A fork bomb or memory runaway in a bot is
-  bounded now — the cgroup caps this surface used to lack.
+  bounded.
 - **The hidden seeds never enter the box.** The secret is expanded to concrete
-  per-trajectory seeds *on the host*, and the resulting specs are piped to the
-  container's **stdin** (`-i`); its argv and environment carry only step/timeout
-  parameters — no secret, no `NETHACK_ARENA_SECRET`, nothing to read out of
-  `/proc`. (A public-seed `--batch` path that derives specs in-container from a
-  caller-supplied secret is kept for the mutator's own self-test; the trusted
-  eval path above uses stdin and never sees a secret.)
-- **`/sol:ro`**, and the host reads back only `/out/results.json` — through
+  per-trajectory seeds on the host, and the resulting specs are piped to the
+  container's stdin (`-i`); its argv and environment carry only step/timeout
+  parameters, so there is no secret to read out of `/proc`. (A public-seed
+  `--batch` path that derives specs in-container from a caller-supplied secret is
+  kept for the mutator's own self-test; the trusted eval path above uses stdin and
+  never sees a secret.)
+- **`/sol:ro`**, and the host reads back only `/out/results.json`, through
   [`arena/result_io.py`](../src/nethackers/arena/result_io.py), which refuses a
   symlink, an oversize file, or anything that is not a JSON list, and never
   imports or executes what a box wrote.
@@ -441,15 +441,15 @@ Inside the container, [`arena/sandbox.py`](../src/nethackers/arena/sandbox.py)
 runs the bot in its own subprocess, clears the write flag on observation arrays,
 and enforces per-action timeouts (`BotTimeout`).
 
-**One limit remains on this surface, and it is the important one:**
+**One limit remains:**
 
 - **A bot can influence its own score.** The arena puts the solution directory at
-  the *front* of `sys.path` so `import bot` resolves, and imports NLE lazily
+  the front of `sys.path` so `import bot` resolves, and imports NLE lazily
   afterwards. A solution that ships modules named like the ones the scorer imports
-  is therefore importable *by the scorer*, in-process — sealing the container does
-  not change that (it's import happening inside the box), and `:ro` does not help
-  (import only reads). **A self-reported score is a claim you take on trust —
-  which is exactly what the Public/Private tier split is for.**
+  is therefore importable by the scorer, in-process. Sealing the container does not
+  change that (it's import happening inside the box), and `:ro` does not help
+  (import only reads). A self-reported score is a claim you take on trust, which is
+  what the Public/Private tier split is for.
 - **The digest pin is a default, not a guarantee.** An explicit `--image`,
   `NETHACKERS_ARENA_IMAGE`, or a repo checkout's `.env.stack` still wins over
   the pin, so a local `eval` can be pointed at unpinned bytes — including a
@@ -512,8 +512,8 @@ docker run --rm \
 
 - **Open network egress.** The agent CLIs need their model APIs, so by default
   there is no restriction. An egress allow-list is designed but not on by default;
-  the **credential-broker** path below is the one mode that does constrain egress
-  (to the broker alone). This is the largest hole in the default sandbox.
+  the credential-broker path below is the one mode that constrains egress (to the
+  broker alone). This is the largest hole in the default sandbox.
 - **Your coding-agent credentials are in reach.** By default `/workspace` is not
   the only writable mount: for **Codex** the host's real `~/.codex` is bind-mounted
   **read-write** (code in the cage can influence your *next host-side* `codex`
@@ -521,15 +521,15 @@ docker run --rm \
   macOS the OAuth token is passed as an env var (visible in `docker inspect`); for
   **OpenCode** a read-only copy of your provider definitions is mounted, and the
   keys they name arrive as env vars. An agent that wanted to exfiltrate those
-  could — and for Codex, modify them.
+  could, and for Codex could modify them.
   **Opt-in mitigation:** `ContainerOperator(broker=True)` swaps the credential
-  mount for a host-side [`cred_broker.CredBroker`](../src/nethackers/harness/cred_broker.py)
-  — the container gets a placeholder key and a base-URL pointed back at the broker
+  mount for a host-side [`cred_broker.CredBroker`](../src/nethackers/harness/cred_broker.py):
+  the container gets a placeholder key and a base URL pointing back at the broker
   over the host gateway, egress is constrained to it, and the real key is injected
   host-side per request and never enters the container. It is off by default and
   not yet wired to a CLI/TUI flag, and per-agent auth (Claude's OAuth vs an API
-  key, Codex's host) is still being verified live — so treat it as available, not
-  finished.
+  key, Codex's host) is still being verified live, so treat it as available rather
+  than finished.
 - **Blast radius is not confined to the worktree.** Host-side steps after the run
   (`copytree` into the tree store, into the next `/refs`, and into the published
   repo) follow symlinks by default. Combined with register-all publishing, a
@@ -545,13 +545,13 @@ The fetch itself is hardened ([`hubclient/pull.py`](../src/nethackers/hubclient/
 [`github_ref.py`](../src/nethackers/github_ref.py)):
 
 - **github-only, host-parsed.** Only `github.com/<owner>/<repo>[@<ref>]` is
-  accepted — the URL's host is *parsed* and compared, not substring-matched, so
+  accepted. The URL's host is parsed and compared, not substring-matched, so
   `github.com.evil.com`, `github.com@evil`, `evil/github.com`, and scp forms
-  (`git@github.com:o/n`) are all refused. The **hub rejects a non-github reference
-  at registration** the same way, so a board row can only ever point at GitHub.
+  (`git@github.com:o/n`) are all refused. The hub rejects a non-github reference
+  at registration the same way, so a board row can only ever point at GitHub.
 - **A locked-down clone**, following the git advisory for cloning untrusted repos
   (GHSA-vm9j-46j9-qvq4): `-c protocol.allow=never -c protocol.https.allow=always`
-  (https only — no `file://`, `ext::`, ssh transports), `-c core.symlinks=false`
+  (https only, no `file://`, `ext::`, or ssh transports), `-c core.symlinks=false`
   (checkout writes no symlinks), `-c fetch.recurseSubmodules=false` (no submodule
   fetch), and `--no-tags`.
 
@@ -583,12 +583,12 @@ hand-typed ref is whatever you typed.
    you add a new surface.
 8. **Keep secrets out of the box.** If the scorer needs a secret (ours seeds the
    games from one), expand it to the concrete values host-side and pipe only those
-   in over stdin — never on argv or in the environment, where any code in the
+   in over stdin, never on argv or in the environment, where any code in the
    container can read them out of `/proc`.
-9. **Constrain what a fetch can be.** Parse the *host* of a submitted reference
+9. **Constrain what a fetch can be.** Parse the host of a submitted reference
    (don't substring-match it), allow only the transport you mean, and disable
-   submodule and symlink checkout — an untrusted `git clone` is an execution
-   surface of its own.
+   submodule and symlink checkout. An untrusted `git clone` is an execution surface
+   of its own.
 
 
 ## 4. Building your own harness
