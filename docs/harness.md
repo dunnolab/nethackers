@@ -369,38 +369,29 @@ secret, not because of the image layout.
 
 ## 3. Safety and sandboxing
 
-> **This section is the part most worth reusing** — including the parts where we
-> tell you our own boundary is thinner than it looks. It is kept honest against
-> the code: an audit (2026-09-08) removed claims an earlier draft made that the
-> implementation did not deliver, and the v0.34.0 hardening (2026-09-22) — a
-> sealed evaluator, host-side seed derivation, github-only fetch, and an opt-in
-> credential broker — is folded in below, with the limits that remain still
-> called out.
+> **If you're building your own harness, this is the part most worth reusing.**
+> It says exactly what we isolate and — just as plainly — what we don't, so you
+> can copy the protections and know where the edges are.
 
-### The threat model, stated up front
+### What this is built to stop
 
-**Accident-grade at heart, with the strangers' surface hardened.** The design
-this inherits was written for one surface: our own model's generated code, on our
-own machines. It defends against *thrashing and blast radius* — fork bombs,
-runaway memory, an agent that `rm -rf`s outside its worktree — not a determined
-adversary. That ruled out microVMs and gVisor: isolation we didn't need at
-overhead we'd pay.
+These controls are built to contain **accidents**: a fork bomb, runaway memory,
+an agent that `rm -rf`s outside its worktree, a bot that tries to phone home.
+They are not built to stop a determined attacker who has found a kernel exploit —
+that's why there are no microVMs or gVisor here.
 
-The one surface that runs *strangers'* code — bot evaluation — no longer inherits
-that model without controls. Since v0.34.0 it runs in a fully sealed box (see (a)
-below) and the hidden seeds never enter it. What is still true, and worth being
-plain about:
+Two things are true and worth stating up front:
 
-- **A bot can still shape its own self-reported score.** It runs in-process with
-  the scorer (see (a)), which is the entire reason for the verified tier.
-- **Credentials are in reach on the mutator surface by default.** The broker that
-  removes them is opt-in, so "no secrets in reach" is not accurate there unless
-  you turn it on.
+- **A bot can influence its own score.** It runs in the same process as the
+  scorer (see (a)), so a self-reported number is a claim you take on trust. That
+  is the whole reason for the verified (Private Dungeons) tier.
+- **Your coding-agent credentials are in reach of the agent by default.** There's
+  an opt-in broker that removes them (see (b)), but until you turn it on, they're
+  mounted.
 
-If you are evaluating code from people you don't trust, on a machine that matters,
-treat the container as a blast-radius limiter, not a boundary against a kernel
-exploit — and that includes anyone running a public verifier on the same code
-path.
+If you're running code from people you don't trust on a machine that matters,
+treat the container as something that limits the blast radius, not as a wall
+against a kernel exploit — that goes for anyone running a public verifier too.
 
 ### Three surfaces that execute untrusted code
 
@@ -456,9 +447,9 @@ and enforces per-action timeouts (`BotTimeout`).
   the *front* of `sys.path` so `import bot` resolves, and imports NLE lazily
   afterwards. A solution that ships modules named like the ones the scorer imports
   is therefore importable *by the scorer*, in-process — sealing the container does
-  not change that, since it is import happening inside the box, and `:ro` does not
-  help (import only reads). **Treat every self-reported score as an unaudited
-  claim; that is exactly what the Public/Private tier split is for.**
+  not change that (it's import happening inside the box), and `:ro` does not help
+  (import only reads). **A self-reported score is a claim you take on trust —
+  which is exactly what the Public/Private tier split is for.**
 - **The digest pin is a default, not a guarantee.** An explicit `--image`,
   `NETHACKERS_ARENA_IMAGE`, or a repo checkout's `.env.stack` still wins over
   the pin, so a local `eval` can be pointed at unpinned bytes — including a
@@ -573,9 +564,7 @@ hand-typed ref is whatever you typed.
 
 1. **Put resource caps on every container that runs code you didn't write** —
    `--pids-limit`, `--memory` + `--memory-swap`, `--cpus`, wall-clock `timeout`.
-   We now do this on *both* the agent and the evaluator; an earlier version of
-   this list told you not to copy the evaluator because it had none — that gap is
-   closed.
+   We do this on both the agent and the evaluator.
 2. **Run bot evaluation with `--network none`.** Cheap, and removes a whole class
    of problem.
 3. **Don't put untrusted code on the interpreter's `sys.path` inside your
@@ -590,8 +579,8 @@ hand-typed ref is whatever you typed.
    re-run on seeds the author never saw is the only score worth ranking on.
 6. **Copy without following symlinks** (`copytree(..., symlinks=True)`) anywhere
    you move an agent's output around, especially before publishing it.
-7. **Be explicit about what you don't defend against**, and re-check it when you
-   add a surface — this section was wrong until it was audited against the code.
+7. **Be explicit about what you don't defend against**, and re-check it whenever
+   you add a new surface.
 8. **Keep secrets out of the box.** If the scorer needs a secret (ours seeds the
    games from one), expand it to the concrete values host-side and pipe only those
    in over stdin — never on argv or in the environment, where any code in the

@@ -146,13 +146,12 @@ What we do about it:
   **opt-in credential broker** can keep your model key out of the container
   entirely.
 
-What we do **not** do — stated plainly, because an audit of these docs against the
-code found earlier drafts claiming more than the implementation delivers:
+What we don't do — just as plainly:
 
 - **A bot can still influence its own score.** The scorer runs the bot in-process
-  with the solution on its `sys.path`, so a self-reported number is an unaudited
-  claim. Sealing the container does not change that — it is exactly why the
-  **Private Dungeons** (verified) tier exists.
+  with the solution on its `sys.path`, so a self-reported number is a claim you
+  take on trust. Sealing the container does not change that — it is exactly why
+  the **Private Dungeons** (verified) tier exists.
 - **The credential broker is opt-in.** By default the agent's container still has
   your coding-agent credentials mounted (for Codex, writable) and **open network
   egress** — the agent CLIs need their model APIs, and egress allow-listing is
