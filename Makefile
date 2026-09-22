@@ -1,5 +1,5 @@
 # NetHackers -- dev convenience targets. Requires: uv, docker, curl.
-.PHONY: install uninstall nle-base arena mutator stack up down wait-hub hub hub-down hub-reset test check smoke broker-e2e
+.PHONY: install uninstall nle-base arena mutator stack up down wait-hub hub hub-down hub-reset test check smoke broker-e2e broker-live
 
 # Load this worktree's allocated stage vars as MAKE variables (not just shell
 # env), so `?=`/`$(or ...)` defaults below (ARENA_IMAGE, MUTATOR_IMAGE) can
@@ -146,3 +146,18 @@ smoke:
 # or CI, only by hand.
 broker-e2e:
 	NETHACKERS_E2E=1 uv run python -m pytest tests/e2e/test_broker_e2e.py -m broker_e2e -q
+
+# Gated LIVE smoke per operator (Task 8, design §4.2/§7): the real
+# claude/codex/opencode2 CLI, in the real mutator container, through a real
+# broker into the REAL provider (api.anthropic.com / chatgpt.com's backend /
+# the configured OpenCode provider) -- one round-trip each, spending REAL
+# tokens. Needs Docker + the amd64 mutator image present locally AND a real
+# login already on this host for whichever operator(s) you select; each
+# test skips cleanly (naming what's missing) without NETHACKERS_E2E_LIVE=1
+# or a resolvable login, so this is never run by `make test`/`make
+# broker-e2e` or CI, only by hand. Narrow to one operator with `-m
+# claude_live` / `-m codex_live` / `-m opencode_live` (see
+# tests/e2e/test_broker_live.py's module docstring for why codex is the
+# load-bearing one, and what a codex failure here means).
+broker-live:
+	NETHACKERS_E2E_LIVE=1 uv run python -m pytest tests/e2e/test_broker_live.py -m "claude_live or codex_live or opencode_live" -q
