@@ -59,10 +59,11 @@ rejected outright. **A codex 403 / Cloudflare block / an auth-refresh error in
 this test is therefore exactly that signal** -- per spec §7 the correct
 response is to stage codex back onto the self-refreshing credential MOUNT
 (``auth_docker_args``, ``broker=False``), NOT to weaken the broker (never
-relax B1 by mounting a real token into the cage). (NOTE: this LIVE tier still
-uses the existing httpx forward; the TLS-impersonating forward for real
-``chatgpt.com`` is a separate task, so a live codex run here may need that
-before it round-trips.) See ``_CODEX_LIVE_ADVISORY`` below, which every codex
+relax B1 by mounting a real token into the cage). The codex broker forwards to
+the Cloudflare-fronted ``chatgpt.com`` backend through the curl_cffi
+TLS-impersonating transport (``CredBroker(impersonate=True)``), so this host
+needs ``pip install curl_cffi`` -- the codex gate skips if it is missing. See
+``_CODEX_LIVE_ADVISORY`` below, which every codex
 assertion failure repeats verbatim.
 
 ASSUMPTIONS/residuals this module can't resolve without the gated run
@@ -87,6 +88,7 @@ have):
 """
 from __future__ import annotations
 
+import importlib.util
 import os
 import platform
 import shutil
@@ -177,6 +179,9 @@ def _claude_gate_reason() -> str | None:
 def _codex_gate_reason() -> str | None:
     if _COMMON_GATE_REASON is not None:
         return _COMMON_GATE_REASON
+    if importlib.util.find_spec("curl_cffi") is None:
+        return ("gated: the codex broker forwards to chatgpt.com via TLS "
+                "impersonation -- `pip install curl_cffi` on this host")
     try:
         _codex_creds(Path.home())  # parses ~/.codex/auth.json; return value discarded
     except AuthUnavailable as exc:

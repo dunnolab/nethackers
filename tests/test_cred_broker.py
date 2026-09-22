@@ -326,6 +326,20 @@ def test_broker_impersonate_forwards_injected_header_and_streams_intact(fake_ups
     assert "REALKEY" not in r2.text
 
 
+def test_broker_impersonate_decodes_gzip_response(fake_upstream):
+    # Parity with test_broker_decodes_gzip_response for the curl_cffi branch:
+    # curl_cffi's iter_content() must yield DECODED bytes (libcurl's
+    # ACCEPT_ENCODING), so a gzip upstream comes back as plain JSON with the
+    # (always-dropped) content-encoding header absent -- no double-decode.
+    pytest.importorskip("curl_cffi")
+    rewrite = HeaderRewrite()
+    with CredBroker(fake_upstream.url, rewrite, impersonate=True) as base:
+        r = httpx.get(f"{base}/gzip")
+    assert r.status_code == 200
+    assert "content-encoding" not in r.headers
+    assert json.loads(r.content) == _GZIP_PAYLOAD
+
+
 def test_broker_impersonate_without_curl_cffi_raises_a_friendly_runtimeerror(monkeypatch):
     # Runs regardless of whether curl_cffi is actually installed on this
     # host: `None` in `sys.modules` is the documented way to make CPython's
