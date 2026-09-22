@@ -203,6 +203,23 @@ ARENA_MAJOR_BY_DIGEST: dict[str, int] = {
     # arena, episodes played under the old and the new caps came out
     # identical.) Same shape as the v0.34.1 entry.
     "sha256:fd68b5ef42f07c1448467ec31348b4682f8b71b6d7a9dee83242653c3374e40c": 2,
+    # v0.34.3, rebuilt because uv.lock is an arena input and this release
+    # changes it twice: the project's own version (0.34.2 -> 0.34.3) and one
+    # added package, truststore 0.10.4. That package is the only change to the
+    # installed environment -- every other package keeps its version -- and it
+    # is inert here: pure Python, no .pth startup hook, imported only by
+    # cli.main to verify host-side HTTPS against the OS trust store. The
+    # arena's entrypoint (`python -m nethackers.arena.run`) loads neither
+    # nethackers.cli nor truststore (checked: both absent from sys.modules
+    # after importing it). The rest of the diff is docs. arena/ and contracts/
+    # are untouched (`git diff v0.34.2...HEAD -- src/nethackers/arena
+    # src/nethackers/contracts` is empty), and so are nle-base/Dockerfile and
+    # arena/Dockerfile. Also the linux/amd64 LEG, not an index -- checked with
+    # scripts/check_one_manifest.sh (I7). Read from the diff, NOT measured: no
+    # scoring-path code changed and the new package never loads, so a re-run
+    # has nothing to disconfirm. Same shape as the v0.34.2 entry, plus that
+    # one package.
+    "sha256:6059f96ce188915430499d498dbbeacadea83613555c11f819d16f7477796fbe": 2,
 }
 
 

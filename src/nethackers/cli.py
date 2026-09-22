@@ -1182,6 +1182,19 @@ def main(argv: list[str] | None = None) -> int:
     ``NETHACKERS_DEBUG=1`` to re-raise and get the full traceback instead.
     (argparse usage errors raise ``SystemExit`` and pass straight through --
     they're already user-friendly.)"""
+    # Verify TLS against the OS trust store as well as certifi's bundle, the
+    # way gh, git and the browser do. Behind a TLS-inspecting corporate
+    # firewall the firewall's CA is only in the OS store, so certifi-only
+    # httpx failed every hub call with CERTIFICATE_VERIFY_FAILED. Process-wide
+    # on purpose: this is the application entry point, and truststore must
+    # never be injected from library code. ImportError = a runtime truststore
+    # can't serve; certifi alone still works there.
+    try:
+        import truststore
+    except ImportError:
+        pass
+    else:
+        truststore.inject_into_ssl()
     try:
         return _run(argv)
     except KeyboardInterrupt:
