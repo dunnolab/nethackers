@@ -220,6 +220,21 @@ ARENA_MAJOR_BY_DIGEST: dict[str, int] = {
     # has nothing to disconfirm. Same shape as the v0.34.2 entry, plus that
     # one package.
     "sha256:6059f96ce188915430499d498dbbeacadea83613555c11f819d16f7477796fbe": 2,
+    # v0.34.4, rebuilt for the same reason as the v0.34.2 digest above: uv.lock
+    # is an arena input and the release moves the project's own version in it,
+    # 0.34.3 -> 0.34.4. That line is the whole uv.lock change, so no package
+    # version moves and the installed environment is identical. The one code
+    # change is hubclient/publish.py, the host-side `git push` of a win to the
+    # owner's repo, which the arena's entrypoint (`python -m
+    # nethackers.arena.run`) never loads (checked: no nethackers.hubclient
+    # module in sys.modules after importing it). arena/ and contracts/ are
+    # untouched (`git diff v0.34.3...HEAD -- src/nethackers/arena
+    # src/nethackers/contracts` is empty), and so are nle-base/Dockerfile and
+    # arena/Dockerfile. Also the linux/amd64 LEG, not an index -- checked with
+    # scripts/check_one_manifest.sh (I7). Read from the diff, NOT measured: no
+    # scoring-path code changed, so a re-run has nothing to disconfirm. Same
+    # shape as the v0.34.2 entry.
+    "sha256:63dad174666973067ee8e1c407e30ed8b03287a4e184464ea9aec2a6bb143f18": 2,
 }
 
 
