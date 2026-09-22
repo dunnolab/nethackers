@@ -90,7 +90,7 @@ header, so the BROKER injects 100% of the auth and codex needs no credential in
 the box. That ``-c`` override lives in the ``codex exec`` command
 (``operator._codex_cmd``, threaded via ``container_operator.build_docker_argv``'s
 ``broker_base``), NOT this module; ``auth_broker_args`` here supplies only the
-cage ``~/.codex`` -- now an EMPTY, owner-only, writable directory + ``CODEX_HOME``
+cage ``~/.codex`` -- now an EMPTY, world-writable directory (container agent must write it) + ``CODEX_HOME``
 (codex needs a writable ``$CODEX_HOME`` for its app-server socket/state; no
 token, no config, B1). ``broker_credential`` then injects the real
 ``Authorization: Bearer`` and, authoritatively, the ``ChatGPT-Account-Id``
@@ -268,7 +268,7 @@ def auth_broker_args(
     override reaches it. That override is UNAUTHENTICATED, so codex sends no
     credential and the broker injects it all host-side (``broker_credential``).
     All this codex branch supplies is the cage ``~/.codex`` itself: an EMPTY,
-    owner-only, writable dir mounted at ``~/.codex`` plus ``CODEX_HOME`` (codex
+    world-writable dir mounted at ``~/.codex`` plus ``CODEX_HOME`` (codex
     needs a writable ``$CODEX_HOME`` for its app-server socket/state) -- so
     ``home`` is REQUIRED for codex, but no token and no config cross the
     boundary. See ``ContainerOperator``'s ``broker`` flag for how a caller opts
@@ -1113,7 +1113,7 @@ def _codex_cage_args(home: Path) -> list[str]:
     by the broker (``broker_credential``). So NO token and NO config ever enter
     the cage (B1).
 
-    The cage is therefore an EMPTY, owner-only directory mounted read-WRITE at
+    The cage is therefore an EMPTY, world-writable directory mounted read-WRITE at
     ``~/.codex`` with ``CODEX_HOME`` pointed at it: docker creates a bind-mount's
     parent dir root-owned, but the mutator entrypoint drops to the ``agent``
     user, so codex needs a dir it can actually write its app-server
@@ -1128,7 +1128,16 @@ def _codex_cage_args(home: Path) -> list[str]:
     """
     cage_dir = home / ".nethackers" / "codex-cage"
     try:
-        cage_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        cage_dir.mkdir(parents=True, exist_ok=True)
+        # World-writable ON PURPOSE: on native Linux docker the bind-mount is
+        # root-owned but the mutator entrypoint drops to the `agent` user (uid
+        # 1000), which MUST write codex's app-server socket/session state here
+        # -- "Permission denied" (os error 13) otherwise, confirmed on a real
+        # Linux box (Docker Desktop UID-maps the volume, so macOS never hit
+        # it). Safe: the cage is EMPTY and non-secret -- no token, no config
+        # (B1) -- so nothing sensitive is ever written into it. chmod (not
+        # mkdir mode=) so it holds regardless of the process umask.
+        os.chmod(cage_dir, 0o777)
         # Defensive: drop the two files an older (placeholder-JWT + config.toml)
         # cage wrote, so an upgraded host's cage is empty as promised. Codex's
         # own runtime state (sockets, etc.) is left untouched.

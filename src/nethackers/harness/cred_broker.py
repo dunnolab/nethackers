@@ -87,11 +87,20 @@ class CredBroker:
 
     def __init__(
         self, upstream_base: str, rewrite: HeaderRewrite, impersonate: bool = False,
+        *, bind_host: str = "127.0.0.1",
     ) -> None:
         self._upstream = upstream_base.rstrip("/")
         self._upstream_host = urlsplit(self._upstream).hostname
         self._rewrite = rewrite
         self._impersonate = impersonate
+        # Interface the proxy listens on. Default 127.0.0.1 is right on macOS
+        # (Docker Desktop routes the container's `host.docker.internal` to the
+        # host loopback). On native Linux the container reaches the host via the
+        # docker BRIDGE GATEWAY (e.g. 172.17.0.1), which can't reach a loopback
+        # listener, so the ContainerOperator binds the gateway IP instead --
+        # reachable from the sandbox, NOT the host's public interface (never
+        # 0.0.0.0). See container_operator._start_broker_auth.
+        self._bind_host = bind_host
         self._client: httpx.Client | None = None
         # Type is `Any`: `curl_cffi` is an optional, lazily-imported dep
         # (never installed for mypy/tests to see -- see `start`), so its
@@ -233,7 +242,7 @@ class CredBroker:
         for method in _METHODS:
             setattr(Handler, f"do_{method}", Handler._proxy)
 
-        self._server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self._server = ThreadingHTTPServer((self._bind_host, 0), Handler)
         # DELIBERATE: stop() joins the accept-loop thread (`self._thread`,
         # below) so `serve_forever` is guaranteed to have exited, but it
         # does NOT wait for whatever per-request worker thread ThreadingMixIn
@@ -249,7 +258,7 @@ class CredBroker:
         self._thread = threading.Thread(target=self._server.serve_forever, daemon=True)
         self._thread.start()
         port = self._server.server_address[1]
-        return f"http://127.0.0.1:{port}"
+        return f"http://{self._bind_host}:{port}"
 
     def stop(self) -> None:
         if self._server is not None:

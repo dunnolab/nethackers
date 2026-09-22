@@ -110,14 +110,35 @@ class _CredBrokerLike(Protocol):
 
 
 def _host_gateway_url(base_url: str) -> str:
-    """``http://127.0.0.1:<port>`` (what ``CredBroker.start()`` returns) --
-    reachable from the host, but 127.0.0.1 *inside* the container is the
-    container itself, not the host. Re-hosts the same port onto
-    ``host.docker.internal``, which ``build_docker_argv``'s ``--add-host
+    """``http://<broker-bind-host>:<port>`` (what ``CredBroker.start()``
+    returns) -- reachable from the host, but that host/loopback *inside* the
+    container is the container itself, not the host. Re-hosts the same port
+    onto ``host.docker.internal``, which ``build_docker_argv``'s ``--add-host
     host.docker.internal:host-gateway`` (added on the broker path) makes
     resolvable from inside the container."""
     parts = urlsplit(base_url)
     return urlunsplit(parts._replace(netloc=f"host.docker.internal:{parts.port}"))
+
+
+def _bridge_gateway_ip(runtime: str, *, run=subprocess.run) -> str | None:
+    """The default-bridge GATEWAY IP the sandbox's ``host.docker.internal``
+    resolves to on native Linux (docker0 is 172.17.0.1 by default). The broker
+    binds HERE on Linux so the container can reach it -- reachable from the
+    docker bridge, NOT the host's public interface (never 0.0.0.0). Docker
+    Desktop (macOS) routes ``host.docker.internal`` to the host loopback
+    instead, so there the broker keeps binding 127.0.0.1. Returns ``None`` if
+    the gateway can't be read; the caller then falls back to loopback (which
+    fails LOUD on Linux rather than silently exposing 0.0.0.0)."""
+    try:
+        result = run(
+            [runtime, "network", "inspect", "bridge",
+             "-f", "{{range .IPAM.Config}}{{.Gateway}}{{end}}"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    gateway = (getattr(result, "stdout", "") or "").strip()
+    return gateway or None
 
 
 @dataclass(frozen=True)
@@ -484,6 +505,17 @@ class ContainerOperator:
         the same fingerprinting.
         """
         codex_broker_base: str | None = None
+        # Where the broker(s) LISTEN so the sandbox can reach them: loopback on
+        # macOS (Docker Desktop routes the container's host.docker.internal
+        # there), the docker BRIDGE GATEWAY on native Linux (the container
+        # reaches the host via that gateway, not loopback -- 127.0.0.1 was
+        # unreachable from a Linux container). NEVER 0.0.0.0: that exposes the
+        # credential-injecting proxy on the host's public interface. An
+        # undeterminable gateway falls back to loopback, which fails LOUD on
+        # Linux rather than silently exposing the broker.
+        bind_host = "127.0.0.1"
+        if self.system != "Darwin":
+            bind_host = _bridge_gateway_ip(self.docker, run=self._run) or "127.0.0.1"
         if self.harness == "opencode2":
             targets = opencode2_broker_targets(home=self.home, environ=os.environ)
             if not targets:
@@ -494,7 +526,7 @@ class ContainerOperator:
             broker_bases: dict[tuple[str, str], str] = {}
             for target in targets:
                 proc = self._cred_broker_factory(
-                    target["upstream"], target["rewrite"],
+                    target["upstream"], target["rewrite"], bind_host=bind_host,
                 )
                 broker_procs.append(proc)
                 broker_bases[(target["file"], target["name"])] = _host_gateway_url(proc.start())
@@ -512,6 +544,7 @@ class ContainerOperator:
                 # and JA3/TLS-fingerprinted; claude's isn't, so it stays on
                 # the plain httpx forward (impersonate's default, False).
                 impersonate=(self.harness == "codex"),
+                bind_host=bind_host,
             )
             broker_procs.append(proc)
             broker_base = _host_gateway_url(proc.start())

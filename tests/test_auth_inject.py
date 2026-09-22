@@ -273,9 +273,11 @@ def test_codex_uses_broker_base_writable_cage_no_token_no_config(tmp_path):
     assert "OPENAI_BASE_URL" not in joined
     assert ":ro" not in joined
 
-    # the cage is a real, owner-only, EMPTY dir -- no token, no config file
+    # the cage is a real, EMPTY dir (no token, no config file), made
+    # world-writable so the container's non-root agent user can write it
+    # (native-Linux docker permission fix; empty + non-secret, B1)
     assert cage_dir.is_dir()
-    assert cage_dir.stat().st_mode & 0o777 == 0o700
+    assert cage_dir.stat().st_mode & 0o777 == 0o777
     assert not (cage_dir / "auth.json").exists()
     assert not (cage_dir / "config.toml").exists()
     assert list(cage_dir.iterdir()) == []

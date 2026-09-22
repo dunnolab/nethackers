@@ -11,6 +11,7 @@ from nethackers.harness.auth_inject import AuthUnavailable
 from nethackers.harness.container_operator import (
     ContainerCaps,
     ContainerOperator,
+    _bridge_gateway_ip,
     build_docker_argv,
 )
 from nethackers.harness.cred_broker import HeaderRewrite
@@ -435,6 +436,18 @@ def test_stop_reliably_kills_even_when_run_operators_watcher_wins_the_race(
 # fakes -- no real server, no real Keychain/`.codex`/`.credentials.json`
 # touched by these tests.
 
+@pytest.fixture(autouse=True)
+def _stub_bridge_gateway(monkeypatch):
+    # The broker's Linux bind-host lookup shells out to `docker network
+    # inspect bridge` (these tests use system="Linux"); stub it so the unit
+    # tier never touches real docker and the Linux broker path binds the
+    # docker0 gateway deterministically.
+    monkeypatch.setattr(
+        "nethackers.harness.container_operator._bridge_gateway_ip",
+        lambda *a, **k: "172.17.0.1",
+    )
+
+
 class _FakeBroker:
     """Stands in for `cred_broker.CredBroker`: records ctor args, fakes
     start()/stop() so no real socket/thread is ever created in a test.
@@ -444,11 +457,12 @@ class _FakeBroker:
     `impersonate` (default False, matching the real `CredBroker`) is recorded
     so a test can assert which harness's broker got constructed with it."""
 
-    def __init__(self, upstream_base, rewrite, port=9999, impersonate=False):
+    def __init__(self, upstream_base, rewrite, port=9999, impersonate=False, bind_host="127.0.0.1"):
         self.upstream_base = upstream_base
         self.rewrite = rewrite
         self.port = port
         self.impersonate = impersonate
+        self.bind_host = bind_host
         self.started = False
         self.stopped = False
 
@@ -473,16 +487,16 @@ def _write_codex_cage_source(home: Path, account_id="acct-1"):
     }))
 
 
-def _broker_op(tmp_path, harness="claude", **kw):
+def _broker_op(tmp_path, harness="claude", system="Linux", **kw):
     holder = {}
 
-    def fake_factory(upstream_base, rewrite, impersonate=False):
-        b = _FakeBroker(upstream_base, rewrite, impersonate=impersonate)
+    def fake_factory(upstream_base, rewrite, impersonate=False, bind_host="127.0.0.1"):
+        b = _FakeBroker(upstream_base, rewrite, impersonate=impersonate, bind_host=bind_host)
         holder["broker"] = b
         return b
 
     op = ContainerOperator(
-        harness=harness, image="img:test", system="Linux", home=tmp_path,
+        harness=harness, image="img:test", system=system, home=tmp_path,
         broker=True,
         cred_broker_factory=fake_factory,
         broker_credential=lambda *a, **kw: HeaderRewrite(
@@ -519,6 +533,9 @@ def test_broker_path_claude_env_and_add_host_no_mount(tmp_path):
     # claude's upstream isn't Cloudflare-fronted -- stays on the plain httpx
     # forward (impersonate=False), unlike codex's below.
     assert holder["broker"].impersonate is False
+    # native Linux: the broker binds the docker0 gateway (stubbed 172.17.0.1),
+    # NOT 127.0.0.1 which is unreachable from a Linux container.
+    assert holder["broker"].bind_host == "172.17.0.1"
 
 
 def test_broker_path_codex_via_c_override_at_chatgpt_host_upstream(tmp_path):
@@ -694,9 +711,9 @@ def _numbered_broker_factory(holder: list):
     on a distinct port (9001, 9002, ...) so a test can tell which broker
     served which provider, and appends each to `holder` -- there's no single
     `holder["broker"]` slot once a run can start more than one."""
-    def factory(upstream_base, rewrite, impersonate=False):
+    def factory(upstream_base, rewrite, impersonate=False, bind_host="127.0.0.1"):
         b = _FakeBroker(upstream_base, rewrite, port=9000 + len(holder) + 1,
-                         impersonate=impersonate)
+                         impersonate=impersonate, bind_host=bind_host)
         holder.append(b)
         return b
     return factory
@@ -844,3 +861,42 @@ def test_operator_threads_its_userns_args_into_the_run_argv(tmp_path):
     op._popen = lambda cmd, **kw: seen.setdefault("cmd", cmd) and FakePopen(cmd, **kw)
     op.run(wt, "BRIEF-TEXT")
     assert "--userns=keep-id" in seen["cmd"]
+
+
+def test_bridge_gateway_ip_reads_the_docker_bridge_gateway():
+    def fake_run(cmd, **kw):
+        assert cmd[0] == "docker" and cmd[1:3] == ["network", "inspect"]
+        class R:
+            stdout = "172.17.0.1\n"
+        return R()
+    assert _bridge_gateway_ip("docker", run=fake_run) == "172.17.0.1"
+
+
+def test_bridge_gateway_ip_none_when_docker_unavailable():
+    def boom(cmd, **kw):
+        raise OSError("docker not found")
+    assert _bridge_gateway_ip("docker", run=boom) is None
+
+
+def test_bridge_gateway_ip_none_on_empty_output():
+    def empty(cmd, **kw):
+        class R:
+            stdout = "\n"
+        return R()
+    assert _bridge_gateway_ip("docker", run=empty) is None
+
+
+def test_broker_binds_loopback_on_darwin(tmp_path, monkeypatch):
+    # macOS: Docker Desktop routes the container's host.docker.internal to the
+    # host loopback, so the broker binds 127.0.0.1 and must NOT look up a
+    # docker bridge gateway.
+    monkeypatch.setattr(
+        "nethackers.harness.container_operator._bridge_gateway_ip",
+        lambda *a, **k: pytest.fail("must not look up the bridge gateway on Darwin"),
+    )
+    op, holder = _broker_op(tmp_path, harness="claude", system="Darwin")
+    wt = tmp_path / "work" / "iter-1"
+    wt.mkdir(parents=True)
+    op._popen = lambda cmd, **kw: FakePopen(cmd, **kw)
+    op.run(wt, "BRIEF")
+    assert holder["broker"].bind_host == "127.0.0.1"
