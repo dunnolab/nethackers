@@ -158,12 +158,6 @@ _CODEX_TOKEN_ENDPOINT = "https://auth.openai.com/oauth/token"
 # snapshot for a container's whole (up to 8h) lifetime.
 _CODEX_REFRESH_MARGIN_S = 30 * 60
 
-# The two cage-login files the codex broker path mounts read-only -- ONLY these
-# two, so the container's own ~/.codex stays writable+ephemeral (codex still
-# writes its sessions/history there).
-_CODEX_CAGE_AUTH_MOUNT = "/home/agent/.codex/auth.json"
-_CODEX_CAGE_CONFIG_MOUNT = "/home/agent/.codex/config.toml"
-
 
 class AuthUnavailable(Exception):
     """Raised when ``harness`` has no resolvable login on this host -- no
@@ -322,12 +316,13 @@ def broker_credential(
         # broker's value wins regardless of how codex derives it (account_id is
         # not a secret; B1). See the module docstring's "Codex broker" section.
         creds = _codex_creds(home)
-        tokens = creds.get("tokens") if isinstance(creds.get("tokens"), dict) else {}
+        raw_tokens = creds.get("tokens")
+        tokens = raw_tokens if isinstance(raw_tokens, dict) else {}
         account_id = tokens.get("account_id")
         access = tokens.get("access_token")
         if not (isinstance(access, str) and access) or _codex_token_needs_refresh(access):
             access = _codex_refresh(home)   # writes the rotated token back; returns fresh access
-        inject = (("Authorization", f"Bearer {access}"),)
+        inject: tuple[tuple[str, str], ...] = (("Authorization", f"Bearer {access}"),)
         if isinstance(account_id, str) and account_id:
             inject = inject + (("ChatGPT-Account-Id", account_id),)
         return HeaderRewrite(inject=inject)
@@ -753,7 +748,7 @@ def _claude_linux_token(home: Path) -> str:
 
 def _codex_creds(home: Path) -> dict:
     """Parsed ``~/.codex/auth.json`` -- the same file ``auth_docker_args``
-    mounts whole and ``_codex_token``/``_codex_refresh`` read. Raises
+    mounts whole and ``_codex_refresh`` / the codex broker path read. Raises
     ``AuthUnavailable`` on a missing, unreadable, or malformed (unparsable,
     or not a JSON object) file."""
     try:
@@ -763,23 +758,6 @@ def _codex_creds(home: Path) -> dict:
     if not isinstance(doc, dict):
         raise AuthUnavailable("codex", "run `codex login` on this host, then retry")
     return doc
-
-
-def _codex_token(home: Path) -> str:
-    """Read a usable OpenAI credential out of the host's canonical
-    ``~/.codex`` -- the same directory ``auth_docker_args`` mounts whole.
-    Prefers a stable ``OPENAI_API_KEY`` login; falls back to the OAuth
-    session's rotating ``access_token`` (see the module docstring's Broker
-    section for the staleness this creates on a long mutator run)."""
-    doc = _codex_creds(home)
-    api_key = doc.get("OPENAI_API_KEY")
-    if isinstance(api_key, str) and api_key:
-        return api_key
-    tokens = doc.get("tokens")
-    access_token = tokens.get("access_token") if isinstance(tokens, dict) else None
-    if isinstance(access_token, str) and access_token:
-        return access_token
-    raise AuthUnavailable("codex", "run `codex login` on this host, then retry")
 
 
 def _codex_refresh(home: Path, *, post=httpx.post) -> str:
@@ -804,7 +782,7 @@ def _codex_refresh(home: Path, *, post=httpx.post) -> str:
     if not isinstance(refresh_token, str) or not refresh_token:
         # Guard against a malformed (non-string) or absent refresh_token, which
         # would otherwise be handed to httpx as-is and surface as a raw error
-        # (mirrors _codex_token's access_token isinstance guard).
+        # (same shape as the access_token isinstance guards elsewhere).
         raise AuthUnavailable("codex", "run `codex login` on this host, then retry")
 
     try:
@@ -955,10 +933,10 @@ def _write_codex_cage_file(home: Path, name: str, content: str) -> Path:
 
 
 def _codex_cage_args(home: Path, broker_base: str) -> list[str]:
-    """Build the codex broker cage login and return its two read-only file
-    mounts (§3.2/§3.3). A ChatGPT-subscription codex talks to
-    ``chatgpt.com/backend-api/codex`` and IGNORES ``OPENAI_BASE_URL`` for its
-    model endpoint, so this routes it by CONFIG instead:
+    """Build the codex broker cage login and return the single read-write
+    mount of its cage directory (§3.2/§3.3). A ChatGPT-subscription codex talks
+    to ``chatgpt.com/backend-api/codex`` and IGNORES ``OPENAI_BASE_URL`` for
+    its model endpoint, so this routes it by CONFIG instead:
 
     - ``auth.json``: a minimal ``chatgpt``-mode login carrying a PLACEHOLDER
       far-``exp`` JWT (``_codex_placeholder_jwt`` -- never a real token, B1)
@@ -968,9 +946,14 @@ def _codex_cage_args(home: Path, broker_base: str) -> list[str]:
     - ``config.toml``: top-level ``openai_base_url`` pointing the model
       endpoint at the broker.
 
-    Only these two files are mounted (read-only), NOT the whole ``~/.codex``,
-    so the container's own ``~/.codex`` stays writable+ephemeral and codex can
-    still write its sessions/history there.
+    The cage DIRECTORY is mounted read-WRITE at ``~/.codex`` (not the two files
+    read-only): docker creates a bind-mount's parent dir root-owned, but the
+    mutator entrypoint drops to the ``agent`` user, so a two-read-only-files
+    cage leaves codex unable to write its app-server socket/session state into
+    ``~/.codex`` ("Permission denied", os error 13 -- confirmed by the real
+    E2E). The dir holds ONLY the placeholder ``auth.json`` + ``config.toml``
+    (no real token, so B1 still holds); the real Bearer is swapped on the wire
+    by ``broker_credential``.
 
     LIVE-GATED (Task 8's live smoke): whether a subscription codex honours
     ``config.toml``'s ``openai_base_url`` for the model endpoint in chatgpt
@@ -979,7 +962,8 @@ def _codex_cage_args(home: Path, broker_base: str) -> list[str]:
     self-refreshing mount).
     """
     creds = _codex_creds(home)
-    tokens = creds.get("tokens") if isinstance(creds.get("tokens"), dict) else {}
+    raw_tokens = creds.get("tokens")
+    tokens = raw_tokens if isinstance(raw_tokens, dict) else {}
     account_id = tokens.get("account_id")
     account_id = account_id if isinstance(account_id, str) and account_id else None
     placeholder = _codex_placeholder_jwt(account_id)
@@ -998,9 +982,14 @@ def _codex_cage_args(home: Path, broker_base: str) -> list[str]:
     # is deliberately NOT set: chatgpt mode ignores it for the model endpoint,
     # which is exactly why the base URL has to live in config.toml (§3.2).
     config_toml = f'openai_base_url = "{broker_base}"\n'
-    cage_auth = _write_codex_cage_file(home, "auth.json", auth_json)
-    cage_config = _write_codex_cage_file(home, "config.toml", config_toml)
-    return [
-        "-v", f"{cage_auth}:{_CODEX_CAGE_AUTH_MOUNT}:ro",
-        "-v", f"{cage_config}:{_CODEX_CAGE_CONFIG_MOUNT}:ro",
-    ]
+    _write_codex_cage_file(home, "auth.json", auth_json)
+    _write_codex_cage_file(home, "config.toml", config_toml)
+    cage_dir = home / ".nethackers" / "codex-cage"
+    # Mount the cage DIR read-write, NOT the two files read-only: docker creates
+    # a bind-mount's parent dir root-owned, but the mutator entrypoint drops to
+    # `agent`, so a 2-ro-files cage leaves codex unable to write its app-server
+    # socket/session state into ~/.codex ("Permission denied", os error 13,
+    # confirmed by the real E2E). The dir holds ONLY the placeholder auth.json +
+    # config.toml (no real token -- B1 holds), so rw is safe; the real Bearer is
+    # swapped on the wire by broker_credential.
+    return ["-v", f"{cage_dir}:/home/agent/.codex"]

@@ -540,11 +540,12 @@ def test_broker_path_codex_cage_login_at_chatgpt_upstream(tmp_path):
     assert "REAL-REF" not in joined
     assert "REAL-ID" not in joined
     assert "REAL-SECRET-VALUE" not in joined
-    # workspace mount + the two cage file mounts, mounted read-only
+    # workspace mount + the single writable cage DIR mount (not two :ro files:
+    # codex must be able to write its app-server state into ~/.codex)
     v_values = [v for flag, v in zip(cmd, cmd[1:], strict=False) if flag == "-v"]
     assert f"{wt}:/workspace" in v_values
-    assert any(v.endswith(":/home/agent/.codex/auth.json:ro") for v in v_values)
-    assert any(v.endswith(":/home/agent/.codex/config.toml:ro") for v in v_values)
+    assert any(v.endswith(":/home/agent/.codex") for v in v_values)
+    assert not any(v.endswith(":/home/agent/.codex/auth.json:ro") for v in v_values)
     assert holder["broker"].started is True
     assert holder["broker"].stopped is True
 

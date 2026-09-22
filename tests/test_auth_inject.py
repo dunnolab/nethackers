@@ -243,10 +243,12 @@ def test_claude_uses_broker_base_and_placeholder():
 
 
 def test_codex_uses_broker_base_cage_login_no_real_token(tmp_path):
-    # Codex broker path routes via a CAGE `~/.codex` (auth.json + config.toml)
-    # mounted read-only, NOT the `OPENAI_BASE_URL` env var (a ChatGPT-subscription
-    # login ignores that for its model endpoint). auth.json carries a PLACEHOLDER
-    # far-exp JWT + the real (non-secret) account_id; no real token in the cage.
+    # Codex broker path routes via a CAGE `~/.codex` mounted read-WRITE as a
+    # single directory (so the caged codex can write its app-server socket/
+    # state -- a two-ro-files cage fails with "Permission denied", os error 13),
+    # NOT the `OPENAI_BASE_URL` env var (a ChatGPT-subscription login ignores
+    # that for its model endpoint). auth.json carries a PLACEHOLDER far-exp JWT
+    # + the real (non-secret) account_id; no real token in the cage.
     (tmp_path / ".codex").mkdir()
     (tmp_path / ".codex" / "auth.json").write_text(json.dumps({
         "OPENAI_API_KEY": "",
@@ -262,18 +264,15 @@ def test_codex_uses_broker_base_cage_login_no_real_token(tmp_path):
 
     args = auth_broker_args("codex", broker_base=broker_base, home=tmp_path)
 
-    # exactly the two :ro file mounts, no env at all
-    assert len(args) == 4
-    assert args[0] == "-v" and args[2] == "-v"
+    # a SINGLE writable dir mount, no env, no :ro
+    cage_dir = tmp_path / ".nethackers" / "codex-cage"
+    assert args == ["-v", f"{cage_dir}:/home/agent/.codex"]
+    assert str(cage_dir).endswith("/.nethackers/codex-cage")
     assert "-e" not in args
     assert "OPENAI_BASE_URL" not in " ".join(args)
-    assert args[1].endswith(":/home/agent/.codex/auth.json:ro")
-    assert args[3].endswith(":/home/agent/.codex/config.toml:ro")
-    assert "/.nethackers/codex-cage/" in args[1]
+    assert ":ro" not in args[1]
 
-    cage_auth = Path(args[1].rsplit(":", 2)[0])
-    cage_config = Path(args[3].rsplit(":", 2)[0])
-    auth_doc = json.loads(cage_auth.read_text())
+    auth_doc = json.loads((cage_dir / "auth.json").read_text())
     assert auth_doc["auth_mode"] == "chatgpt"
     assert auth_doc["tokens"]["account_id"] == "acct-xyz"
     assert auth_doc["tokens"]["refresh_token"] == "proxy-managed"
@@ -289,16 +288,17 @@ def test_codex_uses_broker_base_cage_login_no_real_token(tmp_path):
     assert _decode_jwt_payload(auth_doc["tokens"]["id_token"])["exp"] > time.time()
 
     # config.toml routes codex's model endpoint at the broker
-    assert f'openai_base_url = "{broker_base}"' in cage_config.read_text()
+    config_text = (cage_dir / "config.toml").read_text()
+    assert f'openai_base_url = "{broker_base}"' in config_text
 
     # NO real token anywhere in the cage (account_id, an identifier, may appear)
-    blob = cage_auth.read_text() + cage_config.read_text()
+    blob = (cage_dir / "auth.json").read_text() + config_text
     assert "REAL-OAUTH-TOKEN" not in blob
     assert "REAL-REFRESH-TOKEN" not in blob
     assert "REAL-ID-TOKEN" not in blob
 
     # owner-only cage dir
-    assert (tmp_path / ".nethackers" / "codex-cage").stat().st_mode & 0o777 == 0o700
+    assert cage_dir.stat().st_mode & 0o777 == 0o700
 
 
 def test_codex_broker_args_requires_home(tmp_path):
@@ -320,8 +320,8 @@ def test_codex_broker_args_omits_account_id_when_absent(tmp_path):
         "tokens": {"access_token": "REAL", "refresh_token": "REAL2"},   # no account_id
     }))
     args = auth_broker_args("codex", broker_base="http://x:1", home=tmp_path)
-    cage_auth = Path(args[1].rsplit(":", 2)[0])
-    auth_doc = json.loads(cage_auth.read_text())
+    cage_dir = Path(args[1].rpartition(":")[0])
+    auth_doc = json.loads((cage_dir / "auth.json").read_text())
     assert auth_doc["tokens"]["account_id"] is None
 
 
@@ -721,8 +721,7 @@ def test_opencode2_broker_docker_args_mounts_owner_only_even_with_a_literal_key(
 # --- Codex OAuth refresh (§3.3, Task 4a): _codex_creds + _codex_refresh ----
 #
 # `_codex_creds` is the parsed `~/.codex/auth.json`, raising `AuthUnavailable`
-# on a missing/unreadable/malformed file -- the same failure mode
-# `_codex_token` already raises. `_codex_refresh` does the broker's
+# on a missing/unreadable/malformed file. `_codex_refresh` does the broker's
 # proactive/reactive OAuth refresh (§3.3): POST `grant_type=refresh_token` to
 # auth.openai.com, then WRITE BACK the rotated access_token + refresh_token to
 # the canonical file (the refresh token is single-use, so skipping the
@@ -966,8 +965,8 @@ def test_codex_token_needs_refresh_non_numeric_exp_is_true():
 
 def test_codex_refresh_non_string_refresh_token_raises_cleanly(tmp_path):
     # Finding (a): a malformed (non-string) refresh_token must raise a clean
-    # AuthUnavailable BEFORE any network call, mirroring _codex_token's
-    # access_token isinstance guard -- not a raw httpx error.
+    # AuthUnavailable BEFORE any network call (same shape as the access_token
+    # isinstance guards) -- not a raw httpx error.
     doc = _codex_auth_doc()
     doc["tokens"]["refresh_token"] = 12345
     path = _write_codex_auth(tmp_path, doc)
