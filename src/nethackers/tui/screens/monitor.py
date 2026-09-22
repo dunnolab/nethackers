@@ -1,5 +1,5 @@
 """The evolution monitor: a left iteration list (init + every iteration, each
-marked live/registered/rejected/pending) next to Progress/Mutator Logs/Logs
+marked live/registered/rejected/pending) next to Logs · Progress · Mutator Logs
 tabs, rendered from an app-owned ``Run``. Replaces the old cockpit/2-tab
 screen, built on real ``Run`` accessors.
 
@@ -229,7 +229,7 @@ class DetailView(Vertical):
 
 
 class RunMonitor(Screen):
-    """Iteration list + Progress/Mutator Logs/Logs tabs, rendered from a
+    """Iteration list + Logs · Progress · Mutator Logs tabs, rendered from a
     ``Run``. Holds no worker."""
 
     CSS = """
@@ -239,7 +239,7 @@ class RunMonitor(Screen):
     RunMonitor #now { height: auto; padding: 0 1; background: #20202b; }
     RunMonitor #stage { height: 1fr; }
     RunMonitor #main { height: 1fr; }
-    RunMonitor #left { width: 30; }
+    RunMonitor #left { width: 38; }
     RunMonitor #iters { height: 1fr; }
     RunMonitor #right { width: 1fr; }
     RunMonitor #progress_pane { padding: 0 1; }
@@ -284,9 +284,12 @@ class RunMonitor(Screen):
         # unconditionally before this guard), and on_mount's own _select(...)
         # backfills from that current state as soon as it runs.
         self._ready = False
-        self.sel_iter = next(
-            (k for k in range(run.cfg.iterations + 1) if run.iteration_status(k) == "running"),
-            0)
+        self._iters_sig: tuple | None = None
+        # Follow the live run -- setup, then each iteration as it starts --
+        # until the user picks another section; picking the live one resumes.
+        self.following = True
+        live = self._live_section()
+        self.sel_iter = live if live is not None else (0 if run.running else self._last_ran())
 
     def compose(self) -> ComposeResult:
         with Horizontal(id="titlebar"):
@@ -365,25 +368,20 @@ class RunMonitor(Screen):
     # ---- rendering: iteration list -------------------------------------------
     def _render_iters(self) -> None:
         ol = self.query_one("#iters", OptionList)
-        keep = ol.highlighted
+        labels = [story.iter_label(self.run, k) for k in range(self.run.cfg.iterations + 1)]
+        sig = (tuple(labels), self.sel_iter)
+        if sig == self._iters_sig:
+            return
+        self._iters_sig = sig
         ol.clear_options()
-        for k in range(self.run.cfg.iterations + 1):
-            label = "init" if k == 0 else f"iter {k}"
-            status = self.run.iteration_status(k)
-            if status == "init":
-                mark, color, tag, disabled = "✓", "#00a000", "", False
-            elif status == "registered":
-                mark, color, tag, disabled = "✓", "#00a000", "  [#00a000]registered[/]", False
-            elif status == "rejected":
-                mark, color, tag, disabled = "✗", "#7c745f", "  [dim]rejected[/]", False
-            elif status == "running":
-                mark, color, tag, disabled = "▶", "#ffd54a", "  [#ffd54a]live[/]", False
-            else:  # pending
-                mark, color, tag, disabled = "·", "#7c745f", "", True
-            ol.add_option(Option(
-                Text.from_markup(f"[{color}]{mark}[/] [b]{label}[/]{tag}"),
-                id=f"it::{k}", disabled=disabled))
-        ol.highlighted = keep if keep is not None else self.sel_iter
+        for k, (markup, disabled) in enumerate(labels):
+            text = Text.from_markup(markup)
+            if k == self.sel_iter:
+                # the highlighted row is dark-on-gold: coloured marks would vanish
+                text = Text(text.plain, style="bold")
+            ol.add_option(Option(text, id=f"it::{k}", disabled=disabled))
+        ol.highlighted = self.sel_iter
+        ol.scroll_to_highlight()
 
     # ---- rendering: Progress table --------------------------------------------
     def _row_eval(self, ident: str, evals: dict[str, EvalView]) -> EvalView:
@@ -536,6 +534,12 @@ class RunMonitor(Screen):
 
     def _select(self, index: int) -> None:
         self.sel_iter = index
+        self._render_iters()
+        # _render_iters may no-op (unchanged signature) even on the very first
+        # real layout pass -- _backfill's _select runs after on_mount already
+        # rendered the same labels/sel_iter pre-layout, when scroll_to_highlight
+        # was a no-op -- so scroll explicitly here too (Ruling 3).
+        self.query_one("#iters", OptionList).scroll_to_highlight()
         self._rebuild_score()
         self._render_mutator()
         self._render_steps()
@@ -611,24 +615,35 @@ class RunMonitor(Screen):
         if event.button.id == "back":
             self.close_detail()
 
-    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
-        if not self._ready:
-            # populating #iters (on_mount's _render_iters, before _backfill
-            # gives #idents its columns) auto-highlights the first option,
-            # firing this before #idents is ready -- _backfill's own
-            # _select(self.sel_iter) will render correctly once ready either
-            # way, so this early auto-fire is safely ignored.
+    def _pick(self, option_id: str) -> None:
+        """The user picked a section: view it, and follow the live run only if
+        that's the section it's working on."""
+        if not self._ready or not option_id.startswith("it::"):
             return
-        oid = event.option.id or ""
-        if oid.startswith("it::"):
-            self._select(int(oid.split("::")[1]))
+        k = int(option_id.split("::")[1])
+        if k == self.sel_iter:
+            return
+        self.following = k == self._live_section()
+        self._select(k)
+
+    def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
+        # populating #iters auto-highlights before #idents is ready -- _pick's
+        # own _ready guard skips that, and _backfill's _select renders it.
+        self._pick(event.option.id or "")
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
-        if not self._ready:
+        self._pick(event.option.id or "")
+
+    def _follow_live(self) -> None:
+        """While following: keep the view on what the run is doing; when the
+        run ends, land on the last iteration that ran."""
+        if not self.following:
             return
-        oid = event.option.id or ""
-        if oid.startswith("it::"):
-            self._select(int(oid.split("::")[1]))
+        target = self._live_section()
+        if target is None and not self.run.running:
+            target = self._last_ran()
+        if target is not None and target != self.sel_iter:
+            self._select(target)
 
     def _valid_cell(self, row: int, col: int) -> bool:
         if not (0 <= row < len(self._row_map)):
@@ -688,6 +703,7 @@ class RunMonitor(Screen):
     def render_state(self) -> None:
         if not self._ready:
             return   # pre-mount race (see __init__) -- on_mount will backfill
+        self._follow_live()
         self._render_iters()
         if self.sel_iter == 0 and self.run.state.get("phase") == "cold-start":
             self._rebuild_score()
@@ -721,6 +737,7 @@ class RunMonitor(Screen):
     def render_iteration(self, iteration: int, result: IterationResult) -> None:
         if not self._ready:
             return
+        self._follow_live()
         self._render_iters()   # status rollover: running -> decided
         if iteration <= self.sel_iter:
             self._rebuild_score()
@@ -735,6 +752,7 @@ class RunMonitor(Screen):
         # elapsed times and the pace move every second, between worker events
         if not self._ready:
             return
+        self._follow_live()
         self._render_now()
         self._render_steps()
         self._render_statusline()

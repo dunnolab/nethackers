@@ -4,7 +4,7 @@ Mutator Logs/Logs tabs + a clickable Progress table, rendered from a ``Run``.
 from __future__ import annotations
 
 from textual.app import App
-from textual.widgets import DataTable, Static, TabbedContent, TabPane
+from textual.widgets import DataTable, OptionList, Static, TabbedContent, TabPane
 
 from nethackers.harness.loop import IterationResult
 from nethackers.tui.run import Run
@@ -477,3 +477,74 @@ async def test_logs_follow_the_selected_iteration():
         await pilot.pause()
         assert mon.steps_view is not None
         assert "Iteration 1 of 3" in mon.steps_view.header
+
+
+IDS3 = ["wiz-elf-cha-mal", "wiz-orc-cha-mal", "val-dwa-law-fem"]
+
+
+def _phase(r: Run, phase: str, k: int, **kw) -> None:
+    r.apply_state({**r.state, "phase": phase, "iteration": k,
+                   "cell": kw.pop("cell", IDS3[0]), **kw})
+
+
+async def test_the_iteration_list_names_outcomes_and_marks_the_live_row():
+    r = _run()
+    _phase(r, "mutating", 1)
+    r.apply_iteration(1, IterationResult(True, "registered", improved=[IDS3[0]],
+                                         dev_fitness=0.5))
+    _phase(r, "registered", 1)
+    _phase(r, "mutating", 2, cell=IDS3[1])
+    r.apply_iteration(2, IterationResult(False, "gate:smoke episode crashed"))
+    _phase(r, "rejected", 2, cell=IDS3[1], detail="gate: smoke episode crashed")
+    _phase(r, "mutating", 3, cell=IDS3[2])
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        ol = mon.query_one("#iters", OptionList)
+        labels = [str(ol.get_option_at_index(i).prompt) for i in range(ol.option_count)]
+        assert labels[0].startswith("✓ setup")
+        assert "improved" in labels[1] and "failed test" in labels[2]
+        assert mon.sel_iter == 3 and labels[3].startswith("▶ iter 3")   # opened on the live one
+
+
+async def test_the_view_follows_the_live_run_until_you_pick_another_iteration():
+    r = _run()
+    _phase(r, "mutating", 1)
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        assert mon.sel_iter == 1 and mon.following
+        r.apply_iteration(1, IterationResult(False, "no-cell-improved", dev_fitness=0.1))
+        _phase(r, "rejected", 1)
+        _phase(r, "mutating", 2, cell=IDS3[1])
+        mon.render_state()
+        await pilot.pause()
+        assert mon.sel_iter == 2                       # followed the run
+        mon._pick("it::1")
+        await pilot.pause()
+        assert mon.sel_iter == 1 and not mon.following
+        r.apply_iteration(2, IterationResult(False, "no-cell-improved", dev_fitness=0.1))
+        _phase(r, "rejected", 2, cell=IDS3[1])
+        _phase(r, "mutating", 3, cell=IDS3[2])
+        mon.render_state()
+        await pilot.pause()
+        assert mon.sel_iter == 1                       # stayed where you put it
+        assert "(live: iter 3)" in str(mon.query_one("#statusline", Static).render())
+        mon._pick("it::3")
+        await pilot.pause()
+        assert mon.following
+
+
+async def test_long_runs_keep_the_live_row_in_view():
+    r = Run("r1", EvolveConfig(",".join(IDS3), "claude", 100))
+    r.apply_state({**_run().state, "phase": "mutating", "iteration": 60, "cell": IDS3[0]})
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        mon = host.screen
+        ol = mon.query_one("#iters", OptionList)
+        assert mon.sel_iter == 60 and ol.highlighted == 60
+        assert ol.scroll_offset.y > 0                  # scrolled down to it
