@@ -3,6 +3,38 @@
 `nethackers setup` gets a machine ready to evaluate, evolve and publish bots.
 This page says what it does on each OS, and how sure we are that it works.
 
+## What it does
+
+It runs `nethackers doctor`'s checks, then shows a plan:
+
+1. **Logins first**, so you can walk away afterwards: `nethackers login`
+   (GitHub device code), `gh auth login` (then a check that `gh` and the hub
+   are the same GitHub account), and your coding agent's own login
+   (`claude auth login` or `codex login`).
+2. **Installs**, only when one documented command does it without `sudo`:
+   `gh`, Colima and Docker's CLI through Homebrew on a Mac; Claude Code or Codex
+   with the vendor's own installer.
+3. **The container runtime**, started with the runtime's own command:
+   `colima start` (a new VM gets Rosetta), `docker desktop start`, `orb start`,
+   `podman machine start`.
+4. **The sandbox images**, with a progress bar and the time left (about 1 GB
+   to download, 4 GB on disk).
+
+Anything that needs `sudo`, a GUI click, or logging out and back in is printed
+for you — on Linux that's the container runtime and `gh`. nethackers never runs
+`sudo` (a test enforces it). Running `nethackers setup` again is always safe: it
+re-checks and plans only what's still missing.
+
+## Options
+
+- `--for eval|evolve|publish|browse` — set up only what that needs.
+- `--operator claude|codex|opencode2` — the coding agent evolve should use.
+- `--yes` — run the plan without asking.
+- With no terminal attached (a coding agent's shell, a pipe), setup prints the
+  plan and changes nothing; with `--yes` it runs every unattended step and lists
+  the logins for you to run, each printing a code or a link.
+- Native Windows isn't covered; run nethackers inside WSL2.
+
 ## What has been run on real machines
 
 Every recipe below is **tested** (someone ran `nethackers setup` end to end on a

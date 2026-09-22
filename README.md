@@ -104,10 +104,12 @@ Other hosts emulate, and that's required, not optional: the same seed plays a
 different game of NetHack on a different CPU architecture, so a native arm64
 score isn't comparable — the hub refuses it.
 
-On Apple Silicon, turn on Rosetta in Docker Desktop (Settings → General →
-Apple Virtualization framework → "Use Rosetta for x86_64/amd64 emulation").
-It's worth doing: the same 15-episode batch on the same machine took 823s
-under QEMU and 224s with Rosetta. `nethackers doctor` reports whether it's on.
+On Apple Silicon, run amd64 through Rosetta rather than QEMU: the same
+15-episode batch on the same machine took 823s under QEMU and 224s with
+Rosetta. `nethackers setup` starts a new Colima VM with Rosetta; with Docker
+Desktop, turn it on in Settings → General → Apple Virtualization framework →
+"Use Rosetta for x86_64/amd64 emulation"; OrbStack uses it already.
+`nethackers doctor` reports whether it's on.
 
 ## Safety: this runs untrusted code
 
@@ -156,17 +158,45 @@ written to be reused by anyone building a harness of their own.
 
 ## Install
 
-**Requirements**
+```bash
+uv tool install nethackers      # or: pip install nethackers
+nethackers setup
+```
 
-Every row also needs Python 3.11+; the rest are additive per row, not cumulative
-down the table.
+Don't have `uv`? It installs from https://astral.sh/uv. Python 3.11+ is required.
+
+`nethackers setup` gets this machine ready. It checks what's there, shows a
+plan and asks once; then it installs what it can, starts the container
+runtime, runs the logins back to back, and pulls the sandbox images. Running it
+again is safe: it plans only what's still missing.
+
+- **What it installs itself:** only what is one documented command and needs
+  no `sudo` — Colima, Docker's CLI and `gh` through Homebrew on a Mac, and Claude
+  Code or Codex with the vendor's own installer. Anything that needs `sudo`, a
+  GUI click, or logging out and back in is printed for you instead (on Linux,
+  that's the container runtime and `gh`). nethackers never runs `sudo`.
+- **Container runtime:** a fresh Mac gets Colima, started with Rosetta. An
+  installed Docker Desktop, OrbStack or Podman is kept and started.
+- **Logins:** `nethackers login` (GitHub), `gh auth login` (checked to be the
+  same GitHub account), and your coding agent's own login.
+- **Sandbox images** (`ghcr.io/dunnolab/nethackers-arena` and `-mutator`, pinned
+  by digest in the CLI): about 1 GB to download and 4 GB on disk, first run only.
+- `--for eval` sets up only what `eval` needs, `--operator codex` picks the
+  coding agent, and `--yes` runs the plan without asking.
+- Native Windows isn't covered; run nethackers inside WSL2.
+
+What has actually been run on real machines, and what is written from vendor
+docs but untested, is in [`docs/setup.md`](docs/setup.md).
+
+**Requirements** — what setup takes care of. Every row also needs Python 3.11+;
+the rest are additive per row, not cumulative down the table.
 
 | To do this | You need |
 |---|---|
 | Browse the hub (TUI, boards, frontier) | nothing else |
 | `eval` — score a bot | Docker or Podman |
-| `evolve` — run the loop | Docker or Podman, a coding agent CLI (`claude`, `codex`, or `opencode2`) logged in on the host, and `nethackers login` |
-| `submit` — publish a solution | Docker or Podman (it evaluates before pushing), `nethackers login`, and [`gh`](https://cli.github.com/) authenticated as the **same** GitHub account |
+| `evolve` — run the loop | Docker or Podman, a coding agent CLI (`claude`, `codex`, or `opencode2`) logged in on the host, `nethackers login`, and — to publish its wins — [`gh`](https://cli.github.com/) authenticated as the **same** GitHub account |
+| `submit` — publish a solution | Docker or Podman (it evaluates before pushing), `nethackers login`, and `gh` authenticated as the **same** GitHub account |
 
 OpenCode 2 needs nothing installed on the host: its CLI ships in the sandbox.
 Give it models by defining providers in your global
@@ -179,36 +209,20 @@ key as `{env:NAME}` or a literal `apiKey`: a `{file:...}` key, a login made with
 models, and `doctor` says so. How each coding agent behaves in the sandbox, with
 OpenCode 2 in detail, is in [`docs/harness.md`](docs/harness.md#the-coding-agents).
 
-Note that `doctor`'s `publish` capability checks the hub, your login, and `gh` —
-but not the container runtime, so it can report `publish` ready on a machine where
-`submit` will still stop at its arena evaluation.
-
-**Install the CLI**
-
-```bash
-pip install nethackers
-# or, isolated:
-uv tool install nethackers
-```
-
-Don't have `uv`? It installs from https://astral.sh/uv.
-
-**Check your machine**
+**Check your machine** without changing anything:
 
 ```bash
 nethackers doctor
 ```
 
 `doctor` runs eight checks and folds them into four capabilities — `browse`,
-`eval`, `evolve`, `publish` — telling you exactly which ones this machine can do
-and what to fix for the rest. It honors `-o json` if you want to gate a script on
-it. It reaches the network (a hub round-trip, and a registry probe for any
-sandbox image you don't have locally), and it changes nothing unless you pass
-`--pull`.
-
-The sandbox images (`ghcr.io/dunnolab/nethackers-arena` and `-mutator`) are
-pinned by digest in the CLI and pulled on first use — several GB, so the first
-`eval` takes a while. Nothing else needs building.
+`eval`, `evolve`, `publish` — telling you which ones this machine can do.
+Where setup can fix a check, its fix says `nethackers setup`. It honors `-o
+json` if you want to gate a script on it, and it reaches the network (a hub
+round-trip, and a registry probe for any sandbox image you don't have
+locally). Its `publish` capability checks the hub, your login and `gh` but not
+the container runtime, so it can report `publish` ready on a machine where
+`submit` will still stop at its arena evaluation.
 
 ## Quickstart
 

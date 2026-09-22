@@ -11,16 +11,19 @@
 **Start here:**
 
 ```bash
-nethackers doctor
+nethackers setup      # fixes what it can, prints the rest
+nethackers doctor     # read-only: what this machine can do, and why not
 ```
 
-Eight checks, folded into four capabilities — `browse`, `eval`, `evolve`,
-`publish`. It tells you which ones this machine can do and prints a concrete fix
-for each failure. `-o json` if you want to gate a script on it. It changes nothing
-unless you pass `--pull` (which fetches missing sandbox images), but it is **not**
-offline: it makes a hub round-trip, runs `gh auth status`, and probes the registry
-for any sandbox image you don't already have. `nethackers report` and
-`nethackers --version` are the genuinely offline commands.
+`setup` checks the machine, shows a plan, asks once, and fixes what it can;
+anything that needs `sudo` or a GUI click is printed for you, and running it
+again picks up where it left off. `doctor` changes nothing: eight checks,
+folded into four capabilities — `browse`, `eval`, `evolve`, `publish` — with a
+concrete fix for each failure (`nethackers setup` wherever setup can do it).
+`-o json` if you want to gate a script on it. doctor is **not** offline: it
+makes a hub round-trip, runs `gh auth status`, and probes the registry for any
+sandbox image you don't already have. `nethackers report` and `nethackers
+--version` are the genuinely offline commands.
 
 For a crash: `nethackers report` prints the most recent local crash report.
 Nothing is ever sent anywhere — there is no telemetry in this project. Paste it
@@ -65,6 +68,10 @@ environment's `bin`/`Scripts` directory to your `PATH`, or install isolated with
 
 ### "no docker or podman found on PATH"
 
+Run `nethackers setup`: on a Mac with Homebrew it installs Colima and starts it
+with Rosetta; on Linux it prints the install commands for your distribution
+(they need `sudo`, which nethackers never runs).
+
 Both are supported and either is fine — `docker` wins if you have both.
 
 If you have podman aliased as docker in your shell, that **will not work**:
@@ -79,36 +86,34 @@ which. "Broken" carries the actual `info` error — usually the daemon is not
 running, or your user lacks socket permission. Restarting a daemon that is
 already up will not help; read the per-CLI breakdown.
 
-### Rootless podman: evolve from the TUI fails with a missing `docker`
+### Rootless podman
 
-**Known open issue ([#54](https://github.com/dunnolab/nethackers/issues/54)).**
-The CLI threads the detected runtime through correctly; the TUI's Start path does
-not, so it launches `docker ...` on a podman-only machine even though its own
-readiness strip correctly reports podman.
+Supported since v0.32.2: under rootless Podman the mutator runs with
+`--userns=keep-id --user 0` (never the arena, where it would change the scoring
+environment). This hasn't been run on a real rootless host yet — if it fails,
+open an issue with `nethackers doctor -o json`.
 
-Workaround — use the CLI for evolve on podman-only machines:
+### On Apple Silicon, amd64 runs under QEMU
 
-```bash
-nethackers evolve <objective> --seed autoascend --operator codex
-```
+`nethackers doctor`'s Rosetta row says why and what to do. Docker Desktop:
+Settings → General → "Use Rosetta for x86_64/amd64 emulation" (it restarts).
+Colima: a VM created without Rosetta can only gain it by being recreated —
+`colima delete` (this deletes its images and containers), then `nethackers
+setup`. Podman turned Rosetta off by default in 5.6, so it stays on QEMU;
+OrbStack always uses Rosetta.
 
-### Rootless podman: mutator fails with `EACCES` on `/workspace`
+### Setup marks a step "(untested)"
 
-Same issue, second half, also unresolved. Rootless podman maps your host uid to
-container uid 0, so the bind-mounted worktree and the injected agent credentials
-appear root-owned to the container's non-root `agent` user.
-
-No fix has shipped. The proposed one is `--userns=keep-id` on the **mutator**
-run only — never on the arena run, where it would change the scoring environment.
-Note that `keep-id` alone is not enough: the image's entrypoint starts as root to
-remap the uid and `gosu`-drop to `agent`, so it needs a non-root entrypoint path
-as well. Treat this as a direction, not a recipe.
+That recipe was written from the vendor's documentation but nobody has run
+`nethackers setup` through it on a real machine yet. Setup still shows the exact
+command before running it. [`setup.md`](setup.md) lists every recipe and its
+status; if one works (or doesn't) for you, an issue saying so helps.
 
 ### The first `eval` takes forever
 
-It is pulling the arena image (several GB), pinned by digest. `nethackers doctor
---pull` fetches the sandbox images ahead of time so the first real run doesn't
-stall on it.
+It is pulling the arena image, pinned by digest (both sandbox images together are
+about 1 GB to download and 4 GB on disk). `nethackers setup` fetches them ahead of
+time, with a progress bar and the time left.
 
 ### "unreachable — ghcr.io/dunnolab/nethackers-arena@sha256:…"
 
@@ -124,11 +129,11 @@ hatch.
 
 You are running from a checkout whose mutator files (its Dockerfile, entrypoint,
 or the arena code it copies) differ from the pinned build, and CI hasn't published
-an image for them. `nethackers doctor --pull` builds it now; `evolve` builds it on
-its own. Nothing to run by hand. It is built for `linux/amd64`, so on Apple
-Silicon the build runs under emulation and takes several minutes. Older
-fingerprint images stay on disk until you remove them; `docker image ls
-nethackers/mutator` lists them.
+an image for them. `nethackers setup` (or `nethackers doctor --pull`) builds it
+now; `evolve` builds it on its own. Nothing to run by hand. It is built for
+`linux/amd64`, so on Apple Silicon the build runs under emulation and takes
+several minutes. Older fingerprint images stay on disk until you remove them;
+`docker image ls nethackers/mutator` lists them.
 
 ### "sandbox platform mismatch"
 
