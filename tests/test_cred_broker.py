@@ -12,6 +12,7 @@ from __future__ import annotations
 import http.client
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
@@ -19,6 +20,12 @@ import httpx
 import pytest
 
 from nethackers.harness.cred_broker import CredBroker, HeaderRewrite
+
+# A handful of SSE-style events the fake upstream's `/sse` endpoint writes
+# one at a time (see `_respond_sse`) rather than as a single blob -- shared
+# with the test so the expected concatenation can't drift from what the
+# handler actually sends.
+_SSE_EVENTS = tuple(f"data: {i}\n\n" for i in range(5))
 
 
 class _FakeUpstreamHandler(BaseHTTPRequestHandler):
@@ -46,11 +53,30 @@ class _FakeUpstreamHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _respond_sse(self) -> None:
+        # Writes its body in pieces, flushing and pausing between them, so
+        # a request to `/sse` is genuinely produced over time -- unlike
+        # `_respond` above, which writes its whole (short) body in one shot
+        # and so can't tell a streaming broker apart from a buffering one.
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.end_headers()
+        for event in _SSE_EVENTS:
+            self.wfile.write(event.encode())
+            self.wfile.flush()
+            time.sleep(0.02)
+
     def do_GET(self) -> None:
-        self._respond()
+        if self.path == "/sse":
+            self._respond_sse()
+        else:
+            self._respond()
 
     def do_POST(self) -> None:
-        self._respond()
+        if self.path == "/sse":
+            self._respond_sse()
+        else:
+            self._respond()
 
     def log_message(self, *args: object) -> None:  # quiet the test output
         pass
@@ -196,3 +222,26 @@ def test_broker_merge_csv_unions_client_values_and_dedupes(fake_upstream):
                         headers={"anthropic-beta": "foo, oauth-2025-04-20"})
     assert r.status_code == 200
     assert fake_upstream.last_headers["anthropic-beta"] == "foo, oauth-2025-04-20"
+
+
+# --- Streaming passthrough ---------------------------------------------
+
+
+def test_broker_streams_sse_without_buffering(fake_upstream):
+    # `_respond_sse` writes `_SSE_EVENTS` one at a time, flushing and
+    # pausing between them -- not as a single blob. A broker that still
+    # buffered the whole response (e.g. via `.content`) before replying
+    # would produce the same concatenated text here (that's (a)), but it
+    # would also know the total size up front and send a Content-Length
+    # header for it. (b) is the actual proof this response was streamed
+    # rather than buffered whole.
+    rewrite = HeaderRewrite()
+    with CredBroker(fake_upstream.url, rewrite) as base:
+        r = httpx.get(f"{base}/sse")
+    assert r.status_code == 200
+    # (a) every chunk arrived, in order, concatenated back into the exact
+    # original text -- streaming didn't drop or reorder any bytes.
+    assert r.text == "".join(_SSE_EVENTS)
+    # (b) no Content-Length: the broker couldn't have known the total size
+    # up front, because it never held the whole response at once.
+    assert "content-length" not in r.headers

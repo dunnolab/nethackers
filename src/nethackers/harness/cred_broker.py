@@ -103,17 +103,25 @@ class CredBroker:
                                 if p.strip()]
                     headers[name] = ", ".join(dict.fromkeys([*existing, *values]))
                 try:
-                    upstream_response = client.request(
+                    with client.stream(
                         self.command, broker._upstream + self.path,
                         content=body, headers=headers,
-                    )
-                    self.send_response(upstream_response.status_code)
-                    for k, v in upstream_response.headers.items():
-                        if k.lower() not in _HOP_BY_HOP_RESPONSE_HEADERS:
-                            self.send_header(k, v)
-                    self.send_header("Content-Length", str(len(upstream_response.content)))
-                    self.end_headers()
-                    self.wfile.write(upstream_response.content)
+                    ) as up:
+                        self.send_response(up.status_code)
+                        for k, v in up.headers.items():
+                            if k.lower() not in _HOP_BY_HOP_RESPONSE_HEADERS:
+                                self.send_header(k, v)
+                        # No Content-Length: the body is streamed to the
+                        # client as it arrives from upstream (never fully
+                        # buffered here), so the total size isn't known up
+                        # front. Closing the connection once this response
+                        # ends is what tells the client where the body
+                        # stops instead.
+                        self.close_connection = True
+                        self.end_headers()
+                        for chunk in up.iter_raw():
+                            self.wfile.write(chunk)
+                            self.wfile.flush()
                 except Exception:
                     # `client` can be closed out from under this thread by a
                     # concurrent stop() (daemon_threads=True means stop()
