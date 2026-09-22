@@ -151,3 +151,25 @@ def test_setup_end_to_end_in_a_real_terminal(tmp_path):
     assert "pull the mutator image" in text and "432 MB, first time only" in text
     assert "PULLED mutator" in text
     assert "ready to eval" in text and "Next: nethackers evolve" in text
+
+
+def test_plain_pull_progress_prints_layer_changes_not_every_byte(monkeypatch):
+    import io
+
+    from rich.console import Console
+
+    from nethackers.harness.pull_events import PullEvent
+
+    buf = io.StringIO()
+    monkeypatch.setattr(cli, "err", Console(file=buf, force_terminal=False, width=100))
+
+    def ev(detail, done):
+        return PullEvent(kind="arena", ref="img", phase="layer", layers_total=2,
+                         layers_complete=0, detail=detail, bytes_done=done, bytes_total=4)
+
+    with cli._pull_progress(total=4) as on_event:
+        for i in range(50):
+            on_event(ev("Downloading [==>]  1MB/4MB", i))
+        on_event(ev("Pull complete", 4))
+    lines = [ln for ln in buf.getvalue().splitlines() if ln.strip()]
+    assert len(lines) == 1 and "pulling arena" in lines[0]

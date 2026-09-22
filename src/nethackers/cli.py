@@ -89,6 +89,15 @@ import httpx
 from rich.live import Live
 from rich.markup import escape
 from rich.panel import Panel
+from rich.progress import (
+    BarColumn,
+    DownloadColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeRemainingColumn,
+    TransferSpeedColumn,
+)
 from rich.prompt import Confirm, Prompt
 from rich.text import Text
 from rich_argparse import RichHelpFormatter
@@ -111,6 +120,7 @@ from nethackers.harness.discovery import ModelInfo, list_models, preflight_model
 from nethackers.harness.launch import EvolveParams, _now, prepare_evolve
 from nethackers.harness.pull_events import PullEvent, render_cli_line
 from nethackers.harness.sandbox_preflight import (
+    download_size,
     ensure_image,
     image_present,
     preflight as sandbox_preflight,
@@ -708,35 +718,43 @@ def _arena_preflight(image: str, *, runtime: str | None) -> str | None:
 
 
 @contextmanager
-def _pull_progress() -> Iterator[Callable[[PullEvent], None]]:
-    """A ``PullEvent`` consumer for CLI sandbox provisioning -- the CLI half
-    of the shared typed pull-progress seam (spec S5.5; the TUI has its own
-    consumer). While attached to a real terminal, renders ``render_cli_line``
-    as a single rewriting status line via ``rich.live.Live`` (the same
-    in-place-update convention ``EpisodeStream`` below already uses for the
-    per-episode table, ``transient=True`` here since the surrounding
-    "checking/pulling…"/"✓ ready" prints already bracket it with a permanent
-    record). Redirected output (no tty, e.g. ``-o json``/CI logs) instead
-    gets plain sequential lines -- rewriting a line only makes sense on a
-    real terminal. Deliberately minimal: a compact one-liner, not a
-    progress bar.
-
-    Used INSTEAD OF the raw ``on_line`` docker-text dump at its two call
-    sites below (fix round 1) -- passing both would show the user the full
-    raw transcript AND a redundant compact line underneath it, which
-    defeats the point of a compact typed surface. ``on_line`` itself stays
-    a valid parameter on ``ensure_image``/``_pull_image``/``_build_image``
-    for any other caller (e.g. ``_arena_preflight``) that still wants the
-    raw text."""
+def _pull_progress(total: int | None = None) -> Iterator[Callable[[PullEvent], None]]:
+    """A ``PullEvent`` consumer for CLI sandbox provisioning (spec S5.5; the
+    TUI has its own). On a terminal: one bar across every image pulled inside
+    this block -- megabytes, speed, and time left once rich has measured a
+    rate -- with ``total`` (bytes, from the registry) as the length when known.
+    Before any byte count arrives (Podman, or a pipe) the description shows the
+    layer count. Redirected output gets plain lines instead, one per layer
+    change -- never one per byte update."""
     if not err.is_terminal:
         def _on_event_plain(event: PullEvent) -> None:
+            if event.phase == "layer" and event.detail.startswith(("Downloading", "Extracting")):
+                return
             err.print(f"[dim]{render_cli_line(event)}[/]")
         yield _on_event_plain
         return
-    with Live(console=err, auto_refresh=False, transient=True) as live:
-        def _on_event_live(event: PullEvent) -> None:
-            live.update(f"[dim]{render_cli_line(event)}[/]", refresh=True)
-        yield _on_event_live
+    columns = (SpinnerColumn(), TextColumn("{task.description}"), BarColumn(),
+               DownloadColumn(), TransferSpeedColumn(), TimeRemainingColumn())
+    with Progress(*columns, console=err, transient=True) as progress:
+        task = progress.add_task("pulling", total=total)
+        finished = 0   # bytes of images already pulled in this block
+        current = 0
+
+        def _on_event_bar(event: PullEvent) -> None:
+            nonlocal finished, current
+            if event.bytes_done is not None:
+                current = event.bytes_done
+                known = finished + (event.bytes_total or 0)
+                progress.update(task, description=f"pulling {event.kind}",
+                                completed=finished + current,
+                                total=max(total or 0, known) or None)
+            else:
+                progress.update(task, description=render_cli_line(event))
+            if event.phase in ("done", "error"):
+                finished += current
+                current = 0
+
+        yield _on_event_bar
 
 
 def _do_login(stage: Stage) -> str:
@@ -755,12 +773,11 @@ def _do_login(stage: Stage) -> str:
 
 def _setup_pull(kinds: tuple[str, ...], total: int | None) -> str | None:
     """Pull the named sandbox images with the CLI's progress display; the first
-    error, or ``None``. ``total`` (bytes) is used by the progress bar once it
-    shows bytes."""
+    error, or ``None``. ``total`` (bytes) is used by the progress bar."""
     runtime = container_runtime()
     if runtime is None:
         return "no usable container runtime"
-    with _pull_progress() as on_event:
+    with _pull_progress(total) as on_event:
         for kind in kinds:
             perr = ensure_image(resolve_image(None, kind), kind, runtime=runtime,
                                 on_event=on_event)
@@ -770,8 +787,15 @@ def _setup_pull(kinds: tuple[str, ...], total: int | None) -> str | None:
 
 
 def _setup_pull_size(kinds: tuple[str, ...]) -> int | None:
-    """Bytes a pull of ``kinds`` will download; ``None`` until known."""
-    return None
+    """Bytes a pull of ``kinds`` will download, from the registry: layers
+    shared by both images counted once, minus the layers of an image already
+    here. ``None`` when it can't be read (no runtime yet, offline, Podman)."""
+    runtime = container_runtime()
+    if runtime is None:
+        return None
+    present = [resolve_image(None, k) for k in ("arena", "mutator")
+               if k not in kinds and image_present(resolve_image(None, k), runtime=runtime)]
+    return download_size([resolve_image(None, k) for k in kinds], present, runtime=runtime)
 
 
 def _setup(args: argparse.Namespace, stage: Stage) -> int:
