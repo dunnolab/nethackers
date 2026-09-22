@@ -76,6 +76,17 @@ def _section_renderable(view: story.SectionView) -> Group:
     return Group(*parts)
 
 
+def _seed_cells(row: dict) -> list:
+    """One per-seed row's cells (seed … time), shared by every detail table."""
+    glyph, color = S.status_glyph(row["status"])
+    return [str(row["seed"]), f'{row["progress"]:.2f}',
+            Text(f'{glyph} {row["status"]}', style=color),
+            Text(row["cause"] or "—", style="#7c745f" if not row["cause"] else ""),
+            str(row["depth"]) if row["depth"] is not None else "—",
+            f'{row["turns"]:,}' if row["turns"] is not None else "—",
+            S.ep_time(row["time"]) if row["time"] is not None else "—"]
+
+
 class DetailView(Vertical):
     """Per-program evaluation window (embedded panel, not a pushed screen):
     a per-seed table for one program, or the BEST OVERALL program's full
@@ -88,8 +99,11 @@ class DetailView(Vertical):
                  classes: str | None = None) -> None:
         super().__init__(id=id, classes=classes)
         self.run = run
-        self.kind = "eval"                          # eval | program | baseline
-        self._live: tuple[int, str] | None = None    # (iteration, ident) if streaming
+        self.kind = "eval"                    # eval | program | baseline | candidate
+        # (iteration, ident) while streaming a single identity's eval (open_run);
+        # (iteration, None) while streaming the BEST OVERALL candidate's table
+        # across every identity (open_candidate). None once static.
+        self._live: tuple[int, str | None] | None = None
         self._src = ""
 
     def compose(self) -> ComposeResult:
@@ -124,14 +138,14 @@ class DetailView(Vertical):
         self._live = None
         self.border_title = title
         self.query_one("#d_head", Static).update(Text.from_markup(
-            f"x̄ [b #ffd54a]{score:.2f}[/]   [dim]AutoAscend baseline · no per-seed breakdown[/]"))
+            f"avg [b #ffd54a]{score:.2f}[/]   [dim]AutoAscend baseline · no per-seed breakdown[/]"))
         self.query_one("#d_src", Static).update(Text.from_markup(
             "[dim]source[/]  [dim]AutoAscend baseline · not a repository[/]"))
         t = self.query_one("#d_table", DataTable)
         t.clear(columns=True)
         if per_identity:
             t.add_column("identity", width=24)
-            t.add_column("AutoAscend x̄", width=16)
+            t.add_column("AutoAscend avg", width=16)
             for ident in sorted(per_identity):
                 t.add_row(ident, f"{per_identity[ident]:.2f}")
         else:
@@ -177,7 +191,7 @@ class DetailView(Vertical):
             # honestly empty rather than guessing at the wrong iteration.
             src = "[dim]source[/]  [dim]origin iteration unknown[/]"
         self.query_one("#d_head", Static).update(Text.from_markup(
-            f"[b #d2a24c]{label}[/]   x̄ [b #ffd54a]{score:.2f}[/]   "
+            f"[b #d2a24c]{label}[/]   avg [b #ffd54a]{score:.2f}[/]   "
             f"[dim]{len(idents)} identities[/]"))
         self.query_one("#d_src", Static).update(Text.from_markup(src))
         for ident in idents:
@@ -185,47 +199,83 @@ class DetailView(Vertical):
             if ev is None:
                 continue
             for row in ev.rows:
-                glyph, color = S.status_glyph(row["status"])
-                t.add_row(ident, str(row["seed"]), f'{row["progress"]:.2f}',
-                          Text(f'{glyph} {row["status"]}', style=color),
-                          Text(row["cause"] or "—", style="#7c745f" if not row["cause"] else ""),
-                          str(row["depth"]) if row["depth"] is not None else "—",
-                          f'{row["turns"]:,}' if row["turns"] is not None else "—",
-                          S.ep_time(row["time"]) if row["time"] is not None else "—")
+                t.add_row(ident, *_seed_cells(row))
 
     def refresh_live(self) -> None:
-        """Only a currently-streaming candidate's own table updates in place;
-        BEST OVERALL's full table and the AutoAscend baseline note are static
-        snapshots (re-opened, not ticked)."""
-        if self._live is None or not self.display or self.kind != "eval":
+        """A currently-streaming eval (``open_run``'s one identity) or this
+        iteration's BEST OVERALL candidate (``open_candidate``'s every
+        identity) updates in place, re-pulling its rows from the ``Run``;
+        the incumbent's full table and the AutoAscend baseline note are
+        static snapshots (re-opened, not ticked)."""
+        if self._live is None or not self.display or self.kind not in ("eval", "candidate"):
             return
         it, ident = self._live
-        ev = self.run.iteration_evals(it)[ident]
-        self._render_eval(ev.rows, ev.total)
+        if self.kind == "candidate":
+            self._render_candidate(it)
+        else:
+            assert ident is not None
+            ev = self.run.iteration_evals(it)[ident]
+            self._render_eval(ev.rows, ev.total)
 
     def _render_eval(self, rows: list[dict], total: int) -> None:
         if not rows:
-            head = Text.from_markup("[dim]pending — no episodes yet[/]")
+            head = Text.from_markup("[dim]no games yet[/]")
         else:
             scores = [float(r["progress"]) for r in rows]
             avg = sum(scores) / len(scores)
             std = pstdev(scores) if len(scores) > 1 else 0.0
-            done = "done" if total > 0 and len(rows) >= total else "computing ⊙"
+            # Ruling 16(a): a finished run's cut-short batch never claims to
+            # still be playing -- only a genuinely running run can be.
+            more = ("" if (total > 0 and len(rows) >= total) or not self.run.running
+                    else "   [dim]still playing…[/]")
             head = Text.from_markup(
-                f"x̄ [b #ffd54a]{avg:.2f}[/]   std [b]{std:.2f}[/]"
-                f"   seeds [b]{len(rows)}/{total}[/]   [dim]{done}[/]")
+                f"avg [b #ffd54a]{avg:.2f}[/]   std [b]{std:.2f}[/]   "
+                f"[b]{len(rows)}/{total}[/] games{more}")
         self.query_one("#d_head", Static).update(head)
         self.query_one("#d_src", Static).update(Text.from_markup(self._src))
         t = self.query_one("#d_table", DataTable)
         t.clear()
         for row in rows:
-            glyph, color = S.status_glyph(row["status"])
-            t.add_row(str(row["seed"]), f'{row["progress"]:.2f}',
-                      Text(f'{glyph} {row["status"]}', style=color),
-                      Text(row["cause"] or "—", style="#7c745f" if not row["cause"] else ""),
-                      str(row["depth"]) if row["depth"] is not None else "—",
-                      f'{row["turns"]:,}' if row["turns"] is not None else "—",
-                      S.ep_time(row["time"]) if row["time"] is not None else "—")
+            t.add_row(*_seed_cells(row))
+
+    def show_candidate(self, run: Run, k: int) -> None:
+        """Iteration k's candidate across every identity: the average the
+        BEST OVERALL row's "this iteration" cell shows. Live while the
+        iteration is still evaluating -- refresh_live re-renders it in
+        place (keeping the columns), the same way open_run's own-candidate
+        table does (Ruling 16(b))."""
+        self.kind = "candidate"
+        self._live = (k, None)
+        self.border_title = f" BEST OVERALL candidate · iter {k} · all evaluations "
+        t = self.query_one("#d_table", DataTable)
+        t.clear(columns=True)
+        t.add_columns("identity", "seed", "progress", "status", "cause of death",
+                      "depth", "turns", "time")
+        self._src = (f"[dim]source[/]  [link=file:///runs/{run.rid}/iter{k}/bot.py]"
+                     f"bot.py ↗ (this run · iter {k})[/]")
+        self._render_candidate(k)
+
+    def _render_candidate(self, k: int) -> None:
+        """The BEST OVERALL candidate table's head + rows, from iteration
+        k's own dev batch (running, decided or crashed) -- shared by
+        show_candidate and refresh_live so a still-streaming candidate
+        ticks up in place without losing its columns."""
+        evals = self.run.iteration_evals(k)
+        rows = [(ident, row) for ident in self.run.identities() for row in evals[ident].rows]
+        total = sum(view.total for view in evals.values())
+        if rows:
+            avg = sum(float(r["progress"]) for _i, r in rows) / len(rows)
+            more = ("" if len(rows) >= total or not self.run.running
+                    else "   [dim]still playing…[/]")
+            head = f"avg [b #ffd54a]{avg:.2f}[/]   [b]{len(rows)}/{total}[/] games{more}"
+        else:
+            head = "[dim]no games yet[/]"
+        self.query_one("#d_head", Static).update(Text.from_markup(head))
+        self.query_one("#d_src", Static).update(Text.from_markup(self._src))
+        t = self.query_one("#d_table", DataTable)
+        t.clear()
+        for ident, row in rows:
+            t.add_row(ident, *_seed_cells(row))
 
 
 class RunMonitor(Screen):
@@ -244,6 +294,7 @@ class RunMonitor(Screen):
     RunMonitor #right { width: 1fr; }
     RunMonitor #progress_pane { padding: 0 1; }
     RunMonitor #idents { height: 1fr; }
+    RunMonitor #legend { height: auto; color: #7c745f; padding: 0 1; }
     RunMonitor #detailview { height: 1fr; padding: 1 2; }
     RunMonitor #d_head { height: auto; padding: 0 0 1 0; }
     RunMonitor #d_src { height: auto; color: #7c745f; padding: 0 0 1 0; }
@@ -267,6 +318,8 @@ class RunMonitor(Screen):
         self.run = run
         self._row_map: list[tuple[str, str | None]] = []   # row index -> (kind, ident)
         self._row_keys: dict[str, RowKey] = {}              # ident -> its table row key
+        self._clickable: set[tuple[int, int]] = set()   # (row, col) cells that open detail
+        self._score_sig: tuple | None = None             # table structure last built
         self._last_cursor_row = 0
         self._mutlog_shown = 0    # #mutlog lines already written, for the viewed iteration
         self._steps_view: story.SectionView | None = None
@@ -307,6 +360,7 @@ class RunMonitor(Screen):
                     with TabPane("Progress", id="tab_score"), Vertical(id="progress_pane"):
                         yield ClickTable(id="idents", cursor_type="cell",
                                          zebra_stripes=True, classes="panel")
+                        yield Static(story.LEGEND, id="legend")
                     with TabPane("Mutator Logs", id="tab_mutator"):
                         yield RichLog(id="mutlog", classes="panel",
                                      wrap=True, markup=True, highlight=False)
@@ -340,9 +394,9 @@ class RunMonitor(Screen):
         # content-width measurement to idle, so at first paint they truncate
         # cells to the *header* width ("sam-hu", "vkurenkov @" with the score
         # cut). Fixed widths render the full identity / champion@sha / score.
-        idents.add_column("identity", key="id", width=24)
-        idents.add_column("best so far", key="best", width=34)
-        idents.add_column("this iteration", key="run", width=30)
+        idents.add_column("identity", key="id", width=22)
+        idents.add_column("best so far", key="best", width=26)
+        idents.add_column("this iteration", key="run", width=31)
         idents.border_title = " progress by identity "
         idents._valid_fn = self._valid_cell        # hover only on clickable cells
         # #idents now has its columns -- safe to render into it. Flip the
@@ -384,28 +438,29 @@ class RunMonitor(Screen):
         ol.scroll_to_highlight()
 
     # ---- rendering: Progress table --------------------------------------------
-    def _row_eval(self, ident: str, evals: dict[str, EvalView]) -> EvalView:
-        """The identity's eval for the VIEWED iteration -- suppressing a
-        running iteration's foreign/stale batch (the previous iteration's
-        leftover rows during "mutating", or the gate's smoke-test episodes
-        during "gating") outside the "evaluating-dev" phase, mirroring the
-        old monitor's own gate (monitor.py:215, pre-rework)."""
-        ev = evals[ident]
-        if (self.run.iteration_status(self.sel_iter) == "running"
-                and self.run.state.get("phase") != "evaluating-dev"):
-            return EvalView(ident, ev.total, [])
-        return ev
+    def _score_signature(self) -> tuple:
+        """What decides whether the Progress table needs a full rebuild
+        (its row structure changed) rather than an in-place cell refill."""
+        target = None if self.sel_iter == 0 else self.run.iter_target(self.sel_iter)
+        return (tuple(self.run.identities()), target, self.sel_iter, self.run.reopened)
+
+    def _refresh_score(self) -> None:
+        """Rebuild the table when its rows change, else refill its cells."""
+        if self._score_signature() != self._score_sig:
+            self._rebuild_score()
+        else:
+            self._update_score()
 
     def _rebuild_score(self) -> None:
-        """Full rebuild of the Progress table -- only on iteration change /
-        mount / a completed iteration (a discrete event), never on a live
-        in-place tick (``_update_score`` handles that)."""
-        is_init = self.sel_iter == 0
+        """Rebuild the Progress rows: BEST OVERALL (multi-identity only), then
+        identities grouped by role; ✎ marks what this iteration improves."""
         t = self.query_one("#idents", ClickTable)
         coord = t.cursor_coordinate
         t.clear()
         self._row_map = []
         self._row_keys = {}
+        self._clickable = set()
+        self._score_sig = self._score_signature()
 
         if self.run.reopened:
             # A run rebuilt from disk: per-identity Progress scores were never
@@ -421,8 +476,7 @@ class RunMonitor(Screen):
             self._row_map.append(("norec", None))
             return
 
-        # BEST OVERALL (the union cell) sits IN the table, first (openable)
-        # row -- it UPDATES as the run finds a child with a better average.
+        target = None if self.sel_iter == 0 else self.run.iter_target(self.sel_iter)
         # I8: for a single-identity objective the harness never seeds/moves
         # the union cell (archive.py's `len(identities) > 1` guard) -- showing
         # it would freeze at the AutoAscend baseline forever, misleadingly
@@ -430,28 +484,20 @@ class RunMonitor(Screen):
         # the row entirely; _row_map/_valid_cell/select routing are already
         # data-driven off _row_map, so simply not appending it is sufficient.
         if len(self.run.identities()) > 1:
-            bo = self.run.best_overall(self.sel_iter)   # (score, label, kind, _)
-            # Aligned with the identity rows: name | program+score | hint, so the
-            # champion@sha + x̄ sit in "best so far", not one over-wide cell.
-            t.add_row(Text.from_markup("[b #d2a24c]★ BEST OVERALL[/]"), S.best_cell(bo),
-                      Text.from_markup("[dim]open ▸[/]"), key="ov")
+            name = ("[b #ffd54a]✎ ★ BEST OVERALL[/]" if target == "union"
+                    else "[b #d2a24c]★ BEST OVERALL[/]")
+            t.add_row(Text.from_markup(name), "", "", key="ov")
             self._row_map.append(("overall", None))
-
-        target = None if is_init else self.run.iter_target(self.sel_iter)
-        evals = self.run.iteration_evals(self.sel_iter)
         for role in self.run.roles_present():
             t.add_row(Text.from_markup(f"[b #d2a24c]{S.role_full(role)}[/]"), "", "",
                       key=f"role:{role}")
             self._row_map.append(("role", None))
             for ident in (i for i in self.run.identities() if self.run.role_of(i) == role):
-                inc = self.run.incumbent(ident, self.sel_iter)
-                ev = self._row_eval(ident, evals)
-                name = (f"[b #ffd54a]✎ {ident}[/]" if ident == target else f"[b]  {ident}[/]")
-                best_c = S.best_cell(inc)
-                run_c = S.run_cell(ev.avg, ev.revealed, ev.total, inc[0], is_init, ev.done)
-                rk = t.add_row(Text.from_markup(name), best_c, run_c, key=f"id:{ident}")
-                self._row_keys[ident] = rk
+                name = f"[b #ffd54a]✎ {ident}[/]" if ident == target else f"[b]  {ident}[/]"
+                self._row_keys[ident] = t.add_row(Text.from_markup(name), "", "",
+                                                  key=f"id:{ident}")
                 self._row_map.append(("ident", ident))
+        self._update_score()
         # keep the cursor on a program cell
         if coord is not None and self._valid_cell(coord.row, coord.column):
             t.move_cursor(row=coord.row, column=coord.column)
@@ -462,23 +508,48 @@ class RunMonitor(Screen):
             self._last_cursor_row = first
 
     def _update_score(self) -> None:
-        """In-place update of only the "this iteration" cells, so the cursor /
-        highlight / focus are preserved and the table doesn't flicker on
-        every live tick."""
-        is_init = self.sel_iter == 0
+        """Refill every program cell in place (cursor and focus kept) and
+        recompute which cells are clickable."""
+        if self.run.reopened:
+            return
         t = self.query_one("#idents", ClickTable)
-        evals = self.run.iteration_evals(self.sel_iter)
-        for ident in self.run.identities():
-            inc = self.run.incumbent(ident, self.sel_iter)
-            ev = self._row_eval(ident, evals)
-            rk = self._row_keys.get(ident)
-            if rk is not None:
-                # "best so far" too, not just "this iteration": during cold-start
-                # the champion's live local mean ticks up per episode, and the
-                # AutoAscend->champion label flips once its cell is scored.
-                t.update_cell(rk, "best", S.best_cell(inc), update_width=False)
-                t.update_cell(rk, "run", S.run_cell(ev.avg, ev.revealed, ev.total, inc[0],
-                                                     is_init, ev.done), update_width=False)
+        k = self.sel_iter
+        before_state = self.run.first_state_at is None
+        clickable: set[tuple[int, int]] = set()
+        for r, (kind, ident) in enumerate(self._row_map):
+            best: float | None = None
+            if kind == "overall":
+                if before_state or (self.run.init_union is None
+                                    and self.run.setup_ended_at is None):
+                    best_txt = Text.from_markup("[#7c745f]scored at the end of setup[/]")
+                else:
+                    bo = self.run.best_overall(k)
+                    best_txt, best = S.best_cell(bo), bo[0]
+                    clickable |= {(r, 0), (r, 1)}
+                if k == 0 and best is not None:
+                    # Ruling 16(c): at setup, once the union has scored, its
+                    # "this iteration" cell opens the same program as "best
+                    # so far" -- the only way to see it before iteration 1.
+                    this, ok = "[#7c745f]open ▸[/]", True
+                else:
+                    this, ok = story.this_cell(self.run, None, k, best)
+                key = "ov"
+            elif kind == "ident" and ident is not None:
+                if before_state:
+                    best_txt = Text.from_markup("[#7c745f]fetching…[/]")
+                else:
+                    inc = self.run.incumbent(ident, k)
+                    best_txt, best = S.best_cell(inc), inc[0]
+                    clickable.add((r, 1))
+                this, ok = story.this_cell(self.run, ident, k, best)
+                key = f"id:{ident}"
+            else:
+                continue
+            if ok:
+                clickable.add((r, 2))
+            t.update_cell(key, "best", best_txt, update_width=False)
+            t.update_cell(key, "run", Text.from_markup(this), update_width=False)
+        self._clickable = clickable
 
     # ---- rendering: Mutator Logs / Logs tabs ----------------------------------
     def _render_mutator(self) -> None:
@@ -562,8 +633,10 @@ class RunMonitor(Screen):
     def open_best(self, ident: str) -> None:
         """Open the incumbent ("best so far") program for ``ident``: a run
         child (local source), a hub champion (re-run locally at init -- D3;
-        source links to the GitHub reference), or the AutoAscend floor
-        (D5 -- no per-seed table)."""
+        source links to the GitHub reference), a seed cell -- no hub
+        champion, played locally during setup (Ruling 11) -- or, only when
+        the identity has no cell at all, the AutoAscend floor (D5 -- no
+        per-seed table)."""
         score, label, kind, j = self.run.incumbent(ident, self.sel_iter)
         title = f" {ident} · {label} "
         dv = self.query_one("#detailview", DetailView)
@@ -583,6 +656,13 @@ class RunMonitor(Screen):
             repo, sha = origin.get("repo"), origin.get("sha")
             src = (f"[dim]source[/]  [link=https://{repo}/commit/{sha}]{repo}@{sha} ↗[/]"
                    if repo and sha else "[dim]source[/]  [dim]origin unknown[/]")
+            dv.show_eval(ev.rows, ev.total, title, src)
+        elif kind == "aa" and ident in self.run.init_cells:
+            # Ruling 11: a seed cell (--from-seed/--seed, no hub champion)
+            # was measured on THIS machine during setup -- its games exist,
+            # unlike the hub-reference AutoAscend floor show_baseline is for.
+            ev = self.run.iteration_evals(0)[ident]
+            src = "[dim]source[/]  [dim]the starting bot · played on your machine during setup[/]"
             dv.show_eval(ev.rows, ev.total, title, src)
         else:
             dv.show_baseline(title, score)
@@ -604,6 +684,12 @@ class RunMonitor(Screen):
         table."""
         info = self.run.best_overall(self.sel_iter)
         self.query_one("#detailview", DetailView).show_program(self.run, info)
+        self._open_detail()
+
+    def open_candidate(self) -> None:
+        """This iteration's candidate across every identity -- the average
+        the BEST OVERALL row's "this iteration" cell shows."""
+        self.query_one("#detailview", DetailView).show_candidate(self.run, self.sel_iter)
         self._open_detail()
 
     def _refresh_detail_if_open(self) -> None:
@@ -662,57 +748,48 @@ class RunMonitor(Screen):
             self._select(target)
 
     def _valid_cell(self, row: int, col: int) -> bool:
-        if not (0 <= row < len(self._row_map)):
-            return False
-        kind = self._row_map[row][0]
-        if kind == "overall":
-            return col in (0, 1)
-        if kind == "ident":
-            return col == 1 if self.sel_iter == 0 else col in (1, 2)  # init: no "this iteration"
-        return False
+        return (row, col) in self._clickable
 
     def on_data_table_cell_highlighted(self, event: DataTable.CellHighlighted) -> None:
-        # only program cells highlight: BEST OVERALL (row 0, col 0/1) and each
-        # identity's two programs (col 1/2). Snap off everything else.
+        # Only program cells highlight: snap anywhere else to the nearest
+        # clickable cell -- and never onto an unclickable one, so the snap
+        # can't bounce between dead cells forever.
         if getattr(event.data_table, "id", None) != "idents":
             return
-        n = len(self._row_map)
         row, col = event.coordinate.row, event.coordinate.column
         if self._valid_cell(row, col):
             self._last_cursor_row = row
             return
+        n = len(self._row_map)
         going_up = row < self._last_cursor_row
         order = (list(range(row, -1, -1)) + list(range(row + 1, n))) if going_up \
             else (list(range(row, n)) + list(range(row - 1, -1, -1)))
         for r in order:
-            if not (0 <= r < n):
-                continue
-            kind = self._row_map[r][0]
-            if kind == "overall":
-                self._last_cursor_row = r
-                event.data_table.move_cursor(row=r, column=0 if col <= 0 else 1)
-                return
-            if kind == "ident":
-                self._last_cursor_row = r
-                tcol = 1 if (self.sel_iter == 0 or col <= 1) else 2
-                event.data_table.move_cursor(row=r, column=tcol)
-                return
+            for c in (col, 1, 2, 0):
+                if self._valid_cell(r, c):
+                    self._last_cursor_row = r
+                    event.data_table.move_cursor(row=r, column=c)
+                    return
 
     def on_data_table_cell_selected(self, event: DataTable.CellSelected) -> None:
         # NOTE: a single click on a ClickTable posts CellSelected TWICE
-        # (Textual 8.2.8 MRO/cursor-dispatch quirk, confirmed in Task 7) -- this
-        # handler is a pure function of event.coordinate -> open_*, so a
-        # double-fire is harmless (opening the same thing twice).
+        # (Textual 8.2.8 quirk) -- this is a pure function of the coordinate.
         row, col = event.coordinate.row, event.coordinate.column
-        if row >= len(self._row_map):
+        if not self._valid_cell(row, col) or row >= len(self._row_map):
             return
         kind, ident = self._row_map[row]
         if kind == "overall":
-            self.open_program()
+            # Ruling 16(c): at setup, col 2 is "open ▸" -- the same program
+            # as "best so far", not the (nonexistent before iteration 1)
+            # candidate.
+            if col == 2 and self.sel_iter != 0:
+                self.open_candidate()
+            else:
+                self.open_program()
         elif kind == "ident" and ident is not None:
-            if col == 1:                              # "best so far" program
+            if col == 1:
                 self.open_best(ident)
-            elif col == 2 and self.sel_iter != 0:      # "this iteration" (none at init)
+            elif col == 2:
                 self.open_run(ident)
 
     # ---- live renders (forwarded by the app while this screen is on top) ------
@@ -721,10 +798,7 @@ class RunMonitor(Screen):
             return   # pre-mount race (see __init__) -- on_mount will backfill
         self._follow_live()
         self._render_iters()
-        if self.sel_iter == 0 and self.run.state.get("phase") == "cold-start":
-            self._rebuild_score()
-        elif self.run.iteration_status(self.sel_iter) == "running":
-            self._update_score()
+        self._refresh_score()
         self._render_steps()
         self._render_statusline()
         self._render_now()
@@ -732,7 +806,7 @@ class RunMonitor(Screen):
     def render_episode(self, label: str, ep: dict) -> None:
         if not self._ready:
             return
-        self._update_score()
+        self._refresh_score()
         self._render_steps()
         self._render_now()
         self._refresh_detail_if_open()   # a live open_run() table gains a row
@@ -755,8 +829,7 @@ class RunMonitor(Screen):
             return
         self._follow_live()
         self._render_iters()   # status rollover: running -> decided
-        if iteration <= self.sel_iter:
-            self._rebuild_score()
+        self._refresh_score()
         self._render_steps()
         self._render_statusline()
         self._render_now()

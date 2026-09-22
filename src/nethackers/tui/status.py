@@ -109,19 +109,6 @@ def best_cell(inc: tuple[float, str, str, int | None]) -> Text:
     return Text.from_markup(f"[{color}]{label:<15}[/] [b {color}]{score:>4.2f}[/]")
 
 
-def run_cell(avg: float | None, revealed: int, total: int, inc_score: float,
-             is_init: bool, done: bool) -> Text:
-    if is_init or avg is None or revealed == 0:
-        return Text.from_markup("[dim]— · no mutation[/]" if is_init
-                                else f"[dim]{'—':>4}  {revealed:>2}/{total} pending[/]")
-    win = avg > inc_score
-    color = _GREEN if win else _FOCUS
-    spin = "" if done else " [dim]⊙[/]"
-    tag = f"   [b {_GREEN}]▲ new best[/]" if win else ""
-    return Text.from_markup(
-        f"[b {color}]{avg:>4.2f}[/]  [dim]{revealed:>2}/{total}[/]{spin}{tag}")
-
-
 def best_overall_cell(bo: tuple[float, str, str, int | None]) -> Text:
     score, label, kind, _ = bo
     color = {"aa": _DIM, "run": _GREEN, "hub": _PARCHMENT}[kind]
