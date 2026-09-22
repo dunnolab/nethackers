@@ -7,6 +7,14 @@ from nethackers.harness.launch import EvolveParams, prepare_evolve
 from nethackers.harness.version import RUN_SCHEMA_VERSION
 
 
+def test_evolve_params_broker_defaults_to_true():
+    # §3.4: the credential broker is now the default credential defense --
+    # flipping it to the MOUNT is the explicit --no-broker/TUI opt-out, not
+    # the baseline every unspecified run gets.
+    p = EvolveParams(objective="wiz-elf-cha-mal", seed="roots/autoascend")
+    assert p.broker is True
+
+
 def test_prepare_evolve_writes_config_and_drives_run_loop(tmp_path, monkeypatch):
     captured = {}
     monkeypatch.setattr(launch, "run_loop", lambda **kw: captured.update(kw) or ["res"])

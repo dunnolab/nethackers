@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from nethackers.harness.auth_inject import AuthUnavailable
 from nethackers.harness.container_operator import (
     ContainerCaps,
     ContainerOperator,
@@ -582,6 +583,49 @@ def test_broker_off_by_default_keeps_the_mount_and_no_add_host(tmp_path):
     assert "--add-host" not in cmd
     assert f"{tmp_path}/.codex:/home/agent/.codex" in cmd
     assert "OPENAI_BASE_URL" not in " ".join(cmd)
+
+
+def test_broker_fails_loud_with_no_login_never_falls_back_to_mount(tmp_path):
+    """B3 / fail-loud (design §3.4): when the broker path can't resolve a
+    real credential for claude/codex -- no login on this host -- `run` must
+    raise `AuthUnavailable` straight through `_start_broker_auth`, never
+    silently swap to the credential-MOUNT path (`auth_docker_args`), which
+    would remount the very secret the broker exists to keep host-side.
+    `cred_broker_factory` is a fail-fast stub here: `broker_credential` is
+    called BEFORE it in `_start_broker_auth`'s claude/codex branch, so a
+    correct implementation never even reaches it. `_popen` is asserted
+    unreached too -- docker must never be shelled out to for either harness."""
+    def _no_login(*a, **kw):
+        raise AuthUnavailable("claude", "run `claude setup-token`, then retry")
+
+    def _boom_if_a_broker_starts(*a, **kw):
+        pytest.fail("a broker was started despite no resolvable credential")
+
+    popen_calls: list = []
+    for harness in ("claude", "codex"):
+        op = ContainerOperator(
+            harness=harness, image="img:test", system="Linux", home=tmp_path,
+            broker=True,
+            cred_broker_factory=_boom_if_a_broker_starts,
+            broker_credential=_no_login,
+        )
+        op._popen = lambda cmd, **kw: popen_calls.append(cmd) or FakePopen(cmd, **kw)
+        wt = tmp_path / "work" / f"iter-{harness}"
+        wt.mkdir(parents=True)
+
+        with pytest.raises(AuthUnavailable):
+            op.run(wt, "BRIEF-TEXT")
+
+    assert popen_calls == []   # docker never even ran -- no mount, no container
+
+
+# The other half of B3 -- opencode2's "no brokerable provider" fallback to the
+# credential mount is INTENTIONAL (nothing sensitive crosses there -- it's
+# OpenCode's own free-model path) and must survive Task 5 unchanged. Already
+# covered by `test_broker_path_opencode2_falls_back_to_mount_when_nothing_is_
+# brokerable` below (a real no-brokerable-provider config fixture, not a
+# stubbed resolver) -- that test is left as-is and re-run as a regression
+# check rather than duplicated here.
 
 
 def test_build_docker_argv_extra_args_precede_the_image():

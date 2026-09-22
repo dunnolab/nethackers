@@ -903,6 +903,57 @@ async def test_selecting_verified_sets_tier(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Credential broker toggle (spec 3.4/3.5): the default credential defense --
+# the model credential stays host-side, injected only on the wire to the one
+# real provider -- vs. the older MOUNT opt-out. Mirrors the network toggle
+# immediately above.
+# ---------------------------------------------------------------------------
+
+async def test_broker_toggle_defaults_to_broker(monkeypatch):
+    seen: dict = {}
+
+    def _fake_prepare_evolve(params, **_kw):
+        seen["params"] = params
+        return _Plan()
+
+    monkeypatch.setattr(ef, "prepare_evolve", _fake_prepare_evolve)
+    app = _Host(None)
+    async with app.run_test(size=(100, 50)) as pilot:
+        form = app.query_one(ef.EvolveForm)
+        assert form._broker() is True     # default, before any Start
+        # the explanation names the invariant the broker holds regardless of
+        # today's open egress
+        help_text = str(form.query_one("#f_broker_help", Static).render()).lower()
+        assert "host" in help_text
+
+        form._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        assert seen["params"].broker is True        # flows through to EvolveParams
+
+
+async def test_selecting_mount_sets_broker_false(monkeypatch):
+    seen: dict = {}
+
+    def _fake_prepare_evolve(params, **_kw):
+        seen["params"] = params
+        return _Plan()
+
+    monkeypatch.setattr(ef, "prepare_evolve", _fake_prepare_evolve)
+    app = _Host(None)
+    async with app.run_test(size=(100, 50)) as pilot:
+        form = app.query_one(ef.EvolveForm)
+        form.query_one("#f_broker", Select).value = "mount"
+        await pilot.pause()
+        assert form._broker() is False
+
+        form._objective = "wiz-elf-cha-mal"
+        app.query_one("#f_start", Button).press()
+        await pilot.pause()
+        assert seen["params"].broker is False
+
+
+# ---------------------------------------------------------------------------
 # Detected runtime -> EvolveParams (issue #54). The form already resolved
 # docker-vs-podman for its own preflight/presence/provision probes (#50/#52),
 # but never put it on the params it hands to `prepare_evolve` -- which is what

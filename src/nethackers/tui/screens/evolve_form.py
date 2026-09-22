@@ -241,6 +241,19 @@ class EvolveForm(Vertical):
                     "safely they run.[/]",
                     id="f_network_help",
                 )
+                yield Label("Credential")
+                yield Select(
+                    [("Broker — credential stays host-side (default)", "broker"),
+                     ("Mount — credential mounted into the sandbox", "mount")],
+                    value="broker", allow_blank=False, id="f_broker",
+                )
+                yield Static(
+                    "[dim]Broker keeps the model credential on the host and injects it "
+                    "only on the wire to the real provider, so untrusted code in the "
+                    "sandbox can't read it — even though egress is open. Mount instead "
+                    "puts the real credential inside the sandbox.[/]",
+                    id="f_broker_help",
+                )
         # full-width start bar below the two subwindows
         with Horizontal(id="f_startbar"):
             yield Button("Start", id="f_start", variant="success")
@@ -472,6 +485,9 @@ class EvolveForm(Vertical):
     def _network_tier(self) -> str:
         return str(self.query_one("#f_network", Select).value)
 
+    def _broker(self) -> bool:
+        return str(self.query_one("#f_broker", Select).value) == "broker"
+
     def _params(self) -> EvolveParams:
         if not self._objective:
             raise ValueError("pick an objective from the list")
@@ -493,6 +509,7 @@ class EvolveForm(Vertical):
             token=self._creds.access_token if self._creds else OFFLINE_TOKEN,
             owner=self._creds.login if self._creds else OFFLINE_OWNER,
             tier=self._network_tier(),
+            broker=self._broker(),
         )
 
     def on_button_pressed(self, event: Button.Pressed) -> None:

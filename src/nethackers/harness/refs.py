@@ -16,9 +16,14 @@ from nethackers.hubclient.publish import _junk_ignore
 # and rule files that a prompt-injection attack could plant to hijack the
 # mutator's agent (spec §3d). Stripped -- not just hidden -- before the agent
 # ever reads the tree; README.md and ordinary code are untouched.
+# `opencode.json`/`opencode.jsonc`/`.opencode` block OpenCode config-injection
+# STRUCTURALLY -- the tree never reaches the agent -- complementing the
+# runtime `OPENCODE_DISABLE_PROJECT_CONFIG` flag (behavioral, and it has
+# regressed upstream before; this strip holds even if that flag does).
 _AGENT_CONFIG_NAMES = (
     "CLAUDE.md", "AGENTS.md", ".mcp.json", ".envrc",
     ".claude", ".codex", ".cursor", ".cursorrules", ".vscode",
+    "opencode.json", "opencode.jsonc", ".opencode",
 )
 AGENT_CONFIG_IGNORE = shutil.ignore_patterns(*_AGENT_CONFIG_NAMES)
 
