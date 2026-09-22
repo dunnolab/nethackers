@@ -85,5 +85,6 @@ recipe becomes tested only in a PR that records where it ran.
 | `linux.gh.other` | install the GitHub CLI | you | install the GitHub CLI: https://github.com/cli/cli/blob/trunk/docs/install_linux.md | not covered ([vendor page](https://github.com/cli/cli/blob/trunk/docs/install_linux.md)) |
 | `linux.claude.install` | install Claude Code | nethackers | `curl -fsSL https://claude.ai/install.sh \| bash` | untested ([built from](https://code.claude.com/docs/en/setup)) |
 | `linux.codex.install` | install Codex | nethackers | `curl -fsSL https://chatgpt.com/codex/install.sh \| sh` | untested ([built from](https://github.com/openai/codex)) |
+| `linux.broker.ufw` | let the sandbox reach the credential broker (ufw) | you | if ufw is active, allow the sandboxed agent to reach the credential broker (on by default) with a PORT-SCOPED rule (not a blanket `allow in on docker0`): `sudo ufw allow in on docker0 to "$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}')" port 11700:11749 proto tcp` | tested on Ubuntu 26.04 x86_64, Docker 29.1.3 (nethackers 0.35.0, 2026-09-23) |
 
 <!-- setup-recipes:end -->

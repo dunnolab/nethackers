@@ -153,3 +153,17 @@ def test_listed_commands_for_someone_without_a_terminal():
     assert step["hub-login"].shows == "nethackers login (a GitHub code, in your browser)"
     assert listed_command(step["gh-login"]) == (
         "gh auth login --hostname github.com --git-protocol https --web")
+
+
+def _ufw():
+    return linux.firewall_recipe(UBUNTU, UP, which=lambda n: "/usr/sbin/ufw")
+
+
+def test_broker_firewall_todo_appears_for_evolve():
+    plan = build_plan(sit(facts=UBUNTU, firewall=_ufw(), scope="evolve"), linux)
+    assert any("ufw allow in on docker0" in t.say for t in plan.yours)
+
+
+def test_broker_firewall_todo_absent_outside_evolve():
+    plan = build_plan(sit(facts=UBUNTU, firewall=_ufw(), scope="eval"), linux)
+    assert not any("ufw" in t.say for t in plan.yours)

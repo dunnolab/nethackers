@@ -141,6 +141,7 @@ def run_setup(opts: SetupOptions, deps: SetupDeps) -> int:
     pulls = tuple(k for k in ("arena", "mutator")
                   if f"{k}_image" in wanted and wanted[f"{k}_image"].status != "ok")
     emulation = plat.emulation(facts, read_text=deps.read_text)[2] if "rosetta" in wanted else None
+    firewall = plat.firewall_recipe(facts, runtime) if opts.scope in (None, "evolve") else None
     sit = Situation(
         checks=tuple(checks), facts=facts, runtime=runtime, scope=opts.scope, agent=agent,
         agent_installed=agent is not None and (agent == "opencode2"
@@ -151,6 +152,7 @@ def run_setup(opts: SetupOptions, deps: SetupDeps) -> int:
         gh_login=gh_login, gh_state=gh_state,
         pull_size=deps.pull_size(pulls) if pulls and runtime.runtime is not None else None,
         emulation=emulation,
+        firewall=firewall,
     )
     plan = build_plan(sit, plat)
 
