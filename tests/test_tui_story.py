@@ -323,6 +323,21 @@ def test_reopened_iteration_shows_only_the_section_6_8_rows():
                       "improved val-dwa-law-fem", "sent to the hub"]
 
 
+def test_a_reopened_error_iteration_shows_only_the_error_line():
+    """Round-1 leftover (finding 1, still open in round 2): the `not
+    run.reopened` exemption in _edit_rows let a reopened error: result fall
+    through to a false "edited the bot" row, since a reopened run has no
+    edit_end either way. Ruling 6: with no timings at all, a reopened
+    error: result shows ONLY the error line -- no edit row at all."""
+    run = Run("r", EvolveConfig(",".join(IDS), "claude", 5))
+    run.reopened = True
+    run.status = "done"
+    run.apply_iteration(1, IterationResult(False, "error:copytree failed"))
+    view = story.section_view(run, 1, 0)
+    assert [plain(r.label) for r in view.rows] == ["the iteration hit an error: copytree failed"]
+    assert [plain(r.mark) for r in view.rows] == ["✗"]
+
+
 # ---- fix round 1 (task-6-findings-r1.md) -----------------------------------------
 
 def test_an_error_iteration_claims_only_the_steps_that_really_happened():
@@ -378,8 +393,12 @@ def test_an_iteration_cut_short_by_a_worker_crash_shows_the_partial_count():
     """Finding 2a (the iteration-side twin of the setup case above) and
     finding 2c's this_cell bullet, from the same crash: Run.finish() seals
     the dev batch at 12/45 games -- the row must say 12/45, and this_cell
-    must show the real 12/45 too, not 0/45 (Run.iteration_evals only sees a
-    live batch while Run.running, which a crash has just made false)."""
+    must show the real 12/45 too, not 0/45 (Run.iteration_evals's live path
+    now reads the iteration's own dev batch directly, regardless of
+    Run.running -- Ruling 12). Also (round 2 finding 7): the play row's own
+    mark, iter_label, and the section footer must all read as a crash (✗
+    failed), never a stop (■) -- a crash was never previously asserted here,
+    only the label text and this_cell were."""
     clock = Clock()
     run = _through_setup(clock)
     clock.t = 1600
@@ -393,7 +412,41 @@ def test_an_iteration_cut_short_by_a_worker_crash_shows_the_partial_count():
     view = story.section_view(run, 1, clock.t)
     labels = [plain(r.label) for r in view.rows]
     assert labels[2] == "playing the edited bot · 12/45 games · avg 0.15"   # never a checkmark
+    assert plain(view.rows[2].mark) == "✗"                                  # crash, not a stop
     assert plain(story.this_cell(run, None, 1, 0.3)[0]) == "0.15  12/45 games"
+    assert plain(story.iter_label(run, 1)[0]) == "✗ iter 1   failed"
+    assert plain(view.footer) == "✗ the run failed during this iteration"
+
+
+def test_a_crash_mid_edit_marks_the_row_failed_not_stopped():
+    """Finding 2c: the edit row's own "still in progress" mark must also
+    read as a crash, not a stop, once the run isn't running and the
+    iteration is undecided (the re-reviewer's key fact: this combination can
+    only mean status == "failed" -- the loop only checks Stop at the top of
+    an iteration, so a genuine user Stop never leaves one undecided)."""
+    clock = Clock()
+    run = _through_setup(clock)
+    run.apply_log(run.tag(1), _codex_edit("/w/bot.py"))
+    clock.t = 1580
+    run.finish(error=RuntimeError("docker daemon died"))
+    view = story.section_view(run, 1, clock.t)
+    assert plain(view.rows[0].label) == "Codex is editing the bot · 1 action so far"
+    assert plain(view.rows[0].mark) == "✗"
+    assert plain(story.this_cell(run, IDS[1], 1, 0.18)[0]) == "— failed"
+
+
+def test_a_crash_mid_smoke_test_marks_the_row_failed_not_stopped():
+    """Finding 2c: the smoke-test row's own "still in progress" mark, same
+    reasoning as the edit-row test above."""
+    clock = Clock()
+    run = _through_setup(clock)
+    clock.t = 1600
+    run.apply_state(_state("gating", 1, cells=CELLS, cell=IDS[1]))
+    clock.t = 1610
+    run.finish(error=RuntimeError("docker daemon died"))
+    view = story.section_view(run, 1, clock.t)
+    assert plain(view.rows[-1].label) == "smoke test: one short game to check the edited bot runs"
+    assert plain(view.rows[-1].mark) == "✗"
 
 
 def test_a_run_that_fails_before_any_state_does_not_look_live():
@@ -416,8 +469,14 @@ def test_a_run_that_fails_before_any_state_does_not_look_live():
 def test_a_user_stop_mid_iteration_reads_differently_from_a_crash():
     """Finding 2c: the SAME "not running, undecided iteration" shape must be
     worded differently for a user Stop (■ stopped) than for a crash (✗
-    failed, tested above) -- a crash must never read as an intentional stop
-    and a stop must never read as a failure."""
+    failed, tested in test_an_iteration_cut_short_by_a_worker_crash_shows_the_partial_count
+    and the two test_a_crash_mid_* tests above) -- a crash must never read as
+    an intentional stop and a stop must never read as a failure. Per the
+    round-2 re-reviewer's key fact, the loop only checks Stop at the top of
+    an iteration, so a REAL Stop never actually leaves one undecided --
+    "status == stopped, iteration undecided" is synthetic here (built by
+    calling finish() directly, bypassing the loop's own invariant), but the
+    wording must still be correct if it's ever reached."""
     clock = Clock()
     run = _through_setup(clock)
     run.request_stop()
@@ -512,7 +571,10 @@ def test_seed_setup_row_omits_the_hub_claim_under_from_seed():
 def test_union_setup_row_has_the_specs_double_comma_once_done():
     """Finding 5 + Ruling 9: keep "<label>, the best bot on average" once the
     union batch is done -- only add the comma the spec has before
-    "on all N identities" that the code was missing."""
+    "on all N identities" that the code was missing. Round 2 (Ruling 12):
+    the comma belongs ONLY after a real label -- the live/unlabelled row
+    (before the union champion is named) must carry no stray comma at all,
+    matching the now line's own phrasing for the same moment."""
     clock = Clock()
     run = _new(clock)
     clock.t = 1006
@@ -522,7 +584,12 @@ def test_union_setup_row_has_the_specs_double_comma_once_done():
     for i in range(15):
         _ep(run, "cold-start · dev [cccc2222]", i, 15, IDS[2], 0.12)
     run.apply_state(_state("cold-start", cells=CELLS, coverage=(3, 3)))
-    for i in range(45):
+    for i in range(10):
+        _ep(run, "cold-start · dev [union]", i, 45, IDS[i % 3], 0.16)
+    live_labels = [plain(r.label) for r in story.section_view(run, 0, 1300).rows]
+    assert live_labels[-1] == (
+        "playing the best bot on average on all 3 identities · 10/45 games · avg 0.16")
+    for i in range(10, 45):
         _ep(run, "cold-start · dev [union]", i, 45, IDS[i % 3], 0.16)
     run.apply_state(_state("cold-start", cells=CELLS, coverage=(3, 3),
                            union={"score": 0.16, "digest": CLYDE}))
@@ -547,15 +614,18 @@ def test_run_failed_uses_failure_detail_not_the_raw_exception():
 
 
 def test_stopping_between_iterations_is_acknowledged():
-    """Ruling 10 minor: Stop pressed between iterations (none currently
-    running) must say so at once, not claim the next iteration is starting."""
+    """Ruling 10 minor, revised by Ruling 12: Stop pressed between iterations
+    (none currently running) must say so at once -- but must claim nothing
+    about whether another iteration starts, since Stop landing right after
+    the loop's top-of-iteration check still lets the next one begin (its
+    agent killed at once, but its smoke test and games still run)."""
     clock = Clock()
     run = _through_setup(clock)
     clock.t = 1800
     run.apply_iteration(1, IterationResult(False, "gate:boom"))
     run.apply_state(_state("rejected", 1, cells=CELLS, cell=IDS[1], detail="gate: boom"))
     run.request_stop()
-    assert plain(story.now_line(run, clock.t)) == "■ Stopping · no more iterations will start"
+    assert plain(story.now_line(run, clock.t)) == "■ Stopping…"
 
 
 def test_a_single_identity_is_not_pluralized():

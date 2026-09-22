@@ -730,3 +730,24 @@ def test_request_stop_records_when_and_ends_the_projection():
     r.request_stop()
     assert r.stop.is_set() and r.stop_requested_at == 450
     assert r.pace_left() is None
+
+
+def test_pace_left_counts_a_pre_mutating_error_as_done_even_without_a_measured_duration():
+    """Ruling 12: an "error:" before "mutating" ever ran (Ruling 6) leaves
+    edit_start None, so it has no measurable duration -- but it IS decided.
+    The old code counted iterations-left as `iterations - len(durations)`,
+    so this decided-but-unmeasured iteration was wrongly counted as still to
+    come. Probe's own numbers: one measured 300 s iteration + one
+    pre-mutating error, no iteration currently running, 5 total -> 3 really
+    left (correct: 900 s), not 4 (the old bug: 1200 s)."""
+    clock = _Clock()
+    r = Run("r1", EvolveConfig("val-dwa-law-fem", "claude", 5), clock=clock)
+    clock.t = 100
+    r.apply_state(_state("mutating", iteration=1))
+    clock.t = 400
+    r.apply_iteration(1, IterationResult(False, "no-cell-improved"))
+    r.apply_state(_state("rejected", iteration=1))          # measured: 300 s
+    clock.t = 410
+    r.apply_state(_state("error", iteration=2, detail="copytree failed"))   # decided, unmeasured
+    r.apply_iteration(2, IterationResult(False, "error:copytree failed"))
+    assert r.pace_left(410) == 900

@@ -129,6 +129,9 @@ def _batch_label(key: str) -> str:
     return f"cold-start · dev [{key}]"   # harness/loop.py's cold-start batch labels
 
 
+_UNION_NAME = "the best bot on average"   # the union group's unlabelled name (Ruling 9/12)
+
+
 def _setup_groups(run: Run) -> list[_Group]:
     """The cold-start batches in the loop's order: one per distinct hub
     champion (grouped by program over the identities it owns), then the
@@ -149,8 +152,8 @@ def _setup_groups(run: Run) -> list[_Group]:
         groups.append(_Group("seed", "the starting bot", seed))
     if run.batch_for(_batch_label("union")) is not None:
         union = run.init_union
-        name = (f"{run.origin_label(union['digest'])}, the best bot on average"
-                if union else "the best bot on average")
+        name = (f"{run.origin_label(union['digest'])}, {_UNION_NAME}"
+                if union else _UNION_NAME)
         groups.append(_Group("union", name, tuple(run.identities())))
     return groups
 
@@ -163,7 +166,11 @@ def _group_total(run: Run, group: _Group, batch: Batch | None) -> int:
 
 def _group_who(group: _Group, from_seed: bool) -> str:
     if group.key == "union":
-        return f"{escape(group.name)}, on all {len(group.idents)} identities"
+        # The comma belongs only after a real label (the loop hasn't named
+        # the union champion until its eval is scored -- Ruling 9); the
+        # unlabelled/live row gets none, matching the now line's phrasing.
+        comma = "," if group.name != _UNION_NAME else ""
+        return f"{escape(group.name)}{comma} on all {len(group.idents)} identities"
     who = f"{escape(group.name)} on {', '.join(group.idents)}"
     if group.key == "seed" and not from_seed:
         # Only a real hub search that came up empty earns this claim; under
@@ -334,7 +341,7 @@ def _edit_rows(run: Run, k: int, now: float, rows: list[StepRow], reason: str) -
         rows.append(StepRow(FAIL_MARK, f"the agent failed: {detail}", _dur(start, decided_at)))
         return False
     if k not in run.iter_results and end is None:
-        mark = RUN_MARK if run.running else STOP_MARK
+        mark = RUN_MARK if run.running else _crash_word(run)[0]
         rows.append(StepRow(mark, f"{S.agent_name(run.cfg)} is editing the bot · "
                                   f"[b]{len(acts)}[/] {_plural(len(acts), 'action', 'actions')}"
                                   f" so far", _dur(start, now) if run.running else ""))
@@ -342,12 +349,13 @@ def _edit_rows(run: Run, k: int, now: float, rows: list[StepRow], reason: str) -
             rows.append(StepRow("", f"[{S._DIM}]last: {escape(clip(acts[-1], 60))} — full "
                                     f"transcript in [b]Mutator Logs[/][/]"))
         return run.running
-    if end is None and not run.reopened:
+    if end is None and (reason.startswith("error:") or not run.reopened):
         # A generic "error:" (the loop's outer except, which can land ANYWHERE
-        # from before "mutating" through the dev eval) whose edit itself never
-        # actually finished -- claim nothing here; _decide_rows's error line
-        # carries the news. A reopened run has no timestamps at all (§6.8), so
-        # its decided-ness alone is what's authoritative, not `end`.
+        # from before "mutating" through the dev eval) claims no edit either
+        # way: live, the edit itself never actually finished; reopened, there
+        # are no timings at all, so with no other signal to trust, Ruling 6
+        # says an error: result shows ONLY the error line. Either way,
+        # _decide_rows's error line carries the news -- claim nothing here.
         return True
     res = run.iter_results.get(k)
     spend = run.edit_usage(k).spend or (res.usage.spend if res and res.usage else 0)
@@ -381,7 +389,7 @@ def _smoke_rows(run: Run, k: int, now: float, rows: list[StepRow], reason: str) 
         rows.append(StepRow(PEND_MARK, f"[{S._DIM}]{_SMOKE}[/]"))
     elif not decided:
         if not run.running:
-            rows.append(StepRow(STOP_MARK, _SMOKE))
+            rows.append(StepRow(_crash_word(run)[0], _SMOKE))
             return False
         rows.append(StepRow(RUN_MARK, _SMOKE, _dur(edit_end, now)))
     # else: decided (a generic "error:") with the smoke test never having
@@ -408,7 +416,7 @@ def _play_row(run: Run, k: int, now: float, rows: list[StepRow]) -> None:
         # play_end set with played < total is Run.finish() force-sealing a
         # batch a crash/stop cut short (finding 2a) -- never a checkmark.
         rows.append(StepRow(
-            RUN_MARK if run.running else STOP_MARK,
+            RUN_MARK if run.running else _crash_word(run)[0],
             f"playing the edited bot · [b]{played}/{total}[/] games{_avg_txt(_avg(batch))}",
             _dur(smoke_end, now) if run.running else ""))
     else:
@@ -544,7 +552,12 @@ def _iteration_now(run: Run, now: float, stopping: bool) -> str:
     k = run.running_iteration()
     if k is None:
         if stopping:
-            return f"{STOP_MARK} Stopping · no more iterations will start"
+            # Claim nothing about what follows: if Stop landed after the
+            # loop's top-of-iteration check but before "mutating", that
+            # iteration still starts (its agent is killed at once, but its
+            # smoke test and games still run) -- there is no way to tell
+            # which from here.
+            return f"{STOP_MARK} Stopping…"
         return (f"{RUN_MARK} Iteration {len(_decided(run)) + 1} of {total} · "
                 f"getting the next bot ready…")
     t = run.iter_times[k]
@@ -644,21 +657,6 @@ def iter_label(run: Run, k: int) -> tuple[str, bool]:
     return f"[{S._DIM}]·  iter {k}[/]", True
 
 
-def _dev_rows(run: Run, k: int, ident: str | None) -> tuple[list[dict], int]:
-    """Iteration k's OWN dev batch's episodes -- never the smoke batch (which
-    streams under a different label and would otherwise be mistaken for the
-    first dev game -- finding 3), and readable straight off the batch even
-    once the run has stopped or failed mid-eval (unlike
-    ``Run.iteration_evals``, which only sees a LIVE batch while
-    ``Run.running`` -- finding 2c) -- optionally filtered to one identity."""
-    batch = run.batch_for(run.dev_label(k))
-    rows = batch.rows() if batch is not None else []
-    if ident is None:
-        total = batch.total if batch is not None and batch.total else run.games_total()
-        return rows, total
-    return [r for r in rows if r.get("character") == ident], run.games_per_identity()
-
-
 def this_cell(run: Run, ident: str | None, k: int, best: float | None) -> tuple[str, bool]:
     """Progress's "this iteration" cell while viewing section k -- for one
     identity, or across all of them (``ident`` None: the BEST OVERALL row) --
@@ -678,16 +676,17 @@ def this_cell(run: Run, ident: str | None, k: int, best: float | None) -> tuple[
             return f"[{dim}]—[/]", False
         if t.smoke_end is None:
             if not run.running:
-                return f"[{dim}]— stopped[/]", False
+                return f"[{dim}]— {_crash_word(run)[1]}[/]", False
             if t.edit_end is None:
                 return f"[{dim}]waiting for the agent…[/]", False
             return f"[{dim}]smoke test…[/]", False
-        rows, total = _dev_rows(run, k, ident)
-    else:
-        evals = run.iteration_evals(k)
-        views = list(evals.values()) if ident is None else [evals[ident]] if ident in evals else []
-        rows = [row for view in views for row in view.rows]
-        total = sum(view.total for view in views)
+    # Past the smoke test: Run.iteration_evals reads k's own dev batch
+    # directly, whether decided-with-results, undecided-live, or
+    # undecided-and-crashed -- one source for all three (Ruling 12).
+    evals = run.iteration_evals(k)
+    views = list(evals.values()) if ident is None else [evals[ident]] if ident in evals else []
+    rows = [row for view in views for row in view.rows]
+    total = sum(view.total for view in views)
     if not rows:
         if reason.startswith("error:"):
             return f"[{S._HP}]—[/] [{dim}]error[/]", False

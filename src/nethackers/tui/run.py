@@ -570,13 +570,22 @@ class Run:
                     src.setdefault(c, []).append(r)
             return {i: EvalView(i, total, [_seed_row(r) for r in src.get(i, [])])
                     for i in idents}
-        # Only the actually-running iteration streams live per-seed rows. A
-        # completed-but-no-eval iteration (gate/error reject, results=None) or a
-        # not-yet-started one has none -> empty (not another iteration's batch).
-        if self.iteration_status(k) == "running":
-            live2 = self._batch_rows_for()
-            return {i: EvalView(i, total, live2.get(i, [])) for i in idents}
-        return {i: EvalView(i, total, []) for i in idents}
+        # No decided results to read (undecided, or decided without an eval --
+        # a gate/error reject never played, so its own dev batch is empty
+        # anyway): read iteration k's OWN dev batch directly, by its stream
+        # label -- never `current_batch()` (which is whatever batch is MOST
+        # RECENT, so it can be k's smoke batch before its first dev game, or
+        # the WRONG iteration's batch once a live run has moved past k) and
+        # never gated on `running` (a crashed-mid-eval iteration still has a
+        # real, already-streamed dev batch to show, not an empty table).
+        dev = self.batch_for(self.dev_label(k))
+        live2: dict[str, list[dict]] = {}
+        if dev is not None:
+            for row in dev.rows():
+                c = row.get("character")
+                if c:
+                    live2.setdefault(c, []).append(_seed_row(row))
+        return {i: EvalView(i, total, live2.get(i, [])) for i in idents}
 
     def union_evals(self) -> dict[str, EvalView]:
         """Per-identity EvalViews for the BEST OVERALL (union) HUB champion's
@@ -700,6 +709,18 @@ class Run:
     def setup_duration(self) -> float | None:
         return None if self.setup_ended_at is None else self.setup_ended_at - self.started
 
+    def _decided_count(self) -> int:
+        """How many iterations have been decided -- an IterationResult
+        recorded, or a "decided" stamp reached -- broader than counting
+        MEASURED durations: an "error:" iteration whose edit never actually
+        started (Ruling 6) has no edit_start and so no measurable duration,
+        but it IS decided and must count as done, not as still to come
+        (Ruling 12: pace_left previously overcounted the iterations left by
+        exactly the number of such unmeasured-but-decided iterations)."""
+        ks = {k for k in self.iter_results if k > 0} | {
+            k for k, t in self.iter_times.items() if t.decided is not None}
+        return len(ks)
+
     def pace_left(self, now: float | None = None) -> float | None:
         """'At this pace': the mean time of this run's finished iterations x the
         iterations after the current one, plus what's left of the mean for the
@@ -715,7 +736,7 @@ class Run:
         now = self._clock() if now is None else now
         per = sum(durations) / len(durations)
         current = self.running_iteration()
-        after = self.cfg.iterations - len(durations) - (1 if current is not None else 0)
+        after = self.cfg.iterations - self._decided_count() - (1 if current is not None else 0)
         left = per * max(0, after)
         if current is not None:
             started = self.iter_times[current].edit_start
