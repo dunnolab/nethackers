@@ -1,353 +1,279 @@
-```
- _  _     _   _  _         _
+<pre align="center">
+ _  _     _   _  _         _              
 | \| |___| |_| || |__ _ __| |_____ _ _ ___
-| .` / -_)  _| __ / _` / _| / / -_) '_(_-<
+| .` / -_)  _| __ / _` / _| / / -_) '_(_-&lt;
 |_|\_\___|\__|_||_\__,_\__|_\_\___|_| /__/
+</pre>
+
+<p align="center">
+An open effort to build the first program that wins NetHack.<br>
+<a href="https://nethackers.dunnolab.ai">nethackers.dunnolab.ai</a> · <a href="https://pypi.org/project/nethackers/">PyPI</a> · Apache-2.0
+</p>
+
+<p align="center">
+<img src="docs/assets/dashboard.png" width="620" alt="The nethackers dashboard: a table of causes of death across evolved bots (soldier ant, starvation, a wand, a hill orc) above a tombstone that reads: no program has ascended NetHack 3.6.6 yet. Will yours be the first?">
+</p>
+<p align="center"><sub><code>nethackers</code>, the dashboard, on 22 September 2026. The causes of death are real.</sub></p>
+
+NetHackers is a CLI and a shared hub for programs that play NetHack 3.6.6.
+You write a bot, or point a coding agent at one. `nethackers eval` scores it
+on fixed seeds in a sandbox. The hub keeps the best program for each of the
+73 starting characters, and anyone can pull one, improve it, and register the
+result, so your improvement becomes the next person's starting point. How you
+produce the program is your business: by hand, with an agent, or with a thing
+that builds the thing. The hub never runs your search and never assigns you
+work.
+
+## The problem
+
+NetHack came out in 1987 and no program has ever won the version researchers
+use. The only autonomous wins on record are three games in 2015, on 3.4.3, by
+[BotHack](https://github.com/krajj7/BotHack), whose endgame relied on an
+exploit the developers removed that same year. The 2021 NeurIPS challenge ran
+more than half a million games and recorded zero ascensions
+([Hambro et al., 2022](https://arxiv.org/abs/2203.11889)). Its winner,
+[AutoAscend](https://github.com/maciej-sypetkowski/autoascend), is still the
+strongest symbolic bot there is, and in 109,545 logged games it reached Medusa
+exactly never ([Dungeons and Data, Table 5](https://arxiv.org/abs/2211.00539)).
+The best frontier model playing the game directly scores 13% on NetHack in
+[BALROG](https://balrogai.com), and 100% on two other games in the same suite.
+Humans, for comparison, win about 0.4% of all logged games; experts win around
+16% of theirs, and the record streak is 61 wins in a row. The game is
+winnable. Nothing we have built wins it.
+
+In the last couple of years, coding agents that write and refine programs in a
+loop have cracked problems that resisted everything else: ARC puzzles,
+SAT-solver competitions, new provably correct algorithms. The model cannot do
+the task, but it can write a program that does. NetHack is where that pattern
+has not held yet, and it is a cheap place to test it. The world is open
+source, the game is fast to simulate, a policy is a Python file, and a laptop
+can run the experiment. Whether it works, nobody knows. That is the fun part.
+
+## Where this stands
+
+As of 22 September 2026: 73 registered programs from 6 people, 0 ascensions.
+
+Progression is a 0-to-1 score for how far a game got, the empirical chance
+that a human who reached that point went on to win (BALROG's metric).
+AutoAscend, the seed everything here descends from, averages **0.078** over
+the 73 identities on the Private Dungeons. The best registered program that
+covers all 73 identities scores **0.078**. Per identity, 58 of the 73 are led
+by a program, most by a point or two over AutoAscend, and the best single
+cells reach **0.167** on private seeds and **0.215** on public ones. The gap
+between those two tiers is where the interesting work is. On the public tier,
+26 identities have a registered program at all. Live numbers:
+[the frontier](https://nethackers.dunnolab.ai/#frontier).
+
+So the honest summary is that the machinery works, and nothing has
+meaningfully beaten AutoAscend yet.
+
+## Try it
+
+```bash
+pip install nethackers        # or: uv tool install nethackers
+nethackers doctor             # what this machine can do, and what to fix
+nethackers                    # the dashboard
 ```
 
-**An open effort to build the first program that can reliably win NetHack 3.6.6.**
+Python 3.11+. Browsing needs nothing else. Scoring a bot needs Docker or
+Podman. Evolving one needs `nethackers login` and a coding agent: `claude` or
+`codex` logged in on this machine, or OpenCode, which ships inside the
+sandbox. Publishing also needs [`gh`](https://cli.github.com/) authenticated
+as the same GitHub account.
 
-[nethackers.dunnolab.ai](https://nethackers.dunnolab.ai) · [PyPI](https://pypi.org/project/nethackers/) · Apache-2.0
+**Look around.** Every view is a command, and every command prints JSON when
+piped.
 
-NetHack (1987) is among the oldest unsolved challenges in games. NLE put it
-forward as a grand challenge for AI; it is still unsolved, and it is the
-hardest game in the BALROG suite. NetHackers is an attempt to find out —
-together — whether a coding agent can write the program that cracks it.
+```
+$ nethackers board --scope val
+rank  program                                owner   asc  median   mean
+----  -------------------------------------  ------  ---  ------  -----
+   1  prog_e716dc657e8d9bb4c2aed167710f52ce  Howuhh    0   0.144  0.144
+   2  prog_96533958712d16dbd5bb58377e2cf514  Howuhh    0   0.140  0.140
+   3  prog_dc05b05efad31410bd0577695b287fca  Howuhh    0   0.135  0.135
+```
 
-What gets scored is the **program**: a symbolic bot, cheap to run and — as long
-as you keep it deterministic — replayable. How you produce that program is
-entirely your business. Write it by hand, evolve it with a coding agent, or build
-a better thing that builds it — the hub never runs your search and never assigns
-you work.
+`frontier` shows how far the community has got on every identity, `elites`
+the best program per identity, `show <prog_id>` one program in detail, and
+`search --owner <login>` someone's whole history.
 
----
-
-## Contents
-
-- [How it works](#how-it-works)
-- [Public and Private Dungeons](#public-and-private-dungeons)
-- [Safety: this runs untrusted code](#safety-this-runs-untrusted-code)
-- [Install](#install)
-- [Quickstart](#quickstart)
-- [GitHub is the infrastructure](#github-is-the-infrastructure)
-- [Documentation](#documentation)
-
----
-
-## How it works
-
-The unit of evaluation is one bot directory containing a `bot.py` with a
-top-level `make_agent()`. That's the whole contract — see
+**Score a bot.** A bot is a directory with a `bot.py` that defines
+`make_agent()`. That is the whole contract; the rest is in
 [`docs/harness.md`](docs/harness.md).
-
-Objectives grid over the **73 legal starting identities** (`role-race-align-gender`,
-e.g. `val-dwa-law-fem`): NetHack 3.6.6's 38 valid (role, race, align) triples, each
-crossed with both genders — except Valkyrie's 3, which the game locks to female.
-35×2 + 3 = 73. Each identity has a published batch of **15 seeds**. A bot is
-scored on how far it gets, averaged over that batch; the north star is an
-**ascension**, which nothing has managed yet.
-
-The hub keeps the best program per identity (the **elites**). Anyone can pull an
-elite, improve it, and register the result — so one contributor's improvement
-becomes everyone's parent.
-
-```
-   hub ──pull elite──▶ your machine ──mutate──▶ candidate
-    ▲                                              │
-    │                                          evaluate
-    └──────────register (repo@commit)◀─────── (sandboxed arena)
-```
-
-Our own evolutionary harness — a coding agent in a container, MAP-Elites over
-the 73 identities — ships in this repo. It is the worked example, not the
-required path. [`docs/harness.md`](docs/harness.md) documents it as something to
-read and reuse when building your own.
-
-## Public and Private Dungeons
-
-Every program carries up to two scores, and they answer different questions.
-
-| | **Public Dungeons** | **Private Dungeons** |
-|---|---|---|
-| Tier in the API/DB | `self-reported` | `verified` |
-| Seeds | 15 published per identity | secret, set per deployment (15 in production) |
-| Who ran it | you, on your machine | our verifier, on our hardware |
-| Reproducible by you | yes, given a deterministic bot | no — you never see the seeds |
-| What it measures | how good this bot is on seeds it could tune against | whether that generalizes |
-
-**Public** is where you work. The seeds come from a published secret, so
-`nethackers eval` on your laptop produces the same batch as everyone else's and
-you can iterate against it freely. This is the intended target, not a consolation
-prize: NetHack is unsolved by a wide margin, and the starting bet is that plainly
-getting better at the public dungeons is where the first generalizable gains come
-from.
-
-**Private** answers the other question — does it transfer? A trusted verifier
-re-runs registered programs on seeds held secret by the hub and submits an
-independent score, so nobody has to take a self-reported number on faith. The
-website defaults to Private because it is the harder question; it is not a verdict
-on how you got there.
-
-The two words are deliberately kept apart. *Verified* is the trust level (a
-trusted worker produced this number). *Hidden* is the seeds it happened to use.
-Full mechanism, including the verifier's scheduler:
-[`docs/verification.md`](docs/verification.md).
-
-### Reference architecture
-
-`linux/amd64` is the scoring architecture — every score the hub accepts came
-from the pinned amd64 arena image, which is what `nethackers eval` uses by
-default. That's what makes "the same batch as everyone else's" (above) true
-regardless of what you're running it on.
-
-Other hosts emulate, and that's required, not optional: the same seed plays a
-different game of NetHack on a different CPU architecture, so a native arm64
-score isn't comparable — the hub refuses it.
-
-On Apple Silicon, turn on Rosetta in Docker Desktop (Settings → General →
-Apple Virtualization framework → "Use Rosetta for x86_64/amd64 emulation").
-It's worth doing: the same 15-episode batch on the same machine took 823s
-under QEMU and 224s with Rosetta. `nethackers doctor` reports whether it's on.
-
-## Safety: this runs untrusted code
-
-> ⚠️ **Read this before running `evolve`, `eval`, or `pull`.**
-
-Three things execute code that neither you nor we wrote or reviewed:
-
-1. **Bots you evaluate.** `nethackers eval` and every eval inside `evolve` import
-   and run a `bot.py`. If you pulled it from the hub, someone else wrote it.
-2. **The coding agent.** `nethackers evolve` runs Claude Code, Codex, or OpenCode
-   with permission prompts fully disabled (`--dangerously-skip-permissions` /
-   `--dangerously-bypass-approvals-and-sandbox`). It writes and executes code
-   unattended, for hours.
-3. **Programs you `pull`.** `nethackers pull` clones a repo. Nothing runs at
-   clone time, but you now have a stranger's code on disk that the next `eval`
-   will execute.
-
-What we do about it:
-
-- **The bot evaluator is a sealed box.** Every eval runs in a container with no
-  network (`--network none`), a read-only root filesystem, a `noexec,nosuid`
-  tmpfs for scratch, every Linux capability dropped, `no-new-privileges`, a
-  non-root user, and pid/memory/CPU caps. The bot is mounted read-only, and the
-  hidden seeds never enter the container: the secret is expanded to concrete
-  per-game seeds on the host and piped in over stdin, so it is never on the
-  container's argv or in its environment.
-- **Fetching is github-only and hardened.** `pull` and hub registration accept
-  only `github.com/<owner>/<repo>@<commit>` references. The host is parsed rather
-  than string-matched, so lookalikes like `github.com.evil.com` or
-  `git@github.com:...` are refused, and the clone allows only https, with
-  submodules, symlink checkout, and tags disabled.
-- **The coding agent runs in a container** with `no-new-privileges`, pid/memory
-  (swap-capped)/CPU limits, a non-root user (it starts as root only to remap uids,
-  then drops), and a wall-clock `timeout`. Instruction-bearing files (`CLAUDE.md`,
-  `AGENTS.md`, `.mcp.json`, …) are stripped from the tree it is handed, and an
-  opt-in credential broker can keep your model key out of the container entirely.
-
-What we don't do:
-
-- **A bot can still influence its own score.** The scorer runs the bot in-process
-  with the solution on its `sys.path`, so a self-reported number is a claim you
-  take on trust. Sealing the container does not change that. It is why the Private
-  Dungeons (verified) tier exists.
-- **The credential broker is opt-in.** By default the agent's container still has
-  your coding-agent credentials mounted (for Codex, writable) and open network
-  egress. The agent CLIs need their model APIs, and egress allow-listing is
-  designed but not on by default.
-- **The threat model is accident-grade.** It defends against a runaway or confused
-  agent and the blast radius of one, not a determined adversary. A container is
-  not a boundary against a kernel exploit. If you are evaluating code you have
-  reason to distrust, run it on a machine you are willing to lose.
-
-Details, per-surface, are in [`docs/harness.md`](docs/harness.md#3-safety-and-sandboxing),
-written to be reused by anyone building a harness of their own.
-
-## Install
-
-**Requirements**
-
-Every row also needs Python 3.11+; the rest are additive per row, not cumulative
-down the table.
-
-| To do this | You need |
-|---|---|
-| Browse the hub (TUI, boards, frontier) | nothing else |
-| `eval` — score a bot | Docker or Podman |
-| `evolve` — run the loop | Docker or Podman, a coding agent CLI (`claude`, `codex`, or `opencode2`) logged in on the host, and `nethackers login` |
-| `submit` — publish a solution | Docker or Podman (it evaluates before pushing), `nethackers login`, and [`gh`](https://cli.github.com/) authenticated as the **same** GitHub account |
-
-OpenCode 2 needs nothing installed on the host: its CLI ships in the sandbox.
-Give it models by defining providers in your global
-`~/.config/opencode/opencode.json` (or `.jsonc`). Only that file's `provider`
-section enters the sandbox, along with the environment variables those
-providers reference as `{env:NAME}` or list in their `env` field. So set each
-key as `{env:NAME}` or a literal `apiKey`: a `{file:...}` key, a login made with
-`opencode2 auth login`, your plugins and MCP servers, and project
-`opencode.json` files all stay outside. With no key, runs use OpenCode's free
-models, and `doctor` says so. How each coding agent behaves in the sandbox, with
-OpenCode 2 in detail, is in [`docs/harness.md`](docs/harness.md#the-coding-agents).
-
-Note that `doctor`'s `publish` capability checks the hub, your login, and `gh` —
-but not the container runtime, so it can report `publish` ready on a machine where
-`submit` will still stop at its arena evaluation.
-
-**Install the CLI**
-
-```bash
-pip install nethackers
-# or, isolated:
-uv tool install nethackers
-```
-
-Don't have `uv`? It installs from https://astral.sh/uv.
-
-**Check your machine**
-
-```bash
-nethackers doctor
-```
-
-`doctor` runs eight checks and folds them into four capabilities — `browse`,
-`eval`, `evolve`, `publish` — telling you exactly which ones this machine can do
-and what to fix for the rest. It honors `-o json` if you want to gate a script on
-it. It reaches the network (a hub round-trip, and a registry probe for any
-sandbox image you don't have locally), and it changes nothing unless you pass
-`--pull`.
-
-The sandbox images (`ghcr.io/dunnolab/nethackers-arena` and `-mutator`) are
-pinned by digest in the CLI and pulled on first use — several GB, so the first
-`eval` takes a while. Nothing else needs building.
-
-## Quickstart
-
-**Browse**
-
-```bash
-nethackers          # the dashboard TUI: frontier, boards, elites, your runs
-```
-
-Every view is also a plain command, and each prints JSON when piped:
-
-```bash
-nethackers frontier                   # how far the community has collectively reached
-nethackers board --scope val          # ranked programs; scope = generalist | role |
-                                      #   facet (race:elf) | full identity
-nethackers elites --scope val-dwa-law-fem   # best program per identity
-nethackers search --owner <login>     # registered programs, filtered
-nethackers show <prog_id>             # one program in detail
-nethackers elites -o json | jq '.[0]'
-```
-
-**Score a bot**
 
 ```bash
 nethackers eval ./my-bot --objective val-dwa-law-fem
 ```
 
-Runs the identity's published 15-seed batch in the sandboxed arena and prints the
-result. This is the Public Dungeons number.
+This runs the identity's 15 published seeds in the sandboxed arena and prints
+the result. That is your Public Dungeons number, on the same batch everyone
+else gets.
 
-**Evolve one**
+**Evolve one.**
 
 ```bash
-nethackers login                                     # GitHub device flow, once
-nethackers evolve val-dwa-law-fem \
-    --seed autoascend \
-    --operator codex \
-    --iterations 20
+nethackers login
+nethackers evolve val-dwa-law-fem --seed autoascend --operator codex --iterations 20
 ```
 
-The objective is positional; `--seed` points at the starting solution. AutoAscend
-ships inside nethackers, so `autoascend` works from anywhere, installed or from a
-checkout. The older spelling `roots/autoascend` still resolves to the same tree. Each iteration picks a cell, mutates its elite
-with the coding agent in its container, and evaluates the result.
+Each iteration hands the current elite to the coding agent in a container,
+asks for one focused change, smoke-tests the result, scores it on the 15
+seeds, and keeps it wherever it improved a cell. `autoascend` is the built-in
+seed. The objective can be one identity, a whole role (`val`), a comma list,
+or a glob (`val-*-law-*`).
 
-**Every candidate that survives the smoke check and gets evaluated is then pushed
-to your public `nethacker` repo and registered** — not only the ones that improve
-on their parent. That is deliberate (the archive is meant to record what was
-tried, not just what won), but it means a long run publishes a lot of commits
-under your account. Use `--offline` to run the loop without publishing or
-registering anything.
+> **Every candidate that gets evaluated is pushed to your public `nethacker`
+> repo and registered with the hub, not only the winners.** The archive is
+> meant to record what was tried. A long run publishes a lot of commits under
+> your name. `--offline` runs the loop without publishing anything.
 
-The objective resolves to a set of identities: a single one (`val-dwa-law-fem`),
-a bare role (`val` — all its identities), a comma list, or a glob
-(`val-*-law-*`).
-
-**Publish an existing solution**
+**Publish a bot you already have.**
 
 ```bash
 nethackers submit ./my-solution --objective val-dwa-law-fem
 ```
 
-Evaluates it, pushes it to `github.com/<you>/nethacker` (on its `submit`
-branch), and registers the resulting `repo@commit` with the hub. Requires `gh`
-authenticated as the same account you `nethackers login`'d with.
+Evaluates it, pushes it to `github.com/<you>/nethacker`, and registers the
+commit.
 
-**Fetch anyone's program**
+**Fetch anyone's.**
 
 ```bash
 nethackers pull github.com/<someone>/nethacker@<commit> ./fetched
 ```
 
-Anything registered from a public repo is fetchable by anyone, pinned to the
+Everything registered from a public repo is fetchable by anyone, pinned to the
 exact commit that was measured.
 
-The hub defaults to `https://nethackers.dunnolab.ai`; override with `--hub` or
-`$NETHACKERS_HUB`. `nethackers --help` lists every command.
+<details>
+<summary>Install notes: Apple Silicon, OpenCode, image sizes</summary>
 
-## GitHub is the infrastructure
+Two sandbox images, `ghcr.io/dunnolab/nethackers-arena` and `-mutator`, are
+pinned by digest in the CLI and pulled on first use. They are several GB, so
+the first `eval` takes a while. Nothing needs building.
 
-We deliberately do not run an artifact store, an identity provider, or a code
-host. GitHub is all three, which keeps the hub small enough to be honest about.
+On Apple Silicon, turn on Rosetta in Docker Desktop (Settings → General →
+Apple Virtualization framework → "Use Rosetta for x86_64/amd64 emulation").
+The same 15-episode batch on the same machine took 823 s under QEMU and 224 s
+with Rosetta. `doctor` reports which one you have.
 
-- **A program *is* a `repo@commit`.** The hub stores the link, the manifest, and
-  the scores — never the code. Registration is rejected unless the reference is a
-  real `github.com/<owner>/<repo>` (the host is parsed, so lookalikes are refused)
-  and the commit exists (the hub checks it against the GitHub API using *your*
-  token), so a board row always pointed at a real tree, on GitHub, when it was made. Two honest limits: the hub does
-  not check repo *visibility*, so a private repo can be registered and will not be
-  fetchable by others — `submit` forces the repo public, a hand-rolled `register`
-  does not — and a link is only as durable as the repo behind it, which its owner
-  can force-push, delete, or flip private.
-- **Identity is your GitHub account.** `nethackers login` is a GitHub App device
-  flow. There is no client secret and no App private key anywhere in this repo or
-  on the hub — the hub reads GitHub with the caller's own token. Your board
-  identity is your GitHub login.
-- **Publishing is a push.** `nethackers submit` uses `gh` to create/push
-  `github.com/<you>/nethacker` under your own account. You own your solutions;
-  we hold a pointer. Bots go to branches (`submit`, and one per `evolve` run);
-  on a newly created repo the default branch holds only a README. While the repo's description is still
-  empty, a publish fills it in, links the repo to your page here, tags it
-  `nethack`/`nethackers`, and adds a short README if there is none — it never
-  overwrites a description, website or README you wrote, and all of it is yours
-  to edit or delete.
-- **CI is the deploy lever.** Pushing a `vX.Y.Z` tag builds the hub image, pushes
-  it to GHCR, and flips production by digest with a health check and automatic
-  rollback (skippable with `[skip hub-deploy]` in the tagged commit message). The sandbox images are built by workflow and pinned by digest into
-  the CLI. See [`deploy/README.md`](deploy/README.md).
+OpenCode needs nothing installed on the host; its CLI ships in the sandbox.
+Give it models by defining providers in `~/.config/opencode/opencode.json`
+(or `.jsonc`). Only that file's `provider` section enters the sandbox, along
+with the environment variables those providers reference as `{env:NAME}` or
+list in `env`, so set each key as `{env:NAME}` or a literal `apiKey`. A
+`{file:...}` key, a login made with `opencode2 auth login`, plugins, MCP
+servers, and project `opencode.json` files all stay outside. With no key at
+all, runs use OpenCode's free models, and `doctor` says so. How each agent
+behaves in the sandbox: [`docs/harness.md`](docs/harness.md#the-coding-agents).
 
-## Documentation
+`doctor`'s `publish` check covers the hub, your login, and `gh`, but not the
+container runtime, so it can report `publish` ready on a machine where
+`submit` will still stop at its evaluation.
 
-| Doc | What's in it |
+</details>
+
+## How scoring works
+
+An objective is one of the 73 legal starting identities
+(`role-race-align-gender`, like `val-dwa-law-fem`) and a published batch of
+15 seeds. A program is scored on how far it gets, averaged over the batch.
+Every program carries up to two scores:
+
+| | Public Dungeons | Private Dungeons |
+|---|---|---|
+| Seeds | 15 published per identity | secret, held by the hub |
+| Who ran it | you, on your machine | our verifier, on our hardware |
+| Reproducible by you | yes, given a deterministic bot | no |
+| What it answers | how good is this bot on seeds it could tune against | does that generalize |
+
+Public is where you work, and it is the intended target: NetHack is unsolved
+by such a margin that getting better at the public dungeons is where we expect
+the first real gains to come from. Private answers the other question. A
+trusted verifier re-runs registered programs on seeds nobody sees and submits
+an independent score, so nobody has to take a self-reported number on faith.
+The website defaults to Private because it is the harder question. The
+mechanism, the seeds, and the verifier's scheduler are in
+[`docs/verification.md`](docs/verification.md).
+
+All scores come from one architecture, `linux/amd64`, inside a pinned arena
+image. The same seed plays a different game of NetHack on a different CPU, so
+a native arm64 score is not comparable and the hub refuses it. Apple Silicon
+emulates; with Rosetta it is fast enough (see the install notes above).
+
+One consequence worth stating: the arena has no network, so a bot cannot
+call a model while it plays. If you want a language model in the loop at play
+time, [BALROG](https://balrogai.com) is the benchmark for that. Here the
+model's work happens before the game, in the code it leaves behind.
+
+## This runs code you didn't write
+
+Three things execute code that neither you nor we reviewed. `eval` imports and
+runs a `bot.py`, which a stranger wrote if you pulled it. `evolve` runs Claude
+Code, Codex, or OpenCode with permission prompts off, unattended, for hours.
+`pull` puts a stranger's code on your disk for the next `eval` to run.
+
+The bot evaluator is a sealed box: no network, a read-only root filesystem,
+every capability dropped, a non-root user, pid/memory/CPU caps, and the hidden
+seeds never enter the container. Fetching accepts only
+`github.com/<owner>/<repo>@<commit>`, parsed rather than string-matched, and
+clones over https with submodules, symlinks, and tags disabled. The coding
+agent runs in its own container with resource limits and a wall-clock timeout,
+and instruction-bearing files (`CLAUDE.md`, `AGENTS.md`, `.mcp.json`) are
+stripped from the tree it is handed.
+
+What it does not do: a bot can still influence its own score, because the
+scorer runs it in-process, which is exactly why the Private tier exists. The
+agent's container still has your coding-agent credentials and open network
+egress unless you opt into the credential broker. And the threat model is
+accident-grade, built for a runaway agent rather than a determined adversary.
+If you are evaluating code you have reason to distrust, run it on a machine
+you are willing to lose. Details per surface, written to be reused:
+[`docs/harness.md`](docs/harness.md#3-safety-and-sandboxing).
+
+## Your code stays yours
+
+We don't run an artifact store, an identity provider, or a code host. GitHub
+is all three. A program *is* a `repo@commit`: the hub stores the link, the
+manifest, and the scores, never the code, and checks with your own token that
+the commit exists before accepting a registration. Your identity is your
+GitHub login, through a GitHub App device flow with no client secret anywhere.
+Publishing is a push to `github.com/<you>/nethacker`, which you own and can
+edit or delete; we hold a pointer. Two limits worth knowing: a link is only
+as durable as the repo behind it, and the hub does not check visibility, so a
+hand-rolled `register` of a private repo lands on a board and is fetchable by
+nobody. `submit` makes the repo public.
+
+## The harness that ships in the box
+
+Our own loop is a MAP-Elites archive over the 73 identities with a coding
+agent as the mutation operator: pick a cell, hand its elite to the agent in a
+container, ask for one focused change, smoke-test, evaluate on the public
+seeds, insert wherever it improved. It optimizes the public seeds on purpose
+and has no held-out gate. It is the worked example, not the required path,
+and [`docs/harness.md`](docs/harness.md) documents it as something to read
+and steal from when you build your own.
+
+## Docs
+
+| Doc | Covers |
 |---|---|
-| [`docs/harness.md`](docs/harness.md) | The `ArenaBot` contract, how our evolutionary harness works, **safety and sandboxing**, and how to build your own harness |
-| [`docs/verification.md`](docs/verification.md) | The verified tier: hidden seeds, the verifier's scheduler, the AutoAscend floor, what's public |
-| [`docs/contributing.md`](docs/contributing.md) | Dev setup, tests, conventions, PR flow |
-| [`docs/troubleshooting.md`](docs/troubleshooting.md) | Symptom → cause → fix |
-| [`docs/local-stack.md`](docs/local-stack.md) | Running a full local hub + arena + mutator stack |
-| [`deploy/README.md`](deploy/README.md) | Operating the production hub |
+| [`docs/harness.md`](docs/harness.md) | the bot contract, how our harness works, safety, building your own |
+| [`docs/verification.md`](docs/verification.md) | the Private tier: hidden seeds, the verifier, the AutoAscend floor |
+| [`docs/contributing.md`](docs/contributing.md) | dev setup, tests, conventions |
+| [`docs/troubleshooting.md`](docs/troubleshooting.md) | symptom, cause, fix |
+| [`docs/local-stack.md`](docs/local-stack.md) | a full local hub, arena, and mutator |
+| [`deploy/README.md`](deploy/README.md) | running the production hub |
 
 ## Contributing
 
-Bug reports, bots, and harnesses are all welcome — and you do not need to be
-good at NetHack for any of them. Start with
-[`docs/contributing.md`](docs/contributing.md).
+Bots and harnesses are the point, and they arrive as registrations, not pull
+requests. Pull requests are for the CLI, the hub, the arena, and the docs;
+bug reports for anything. You do not need to be good at NetHack for any of
+it. Start with [`docs/contributing.md`](docs/contributing.md).
 
 ## License
 
-Apache-2.0. See [`LICENSE`](LICENSE). AutoAscend, vendored at
-`src/nethackers/roots/autoascend/` and so shipped inside the wheel, carries its
-own MIT license — see
-[`LICENSE`](src/nethackers/roots/autoascend/LICENSE), which travels with the
-tree wherever it goes.
+Apache-2.0, see [`LICENSE`](LICENSE). AutoAscend ships inside the package
+under its own MIT license, which travels with the tree:
+[`src/nethackers/roots/autoascend/LICENSE`](src/nethackers/roots/autoascend/LICENSE).
