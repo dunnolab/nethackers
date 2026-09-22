@@ -138,31 +138,34 @@ def detect_host(
     )
 
 
-def _ok(run: Callable[..., Any], argv: list[str]) -> bool:
+def _probe(run: Callable[..., Any], argv: list[str]) -> Any | None:
+    """Run a quick local probe; the finished process, or None if it couldn't run."""
     try:
-        proc = run(argv, capture_output=True, text=True, timeout=_PROBE_TIMEOUT)
+        return run(argv, capture_output=True, text=True, timeout=_PROBE_TIMEOUT)
     except (OSError, subprocess.SubprocessError):
-        return False
-    return getattr(proc, "returncode", 1) == 0
+        return None
+
+
+def _ok(run: Callable[..., Any], argv: list[str]) -> bool:
+    proc = _probe(run, argv)
+    return proc is not None and getattr(proc, "returncode", 1) == 0
 
 
 def _first_line(run: Callable[..., Any], argv: list[str]) -> str | None:
-    try:
-        proc = run(argv, capture_output=True, text=True, timeout=_PROBE_TIMEOUT)
-    except (OSError, subprocess.SubprocessError):
-        return None
-    if getattr(proc, "returncode", 1) != 0:
+    proc = _probe(run, argv)
+    if proc is None or getattr(proc, "returncode", 1) != 0:
         return None
     lines = (getattr(proc, "stdout", "") or "").strip().splitlines()
     return lines[0].strip() if lines else None
 
 
 def _podman_machine(run: Callable[..., Any]) -> bool:
+    proc = _probe(run, ["podman", "machine", "list", "--format", "json"])
+    if proc is None:
+        return False
     try:
-        proc = run(["podman", "machine", "list", "--format", "json"],
-                   capture_output=True, text=True, timeout=_PROBE_TIMEOUT)
         machines = json.loads(proc.stdout or "[]") if proc.returncode == 0 else []
-    except (OSError, subprocess.SubprocessError, ValueError):
+    except ValueError:
         return False
     return isinstance(machines, list) and len(machines) > 0
 
