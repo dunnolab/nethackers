@@ -31,6 +31,7 @@ SETUP_CMD = "nethackers setup"
 
 @dataclass(frozen=True)
 class Tested:
+    __test__ = False  # the name starts with "Test": keep pytest from collecting it
     on: str    # e.g. "macOS 15.5 arm64, Docker Desktop 4.92"
     at: str    # the nethackers version it ran at, e.g. "0.35.0"
     date: str  # ISO date, e.g. "2026-09-25"
