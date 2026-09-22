@@ -317,6 +317,78 @@ async def test_best_overall_detail_shows_the_union_champions_own_rows():
         assert "killed by a newt" not in text           # NOT the per-identity cells' champion
 
 
+async def test_best_overall_shows_a_seed_unions_own_games_not_the_autoascend_note():
+    """Coordinator follow-up to Minor 4: for a --from-seed run with no hub
+    champion at all, the cold-start union cell's origin is kind "seed", so
+    Run.best_overall now labels it "the starting bot" (kind "aa"). But
+    show_program used to route EVERY kind=="aa" straight into show_baseline,
+    whose text hardcodes "AutoAscend baseline · no per-seed breakdown" -- false
+    here, since a seed union has its own real cold-start evaluation
+    (init_union["results"]), same as a hub union. Must render it like the hub
+    branch, with open_best's own seed source line, never the AutoAscend
+    words."""
+    ids = ["v1", "v2"]
+    cfg = EvolveConfig(",".join(ids), "claude", 3, from_seed=True)
+    r = Run("r1", cfg)
+    seed_origin = {"kind": "seed", "handle": None, "sha": None, "repo": None, "iteration": None}
+    r.apply_state({
+        "phase": "cold-start", "iteration": 0, "identities": ids,
+        "cells": [{"identity": i, "score": 0.09, "digest": f"seed_{i}"} for i in ids],
+        "origins": {f"seed_{i}": seed_origin for i in ids} | {"useed": seed_origin},
+        "aa_baseline": {}, "elite_of": {},
+        "union": {"score": 0.08, "digest": "useed", "results": [
+            {"character": "v1", "trajectory_id": 100, "progress": 0.09, "status": "completed",
+             "end_status": "died", "ascended": False, "cause_of_death": "starvation",
+             "max_depth": 2, "turns": 150, "wall_seconds": 5.0},
+            {"character": "v2", "trajectory_id": 101, "progress": 0.07, "status": "completed",
+             "end_status": "died", "ascended": False, "cause_of_death": "poisoning",
+             "max_depth": 1, "turns": 90, "wall_seconds": 3.0},
+        ]},
+        "cell_results": {i: [] for i in ids},
+        "coverage": (2, 2), "cell": None, "generation": 0,
+        "baseline_dev": 0.0, "best_dev": 0.0, "wins": 0, "tokens": 0, "detail": "",
+        "parent_digest": "", "parent_dev": 0.0})
+    assert r.best_overall(0)[1:3] == ("the starting bot", "aa")   # sanity: Minor 4's label
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        mon.open_program()
+        await pilot.pause()
+        assert mon.detail_open is True
+        head = str(mon.query_one("#d_head", Static).render())
+        src = str(mon.query_one("#d_src", Static).render())
+        text = _dump(mon.query_one("#d_table", DataTable))
+        assert "starvation" in text and "poisoning" in text   # the seed union's own games
+        assert "AutoAscend" not in head and "AutoAscend" not in src
+        assert "played on your machine during setup" in src
+
+
+async def test_best_overall_with_no_union_still_shows_the_autoascend_floor():
+    """The genuine no-union AutoAscend floor (best_overall's own `else`, no
+    board at all) must keep show_baseline's note -- only a REAL union (seed
+    or hub) gets the per-seed table."""
+    ids = ["v1", "v2"]
+    cfg = EvolveConfig(",".join(ids), "claude", 3)
+    r = Run("r1", cfg)
+    r.apply_state({
+        "phase": "cold-start", "iteration": 0, "identities": ids,
+        "cells": [], "origins": {}, "aa_baseline": {"v1": 0.2, "v2": 0.3},
+        "elite_of": {}, "union": None, "cell_results": {},
+        "coverage": (0, 2), "cell": None, "generation": 0,
+        "baseline_dev": 0.0, "best_dev": 0.0, "wins": 0, "tokens": 0, "detail": "",
+        "parent_digest": "", "parent_dev": 0.0})
+    assert r.best_overall(0)[1:3] == ("AutoAscend", "aa")   # sanity: the true floor
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        mon.open_program()
+        await pilot.pause()
+        head = str(mon.query_one("#d_head", Static).render())
+        assert "AutoAscend baseline" in head and "no per-seed breakdown" in head
+
+
 async def test_open_run_and_open_best_open_different_programs():
     """``open_run`` (this iteration's own candidate) and ``open_best`` (the
     incumbent) must open DIFFERENT programs once the incumbent has propagated

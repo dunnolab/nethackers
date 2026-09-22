@@ -157,12 +157,15 @@ class DetailView(Vertical):
 
     def show_program(self, run: Run, info: tuple[float, str, str, int | None]) -> None:
         """The BEST OVERALL (union-cell) program's FULL table -- every seed on
-        every identity: the hub champion's cold-start union eval, or a run
-        child's own eval once it has taken the union cell."""
+        every identity: the hub or seed champion's cold-start union eval, or a
+        run child's own eval once it has taken the union cell."""
         score, label, kind, j = info
         self.kind = "program"
         self._live = None
-        if kind == "aa":
+        if kind == "aa" and run.init_union is None:
+            # The genuine no-union AutoAscend floor (best_overall's own
+            # `else`, which hardcodes "AutoAscend") -- there is no cold-start
+            # union eval to show at all.
             self.show_baseline(f" BEST OVERALL · {label} ", score,
                                per_identity=run.aa_baseline())
             return
@@ -184,6 +187,17 @@ class DetailView(Vertical):
             repo, sha = origin.get("repo"), origin.get("sha")
             src = (f"[dim]source[/]  [link=https://{repo}/commit/{sha}]{repo}@{sha} ↗[/]"
                    if repo and sha else "[dim]source[/]  [dim]origin unknown[/]")
+        elif kind == "aa":
+            # A seed-origin union (--from-seed/--seed, no hub champion at
+            # all): init_union is NOT None here (the branch above already
+            # returned otherwise), so a real cold-start evaluation exists --
+            # union_evals() reads it exactly like the hub branch above, by
+            # digest alone, regardless of the union's own origin kind. Never
+            # show_baseline's "no per-seed breakdown" note, which would be
+            # false here. Source line matches open_best's own seed branch
+            # (Ruling 11), word for word.
+            evals = run.union_evals()
+            src = "[dim]source[/]  [dim]the starting bot · played on your machine during setup[/]"
         else:
             # kind == "run" but best_overall() couldn't resolve WHICH iteration
             # (its upto_k propagation only re-derives a STRICT improvement over
