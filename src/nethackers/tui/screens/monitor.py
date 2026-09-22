@@ -399,9 +399,9 @@ class RunMonitor(Screen):
         # content-width measurement to idle, so at first paint they truncate
         # cells to the *header* width ("sam-hu", "vkurenkov @" with the score
         # cut). Fixed widths render the full identity / champion@sha / score.
-        idents.add_column("identity", key="id", width=18)
-        idents.add_column("best so far", key="best", width=26)
-        idents.add_column("this iteration", key="run", width=30)
+        idents.add_column("identity", key="id", width=17)
+        idents.add_column("best so far", key="best", width=24)
+        idents.add_column("this iteration", key="run", width=29)
         idents.border_title = " progress by identity "
         idents._valid_fn = self._valid_cell        # hover only on clickable cells
         # #idents now has its columns -- safe to render into it. Flip the

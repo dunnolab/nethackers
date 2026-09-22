@@ -11,6 +11,7 @@ from textual.coordinate import Coordinate
 from textual.widgets import DataTable, OptionList, Static, TabbedContent, TabPane
 
 from nethackers.harness.loop import IterationResult
+from nethackers.tui import theme
 from nethackers.tui.run import Run
 from nethackers.tui.screens._clicktable import ClickTable
 from nethackers.tui.screens.monitor import RunMonitor
@@ -56,6 +57,13 @@ def _run() -> Run:
 
 
 class _Host(App):
+    # The real app is NetHackersApp, whose CSS (.panel's border,
+    # #progress_pane's padding) eats 4 columns the Progress table doesn't
+    # have without it -- a bare, unstyled host lays out wider than any real
+    # user ever sees (Ruling 19/task-9-findings-r2.md). Applying it here
+    # makes every monitor pilot test see the app's real layout.
+    CSS = theme.CSS
+
     def __init__(self, run):
         super().__init__()
         self._run = run
