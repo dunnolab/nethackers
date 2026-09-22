@@ -27,38 +27,35 @@ reachable from a checkout (the mutator's content-fingerprint tag) is built via
 ``make`` -- never the reverse (INV11: a digest ref can't be `-t`-tagged by a
 build, so it is only ever pulled).
 
-Kept a leaf module (stdlib + containers + auth_inject + pull_events only, all
-themselves leaves too) so both ``cli`` and the Textual form can import it
-without a cycle.
+Kept a leaf module (stdlib + containers + auth_inject + pull_events + setup.host
++ ptyrun only, all themselves leaves too) so both ``cli`` and the Textual form
+can import it without a cycle.
 """
 from __future__ import annotations
 
+import json
 import platform
 import re
 import subprocess
 import threading
+import time
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from rich.markup import escape
 
-from nethackers import _image_pins, image_inputs
+from nethackers import _image_pins, image_inputs, ptyrun
 from nethackers.containers import container_runtime
 from nethackers.harness.auth_inject import AuthUnavailable, auth_docker_args
-from nethackers.harness.pull_events import PullEvent, PullParseState, parse_pull_line
-
-
-def sandbox_hint() -> str:
-    """How to bring a container runtime up, per-OS. macOS has no native Docker
-    daemon (Docker Desktop is out per the mutator-sandbox spec) -- its fix is a
-    VM, not just "start Docker"."""
-    if platform.system() == "Darwin":
-        return (
-            "start one, e.g. `colima start --cpu 6 --memory 12 --vm-type vz "
-            "--mount-type virtiofs` (or Podman)"
-        )
-    return "start Docker or Podman"
+from nethackers.harness.pull_events import (
+    PullEvent,
+    PullParseState,
+    byte_sums,
+    is_byte_progress,
+    parse_pull_line,
+)
+from nethackers.setup.host import setup_supported
 
 
 def docker_available(*, run=subprocess.run) -> bool:
@@ -320,6 +317,57 @@ def _remote_image_exists(ref: str, *, runtime: str, run) -> bool:
         return False
 
 
+def manifest_layers(ref: str, *, runtime: str, run=subprocess.run) -> dict[str, int] | None:
+    """Layer digest -> download size for ``ref`` as the registry lists it (the
+    linux/amd64 entry of a multi-arch index), from ``<runtime> manifest
+    inspect -v``. ``None`` when it can't be read: offline, or a runtime (e.g.
+    Podman) that prints another shape."""
+    try:
+        result = run([runtime, "manifest", "inspect", "-v", ref], capture_output=True,
+                     text=True, timeout=MANIFEST_PROBE_TIMEOUT)
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if result.returncode != 0:
+        return None
+    try:
+        doc = json.loads(result.stdout)
+    except ValueError:
+        return None
+    entries = doc if isinstance(doc, list) else [doc]
+    for entry in entries:
+        if not isinstance(entry, dict):
+            continue
+        platform_ = (entry.get("Descriptor") or {}).get("platform") or {}
+        if len(entries) > 1 and (platform_.get("os"), platform_.get("architecture")) != (
+                "linux", "amd64"):
+            continue
+        manifest = entry.get("SchemaV2Manifest") or entry.get("OCIManifest") or {}
+        layers = manifest.get("layers")
+        if isinstance(layers, list):
+            try:
+                return {layer["digest"]: int(layer["size"]) for layer in layers}
+            except (KeyError, TypeError, ValueError):
+                return None
+    return None
+
+
+def download_size(pull: Sequence[str], present: Sequence[str], *, runtime: str,
+                  run=subprocess.run) -> int | None:
+    """Bytes a pull of the ``pull`` refs will download: their layers counted
+    once, minus layers the ``present`` images already have. ``None`` if any
+    ``pull`` manifest can't be read."""
+    wanted: dict[str, int] = {}
+    for ref in pull:
+        layers = manifest_layers(ref, runtime=runtime, run=run)
+        if layers is None:
+            return None
+        wanted.update(layers)
+    for ref in present:
+        for digest in manifest_layers(ref, runtime=runtime, run=run) or {}:
+            wanted.pop(digest, None)
+    return sum(wanted.values())
+
+
 def _tag_image(source: str, target: str, *, runtime: str, run) -> str | None:
     try:
         result = run([runtime, "tag", source, target], capture_output=True, timeout=30)
@@ -342,49 +390,86 @@ def _final_pull_event(kind: str, ref: str, state: PullParseState, phase: str,
     bare marker."""
     total = len(state.seen) if state.seen else None
     complete = len(state.complete) if state.seen else None
+    done, known = byte_sums(state)
     return PullEvent(kind=kind, ref=ref, phase=phase, layers_total=total,
-                     layers_complete=complete, detail=detail)
+                     layers_complete=complete, detail=detail,
+                     bytes_done=done, bytes_total=known)
+
+
+# A byte update at most this often: docker redraws every layer many times a
+# second, and neither the CLI bar nor the TUI needs more.
+_BYTE_EVENT_INTERVAL = 0.1
+_REAL_POPEN = subprocess.Popen
+
+
+def _pty_lines(proc, master: int):
+    """Every line a pty child prints, until it exits."""
+    for batch in ptyrun.read_lines(master, done=lambda: proc.poll() is not None):
+        if batch:
+            yield from batch
 
 
 def _pull_image(ref: str, kind: str, *, runtime: str = "docker", on_line=None,
                 on_event: Callable[[PullEvent], None] | None = None,
-                popen=subprocess.Popen) -> str | None:
-    """``docker pull ref``, streaming combined stdout/stderr to ``on_line``
-    (raw text, kept for back-compat -- no existing caller is forced to
-    migrate) AND, when given, folding each line through ``parse_pull_line``
-    into typed ``PullEvent``s for ``on_event`` (spec S5.5) -- the two
-    callbacks are independent and both fire off the same read loop.
-    ``on_event`` additionally gets a ``phase="start"`` event before anything
-    is read, and exactly one final ``phase="done"``/``phase="error"`` event
-    once the process exits (via ``_final_pull_event``, built from the
-    loop's final accumulated ``state``) -- ``parse_pull_line`` itself never
-    produces a ``"done"``/``"error"`` event (its terminal ``Status: ...``
-    line is deliberately treated as noise, same as ``Digest:``; see its own
-    docstring), so this one post-loop event is the SOLE done/error signal
-    on every path, pull success, pull failure, or a ``popen``/read
-    exception.
+                popen=subprocess.Popen, tty: bool | None = None,
+                spawn=ptyrun.spawn, clock=time.monotonic) -> str | None:
+    """``docker pull ref``, streaming each output line to ``on_line`` (raw
+    text, back-compat -- discrete status lines only, e.g. ``"Pull complete"``;
+    a pty's in-place byte-progress redraws, ``is_byte_progress``, are folded
+    into ``on_event`` instead and never reach ``on_line``, or a terminal
+    consumer would be flooded with a line per redraw) and folding it through
+    ``parse_pull_line`` into typed ``PullEvent``s for ``on_event`` (spec
+    S5.5): a ``phase="start"`` event first, exactly one final
+    ``"done"``/``"error"`` event last (via ``_final_pull_event``), and
+    ``"layer"`` events between -- byte-only updates at most every
+    ``_BYTE_EVENT_INTERVAL`` seconds.
 
-    ``None`` on success, else one of the styled, one-runnable-command
-    messages (spec S5.5 / INV9) mapped from the registry's failure shape."""
+    The real pull runs in a pseudo-terminal (``tty``; ``None`` means "yes for
+    the real ``subprocess.Popen``, no for an injected fake"), so docker prints
+    its byte progress; the pipe path stays for injected ``popen`` fakes and
+    for platforms without a pty. Ctrl-C stops the pull before propagating.
+
+    ``None`` on success, else one of the styled, one-runnable-command messages
+    (spec S5.5 / INV9) mapped from the registry's failure shape."""
     if on_event is not None:
         on_event(PullEvent(kind=kind, ref=ref, phase="start",
                            layers_total=None, layers_complete=None, detail=""))
     state = PullParseState()
+    use_tty = (popen is _REAL_POPEN) if tty is None else tty
+    argv = [runtime, "pull", ref]
+    last_byte_event = float("-inf")
+    proc = None
     try:
-        proc = popen([runtime, "pull", ref], stdout=subprocess.PIPE,
-                     stderr=subprocess.STDOUT, text=True, bufsize=1)
+        if use_tty and ptyrun.available():
+            proc, master = spawn(argv)
+            lines = _pty_lines(proc, master)
+        else:
+            proc = popen(argv, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+                         bufsize=1)
+            lines = (ln.rstrip() for ln in proc.stdout)
         collected: list[str] = []
-        for line in proc.stdout:
-            collected.append(line)
-            stripped = line.rstrip()
-            if on_line is not None:
+        for stripped in lines:
+            collected.append(stripped + "\n")
+            if on_line is not None and not is_byte_progress(stripped):
                 on_line(stripped)
             if on_event is not None:
                 state, event = parse_pull_line(state, stripped, kind=kind, ref=ref)
-                if event is not None:
-                    on_event(event)
+                if event is None:
+                    continue
+                if event.detail.startswith(("Downloading", "Extracting")):
+                    now = clock()
+                    if now - last_byte_event < _BYTE_EVENT_INTERVAL:
+                        continue
+                    last_byte_event = now
+                on_event(event)
         rc = proc.wait()
+    except KeyboardInterrupt:
+        if proc is not None:
+            ptyrun.stop(proc)
+        raise
     except (OSError, subprocess.SubprocessError) as exc:
+        if proc is not None:
+            ptyrun.stop(proc)
         if on_event is not None:
             on_event(_final_pull_event(kind, ref, state, "error", detail=str(exc)))
         return _pull_error_message(kind, str(exc))
@@ -502,19 +587,20 @@ def ensure_image(ref: str, kind: str, *, runtime: str = "docker", on_line=None,
             event.set()
 
 
-def preflight_runtime(*, run=subprocess.run) -> str | None:
+def preflight_runtime(*, run=subprocess.run, scope: str | None = None) -> str | None:
     """``None`` if a working container runtime is available; else the styled
-    "no container runtime" message. The half of the old combined ``preflight``
-    every sandboxed command needs -- ``eval``/``submit``/``evolve`` all score
-    or mutate inside a container -- so this alone is the correct (and only)
-    preflight for a plain ``eval``/``submit`` (spec S5.5: arena has no
-    operator)."""
-    if not docker_available(run=run):
-        return (
-            f"[red]sandbox unavailable[/]: no working container runtime found "
-            f"— {sandbox_hint()}, then retry"
-        )
-    return None
+    "no container runtime" message, ending in the one command that brings one
+    up (``nethackers setup``, narrowed with ``--for <scope>`` when the caller
+    knows what it needs). The half of the old combined ``preflight`` every
+    sandboxed command needs -- ``eval``/``submit``/``evolve`` all score or
+    mutate inside a container (spec S5.5: arena has no operator)."""
+    if docker_available(run=run):
+        return None
+    if setup_supported(platform.system()):
+        todo = f"run `nethackers setup{f' --for {scope}' if scope else ''}` to set one up"
+    else:
+        todo = "start Docker or Podman"
+    return f"[red]sandbox unavailable[/]: no working container runtime found — {todo}, then retry"
 
 
 def preflight_operator(operator: str, *, system: str | None = None,

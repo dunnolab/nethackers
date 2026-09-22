@@ -104,7 +104,7 @@ from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlsplit
 
-_CLAUDE_LOGIN_HINT = "run `claude` on this host to log in, then retry"
+_CLAUDE_LOGIN_HINT = "run `claude auth login` on this host, then retry"
 
 
 class AuthUnavailable(Exception):

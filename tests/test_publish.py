@@ -46,7 +46,8 @@ class FakeRun:
         self.readme_put_fails = readme_put_fails
         self.about_fails = about_fails
 
-    def __call__(self, cmd, *, check=False, capture_output=False, text=False, env=None):
+    def __call__(self, cmd, *, check=False, capture_output=False, text=False, env=None,
+                 timeout=None):
         self.calls.append(cmd)
         self.envs.append(env)
         head = cmd[:3]

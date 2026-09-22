@@ -55,12 +55,14 @@ def gh_login(run: Run = subprocess.run) -> str | None:
     missing or not logged in.
 
     Never raises for the not-installed / not-authed case -- the caller turns
-    ``None`` into a friendly "set up gh" message rather than a crash.
+    ``None`` into a friendly "set up gh" message rather than a crash. A hung
+    ``gh`` (a slow network) is treated as not logged in after 10 seconds, the
+    subprocess convention elsewhere in this codebase.
     """
     try:
         proc = run(["gh", "api", "user", "-q", ".login"], check=True,
-                   capture_output=True, text=True)
-    except (FileNotFoundError, subprocess.CalledProcessError):
+                   capture_output=True, text=True, timeout=10)
+    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return None
     login = proc.stdout.strip()
     return login or None

@@ -305,15 +305,18 @@ def test_uv_bootstrap_is_explained(populated_store):
     assert "astral.sh/uv" in get_started
 
 
-def test_the_first_run_image_pull_is_flagged(populated_store):
-    """GAP 3: the sandbox images are several GB and pull on first use;
-    `nethackers doctor --pull` front-loads them. Both facts are in
-    README.md and docs/troubleshooting.md; a test agent called the missing
-    warning the single biggest first-run surprise, and not in the brief."""
+def test_setup_and_the_first_run_image_pull_are_in_get_started(populated_store):
+    """GAP 3, updated for `nethackers setup` (2026-09-22): the brief names the
+    one command that gets a machine ready and says how big the first pull is
+    (about 1 GB, measured). It also tells a coding agent to propose the plan
+    once instead of handing the user a to-do list (the observed failure)."""
     brief = render_brief(populated_store, version="9.9.9")
     get_started = brief.split("## Get started", 1)[1].split("## How scoring works", 1)[0]
-    assert "several GB" in get_started
-    assert "`nethackers doctor --pull`" in get_started
+    assert "nethackers setup" in get_started
+    assert "about 1 GB" in get_started
+    assert "doctor --pull" not in get_started
+    assert "don't ask them to install things themselves" in get_started
+    assert "nethackers setup --yes" in get_started
 
 
 def test_the_default_hub_is_stated(populated_store):

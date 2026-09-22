@@ -235,6 +235,25 @@ ARENA_MAJOR_BY_DIGEST: dict[str, int] = {
     # scoring-path code changed, so a re-run has nothing to disconfirm. Same
     # shape as the v0.34.2 entry.
     "sha256:63dad174666973067ee8e1c407e30ed8b03287a4e184464ea9aec2a6bb143f18": 2,
+    # v0.35.0 (`nethackers setup`), rebuilt for the same reason as the two
+    # digests above: uv.lock is an arena input and the release moves the
+    # project's own version in it, 0.34.4 -> 0.35.0. That line is the whole
+    # uv.lock change, so every dependency version is the one the previous
+    # arena installed. The release's code changes are all host-side -- the new
+    # `nethackers.setup` package, cli.py, diagnostics.py, ptyrun.py,
+    # hubclient/publish.py and four harness modules -- and the arena's
+    # entrypoint loads none of them (checked: importing `nethackers.arena.run`
+    # leaves sys.modules holding only nethackers.arena.* and
+    # nethackers.contracts.*). arena/ and contracts/ are untouched (`git diff
+    # v0.34.4...HEAD -- src/nethackers/arena src/nethackers/contracts` is
+    # empty), and so are nle-base/Dockerfile and arena/Dockerfile. Also the
+    # linux/amd64 LEG, not an index -- CI resolves that leg and
+    # scripts/repin_images.py refuses an index. Read from the diff, NOT
+    # measured: no scoring-path code changed, so a re-run has nothing to
+    # disconfirm. As on every rebuild, the base layer is whatever
+    # `python:3.11-slim` resolves to today, which is why the digest moves at
+    # all; the pinned dependency set on top of it does not.
+    "sha256:301cb0a99227c109fcf9b9c354148c5ea978f5adbc44b636ddf86fada6058d4f": 2,
 }
 
 
