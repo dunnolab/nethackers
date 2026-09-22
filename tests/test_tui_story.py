@@ -4,6 +4,7 @@ so every duration is exact."""
 from __future__ import annotations
 
 import json
+import subprocess
 
 from rich.text import Text
 
@@ -304,3 +305,417 @@ def test_reopened_runs_say_so_and_skip_timings():
     assert "improved val-dwa-law-fem" in labels
     assert "weren't recorded" in plain(view.footer)
     assert "wasn't recorded" in plain(story.section_view(run, 0, 0).footer)
+
+
+def test_reopened_iteration_shows_only_the_section_6_8_rows():
+    """Ruling 10 minor: a reopened run has no timestamps at all, so it must
+    never add a smoke-passed or played-games row -- only §6.8's three:
+    edit-done, outcome, hub."""
+    run = Run("r", EvolveConfig(",".join(IDS), "claude", 5))
+    run.reopened = True
+    run.status = "done"
+    run.apply_iteration(1, IterationResult(True, "registered", improved=[IDS[0]],
+                                           dev_fitness=0.2, usage=TokenUsage(1000, 100, 0, 0)))
+    view = story.section_view(run, 1, 0)
+    assert [plain(r.mark) for r in view.rows] == ["✓", "✓", "✓"]
+    labels = [plain(r.label) for r in view.rows]
+    assert labels == ["Claude Code edited the bot · 0 actions · 1.1k tokens",
+                      "improved val-dwa-law-fem", "sent to the hub"]
+
+
+# ---- fix round 1 (task-6-findings-r1.md) -----------------------------------------
+
+def test_an_error_iteration_claims_only_the_steps_that_really_happened():
+    """Finding 1 / Ruling 6: the loop's outer except can land anywhere from
+    before "mutating" through the dev eval. Two sub-cases: (a) it happens
+    after the edit really finished (we reached "gating") but during the
+    smoke test -- claim the edit, not the smoke test; (b) it happens before
+    the agent ever ran (e.g. a copytree failure) -- claim nothing at all
+    except the error itself."""
+    clock = Clock()
+    run = _through_setup(clock)
+    clock.t = 1600
+    run.apply_state(_state("gating", 1, cells=CELLS, cell=IDS[1]))   # the edit really finished
+    clock.t = 1610
+    run.apply_state(_state("error", 1, cells=CELLS, detail="docker: daemon gone"))
+    run.apply_iteration(1, IterationResult(False, "error:docker: daemon gone"))
+    view = story.section_view(run, 1, 1610)
+    labels = [plain(r.label) for r in view.rows]
+    assert labels == ["Codex edited the bot · 0 actions",
+                      "the iteration hit an error: docker: daemon gone"]
+    assert [plain(r.mark) for r in view.rows] == ["✓", "✗"]
+    assert view.rows[0].dur == "1m 40s"          # edit_start(1500) -> edit_end(1600), real
+
+    # iteration 2 never even reached "mutating" -- no edit row, no smoke row.
+    clock.t = 1620
+    run.apply_state(_state("error", 2, cells=CELLS, detail="copytree failed"))
+    run.apply_iteration(2, IterationResult(False, "error:copytree failed"))
+    view2 = story.section_view(run, 2, 1620)
+    assert [plain(r.label) for r in view2.rows] == ["the iteration hit an error: copytree failed"]
+    assert [plain(r.mark) for r in view2.rows] == ["✗"]
+    assert plain(story.iter_label(run, 2)[0]) == "✗ iter 2   error"
+
+
+def test_a_worker_crash_during_setup_shows_the_partial_count_not_a_checkmark():
+    """Finding 2a: Run.finish() force-seals the in-progress cold-start batch
+    (batch.done=True) even though only 5 of 30 games arrived -- the row must
+    keep saying 5/30, never claim all 30 played."""
+    clock = Clock()
+    run = _new(clock)
+    clock.t = 1006
+    run.apply_state(_state("cold-start"))
+    for i in range(5):
+        _ep(run, "cold-start · dev [aaaa1111]", i, 30, IDS[i % 2], 0.2)
+    clock.t = 1100
+    run.finish(error=RuntimeError("docker died"))
+    view = story.section_view(run, 0, clock.t)
+    assert plain(view.rows[1].label) == (
+        "playing clyde @a1b2c3d on val-dwa-law-fem, val-hum-neu-fem · 5/30 games · avg 0.20")
+    assert plain(view.rows[1].mark) == "✗"
+
+
+def test_an_iteration_cut_short_by_a_worker_crash_shows_the_partial_count():
+    """Finding 2a (the iteration-side twin of the setup case above) and
+    finding 2c's this_cell bullet, from the same crash: Run.finish() seals
+    the dev batch at 12/45 games -- the row must say 12/45, and this_cell
+    must show the real 12/45 too, not 0/45 (Run.iteration_evals only sees a
+    live batch while Run.running, which a crash has just made false)."""
+    clock = Clock()
+    run = _through_setup(clock)
+    clock.t = 1600
+    run.apply_state(_state("gating", 1, cells=CELLS, cell=IDS[1]))
+    clock.t = 1650
+    run.apply_state(_state("evaluating-dev", 1, cells=CELLS, cell=IDS[1]))
+    for i in range(12):
+        _ep(run, "iter 1/5 · dev", i, 45, IDS[i % 3], 0.15)
+    clock.t = 1700
+    run.finish(error=RuntimeError("arena crashed"))
+    view = story.section_view(run, 1, clock.t)
+    labels = [plain(r.label) for r in view.rows]
+    assert labels[2] == "playing the edited bot · 12/45 games · avg 0.15"   # never a checkmark
+    assert plain(story.this_cell(run, None, 1, 0.3)[0]) == "0.15  12/45 games"
+
+
+def test_a_run_that_fails_before_any_state_does_not_look_live():
+    """Finding 2b: the setup view's "fetching…" row must reflect a failure
+    that happened before the first state ever arrived -- not keep claiming
+    to be running, timed against `now` instead of when it actually died."""
+    clock = Clock()
+    run = _new(clock)
+    clock.t = 1010
+    run.finish(error=RuntimeError("hub unreachable"))
+    clock.t = 1200
+    assert plain(story.now_line(run, clock.t)) == "✗ Run failed: hub unreachable"
+    view = story.section_view(run, 0, clock.t)
+    assert plain(view.rows[0].mark) == "✗"
+    assert view.rows[0].dur == "10s"                 # frozen at finished_at(1010), not now(1200)
+    assert plain(view.footer) == "✗ setup didn't finish"
+    assert plain(story.iter_label(run, 0)[0]) == "✗ setup   failed"
+
+
+def test_a_user_stop_mid_iteration_reads_differently_from_a_crash():
+    """Finding 2c: the SAME "not running, undecided iteration" shape must be
+    worded differently for a user Stop (■ stopped) than for a crash (✗
+    failed, tested above) -- a crash must never read as an intentional stop
+    and a stop must never read as a failure."""
+    clock = Clock()
+    run = _through_setup(clock)
+    run.request_stop()
+    clock.t = 1600
+    run.finish()   # no error, but stop was requested -> status "stopped"
+    assert plain(story.iter_label(run, 1)[0]) == "■ iter 1   stopped"
+    assert plain(story.section_view(run, 1, clock.t).footer) == (
+        "■ the run stopped during this iteration")
+
+
+def test_this_cell_does_not_count_the_smoke_game_as_the_first_dev_game():
+    """Finding 3: the smoke game streams under a DIFFERENT label
+    ("iter k/n · smoke", on identities[0]) than the dev batch -- this_cell
+    must read the iteration's own dev batch, so it shows 0/N until a real
+    dev game lands, not the smoke game's score passed off as one."""
+    clock = Clock()
+    run = _through_setup(clock)
+    clock.t = 1600
+    run.apply_state(_state("gating", 1, cells=CELLS, cell=IDS[1]))
+    run.apply_episode("iter 1/5 · smoke", {"index": 0, "total": 1, "seed": 9000,
+                                           "progress": 0.40, "status": "completed",
+                                           "character": IDS[0]})
+    clock.t = 1650
+    run.apply_state(_state("evaluating-dev", 1, cells=CELLS, cell=IDS[1]))
+    assert plain(story.this_cell(run, IDS[0], 1, 0.21)[0]) == "0/15 games"
+    assert plain(story.this_cell(run, IDS[1], 1, 0.21)[0]) == "0/15 games"
+    assert plain(story.this_cell(run, None, 1, 0.21)[0]) == "0/45 games"
+    assert plain(story.now_line(run, clock.t)) == (
+        "▶ Iteration 1 of 5 · playing the edited bot · 0/45 games · 0s")
+
+
+def test_the_single_identity_keep_rule_uses_a_seed_cells_measured_score():
+    """Ruling 7 (finding 4): a --from-seed cell has no hub champion, so its
+    origin's kind is "seed", not "hub" -- the keep rule (and "best so far")
+    must cite its MEASURED score (0.09, what CellArchive.insert actually
+    compares against), not the AutoAscend floor, which --from-seed leaves
+    empty (0.0)."""
+    clock = Clock()
+    ident = IDS[0]
+    seed_digest = "5eed5eed5eed"
+
+    def st(phase: str, it: int = 0, **kw) -> dict:
+        s = _state(phase, it, identities=[ident], elite_of={}, aa_baseline={},
+                   origins={seed_digest: {"kind": "seed", "handle": None, "sha": None,
+                                          "repo": None, "iteration": None}},
+                   coverage=(1, 1))
+        s.update(kw)
+        return s
+
+    run = Run("r1", EvolveConfig(ident, "codex", 5, from_seed=True), clock=clock)
+    clock.t = 1002
+    run.apply_state(st("cold-start"))
+    for i in range(15):
+        _ep(run, "cold-start · dev [seed]", i, 15, ident, 0.09)
+    cells = [{"identity": ident, "score": 0.09, "digest": seed_digest}]
+    run.apply_state(st("cold-start", cells=cells))
+    clock.t = 1050
+    run.apply_state(st("mutating", 1, cells=cells, cell=ident))
+    view = story.section_view(run, 1, clock.t)
+    assert plain(view.rows[-1].label) == "decide: keep it if its average beats 0.09"
+    setup_footer = plain(story.section_view(run, 0, clock.t).footer)
+    assert "best so far 0.09 (AutoAscend)" in setup_footer
+
+
+def test_seed_setup_row_says_no_hub_champion_yet():
+    """Finding 5: the seed batch's row must carry the spec's "(no hub
+    champion yet)" qualifier -- a real, empty-handed hub search earns it."""
+    clock = Clock()
+    run = _new(clock)
+    clock.t = 1006
+    elite = {IDS[0]: {"program_id": CLYDE, "score": 0.22}, IDS[1]: {"program_id": CLYDE,
+                                                                    "score": 0.19}}
+    run.apply_state(_state("cold-start", elite_of=elite))
+    _ep(run, "cold-start · dev [aaaa1111]", 0, 30, IDS[0], 0.2)
+    labels = [plain(r.label) for r in story.section_view(run, 0, clock.t).rows]
+    assert labels[-1] == "play the starting bot on wiz-elf-cha-mal (no hub champion yet) · 15 games"
+
+
+def test_seed_setup_row_omits_the_hub_claim_under_from_seed():
+    """Finding 5: --from-seed never asks the hub at all (loop.py skips it),
+    so claiming "no hub champion" would overstate what happened -- omit it."""
+    clock = Clock()
+    run = _new(clock, from_seed=True)
+    clock.t = 1006
+    run.apply_state(_state("cold-start", elite_of={}))
+    view = story.section_view(run, 0, clock.t)
+    assert plain(view.rows[-1].label) == (
+        "playing the starting bot on val-dwa-law-fem, val-hum-neu-fem, wiz-elf-cha-mal"
+        " · 0/45 games")
+
+
+def test_union_setup_row_has_the_specs_double_comma_once_done():
+    """Finding 5 + Ruling 9: keep "<label>, the best bot on average" once the
+    union batch is done -- only add the comma the spec has before
+    "on all N identities" that the code was missing."""
+    clock = Clock()
+    run = _new(clock)
+    clock.t = 1006
+    run.apply_state(_state("cold-start"))
+    for i in range(30):
+        _ep(run, "cold-start · dev [aaaa1111]", i, 30, IDS[i % 2], 0.2)
+    for i in range(15):
+        _ep(run, "cold-start · dev [cccc2222]", i, 15, IDS[2], 0.12)
+    run.apply_state(_state("cold-start", cells=CELLS, coverage=(3, 3)))
+    for i in range(45):
+        _ep(run, "cold-start · dev [union]", i, 45, IDS[i % 3], 0.16)
+    run.apply_state(_state("cold-start", cells=CELLS, coverage=(3, 3),
+                           union={"score": 0.16, "digest": CLYDE}))
+    labels = [plain(r.label) for r in story.section_view(run, 0, 1300).rows]
+    assert labels[-1] == ("played clyde @a1b2c3d, the best bot on average, on all 3 identities"
+                          " · 45 games · avg 0.16")
+
+
+def test_run_failed_uses_failure_detail_not_the_raw_exception():
+    """Finding 6 + Ruling 8: the now-line reuses tui._util.failure_detail (the
+    same helper the app's toast uses) -- a CalledProcessError's own str() is
+    an unreadable giant command repr; failure_detail distills docker's own
+    stderr line instead."""
+    clock = Clock()
+    run = _through_setup(clock)
+    err = subprocess.CalledProcessError(
+        125, ["docker", "run", "--rm", "ghcr.io/dunnolab/nethackers-arena@sha256:" + "a" * 64],
+        stderr=b"docker: Error response from daemon: No such image.\nSee 'docker run --help'.\n")
+    run.finish(error=err)
+    assert plain(story.now_line(run, clock.t)) == (
+        "✗ Run failed: docker: Error response from daemon: No such image.")
+
+
+def test_stopping_between_iterations_is_acknowledged():
+    """Ruling 10 minor: Stop pressed between iterations (none currently
+    running) must say so at once, not claim the next iteration is starting."""
+    clock = Clock()
+    run = _through_setup(clock)
+    clock.t = 1800
+    run.apply_iteration(1, IterationResult(False, "gate:boom"))
+    run.apply_state(_state("rejected", 1, cells=CELLS, cell=IDS[1], detail="gate: boom"))
+    run.request_stop()
+    assert plain(story.now_line(run, clock.t)) == "■ Stopping · no more iterations will start"
+
+
+def test_a_single_identity_is_not_pluralized():
+    """Ruling 10 minor: "your 1 identities" -> "your 1 identity"."""
+    clock = Clock()
+    run = Run("r1", EvolveConfig(IDS[0], "codex", 5), clock=clock)
+    clock.t = 1004
+    assert plain(story.now_line(run, clock.t)) == (
+        "▶ Fetching the best bots for your 1 identity from the hub… · 4s")
+
+
+# ---- finding 7: §6.1/§6.2/§6.3/§6.5 states the committed suite never reached ------
+
+def test_the_now_line_during_the_smoke_test():
+    """§6.1 "iteration, smoke test" row -- untested: every existing test that
+    reaches this window only checks section_view, never now_line."""
+    clock = Clock()
+    run = _through_setup(clock)
+    clock.t = 1600
+    run.apply_state(_state("gating", 1, cells=CELLS, cell=IDS[1]))
+    clock.t = 1612
+    assert plain(story.now_line(run, clock.t)) == (
+        "▶ Iteration 1 of 5 · smoke test: one short game to check the edited bot runs · 12s")
+
+
+def test_the_now_line_and_section_view_while_playing_and_while_deciding():
+    """§6.1 "iteration, games" (a non-zero count) and "iteration, deciding"
+    rows, plus §6.2's own "deciding | running" step row -- none of the
+    committed tests call now_line, or check the deciding step row via
+    section_view, during either window."""
+    clock = Clock()
+    run = _through_setup(clock)
+    clock.t = 1600
+    run.apply_state(_state("gating", 1, cells=CELLS, cell=IDS[1]))
+    clock.t = 1620
+    run.apply_state(_state("evaluating-dev", 1, cells=CELLS, cell=IDS[1]))
+    clock.t = 1630
+    _ep(run, "iter 1/5 · dev", 0, 45, IDS[1], 0.30)
+    clock.t = 1650
+    assert plain(story.now_line(run, clock.t)) == (
+        "▶ Iteration 1 of 5 · playing the edited bot · 1/45 games · avg 0.30 · 30s")
+    for i in range(1, 45):
+        _ep(run, "iter 1/5 · dev", i, 45, IDS[i % 3], 0.30)
+    clock.t = 1700
+    assert plain(story.now_line(run, clock.t)) == (
+        "▶ Iteration 1 of 5 · comparing with the best so far · sending to the hub…")
+    decide_row = story.section_view(run, 1, clock.t).rows[-1]
+    assert plain(decide_row.label) == "comparing with the best so far · sending to the hub…"
+    assert plain(decide_row.mark) == "▶"
+
+
+def test_stopping_after_games_have_already_started():
+    """§6.1's "stopping, during the smoke test or games" row -- distinct from
+    the "stopping, during an edit" row test_stopping_says_what_still_runs
+    already covers; untested until now."""
+    clock = Clock()
+    run = _through_setup(clock)
+    clock.t = 1600
+    run.apply_state(_state("gating", 1, cells=CELLS, cell=IDS[1]))
+    clock.t = 1620
+    run.apply_state(_state("evaluating-dev", 1, cells=CELLS, cell=IDS[1]))
+    _ep(run, "iter 1/5 · dev", 0, 45, IDS[1], 0.25)
+    run.request_stop()
+    assert plain(story.now_line(run, clock.t)) == (
+        "■ Stopping after this iteration's games · 1/45 games")
+
+
+def test_the_now_line_during_the_seed_and_union_setup_batches():
+    """§6.1's seed-batch and union-batch now-line rows -- the only setup
+    now-line row the committed suite reaches is a champion batch's."""
+    clock = Clock()
+    run = _new(clock)
+    clock.t = 1006
+    elite = {IDS[0]: {"program_id": CLYDE, "score": 0.22},
+             IDS[1]: {"program_id": CLYDE, "score": 0.19}}
+    run.apply_state(_state("cold-start", elite_of=elite))
+    clock.t = 1100
+    for i in range(30):
+        _ep(run, "cold-start · dev [aaaa1111]", i, 30, IDS[i % 2], 0.2)
+    clock.t = 1140
+    for i in range(4):
+        _ep(run, "cold-start · dev [seed]", i, 15, IDS[2], 0.1)
+    assert plain(story.now_line(run, 1140)) == (
+        "▶ Setup · playing the starting bot on the 1 identity with no hub champion"
+        " · 4/15 games · 40s")
+    clock.t = 1200
+    for i in range(4, 15):
+        _ep(run, "cold-start · dev [seed]", i, 15, IDS[2], 0.1)
+    run.apply_state(_state("cold-start", elite_of=elite, cells=CELLS))
+    for i in range(12):
+        _ep(run, "cold-start · dev [union]", i, 45, IDS[i % 3], 0.3)
+    assert plain(story.now_line(run, 1263)) == (
+        "▶ Setup · playing the best bot on average on all 3 identities · 12/45 games · 1m 03s")
+
+
+def test_an_agent_crash_is_worded_consistently_across_the_view():
+    """§6.2's "edit | agent error" row, §6.3's "agent failed" label and
+    §6.5's "agent failed" cell -- an operator-error (the agent's OWN process
+    crashing), distinct from the generic loop "error:" already covered
+    above; none of the three were tested anywhere in the committed suite."""
+    clock = Clock()
+    run = _through_setup(clock)
+    run.apply_log(run.tag(1), _codex_edit("/w/bot.py"))
+    clock.t = 1620
+    run.apply_state(_state("error", 1, cells=CELLS, detail="exit 1"))
+    run.apply_iteration(1, IterationResult(False, "operator-error:exit 1"))
+    view = story.section_view(run, 1, clock.t)
+    assert [plain(r.label) for r in view.rows] == ["the agent failed: exit 1"]
+    assert plain(view.rows[0].mark) == "✗"
+    assert plain(story.iter_label(run, 1)[0]) == "✗ iter 1   agent failed  2m"
+    assert plain(story.this_cell(run, IDS[1], 1, 0.18)[0]) == "— agent failed"
+
+
+def test_an_agent_killed_by_stop_via_section_view():
+    """§6.2's "edit | killed by Stop" row -- untested until now."""
+    clock = Clock()
+    run = _through_setup(clock)
+    run.apply_log(run.tag(1), _codex_edit("/w/bot.py"))
+    run.request_stop()
+    clock.t = 1620
+    run.apply_state(_state("gating", 1, cells=CELLS, cell=IDS[1]))
+    run.apply_iteration(1, IterationResult(
+        True, "registered", dev_fitness=0.2, improved=[IDS[1]], stopped_reason="killed",
+        results=[{"character": IDS[1], "progress": 0.2}]))
+    run.apply_state(_state("registered", 1, cells=CELLS, cell=IDS[1]))
+    view = story.section_view(run, 1, clock.t)
+    assert plain(view.rows[0].label) == "the agent was stopped · 1 action"
+    assert plain(view.rows[0].mark) == "■"
+
+
+def test_this_cell_for_a_failed_smoke_test_and_a_stopped_iteration():
+    """§6.5's "failed smoke test" and "stopped" cells -- untested until now."""
+    clock = Clock()
+    run = _through_setup(clock)
+    clock.t = 1560
+    run.apply_state(_state("gating", 1, cells=CELLS, cell=IDS[1]))
+    run.apply_iteration(1, IterationResult(False, "gate:smoke episode crashed"))
+    run.apply_state(_state("rejected", 1, cells=CELLS, cell=IDS[1],
+                           detail="gate: smoke episode crashed"))
+    assert plain(story.this_cell(run, IDS[1], 1, 0.18)[0]) == "— failed smoke test"
+
+    stop_clock = Clock()
+    stopped = _through_setup(stop_clock)
+    stop_clock.t = 1560
+    stopped.apply_state(_state("gating", 1, cells=CELLS, cell=IDS[1]))
+    stopped.request_stop()
+    stopped.finish()
+    assert plain(story.this_cell(stopped, IDS[1], 1, 0.18)[0]) == "— stopped"
+
+
+def test_iter_label_no_gain_and_not_run_after_a_stop():
+    """§6.3's "no gain" and "not run" (a later, never-started iteration after
+    a stop, disabled) labels -- untested until now."""
+    clock = Clock()
+    run = _through_setup(clock)
+    clock.t = 1700
+    run.apply_iteration(1, IterationResult(False, "no-cell-improved", dev_fitness=0.12))
+    run.apply_state(_state("rejected", 1, cells=CELLS, cell=IDS[1]))
+    assert plain(story.iter_label(run, 1)[0]) == "✗ iter 1   no gain  3m"
+    run.request_stop()
+    run.finish()
+    label, disabled = story.iter_label(run, 3)
+    assert plain(label) == "·  iter 3   not run" and disabled is True

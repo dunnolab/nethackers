@@ -504,6 +504,27 @@ def test_incumbent_shows_pulled_champion_during_cold_start_not_autoascend():
     assert kind3 == "aa" and label3 == "AutoAscend"
 
 
+def test_incumbent_trusts_a_seed_cells_measured_score_not_the_aa_floor():
+    """Ruling 7 (finding 4): a --from-seed cell has no hub champion, so
+    harness/loop.py records its origin as kind "seed" (`_origin("seed")`),
+    not "hub" -- incumbent() must still use ITS MEASURED score (what
+    CellArchive.insert actually compares new children against), not the
+    AutoAscend floor (which --from-seed leaves empty: 0.0)."""
+    ident = "val-dwa-law-fem"
+    r = Run("r1", EvolveConfig(ident, "claude", 3, from_seed=True))
+    r.apply_state({
+        "phase": "cold-start", "iteration": 0, "identities": [ident],
+        "cells": [{"identity": ident, "score": 0.09, "digest": "5eed5eed"}],
+        "origins": {"5eed5eed": {"kind": "seed", "handle": None, "sha": None,
+                                  "repo": None, "iteration": None}},
+        "aa_baseline": {}, "elite_of": {}, "union": None, "cell_results": {},
+        "coverage": (1, 1), "cell": None, "generation": 0,
+        "baseline_dev": 0.0, "best_dev": 0.0, "wins": 0, "tokens": 0, "detail": "",
+        "parent_digest": "", "parent_dev": 0.0})
+    score, _, kind, j = r.incumbent(ident, 1)
+    assert (score, kind, j) == (0.09, "aa", None)   # measured, NOT the empty 0.0 floor
+
+
 def test_seed_row_translates_raw_nle_end_status_codes_to_words():
     """A completed TrajectoryResult carries the raw NLE end_status code as a
     string ("1"/"-1"); the detail row must show a word, not the number -- the
@@ -572,8 +593,42 @@ def test_a_gate_rejection_and_an_agent_error_close_their_steps():
     clock.t = 170
     r.apply_state(_state("mutating", iteration=2))
     clock.t = 190
+    # Ruling 6: "error"/"aborted" stamp ONLY `decided` -- the loop's outer
+    # except can land here from anywhere between copytree and the dev eval,
+    # so it must never claim edit_end/smoke_end happened when they didn't.
+    # edit_start survives from the earlier "mutating" (the agent really was
+    # invoked); edit_end stays None (this run never reached "gating" again).
     r.apply_state(_state("error", iteration=2, detail="boom"))
-    assert r.iter_times[2].edit_end == 190 and r.iter_times[2].decided == 190
+    assert r.iter_times[2].edit_start == 170 and r.iter_times[2].edit_end is None
+    assert r.iter_times[2].decided == 190
+
+
+def test_an_error_before_mutating_ever_ran_stamps_only_decided():
+    """Ruling 6: a copytree/refs failure before `_emit("mutating", ...)` never
+    even started the agent -- edit_start must stay None, not be backfilled to
+    the error's own timestamp (the old bug this guards against)."""
+    clock = _Clock()
+    r = Run("r1", CFG, clock=clock)
+    clock.t = 200
+    r.apply_state(_state("error", iteration=1, detail="copytree failed"))
+    t = r.iter_times[1]
+    assert (t.edit_start, t.edit_end, t.smoke_end) == (None, None, None)
+    assert t.decided == 200
+
+
+def test_an_aborted_phase_after_error_stamps_decided_once():
+    """The loop can emit "error" then "aborted" for the SAME iteration (the
+    circuit-breaker trip after max_consecutive_errors) -- both stamp only
+    `decided`, and the first one wins (matching every other decided stamp)."""
+    clock = _Clock()
+    r = Run("r1", CFG, clock=clock)
+    r.apply_state(_state("mutating", iteration=1))
+    clock.t = 140
+    r.apply_state(_state("error", iteration=1, detail="boom"))
+    clock.t = 150
+    r.apply_state(_state("aborted", iteration=1, detail="boom"))
+    t = r.iter_times[1]
+    assert (t.edit_end, t.smoke_end, t.decided) == (None, None, 140)
 
 
 def test_the_dev_batch_completing_stamps_play_end():

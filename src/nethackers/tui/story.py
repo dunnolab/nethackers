@@ -21,6 +21,7 @@ from rich.markup import escape
 
 from nethackers.harness.loop import IterationResult
 from nethackers.tui import status as S
+from nethackers.tui._util import failure_detail
 from nethackers.tui.run import Batch, Run, outcome_word
 
 _WARN = "#d7a700"
@@ -69,6 +70,22 @@ def clip(text: str, width: int) -> str:
 
 def _plural(n: int, one: str, many: str) -> str:
     return one if n == 1 else many
+
+
+def _n_idents(n: int) -> str:
+    return f"{n} {_plural(n, 'identity', 'identities')}"
+
+
+def _crash_word(run: Run) -> tuple[str, str]:
+    """(mark, word) for a run that isn't running, wasn't reopened, and hasn't
+    reached a top-level status branch of its own here -- distinguishes a
+    genuine failure from a user Stop, so a crash never reads as an
+    intentional stop."""
+    return (FAIL_MARK, "failed") if run.status == "failed" else (STOP_MARK, "stopped")
+
+
+_REASON_WIDTH = 80   # a step row's embedded reason/detail text (the now-line's own
+                     # top-level message uses a wider budget -- see now_line/_aborted_after)
 
 
 def _dur(start: float | None, end: float | None) -> str:
@@ -144,22 +161,39 @@ def _group_total(run: Run, group: _Group, batch: Batch | None) -> int:
     return len(group.idents) * run.games_per_identity()
 
 
-def _group_who(group: _Group) -> str:
+def _group_who(group: _Group, from_seed: bool) -> str:
     if group.key == "union":
-        return f"{escape(group.name)} on all {len(group.idents)} identities"
-    return f"{escape(group.name)} on {', '.join(group.idents)}"
+        return f"{escape(group.name)}, on all {len(group.idents)} identities"
+    who = f"{escape(group.name)} on {', '.join(group.idents)}"
+    if group.key == "seed" and not from_seed:
+        # Only a real hub search that came up empty earns this claim; under
+        # --from-seed the hub is never asked at all (loop.py's cold-start
+        # skips it), so saying "no hub champion" would overstate what
+        # happened -- omit the clause there.
+        who += " (no hub champion yet)"
+    return who
+
+
+def _really_done(batch: Batch | None, total: int) -> bool:
+    """batch.done is also set by a forced ``Run.finish()`` sealing a batch
+    that a worker crash/stop cut short -- only trust it once the batch's OWN
+    row count reaches what it was supposed to play (finding 2a: a cut-short
+    batch is never a checkmark)."""
+    return batch is not None and batch.done and len(batch.rows()) >= total
 
 
 def _current_group(run: Run) -> tuple[_Group, Batch | None, float] | None:
-    """The setup batch playing now -- (group, its batch, when it started) --
-    or None when setup is over or between batches."""
-    if run.setup_ended_at is not None or not run.running:
+    """The setup batch that's playing, or was last in progress when the run
+    stopped or failed -- (group, its batch, when it started) -- or None once
+    setup has ended, or before the first group has started."""
+    if run.setup_ended_at is not None:
         return None
     start = run.first_state_at if run.first_state_at is not None else run.started
     for group in _setup_groups(run):
         batch = run.batch_for(_batch_label(group.key))
-        if batch is not None and batch.done:
-            start = batch.ended if batch.ended is not None else start
+        total = _group_total(run, group, batch)
+        if _really_done(batch, total):
+            start = batch.ended if batch is not None and batch.ended is not None else start
             continue
         return group, batch, start
     return None
@@ -177,19 +211,24 @@ def setup_view(run: Run, now: float) -> SectionView:
     first = run.first_state_at
     if first is None:
         what = ("preparing the starting bot" if run.cfg.from_seed
-                else f"fetching the best bots for your {n} identities from the hub")
-        rows.append(StepRow(RUN_MARK, what, S.ep_time(max(0.0, now - run.started))))
-        return SectionView(header, tuple(rows), intro, _setup_next(run))
+                else f"fetching the best bots for your {_n_idents(n)} from the hub")
+        if run.running:
+            rows.append(StepRow(RUN_MARK, what, S.ep_time(max(0.0, now - run.started))))
+        else:
+            end = run.finished_at if run.finished_at is not None else now
+            rows.append(StepRow(_crash_word(run)[0], what,
+                                S.ep_time(max(0.0, end - run.started))))
+        return SectionView(header, tuple(rows), intro, _setup_footer(run))
     groups = _setup_groups(run)
     champs = [g for g in groups if g.key not in ("seed", "union")]
     covered = sum(len(g.idents) for g in champs)
     if run.cfg.from_seed:
         fetched = "prepared the starting bot"
     elif not champs:
-        fetched = f"checked the hub · no bots there yet for your {n} identities"
+        fetched = f"checked the hub · no bots there yet for your {_n_idents(n)}"
     else:
         bots = f"{len(champs)} {_plural(len(champs), 'bot covers', 'bots cover')}"
-        whom = f"your {n} identities" if covered == n else f"{covered} of your {n} identities"
+        whom = f"your {_n_idents(n)}" if covered == n else f"{covered} of your {_n_idents(n)}"
         fetched = f"fetched the best bots from the hub · {bots} {whom}"
     rows.append(StepRow(DONE_MARK, fetched, _dur(run.started, first)))
     start: float = first
@@ -197,17 +236,23 @@ def setup_view(run: Run, now: float) -> SectionView:
     for group in groups:
         batch = run.batch_for(_batch_label(group.key))
         total = _group_total(run, group, batch)
-        who = _group_who(group)
-        if batch is not None and batch.done:
-            end = batch.ended if batch.ended is not None else now
+        who = _group_who(group, run.cfg.from_seed)
+        played = len(batch.rows()) if batch is not None else 0
+        if _really_done(batch, total):
+            end = batch.ended if batch is not None and batch.ended is not None else now
             rows.append(StepRow(DONE_MARK, f"played {who} · {total} games{_avg_txt(_avg(batch))}",
                                 _dur(start, end)))
             start = end
-        elif current is not None and current[0] == group:
-            played = len(batch.rows()) if batch is not None else 0
+        elif current is not None and current[0] == group and run.running:
             rows.append(StepRow(
                 RUN_MARK, f"playing {who} · [b]{played}/{total}[/] games{_avg_txt(_avg(batch))}",
                 _dur(current[2], now)))
+        elif current is not None and current[0] == group and played > 0:
+            # the run stopped or failed mid-batch -- some games really did
+            # play, so this is never a bare "play … · N games" pending row.
+            rows.append(StepRow(
+                _crash_word(run)[0],
+                f"playing {who} · [b]{played}/{total}[/] games{_avg_txt(_avg(batch))}"))
         else:
             rows.append(StepRow(PEND_MARK, f"[{S._DIM}]play {who} · {total} games[/]"))
     return SectionView(header, tuple(rows), intro, _setup_footer(run))
@@ -284,9 +329,9 @@ def _edit_rows(run: Run, k: int, now: float, rows: list[StepRow], reason: str) -
     end = t.edit_end if t else None
     acts = run.actions(k)
     if reason.startswith("operator-error:"):
-        rows.append(StepRow(
-            FAIL_MARK, f"the agent failed: {escape(reason.split(':', 1)[1].strip())}",
-            _dur(start, end)))
+        decided_at = t.decided if t else None
+        detail = escape(clip(reason.split(":", 1)[1].strip(), _REASON_WIDTH))
+        rows.append(StepRow(FAIL_MARK, f"the agent failed: {detail}", _dur(start, decided_at)))
         return False
     if k not in run.iter_results and end is None:
         mark = RUN_MARK if run.running else STOP_MARK
@@ -297,6 +342,13 @@ def _edit_rows(run: Run, k: int, now: float, rows: list[StepRow], reason: str) -
             rows.append(StepRow("", f"[{S._DIM}]last: {escape(clip(acts[-1], 60))} — full "
                                     f"transcript in [b]Mutator Logs[/][/]"))
         return run.running
+    if end is None and not run.reopened:
+        # A generic "error:" (the loop's outer except, which can land ANYWHERE
+        # from before "mutating" through the dev eval) whose edit itself never
+        # actually finished -- claim nothing here; _decide_rows's error line
+        # carries the news. A reopened run has no timestamps at all (§6.8), so
+        # its decided-ness alone is what's authoritative, not `end`.
+        return True
     res = run.iter_results.get(k)
     spend = run.edit_usage(k).spend or (res.usage.spend if res and res.usage else 0)
     tok = f" · {S._compact(spend)} tokens" if spend else ""
@@ -315,37 +367,46 @@ def _smoke_rows(run: Run, k: int, now: float, rows: list[StepRow], reason: str) 
     edit_end = t.edit_end if t else None
     smoke_end = t.smoke_end if t else None
     if reason.startswith("gate:"):
-        rows.append(StepRow(FAIL_MARK, f"smoke test failed — {escape(reason[5:].strip())}",
+        detail = escape(clip(reason[5:].strip(), _REASON_WIDTH))
+        rows.append(StepRow(FAIL_MARK, f"smoke test failed — {detail}",
                             _dur(edit_end, smoke_end)))
         rows.append(StepRow("", f"[{S._DIM}]not played, not sent to the hub[/]"))
         return False
+    if run.reopened:
+        return True   # §6.8: no smoke-test row for a run rebuilt from disk
     decided = k in run.iter_results
-    if not decided and edit_end is None:
+    if smoke_end is not None:
+        rows.append(StepRow(DONE_MARK, "smoke test passed", _dur(edit_end, smoke_end)))
+    elif not decided and edit_end is None:
         rows.append(StepRow(PEND_MARK, f"[{S._DIM}]{_SMOKE}[/]"))
-    elif not decided and smoke_end is None:
+    elif not decided:
         if not run.running:
             rows.append(StepRow(STOP_MARK, _SMOKE))
             return False
         rows.append(StepRow(RUN_MARK, _SMOKE, _dur(edit_end, now)))
-    else:
-        rows.append(StepRow(DONE_MARK, "smoke test passed", _dur(edit_end, smoke_end)))
+    # else: decided (a generic "error:") with the smoke test never having
+    # finished -- nothing true to claim about it.
     return True
 
 
 def _play_row(run: Run, k: int, now: float, rows: list[StepRow]) -> None:
+    if run.reopened:
+        return   # §6.8: no play row for a run rebuilt from disk
     t = run.iter_times.get(k)
     smoke_end = t.smoke_end if t else None
     play_end = t.play_end if t else None
     res = run.iter_results.get(k)
     if res is not None and (res.reason or "").startswith("error:") and res.results is None:
         return   # the iteration broke before any games were played
-    batch = run.batch_for(f"{run.tag(k)} · dev")
+    batch = run.batch_for(run.dev_label(k))
     total = batch.total if batch is not None and batch.total else run.games_total()
+    played = len(batch.rows()) if batch is not None else 0
     if res is None and smoke_end is None:
         rows.append(StepRow(PEND_MARK, f"[{S._DIM}]play the edited bot · {total} games "
                                        f"({run.games_per_identity()} per identity)[/]"))
-    elif res is None and play_end is None:
-        played = len(batch.rows()) if batch is not None else 0
+    elif res is None and (play_end is None or played < total):
+        # play_end set with played < total is Run.finish() force-sealing a
+        # batch a crash/stop cut short (finding 2a) -- never a checkmark.
         rows.append(StepRow(
             RUN_MARK if run.running else STOP_MARK,
             f"playing the edited bot · [b]{played}/{total}[/] games{_avg_txt(_avg(batch))}",
@@ -379,8 +440,8 @@ def _decision_row(run: Run, k: int, res: IterationResult) -> StepRow:
 
 def _hub_row(res: IterationResult) -> StepRow:
     if res.hub_reason:
-        why = res.hub_reason.removeprefix("local-only: ")
-        return StepRow(WARN_MARK, f"[{_WARN}]stayed local:[/] {escape(why)}")
+        why = escape(clip(res.hub_reason.removeprefix("local-only: "), _REASON_WIDTH))
+        return StepRow(WARN_MARK, f"[{_WARN}]stayed local:[/] {why}")
     return StepRow(DONE_MARK, "sent to the hub")
 
 
@@ -389,8 +450,8 @@ def _decide_rows(run: Run, k: int, now: float, rows: list[StepRow], reason: str)
     t = run.iter_times.get(k)
     play_end = t.play_end if t else None
     if reason.startswith("error:"):
-        rows.append(StepRow(FAIL_MARK, f"the iteration hit an error: "
-                                       f"{escape(reason.split(':', 1)[1].strip())}"))
+        detail = escape(clip(reason.split(":", 1)[1].strip(), _REASON_WIDTH))
+        rows.append(StepRow(FAIL_MARK, f"the iteration hit an error: {detail}"))
         return
     if res is None:
         if play_end is None:
@@ -414,7 +475,7 @@ def iteration_view(run: Run, k: int, now: float) -> SectionView:
         return SectionView(
             header=f"{title} — {why}",
             intro=(f"[{S._DIM}]Each iteration: the agent edits one bot → a smoke test → "
-                   f"{run.games_total()} games → kept if it's better.[/]"))
+                   f"{run.games_total()} games → keep it if it's better.[/]"))
     rows: list[StepRow] = []
     reason = (res.reason if res is not None else "") or ""
     if _edit_rows(run, k, now, rows, reason) and _smoke_rows(run, k, now, rows, reason):
@@ -424,7 +485,8 @@ def iteration_view(run: Run, k: int, now: float) -> SectionView:
         footer: str | None = (f"[{S._DIM}]step timings weren't recorded for runs from "
                               f"earlier sessions[/]")
     elif res is None and not run.running:
-        footer = f"{STOP_MARK} the run stopped during this iteration"
+        mark, word = _crash_word(run)
+        footer = f"{mark} the run {word} during this iteration"
     else:
         footer = None
     return SectionView(_iteration_header(run, k, title), tuple(rows), footer=footer)
@@ -436,11 +498,6 @@ def section_view(run: Run, k: int, now: float) -> SectionView:
 
 
 # ---- the now line ---------------------------------------------------------------
-
-def _last_line(error: BaseException | None) -> str:
-    lines = [ln.strip() for ln in str(error or "").splitlines() if ln.strip()]
-    return lines[-1] if lines else type(error).__name__
-
 
 def _aborted_after(run: Run) -> tuple[int, str] | None:
     """(failures, last detail) when agent failures in a row ended the run
@@ -471,8 +528,9 @@ def _setup_now(run: Run, now: float, stopping: bool) -> str:
             what = f"playing the best bot on average on all {len(group.idents)} identities"
         elif group.key == "seed":
             m = len(group.idents)
-            what = (f"playing the starting bot on the {m} "
-                    f"{_plural(m, 'identity', 'identities')} with no hub champion")
+            what = f"playing the starting bot on the {_n_idents(m)}"
+            if not run.cfg.from_seed:
+                what += " with no hub champion"
         else:
             what = "playing the hub's best bots on your machine for a fair starting score"
         body = f"Setup · {what} · {games} · {S.ep_time(max(0.0, now - start))}"
@@ -485,10 +543,12 @@ def _iteration_now(run: Run, now: float, stopping: bool) -> str:
     total = run.cfg.iterations
     k = run.running_iteration()
     if k is None:
+        if stopping:
+            return f"{STOP_MARK} Stopping · no more iterations will start"
         return (f"{RUN_MARK} Iteration {len(_decided(run)) + 1} of {total} · "
                 f"getting the next bot ready…")
     t = run.iter_times[k]
-    batch = run.batch_for(f"{run.tag(k)} · dev")
+    batch = run.batch_for(run.dev_label(k))
     played = len(batch.rows()) if batch is not None and t.smoke_end is not None else 0
     games = batch.total if batch is not None and batch.total else run.games_total()
     if stopping:
@@ -526,7 +586,8 @@ def now_line(run: Run, now: float) -> str:
     if run.reopened:
         return f"{DONE_MARK} Reopened from an earlier session · {improved} of {total} improved"
     if run.status == "failed":
-        return f"{FAIL_MARK} Run failed: {escape(clip(_last_line(run.error), 100))}"
+        detail = failure_detail(run.error) if run.error is not None else ""
+        return f"{FAIL_MARK} Run failed: {escape(clip(detail, 100))}"
     if run.status == "stopped":
         return (f"{STOP_MARK} Stopped by you · {improved} of {total} improved · "
                 f"{S.short_time(run.run_time())}")
@@ -541,8 +602,8 @@ def now_line(run: Run, now: float) -> str:
     stopping = run.stop.is_set()
     if run.first_state_at is None:
         n = len(run.identities())
-        what = (f"Preparing the starting bot for your {n} identities…" if run.cfg.from_seed
-                else f"Fetching the best bots for your {n} identities from the hub…")
+        what = (f"Preparing the starting bot for your {_n_idents(n)}…" if run.cfg.from_seed
+                else f"Fetching the best bots for your {_n_idents(n)} from the hub…")
         return f"{RUN_MARK} {what} · {S.ep_time(max(0.0, now - run.started))}"
     if run.setup_ended_at is None:
         return _setup_now(run, now, stopping)
@@ -559,8 +620,8 @@ def iter_label(run: Run, k: int) -> tuple[str, bool]:
         if run.setup_ended_at is None:
             if run.running:
                 return f"{RUN_MARK} [b]setup[/]   [{S._FOCUS}]live[/]", False
-            word = "failed" if run.status == "failed" else "stopped"
-            return f"{STOP_MARK} [b]setup[/]   [{S._DIM}]{word}[/]", False
+            mark, word = _crash_word(run)
+            return f"{mark} [b]setup[/]   [{S._DIM}]{word}[/]", False
         took = S.short_time(run.setup_duration() or 0.0)
         return f"{DONE_MARK} [b]setup[/]   [{S._DIM}]{took}[/]", False
     res = run.iter_results.get(k)
@@ -576,10 +637,26 @@ def iter_label(run: Run, k: int) -> tuple[str, bool]:
     if t is not None and t.edit_start is not None:
         if run.running:
             return f"{RUN_MARK} [b]iter {k}[/]   [{S._FOCUS}]live[/]", False
-        return f"{STOP_MARK} [b]iter {k}[/]   [{S._DIM}]stopped[/]", False
+        mark, word = _crash_word(run)
+        return f"{mark} [b]iter {k}[/]   [{S._DIM}]{word}[/]", False
     if not run.running:
         return f"[{S._DIM}]·  iter {k}   not run[/]", True
     return f"[{S._DIM}]·  iter {k}[/]", True
+
+
+def _dev_rows(run: Run, k: int, ident: str | None) -> tuple[list[dict], int]:
+    """Iteration k's OWN dev batch's episodes -- never the smoke batch (which
+    streams under a different label and would otherwise be mistaken for the
+    first dev game -- finding 3), and readable straight off the batch even
+    once the run has stopped or failed mid-eval (unlike
+    ``Run.iteration_evals``, which only sees a LIVE batch while
+    ``Run.running`` -- finding 2c) -- optionally filtered to one identity."""
+    batch = run.batch_for(run.dev_label(k))
+    rows = batch.rows() if batch is not None else []
+    if ident is None:
+        total = batch.total if batch is not None and batch.total else run.games_total()
+        return rows, total
+    return [r for r in rows if r.get("character") == ident], run.games_per_identity()
 
 
 def this_cell(run: Run, ident: str | None, k: int, best: float | None) -> tuple[str, bool]:
@@ -605,10 +682,12 @@ def this_cell(run: Run, ident: str | None, k: int, best: float | None) -> tuple[
             if t.edit_end is None:
                 return f"[{dim}]waiting for the agent…[/]", False
             return f"[{dim}]smoke test…[/]", False
-    evals = run.iteration_evals(k)
-    views = list(evals.values()) if ident is None else [evals[ident]] if ident in evals else []
-    rows = [row for view in views for row in view.rows]
-    total = sum(view.total for view in views)
+        rows, total = _dev_rows(run, k, ident)
+    else:
+        evals = run.iteration_evals(k)
+        views = list(evals.values()) if ident is None else [evals[ident]] if ident in evals else []
+        rows = [row for view in views for row in view.rows]
+        total = sum(view.total for view in views)
     if not rows:
         if reason.startswith("error:"):
             return f"[{S._HP}]—[/] [{dim}]error[/]", False

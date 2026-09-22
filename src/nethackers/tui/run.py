@@ -245,8 +245,13 @@ class Run:
     def _stamp(self, phase: str, k: int, now: float) -> None:
         """Record when iteration k reached each step, from the loop's phases:
         mutating -> gating (edit done) -> evaluating-dev (smoke test passed) ->
-        registered/rejected (decided); a gate rejection ends at the smoke test,
-        an error/abort ends the edit."""
+        registered/rejected (decided); a gate rejection ends at the smoke
+        test. "error"/"aborted" can land at ANY point -- the loop's outer
+        `except` covers everything from `copytree` (before "mutating") through
+        the gate and the dev eval -- so they stamp ONLY `decided`, never
+        `edit_end`/`smoke_end`/a not-yet-set `edit_start`: a step is claimed
+        done only when its OWN timestamp was actually reached (tui/story.py
+        reads these to avoid claiming a step that never happened)."""
         if k <= 0:
             return
         if phase == "mutating":
@@ -256,13 +261,17 @@ class Run:
                          "error", "aborted"):
             return
         t = self.iter_times.setdefault(k, IterTimes())
+        if phase in ("error", "aborted"):
+            if t.decided is None:
+                t.decided = now
+            return
         if t.edit_start is None:
             t.edit_start = now     # a state that skipped "mutating" still started it
         if t.edit_end is None:
             t.edit_end = now
         if phase in ("evaluating-dev", "registered", "rejected") and t.smoke_end is None:
             t.smoke_end = now
-        if phase in ("registered", "rejected", "error", "aborted") and t.decided is None:
+        if phase in ("registered", "rejected") and t.decided is None:
             t.decided = now
 
     def apply_episode(self, label: str, ep: dict) -> None:
@@ -336,6 +345,13 @@ class Run:
     # ---- read helpers -------------------------------------------------------
     def tag(self, iteration: int) -> str:
         return f"iter {iteration}/{self.cfg.iterations}"
+
+    def dev_label(self, k: int) -> str:
+        """The loop's stream label for iteration k's dev-eval batch
+        (harness/loop.py's ``f"{tag} · dev"``) -- the one place that knows
+        it, so callers (tui/story.py) never repeat the pattern by hand and
+        risk matching the smoke batch (``f"{tag} · smoke"``) instead."""
+        return f"{self.tag(k)} · dev"
 
     def current_batch(self) -> Batch | None:
         return self.batches[-1] if self.batches else None
@@ -473,7 +489,13 @@ class Run:
     def incumbent(self, ident: str, upto_k: int) -> tuple[float, str, str, int | None]:
         cells = self.init_cells
         elite = self.elite_of().get(ident)
-        if ident in cells and self.origins().get(cells[ident]["digest"], {}).get("kind") == "hub":
+        if ident in cells:
+            # A cold-start cell's measured score is the best so far
+            # regardless of its origin's kind -- a hub champion AND a seed
+            # cell (--from-seed/--seed, no hub champion at all) are both
+            # real, played scores; only an identity with NO cell yet falls
+            # back to the AutoAscend floor below. `_origin_label` gives the
+            # right label either way.
             label, kind = self._origin_label(cells[ident]["digest"])
             score, j = float(cells[ident]["score"]), None
         elif elite is not None and self.state.get("phase") == "cold-start":
