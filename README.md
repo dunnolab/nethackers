@@ -16,8 +16,9 @@ NetHackers is an open effort to write the first program that wins NetHack.
 This is the CLI and the hub behind [nethackers.dunnolab.ai](https://nethackers.dunnolab.ai).
 You write a bot, or point a coding agent at one. It is scored on fixed seeds
 in a sandbox on your machine and re-scored by us on seeds nobody has seen.
-The hub keeps the best program per starting character, as a link to your
-repo at an exact commit, for anyone to pull, improve, and register.
+The hub keeps a link to every registered program, your repo at an exact
+commit, for anyone to pull, improve, and register again; the best per
+starting character are the elites it shows first.
 
 ## Install
 
