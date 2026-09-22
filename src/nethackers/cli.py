@@ -64,6 +64,12 @@ mutating flag (acquires both sandbox images, streaming progress to
 ``err``, then re-checks). The hub/login checks reuse ``whoami``'s own
 ``HubClient(...).hub_mode()``/``_load_creds`` primitives -- one source of
 truth (INV5), not a second implementation.
+
+``setup`` gets a machine ready in one command: it runs doctor's checks,
+builds a plan from the OS recipes (``nethackers.setup``), asks once, runs what
+it can -- never ``sudo`` -- and prints the rest. The orchestration lives in
+``setup/flow.py`` behind ``SetupDeps``; this module only builds the real
+dependencies (``_setup``) and shares ``_do_login`` with ``login``.
 """
 
 from __future__ import annotations
@@ -71,6 +77,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
 import time
 from collections.abc import Callable, Iterator
@@ -79,15 +86,17 @@ from pathlib import Path
 from typing import Any
 
 import httpx
+from rich.highlighter import NullHighlighter
 from rich.live import Live
 from rich.markup import escape
 from rich.panel import Panel
+from rich.prompt import Confirm, Prompt
 from rich.text import Text
 from rich_argparse import RichHelpFormatter
 
 from nethackers import browser, clipboard, config, crashfile
 from nethackers.config import Stage, load_stage
-from nethackers.containers import container_runtime
+from nethackers.containers import container_runtime, probe_container_runtime
 from nethackers.diagnostics import (
     CAPABILITIES,
     _short_digest,
@@ -106,6 +115,7 @@ from nethackers.harness.sandbox_preflight import (
     ensure_image,
     image_present,
     preflight as sandbox_preflight,
+    preflight_operator,
     preflight_runtime,
     resolve_image,
     sandbox_platform_mismatch,
@@ -139,6 +149,8 @@ from nethackers.hubclient.render import (
     render_show as rich_show,
 )
 from nethackers.operators import DEFAULT_OPERATOR, OPERATORS
+from nethackers.setup import flow as setup_flow, render as setup_render, runner as setup_runner
+from nethackers.setup.host import detect_host, read_text
 from nethackers.solution_root import SolutionRootError
 from nethackers.tui.app import NetHackersApp
 
@@ -430,13 +442,33 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
     )
     do.add_argument(
         "--pull", action="store_true",
-        help="Pull the arena+mutator sandbox images first (progress on stderr), "
-        "then re-check.",
+        help="Pull the arena+mutator sandbox images first (progress on stderr), then "
+        "re-check. `nethackers setup` does this and the rest of setting up.",
     )
     do.add_argument(
         "--operator", choices=list(OPERATORS), default=None,
         help="Restrict the operator-readiness check to one agent "
         "(default: all registered coding agents).",
+    )
+
+    su = sub.add_parser(
+        "setup", parents=[common], formatter_class=RichHelpFormatter,
+        help="Get this machine ready: container runtime, sandbox images, logins, coding "
+        "agent. Shows its plan and asks once; never runs sudo.",
+    )
+    su.add_argument(
+        "--for", dest="for_capability", choices=list(CAPABILITIES), default=None,
+        help="Set up only what one capability needs (default: everything).",
+    )
+    su.add_argument(
+        "--operator", choices=list(OPERATORS), default=None,
+        help="The coding agent evolve should use (default: one already logged in, "
+        "or ask).",
+    )
+    su.add_argument(
+        "-y", "--yes", action="store_true",
+        help="Run the plan without asking. With no terminal, runs the unattended steps "
+        "and lists the logins to run.",
     )
 
     sub.add_parser(
@@ -708,6 +740,83 @@ def _pull_progress() -> Iterator[Callable[[PullEvent], None]]:
         yield _on_event_live
 
 
+def _do_login(stage: Stage) -> str:
+    """The GitHub device flow, stored as the hub credential; returns the login.
+    Shared by `login` and `setup`, so there is one copy of it."""
+    tok = device_login(prompt=_login_prompt, client_id=stage.github_client_id)
+    login = whoami_from_token(tok["access_token"])
+    _cred.save(Credentials(
+        login=login,
+        access_token=tok["access_token"],
+        refresh_token=tok["refresh_token"],
+        expires_at=(_time_now() + tok["expires_in"]) if tok["expires_in"] else None,
+    ))
+    return login
+
+
+def _setup_pull(kinds: tuple[str, ...], total: int | None) -> str | None:
+    """Pull the named sandbox images with the CLI's progress display; the first
+    error, or ``None``. ``total`` (bytes) is used by the progress bar once it
+    shows bytes."""
+    runtime = container_runtime()
+    if runtime is None:
+        return "no usable container runtime"
+    with _pull_progress() as on_event:
+        for kind in kinds:
+            perr = ensure_image(resolve_image(None, kind), kind, runtime=runtime,
+                                on_event=on_event)
+            if perr is not None:
+                return perr
+    return None
+
+
+def _setup_pull_size(kinds: tuple[str, ...]) -> int | None:
+    """Bytes a pull of ``kinds`` will download; ``None`` until known."""
+    return None
+
+
+def _setup(args: argparse.Namespace, stage: Stage) -> int:
+    # The plan/progress lines carry live numbers (a pull's MB size, elapsed
+    # seconds, step counts): `rich`'s default highlighter re-styles a bare
+    # number as its own span, which on a real terminal splits e.g. "432 MB"
+    # into two separately-colored runs mid-word. Same fix the TUI already
+    # applies to its own dynamic lines (screens/monitor.py).
+    err.highlighter = NullHighlighter()
+    interactive = sys.stdin is not None and sys.stdin.isatty() and err.is_terminal
+    opts = setup_flow.SetupOptions(scope=args.for_capability, operator=args.operator,
+                                   yes=args.yes, interactive=interactive, hub=args.hub)
+
+    def report(checks, summary) -> None:
+        emit(to_json(checks), args.output,
+             table=lambda _d: setup_render.summary_markup(summary),
+             plain=lambda _d: setup_render.summary_plain(summary))
+
+    deps = setup_flow.SetupDeps(
+        console=err,
+        run_checks=run_checks,
+        detect_host=detect_host,
+        probe_runtime=probe_container_runtime,
+        gh_state=gh_state,
+        load_creds=_load_creds,
+        agent_logged_in=lambda op: preflight_operator(op) is None,
+        resolve_exe=lambda name: setup_flow.resolve_exe(name, which=shutil.which,
+                                                         home=Path.home()),
+        read_text=read_text,
+        hub_login=lambda: _do_login(stage),
+        pull=_setup_pull,
+        pull_size=_setup_pull_size,
+        run_terminal=setup_runner.run_terminal,
+        run_captured=lambda argv, title: setup_runner.run_captured(argv, title=title,
+                                                                   console=err),
+        ask_agent=lambda: Prompt.ask("Which coding agent will evolve use?",
+                                     choices=["claude", "codex", "opencode2"],
+                                     default=DEFAULT_OPERATOR, console=err, stream=sys.stdin),
+        confirm=lambda: Confirm.ask("Continue?", default=True, console=err, stream=sys.stdin),
+        report=report,
+    )
+    return setup_flow.run_setup(opts, deps)
+
+
 def _run(argv: list[str] | None) -> int:
     """Parse args and dispatch one subcommand. May raise -- ``main`` is the
     single place that turns any failure into a clean message, so nothing here
@@ -757,14 +866,7 @@ def _run(argv: list[str] | None) -> int:
         return 0
 
     if args.cmd == "login":
-        tok = device_login(prompt=_login_prompt, client_id=stage.github_client_id)
-        login = whoami_from_token(tok["access_token"])
-        _cred.save(Credentials(
-            login=login,
-            access_token=tok["access_token"],
-            refresh_token=tok["refresh_token"],
-            expires_at=(_time_now() + tok["expires_in"]) if tok["expires_in"] else None,
-        ))
+        login = _do_login(stage)
         err.print(f"logged in as [b]@{login}[/]")
         return 0
 
@@ -836,6 +938,9 @@ def _run(argv: list[str] | None) -> int:
             plain=lambda _d: render_plain(checks),
         )
         return exit_code(checks, args.for_capability)
+
+    if args.cmd == "setup":
+        return _setup(args, stage)
 
     if args.cmd == "report":
         # Read-only and offline, unlike every other branch above/below that
@@ -978,10 +1083,12 @@ def _run(argv: list[str] | None) -> int:
             _gh_login, _gh_state = gh_state()
             if _gh_state == "missing":
                 err.print("[yellow]wins won't publish[/] — install the GitHub CLI "
-                          "(`gh`), then run `gh auth login`")
+                          "(`gh`), then run `gh auth login` — or run "
+                          "`nethackers setup --for publish`")
             elif _gh_state == "unauthed":
                 err.print("[yellow]wins won't publish[/] — run `gh auth login` "
-                          "(separate from `nethackers login`)")
+                          "(separate from `nethackers login`) — or run "
+                          "`nethackers setup --for publish`")
 
         # Preflight only when a model is pinned: harness-default has nothing to
         # validate, and this keeps the model=None path (the common case + every
@@ -1118,14 +1225,17 @@ def _run(argv: list[str] | None) -> int:
         if gh is None:
             if gh_st == "missing":
                 err.print("[yellow]gh not installed[/] — install the GitHub CLI "
-                          "(`gh`), then run `gh auth login`")
+                          "(`gh`), then run `gh auth login` — or run "
+                          "`nethackers setup --for publish`")
             else:  # unauthed
                 err.print("[yellow]gh not authed[/] — run `gh auth login` "
-                          "(separate from `nethackers login`)")
+                          "(separate from `nethackers login`) — or run "
+                          "`nethackers setup --for publish`")
             return 1
         if gh != creds.login:
             err.print(f"gh is authed as [b]@{gh}[/] but you're logged in as "
-                      f"[b]@{creds.login}[/] — sign in to the same account")
+                      f"[b]@{creds.login}[/] — sign in to the same account "
+                      "(`nethackers setup --for publish` checks this)")
             return 1
         token = _authed_token()
         if token is None:  # unreachable (creds is set) -- narrows for the type checker

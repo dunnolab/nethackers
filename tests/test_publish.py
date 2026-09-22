@@ -32,7 +32,7 @@ class FakeRun:
         self.readme_put_fails = readme_put_fails
         self.about_fails = about_fails
 
-    def __call__(self, cmd, *, check=False, capture_output=False, text=False):
+    def __call__(self, cmd, *, check=False, capture_output=False, text=False, timeout=None):
         self.calls.append(cmd)
         head = cmd[:3]
         if head == ["gh", "api", "user"]:
