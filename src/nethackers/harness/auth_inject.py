@@ -40,7 +40,7 @@ real credential, it hands it a placeholder key plus the harness's own
 base-URL override, pointing it at ``cred_broker.CredBroker`` -- which holds
 the real credential host-side and injects it only into requests it forwards
 to the one provider host. ``broker_credential`` is the host-side read that
-gets the broker its real ``header_value``, reusing this module's exact
+gets the broker its real ``HeaderRewrite``, reusing this module's exact
 login paths (macOS Keychain / ``.credentials.json`` for Claude, ``~/.codex``
 for Codex) rather than duplicating them. ``ContainerOperator``'s ``broker``
 flag chooses between the two; the mount stays the default -- see its
@@ -71,9 +71,9 @@ a per-provider JSON config field (``options.baseURL``), not a single env var
 claude/codex-only and still raises for ``harness="opencode2"``. OpenCode 2
 gets its own pair of functions instead: ``opencode2_broker_targets``
 resolves, for every provider across the global configs, whether it's
-brokerable and the ``(upstream, header_name, header_value)`` to broker it
-with -- a literal or env-sourced ``apiKey`` (a ``{file:...}`` key, or no key
-at all, is left alone); an explicit ``options.baseURL``, or absent one,
+brokerable and the ``(upstream, rewrite)`` to broker it with -- a literal
+or env-sourced ``apiKey`` (a ``{file:...}`` key, or no key at all, is left
+alone); an explicit ``options.baseURL``, or absent one,
 Anthropic's/OpenAI's own default host for those two provider names
 specifically (Anthropic gets ``x-api-key``, everything else
 ``Authorization: Bearer`` -- these are provider API keys from the config,
@@ -101,6 +101,8 @@ import tempfile
 from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlsplit
+
+from nethackers.harness.cred_broker import HeaderRewrite
 
 _CLAUDE_LOGIN_HINT = "run `claude` on this host to log in, then retry"
 
@@ -200,28 +202,27 @@ def auth_broker_args(harness: str, *, broker_base: str) -> list[str]:
 
 def broker_credential(
     harness: str, *, system: str, home: Path, run=subprocess.run,
-) -> tuple[str, str]:
-    """``(header_name, header_value)`` for ``cred_broker.CredBroker`` to
-    inject for ``harness`` -- the real credential ``auth_broker_args``'s
-    placeholder stands in for, read host-side via the exact same login
+) -> HeaderRewrite:
+    """A ``HeaderRewrite`` for ``cred_broker.CredBroker`` to apply for
+    ``harness`` -- the real credential ``auth_broker_args``'s placeholder
+    stands in for, read host-side via the exact same login
     ``auth_docker_args`` mounts (never a duplicate/second read of it).
 
-    ``header_name`` is the header the caged CLI's placeholder makes it send,
-    which ``CredBroker`` then replaces with the real value: ``Authorization``
-    (a Bearer) for both Claude's OAuth token and Codex. See the module
-    docstring's Broker section for the Codex token-staleness caveat. Raises
-    ``AuthUnavailable`` on the exact same "no login here" conditions
-    ``auth_docker_args`` does.
+    Both claude and codex inject ``Authorization`` (a Bearer), the header
+    the caged CLI's placeholder makes it send, which ``CredBroker`` then
+    replaces with the real value. See the module docstring's Broker section
+    for the Codex token-staleness caveat. Raises ``AuthUnavailable`` on the
+    exact same "no login here" conditions ``auth_docker_args`` does.
     """
     if harness == "claude":
         # Claude Code sends its OAuth token as a Bearer, not x-api-key, so the
         # broker replaces the Authorization header the caged CLI sends (a
         # placeholder Bearer) with the real one. Verified live.
         token = _claude_macos_token(run) if system == "Darwin" else _claude_linux_token(home)
-        return "Authorization", f"Bearer {token}"
+        return HeaderRewrite(inject=(("Authorization", f"Bearer {token}"),))
 
     if harness == "codex":
-        return "Authorization", f"Bearer {_codex_token(home)}"
+        return HeaderRewrite(inject=(("Authorization", f"Bearer {_codex_token(home)}"),))
 
     raise ValueError(f"no broker credential reader for harness: {harness!r}")
 
@@ -364,11 +365,11 @@ def opencode2_broker_targets(
 ) -> list[dict]:
     """One entry per BROKERABLE provider across the global OpenCode configs
     (``opencode2_global_providers``): ``{"file", "name", "upstream",
-    "header_name", "header_value"}``, ready to hand straight to
-    ``cred_broker.CredBroker(upstream, header_name, header_value)``.
+    "rewrite"}``, ready to hand straight to
+    ``cred_broker.CredBroker(upstream, rewrite)``.
 
     A provider is brokerable only when BOTH halves resolve --
-    ``_opencode2_provider_key`` (the real value ``header_value`` needs) and
+    ``_opencode2_provider_key`` (the real value ``rewrite`` injects) and
     ``_opencode2_provider_upstream`` (where to send it and under what header
     name). A provider with a ``{file:...}``/absent key, an unset
     ``{env:NAME}``, or an unrecognized name with no ``baseURL`` is simply
@@ -389,12 +390,12 @@ def opencode2_broker_targets(
             if resolved is None:
                 continue
             upstream, header_name, is_bearer = resolved
+            header_value = f"Bearer {key}" if is_bearer else key
             targets.append({
                 "file": file_name,
                 "name": provider_name,
                 "upstream": upstream,
-                "header_name": header_name,
-                "header_value": f"Bearer {key}" if is_bearer else key,
+                "rewrite": HeaderRewrite(inject=((header_name, header_value),)),
             })
     return targets
 
@@ -589,7 +590,7 @@ def _claude_macos_token(run) -> str:
     """Read the Claude Code Keychain item host-side and return the raw OAuth
     access token. The one place that shells out to ``security`` -- both
     ``_claude_macos_env`` (the mount path's env arg) and ``broker_credential``
-    (the broker path's ``header_value``) call this instead of each carrying
+    (the broker path's ``rewrite``) call this instead of each carrying
     their own copy of the subprocess call.
     """
     result = run(

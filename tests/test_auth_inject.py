@@ -9,6 +9,7 @@ from nethackers.harness.auth_inject import (
     auth_docker_args,
     opencode2_has_provider_key,
 )
+from nethackers.harness.cred_broker import HeaderRewrite
 
 
 def test_codex_mounts_the_one_canonical_dir():
@@ -203,7 +204,7 @@ def test_unknown_harness_raises():
 #
 # `auth_broker_args` returns env args that point a harness at the credential
 # broker with a PLACEHOLDER key -- no mount, no real key. `broker_credential`
-# is the host-side read the broker itself uses for its real `header_value`
+# is the host-side read the broker itself uses for its real `HeaderRewrite`
 # (ContainerOperator wires the two together -- see test_container_operator.py).
 
 from nethackers.harness.auth_inject import auth_broker_args, broker_credential  # noqa: E402
@@ -250,9 +251,8 @@ def test_broker_credential_claude_linux_reads_credentials_json(tmp_path):
     (creds_dir / ".credentials.json").write_text(
         json.dumps({"claudeAiOauth": {"accessToken": "tok-linux"}})
     )
-    header_name, header_value = broker_credential("claude", system="Linux", home=tmp_path)
-    assert header_name == "Authorization"
-    assert header_value == "Bearer tok-linux"
+    rw = broker_credential("claude", system="Linux", home=tmp_path)
+    assert rw.inject == (("Authorization", "Bearer tok-linux"),)
 
 
 def test_broker_credential_claude_macos_reads_keychain():
@@ -265,11 +265,10 @@ def test_broker_credential_claude_macos_reads_keychain():
 
         return R()
 
-    header_name, header_value = broker_credential(
+    rw = broker_credential(
         "claude", system="Darwin", home=Path("/h"), run=fake_run,
     )
-    assert header_name == "Authorization"
-    assert header_value == "Bearer tok-mac"
+    assert rw.inject == (("Authorization", "Bearer tok-mac"),)
 
 
 def test_broker_credential_claude_linux_missing_creds_raises(tmp_path):
@@ -296,9 +295,8 @@ def test_broker_credential_codex_prefers_stable_api_key(tmp_path):
         "OPENAI_API_KEY": "sk-real",
         "tokens": {"access_token": "should-not-be-used"},
     }))
-    header_name, header_value = broker_credential("codex", system="Linux", home=tmp_path)
-    assert header_name == "Authorization"
-    assert header_value == "Bearer sk-real"
+    rw = broker_credential("codex", system="Linux", home=tmp_path)
+    assert rw.inject == (("Authorization", "Bearer sk-real"),)
 
 
 def test_broker_credential_codex_falls_back_to_oauth_access_token(tmp_path):
@@ -311,9 +309,8 @@ def test_broker_credential_codex_falls_back_to_oauth_access_token(tmp_path):
         "OPENAI_API_KEY": None,
         "tokens": {"access_token": "chatgpt-oauth-tok"},
     }))
-    header_name, header_value = broker_credential("codex", system="Linux", home=tmp_path)
-    assert header_name == "Authorization"
-    assert header_value == "Bearer chatgpt-oauth-tok"
+    rw = broker_credential("codex", system="Linux", home=tmp_path)
+    assert rw.inject == (("Authorization", "Bearer chatgpt-oauth-tok"),)
 
 
 def test_broker_credential_codex_missing_login_raises(tmp_path):
@@ -351,7 +348,7 @@ def test_opencode2_broker_targets_anthropic_default_uses_x_api_key(tmp_path):
     assert targets == [{
         "file": "opencode.json", "name": "anthropic",
         "upstream": "https://api.anthropic.com",
-        "header_name": "x-api-key", "header_value": "sk-ant-real",
+        "rewrite": HeaderRewrite(inject=(("x-api-key", "sk-ant-real"),)),
     }]
 
 
@@ -363,7 +360,7 @@ def test_opencode2_broker_targets_openai_default_uses_bearer(tmp_path):
     assert targets == [{
         "file": "opencode.json", "name": "openai",
         "upstream": "https://api.openai.com/v1",
-        "header_name": "Authorization", "header_value": "Bearer sk-oa-real",
+        "rewrite": HeaderRewrite(inject=(("Authorization", "Bearer sk-oa-real"),)),
     }]
 
 
@@ -377,7 +374,7 @@ def test_opencode2_broker_targets_explicit_base_url_uses_bearer_by_default(tmp_p
     assert targets == [{
         "file": "opencode.json", "name": "custom",
         "upstream": "https://api.custom.example/v1",
-        "header_name": "Authorization", "header_value": "Bearer sk-custom",
+        "rewrite": HeaderRewrite(inject=(("Authorization", "Bearer sk-custom"),)),
     }]
 
 
@@ -393,7 +390,7 @@ def test_opencode2_broker_targets_anthropic_named_provider_keeps_x_api_key_with_
     assert targets == [{
         "file": "opencode.json", "name": "anthropic",
         "upstream": "https://mirror.example/anthropic",
-        "header_name": "x-api-key", "header_value": "sk-ant",
+        "rewrite": HeaderRewrite(inject=(("x-api-key", "sk-ant"),)),
     }]
 
 
@@ -409,7 +406,7 @@ def test_opencode2_broker_targets_base_url_host_ending_anthropic_com_uses_x_api_
     assert targets == [{
         "file": "opencode.json", "name": "my-claude",
         "upstream": "https://eu.anthropic.com",
-        "header_name": "x-api-key", "header_value": "sk-ant2",
+        "rewrite": HeaderRewrite(inject=(("x-api-key", "sk-ant2"),)),
     }]
 
 
@@ -421,7 +418,7 @@ def test_opencode2_broker_targets_resolves_env_key(tmp_path):
     assert targets == [{
         "file": "opencode.json", "name": "openai",
         "upstream": "https://api.openai.com/v1",
-        "header_name": "Authorization", "header_value": "Bearer sk-from-env",
+        "rewrite": HeaderRewrite(inject=(("Authorization", "Bearer sk-from-env"),)),
     }]
 
 

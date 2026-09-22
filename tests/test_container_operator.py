@@ -12,6 +12,7 @@ from nethackers.harness.container_operator import (
     ContainerOperator,
     build_docker_argv,
 )
+from nethackers.harness.cred_broker import HeaderRewrite
 
 
 def _argv(harness, **kw):
@@ -440,10 +441,9 @@ class _FakeBroker:
     multi-broker (opencode2) tests further down pass a distinct one per
     instance so two concurrently-"started" fakes are tellable apart."""
 
-    def __init__(self, upstream_base, header_name, header_value, port=9999):
+    def __init__(self, upstream_base, rewrite, port=9999):
         self.upstream_base = upstream_base
-        self.header_name = header_name
-        self.header_value = header_value
+        self.rewrite = rewrite
         self.port = port
         self.started = False
         self.stopped = False
@@ -459,8 +459,8 @@ class _FakeBroker:
 def _broker_op(tmp_path, harness="claude", **kw):
     holder = {}
 
-    def fake_factory(upstream_base, header_name, header_value):
-        b = _FakeBroker(upstream_base, header_name, header_value)
+    def fake_factory(upstream_base, rewrite):
+        b = _FakeBroker(upstream_base, rewrite)
         holder["broker"] = b
         return b
 
@@ -468,7 +468,9 @@ def _broker_op(tmp_path, harness="claude", **kw):
         harness=harness, image="img:test", system="Linux", home=tmp_path,
         broker=True,
         cred_broker_factory=fake_factory,
-        broker_credential=lambda *a, **kw: ("Authorization", "Bearer REAL-SECRET-VALUE"),
+        broker_credential=lambda *a, **kw: HeaderRewrite(
+            inject=(("Authorization", "Bearer REAL-SECRET-VALUE"),)
+        ),
         **kw,
     )
     return op, holder
@@ -494,8 +496,7 @@ def test_broker_path_claude_env_and_add_host_no_mount(tmp_path):
     v_values = [v for flag, v in zip(cmd, cmd[1:], strict=False) if flag == "-v"]
     assert v_values == [f"{wt}:/workspace"]
     assert holder["broker"].upstream_base == "https://api.anthropic.com"
-    assert holder["broker"].header_name == "Authorization"
-    assert holder["broker"].header_value == "Bearer REAL-SECRET-VALUE"
+    assert ("Authorization", "Bearer REAL-SECRET-VALUE") in holder["broker"].rewrite.inject
     assert holder["broker"].started is True
     assert holder["broker"].stopped is True
 
@@ -598,8 +599,8 @@ def _numbered_broker_factory(holder: list):
     on a distinct port (9001, 9002, ...) so a test can tell which broker
     served which provider, and appends each to `holder` -- there's no single
     `holder["broker"]` slot once a run can start more than one."""
-    def factory(upstream_base, header_name, header_value):
-        b = _FakeBroker(upstream_base, header_name, header_value, port=9000 + len(holder) + 1)
+    def factory(upstream_base, rewrite):
+        b = _FakeBroker(upstream_base, rewrite, port=9000 + len(holder) + 1)
         holder.append(b)
         return b
     return factory
@@ -634,10 +635,10 @@ def test_broker_path_opencode2_starts_one_broker_per_brokerable_provider(monkeyp
 
     assert len(brokers) == 2   # one per BROKERABLE provider -- "leftover" is not one
     by_upstream = {b.upstream_base: b for b in brokers}
-    assert by_upstream["https://api.anthropic.com"].header_name == "x-api-key"
-    assert by_upstream["https://api.anthropic.com"].header_value == "sk-ant-real"
-    assert by_upstream["https://api.custom.example/v1"].header_name == "Authorization"
-    assert by_upstream["https://api.custom.example/v1"].header_value == "Bearer sk-custom-real"
+    assert ("x-api-key", "sk-ant-real") in by_upstream["https://api.anthropic.com"].rewrite.inject
+    assert ("Authorization", "Bearer sk-custom-real") in (
+        by_upstream["https://api.custom.example/v1"].rewrite.inject
+    )
     assert all(b.started for b in brokers)
     assert all(b.stopped for b in brokers)
 

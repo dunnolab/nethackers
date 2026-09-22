@@ -18,7 +18,7 @@ from urllib.parse import urlsplit
 import httpx
 import pytest
 
-from nethackers.harness.cred_broker import CredBroker
+from nethackers.harness.cred_broker import CredBroker, HeaderRewrite
 
 
 class _FakeUpstreamHandler(BaseHTTPRequestHandler):
@@ -86,8 +86,8 @@ def fake_upstream():
 
 
 def test_broker_injects_auth_and_forwards(fake_upstream):
-    with CredBroker(upstream_base=fake_upstream.url, header_name="Authorization",
-                     header_value="Bearer REALKEY") as base:
+    rewrite = HeaderRewrite(inject=(("Authorization", "Bearer REALKEY"),))
+    with CredBroker(upstream_base=fake_upstream.url, rewrite=rewrite) as base:
         r = httpx.post(f"{base}/v1/messages", json={"hi": 1},
                         headers={"Authorization": "Bearer PLACEHOLDER"})
     assert r.status_code == 200
@@ -107,7 +107,8 @@ def test_broker_injects_auth_and_forwards(fake_upstream):
 
 
 def test_broker_refuses_offhost(fake_upstream):
-    with CredBroker(fake_upstream.url, "Authorization", "Bearer REALKEY") as base:
+    rewrite = HeaderRewrite(inject=(("Authorization", "Bearer REALKEY"),))
+    with CredBroker(fake_upstream.url, rewrite) as base:
         parsed = urlsplit(base)
         conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=5)
         try:
@@ -131,7 +132,8 @@ def test_broker_allows_host_docker_internal(fake_upstream):
     # request arrives with `Host: host.docker.internal`. That must be
     # ALLOWED (forwarded, like the broker's own loopback addresses), not
     # rejected as a genuine off-host guess the way "evil.example" is above.
-    with CredBroker(fake_upstream.url, "Authorization", "Bearer REALKEY") as base:
+    rewrite = HeaderRewrite(inject=(("Authorization", "Bearer REALKEY"),))
+    with CredBroker(fake_upstream.url, rewrite) as base:
         parsed = urlsplit(base)
         conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=5)
         try:
@@ -145,3 +147,52 @@ def test_broker_allows_host_docker_internal(fake_upstream):
             conn.close()
     assert status == 200
     assert fake_upstream.last_headers["authorization"] == "Bearer REALKEY"
+
+
+# --- HeaderRewrite ops: inject / strip / merge_csv --------------------------
+
+
+def test_broker_inject_replaces_inbound_header_case_insensitively(fake_upstream):
+    # The client's own header can arrive in ANY case (RFC 9110 S:4.2); the
+    # rewrite's `inject` must still be the only one of that name upstream
+    # sees -- the client's differently-cased placeholder must not survive
+    # alongside it.
+    rewrite = HeaderRewrite(inject=(("Authorization", "Bearer REALKEY"),))
+    with CredBroker(fake_upstream.url, rewrite) as base:
+        parsed = urlsplit(base)
+        conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=5)
+        try:
+            conn.putrequest("POST", "/v1/messages")
+            conn.putheader("AUTHORIZATION", "Bearer client-placeholder-lower")
+            conn.putheader("Content-Length", "0")
+            conn.endheaders()
+            response = conn.getresponse()
+            status = response.status
+            response.read()
+        finally:
+            conn.close()
+    assert status == 200
+    assert fake_upstream.last_headers["authorization"] == "Bearer REALKEY"
+    assert "Bearer client-placeholder-lower" not in fake_upstream.last_headers.values()
+
+
+def test_broker_strip_removes_inbound_header(fake_upstream):
+    rewrite = HeaderRewrite(strip=("x-api-key",))
+    with CredBroker(fake_upstream.url, rewrite) as base:
+        r = httpx.post(f"{base}/v1/messages", json={"hi": 1},
+                        headers={"x-api-key": "leak"})
+    assert r.status_code == 200
+    assert "x-api-key" not in fake_upstream.last_headers
+    assert "leak" not in fake_upstream.last_headers.values()
+
+
+def test_broker_merge_csv_unions_client_values_and_dedupes(fake_upstream):
+    # merge_csv must keep the client's own beta flag ("foo") AND add the
+    # broker's ("oauth-2025-04-20") -- even though the client ALSO already
+    # sent the broker's value once, it must not be duplicated.
+    rewrite = HeaderRewrite(merge_csv=(("anthropic-beta", ("oauth-2025-04-20",)),))
+    with CredBroker(fake_upstream.url, rewrite) as base:
+        r = httpx.post(f"{base}/v1/messages", json={"hi": 1},
+                        headers={"anthropic-beta": "foo, oauth-2025-04-20"})
+    assert r.status_code == 200
+    assert fake_upstream.last_headers["anthropic-beta"] == "foo, oauth-2025-04-20"

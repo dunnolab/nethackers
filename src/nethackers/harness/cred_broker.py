@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import contextlib
 import threading
+from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
@@ -37,15 +38,36 @@ _HOP_BY_HOP_RESPONSE_HEADERS = frozenset(
 )
 
 
+@dataclass(frozen=True)
+class HeaderRewrite:
+    """A declarative header rewrite applied to every request this broker
+    forwards -- the single seam every operator (Claude, Codex, OpenCode)
+    maps onto, so ``CredBroker`` itself never carries per-operator logic.
+
+    - ``inject``: ``(name, value)`` pairs set on the outgoing request,
+      REPLACING any inbound header of that name (case-insensitively) so a
+      client-supplied placeholder can never shadow the real value.
+    - ``strip``: inbound header names dropped outright (e.g. a stray
+      ``x-api-key`` that would otherwise sit alongside an injected
+      ``Authorization``).
+    - ``merge_csv``: ``(name, values)`` pairs whose ``values`` are unioned
+      into a comma-list header, preserving the client's own values and
+      order, deduping so a value present in both never repeats.
+    """
+
+    inject: tuple[tuple[str, str], ...] = ()
+    strip: tuple[str, ...] = ()
+    merge_csv: tuple[tuple[str, tuple[str, ...]], ...] = ()
+
+
 class CredBroker:
-    """Context manager: ``with CredBroker(upstream, name, value) as base:``
+    """Context manager: ``with CredBroker(upstream, rewrite) as base:``
     starts the proxy and yields its base URL; the block's exit stops it."""
 
-    def __init__(self, upstream_base: str, header_name: str, header_value: str) -> None:
+    def __init__(self, upstream_base: str, rewrite: HeaderRewrite) -> None:
         self._upstream = upstream_base.rstrip("/")
         self._upstream_host = urlsplit(self._upstream).hostname
-        self._header_name = header_name
-        self._header_value = header_value
+        self._rewrite = rewrite
         self._client: httpx.Client | None = None
         self._server: ThreadingHTTPServer | None = None
         self._thread: threading.Thread | None = None
@@ -69,11 +91,17 @@ class CredBroker:
                     return
                 length = int(self.headers.get("Content-Length") or 0)
                 body = self.rfile.read(length) if length else None
-                headers = {
-                    k: v for k, v in self.headers.items()
-                    if k.lower() not in ("host", "content-length", broker._header_name.lower())
-                }
-                headers[broker._header_name] = broker._header_value
+                rewrite = broker._rewrite
+                drop = {"host", "content-length", *(n.lower() for n in rewrite.strip),
+                        *(n.lower() for n, _ in rewrite.inject),
+                        *(n.lower() for n, _ in rewrite.merge_csv)}
+                headers = {k: v for k, v in self.headers.items() if k.lower() not in drop}
+                for name, value in rewrite.inject:
+                    headers[name] = value
+                for name, values in rewrite.merge_csv:
+                    existing = [p.strip() for p in (self.headers.get(name) or "").split(",")
+                                if p.strip()]
+                    headers[name] = ", ".join(dict.fromkeys([*existing, *values]))
                 try:
                     upstream_response = client.request(
                         self.command, broker._upstream + self.path,

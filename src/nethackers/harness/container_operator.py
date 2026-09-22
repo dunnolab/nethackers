@@ -54,7 +54,7 @@ from nethackers.harness.auth_inject import (
     opencode2_broker_docker_args,
     opencode2_broker_targets,
 )
-from nethackers.harness.cred_broker import CredBroker
+from nethackers.harness.cred_broker import CredBroker, HeaderRewrite
 from nethackers.harness.operator import (
     OperatorResult,
     _claude_cmd,
@@ -251,8 +251,8 @@ class ContainerOperator:
         docker: str = "docker",
         run_id: str | None = None,
         broker: bool = False,
-        cred_broker_factory: Callable[[str, str, str], _CredBrokerLike] = CredBroker,
-        broker_credential: Callable[..., tuple[str, str]] = _default_broker_credential,
+        cred_broker_factory: Callable[[str, HeaderRewrite], _CredBrokerLike] = CredBroker,
+        broker_credential: Callable[..., HeaderRewrite] = _default_broker_credential,
         userns_args: list[str] | None = None,
     ) -> None:
         self.harness = harness
@@ -436,7 +436,7 @@ class ContainerOperator:
             broker_bases: dict[tuple[str, str], str] = {}
             for target in targets:
                 proc = self._cred_broker_factory(
-                    target["upstream"], target["header_name"], target["header_value"],
+                    target["upstream"], target["rewrite"],
                 )
                 broker_procs.append(proc)
                 broker_bases[(target["file"], target["name"])] = _host_gateway_url(proc.start())
@@ -444,11 +444,11 @@ class ContainerOperator:
                 self.home, environ=os.environ, broker_bases=broker_bases,
             )
         else:
-            header_name, header_value = self._broker_credential(
+            rewrite = self._broker_credential(
                 self.harness, system=self.system, home=self.home, run=self._run,
             )
             proc = self._cred_broker_factory(
-                _broker_upstream_base(self.harness), header_name, header_value,
+                _broker_upstream_base(self.harness), rewrite,
             )
             broker_procs.append(proc)
             broker_base = _host_gateway_url(proc.start())
