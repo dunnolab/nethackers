@@ -440,12 +440,15 @@ class _FakeBroker:
     start()/stop() so no real socket/thread is ever created in a test.
     `port` defaults to the single-broker tests' existing hardcoded 9999; the
     multi-broker (opencode2) tests further down pass a distinct one per
-    instance so two concurrently-"started" fakes are tellable apart."""
+    instance so two concurrently-"started" fakes are tellable apart.
+    `impersonate` (default False, matching the real `CredBroker`) is recorded
+    so a test can assert which harness's broker got constructed with it."""
 
-    def __init__(self, upstream_base, rewrite, port=9999):
+    def __init__(self, upstream_base, rewrite, port=9999, impersonate=False):
         self.upstream_base = upstream_base
         self.rewrite = rewrite
         self.port = port
+        self.impersonate = impersonate
         self.started = False
         self.stopped = False
 
@@ -473,8 +476,8 @@ def _write_codex_cage_source(home: Path, account_id="acct-1"):
 def _broker_op(tmp_path, harness="claude", **kw):
     holder = {}
 
-    def fake_factory(upstream_base, rewrite):
-        b = _FakeBroker(upstream_base, rewrite)
+    def fake_factory(upstream_base, rewrite, impersonate=False):
+        b = _FakeBroker(upstream_base, rewrite, impersonate=impersonate)
         holder["broker"] = b
         return b
 
@@ -513,6 +516,9 @@ def test_broker_path_claude_env_and_add_host_no_mount(tmp_path):
     assert ("Authorization", "Bearer REAL-SECRET-VALUE") in holder["broker"].rewrite.inject
     assert holder["broker"].started is True
     assert holder["broker"].stopped is True
+    # claude's upstream isn't Cloudflare-fronted -- stays on the plain httpx
+    # forward (impersonate=False), unlike codex's below.
+    assert holder["broker"].impersonate is False
 
 
 def test_broker_path_codex_via_c_override_at_chatgpt_host_upstream(tmp_path):
@@ -560,6 +566,9 @@ def test_broker_path_codex_via_c_override_at_chatgpt_host_upstream(tmp_path):
     assert not any(v.endswith(":/home/agent/.codex/auth.json:ro") for v in v_values)
     assert holder["broker"].started is True
     assert holder["broker"].stopped is True
+    # codex's upstream (chatgpt.com) IS Cloudflare-fronted -- the only broker
+    # ever constructed with impersonate=True (curl_cffi Chrome TLS forward).
+    assert holder["broker"].impersonate is True
 
 
 def test_broker_stopped_even_if_the_run_raises(tmp_path):
@@ -685,8 +694,9 @@ def _numbered_broker_factory(holder: list):
     on a distinct port (9001, 9002, ...) so a test can tell which broker
     served which provider, and appends each to `holder` -- there's no single
     `holder["broker"]` slot once a run can start more than one."""
-    def factory(upstream_base, rewrite):
-        b = _FakeBroker(upstream_base, rewrite, port=9000 + len(holder) + 1)
+    def factory(upstream_base, rewrite, impersonate=False):
+        b = _FakeBroker(upstream_base, rewrite, port=9000 + len(holder) + 1,
+                         impersonate=impersonate)
         holder.append(b)
         return b
     return factory
@@ -727,6 +737,9 @@ def test_broker_path_opencode2_starts_one_broker_per_brokerable_provider(monkeyp
     )
     assert all(b.started for b in brokers)
     assert all(b.stopped for b in brokers)
+    # opencode2's providers aren't Cloudflare-fronted the way codex's
+    # chatgpt.com is -- every opencode2 broker stays impersonate=False.
+    assert all(b.impersonate is False for b in brokers)
 
     cmd = seen["cmd"]
     joined = " ".join(cmd)

@@ -99,9 +99,14 @@ at ``auth.openai.com/oauth/token``) rather than pinning one ~8h snapshot --
 writing the rotated single-use token back to the canonical file (the broker is
 the sole writer during a broker run; the container has no ``~/.codex`` mount).
 
-Validated on a MOCK provider (``test_broker_e2e`` / ``test_broker_transform``);
-the TLS-impersonating forward for the real ``chatgpt.com`` is a separate task,
-so C1 uses the existing httpx forward (fine against the mock). Fallback, if a
+Validated on a MOCK provider (``test_broker_e2e`` / ``test_broker_transform``).
+The real ``chatgpt.com`` sits behind Cloudflare JA3/TLS fingerprinting that
+403s a plain httpx forward, so ``ContainerOperator`` constructs the codex
+``CredBroker`` (only) with ``impersonate=True``: a Chrome-TLS-impersonating
+forward via ``curl_cffi`` (``cred_broker.CredBroker``) instead of httpx.
+``curl_cffi`` is a lazy, host-side-only import -- **running the codex broker
+requires ``pip install curl_cffi`` on the host**; it is never a packaged
+dependency, so the mutator image/fingerprint stays untouched. Fallback, if a
 live smoke shows codex refuses to start against a fully empty ``~/.codex``: a
 minimal VALID ``auth.json`` (a 3-part ``id_token`` with a non-empty 3rd
 segment) -- not the placeholder-JWT + ``config.toml`` cage this replaced.

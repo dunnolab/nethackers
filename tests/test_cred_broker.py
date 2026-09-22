@@ -12,6 +12,7 @@ from __future__ import annotations
 import gzip
 import http.client
 import json
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -286,3 +287,56 @@ def test_broker_decodes_gzip_response(fake_upstream):
     assert r.status_code == 200
     assert "content-encoding" not in r.headers
     assert json.loads(r.content) == _GZIP_PAYLOAD
+
+
+# --- TLS-impersonation forward (curl_cffi, codex/chatgpt.com's transport) ---
+#
+# codex's broker is the only one ever constructed with `impersonate=True`
+# (container_operator._start_broker_auth) -- `curl_cffi` is a LAZY,
+# host-side-only import (never a packaged dependency; see
+# `CredBroker`'s docstring), so both tests below are gated/robust the same
+# way `@pytest.mark.nle` tests are: they skip or pass identically whether or
+# not curl_cffi happens to be installed on whatever host runs this suite.
+
+
+def test_broker_impersonate_forwards_injected_header_and_streams_intact(fake_upstream):
+    # Gated: this is the one test in the module that actually drives a real
+    # curl_cffi forward, so it must SKIP cleanly wherever curl_cffi isn't
+    # installed rather than fail collection/import. The fake upstream is
+    # plain HTTP on 127.0.0.1 -- curl_cffi forwards that fine; Chrome TLS
+    # impersonation only matters against a real Cloudflare handshake, which
+    # is what the gated live smoke (not this test) validates.
+    pytest.importorskip("curl_cffi")
+    rewrite = HeaderRewrite(inject=(("Authorization", "Bearer REALKEY"),))
+    with CredBroker(fake_upstream.url, rewrite, impersonate=True) as base:
+        # (1) the injected header reaches the fake upstream over the
+        # curl_cffi forward -- `/v1/messages` hits `_respond`, which records
+        # `last_headers`, exactly like `test_broker_injects_auth_and_forwards`
+        # above (`/sse` below never records headers, only body -- that's why
+        # this is a separate request rather than reusing its response).
+        r1 = httpx.get(f"{base}/v1/messages")
+        # (2) a streamed body comes back intact over the same forward --
+        # `_respond_sse` writes `_SSE_EVENTS` one at a time, the curl_cffi-
+        # forward counterpart to `test_broker_streams_sse_without_buffering`.
+        r2 = httpx.get(f"{base}/sse")
+    assert r1.status_code == 200
+    assert fake_upstream.last_headers["authorization"] == "Bearer REALKEY"
+    assert r2.status_code == 200
+    assert r2.text == "".join(_SSE_EVENTS)
+    assert "REALKEY" not in r2.text
+
+
+def test_broker_impersonate_without_curl_cffi_raises_a_friendly_runtimeerror(monkeypatch):
+    # Runs regardless of whether curl_cffi is actually installed on this
+    # host: `None` in `sys.modules` is the documented way to make CPython's
+    # import system raise ImportError for a name unconditionally (see the
+    # import system reference: "if the named module is not found in
+    # `sys.modules`... [if it] is `None`, an `ImportError` is raised"), so
+    # this forces `CredBroker.start`'s lazy `from curl_cffi import requests`
+    # to fail the same way it would on a host that never `pip install
+    # curl_cffi`-ed at all. `monkeypatch.setitem` restores whatever was at
+    # `sys.modules["curl_cffi"]` (present or absent) once the test ends.
+    monkeypatch.setitem(sys.modules, "curl_cffi", None)
+    broker = CredBroker("http://127.0.0.1:1", HeaderRewrite(), impersonate=True)
+    with pytest.raises(RuntimeError, match=r"pip install curl_cffi"):
+        broker.start()

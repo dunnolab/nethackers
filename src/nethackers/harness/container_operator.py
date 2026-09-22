@@ -281,7 +281,14 @@ class ContainerOperator:
         docker: str = "docker",
         run_id: str | None = None,
         broker: bool = False,
-        cred_broker_factory: Callable[[str, HeaderRewrite], _CredBrokerLike] = CredBroker,
+        # `Callable[..., _CredBrokerLike]`, not a narrower
+        # `Callable[[str, HeaderRewrite], _CredBrokerLike]`: real
+        # `cred_broker.CredBroker` (the default) takes a third `impersonate`
+        # keyword (`_start_broker_auth` passes it for codex), and this
+        # mirrors `broker_credential` just below, an existing injectable
+        # seam with the identical "real signature has more than the two
+        # tests need to fake" shape.
+        cred_broker_factory: Callable[..., _CredBrokerLike] = CredBroker,
         broker_credential: Callable[..., HeaderRewrite] = _default_broker_credential,
         userns_args: list[str] | None = None,
     ) -> None:
@@ -466,6 +473,15 @@ class ContainerOperator:
         zero brokers and falls back to the credential mount wholesale,
         rather than mount an empty broker config behind an unused
         ``--add-host``.
+
+        codex's ``CredBroker`` (only) is constructed with ``impersonate=True``:
+        its upstream, ``chatgpt.com``, sits behind Cloudflare JA3/TLS
+        fingerprinting that 403s a plain forward, so that one broker forwards
+        via ``curl_cffi`` Chrome impersonation instead of ``httpx`` (see
+        ``cred_broker.CredBroker``'s docstring) -- this needs ``pip install
+        curl_cffi`` on the host. claude and every opencode2 broker stay
+        ``impersonate=False`` (the default) -- their upstreams aren't behind
+        the same fingerprinting.
         """
         codex_broker_base: str | None = None
         if self.harness == "opencode2":
@@ -492,6 +508,10 @@ class ContainerOperator:
             )
             proc = self._cred_broker_factory(
                 _broker_upstream_base(self.harness), rewrite,
+                # Only codex's upstream (chatgpt.com) is Cloudflare-fronted
+                # and JA3/TLS-fingerprinted; claude's isn't, so it stays on
+                # the plain httpx forward (impersonate's default, False).
+                impersonate=(self.harness == "codex"),
             )
             broker_procs.append(proc)
             broker_base = _host_gateway_url(proc.start())

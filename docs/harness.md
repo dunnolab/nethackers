@@ -526,7 +526,11 @@ docker run --rm \
   mount for a host-side [`cred_broker.CredBroker`](../src/nethackers/harness/cred_broker.py):
   the container gets a placeholder key and a base URL pointing back at the broker
   over the host gateway, egress is constrained to it, and the real key is injected
-  host-side per request and never enters the container. It is off by default and
+  host-side per request and never enters the container. Codex's broker forwards to
+  `chatgpt.com` over a Chrome-TLS-impersonating `curl_cffi` client instead of plain
+  `httpx` (that upstream is Cloudflare-fronted and JA3/TLS-fingerprinted) -- this
+  needs `pip install curl_cffi` on the host; it's a lazy, host-side-only import,
+  never a packaged dependency. It is off by default and
   not yet wired to a CLI/TUI flag, and per-agent auth (Claude's OAuth vs an API
   key, Codex's host) is still being verified live, so treat it as available rather
   than finished.

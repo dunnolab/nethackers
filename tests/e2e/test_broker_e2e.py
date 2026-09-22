@@ -58,6 +58,7 @@ this environment doesn't have):
 from __future__ import annotations
 
 import base64
+import importlib.util
 import json
 import os
 import shutil
@@ -123,6 +124,15 @@ pytestmark = [
     pytest.mark.broker_e2e,
     pytest.mark.skipif(_GATE_REASON is not None, reason=_GATE_REASON or ""),
 ]
+
+# codex's broker (only -- see container_operator._start_broker_auth) is now
+# constructed with impersonate=True: chatgpt.com is Cloudflare-fronted, so
+# even this MOCK-provider run forwards through a real curl_cffi Session
+# (Chrome TLS impersonation), not httpx. `find_spec` is a side-effect-free
+# presence check (no import, no network) -- safe at collection time exactly
+# like `_gate_reason` above. claude/opencode2 stay on the plain httpx forward
+# and need no such gate.
+_CURL_CFFI_MISSING = importlib.util.find_spec("curl_cffi") is None
 
 
 # --- canned per-operator provider responses ---------------------------------
@@ -252,12 +262,21 @@ def test_claude_one_shot_through_broker_to_mock(tmp_path, monkeypatch):
     assert "PONG" in "".join(lines), f"claude CLI output never contained PONG: {''.join(lines)!r}"
 
 
+@pytest.mark.skipif(
+    _CURL_CFFI_MISSING,
+    reason="codex broker needs curl_cffi (TLS impersonation for chatgpt.com): "
+           "pip install curl_cffi",
+)
 def test_codex_one_shot_through_broker_to_mock(tmp_path, monkeypatch):
     # The host ~/.codex login the BROKER reads host-side (broker_credential).
     # The container's cage ~/.codex carries NO token: codex is routed at the
     # broker by an unauthenticated `-c` provider and sends the POST with no
     # Authorization, so the broker injects 100% of the auth. `access` is a
     # far-future JWT so _codex_token_needs_refresh never fires (no live refresh).
+    # This ContainerOperator is unchanged from before C2 -- no explicit
+    # `cred_broker_factory`/`impersonate=` here -- but it now gets the real
+    # `impersonate=True` codex broker for free, via
+    # `_start_broker_auth`'s `impersonate=(self.harness == "codex")`.
     home = tmp_path / "home"
     codex_dir = home / ".codex"
     codex_dir.mkdir(parents=True)
