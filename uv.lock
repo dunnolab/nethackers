@@ -547,13 +547,14 @@ wheels = [
 
 [[package]]
 name = "nethackers"
-version = "0.34.2"
+version = "0.34.4"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
     { name = "rich" },
     { name = "rich-argparse" },
     { name = "textual" },
+    { name = "truststore" },
 ]
 
 [package.optional-dependencies]
@@ -603,6 +604,7 @@ requires-dist = [
     { name = "scipy", marker = "extra == 'autoascend'", specifier = ">=1.11" },
     { name = "textual", specifier = ">=8.2.8" },
     { name = "toolz", marker = "extra == 'autoascend'", specifier = ">=1.0" },
+    { name = "truststore", specifier = ">=0.10.4" },
     { name = "uvicorn", marker = "extra == 'hub'", specifier = ">=0.30" },
 ]
 provides-extras = ["nle", "autoascend", "hub", "worker"]
@@ -1452,6 +1454,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/21/3b/6c24bec5be5e743ffd99576daa5cc077722fc7d5bbc00bd133fa0c698dc6/tqdm-4.70.0.tar.gz", hash = "sha256:55b0b0dbd97462d06ebee91e4dac24ed4d4702be82b24f07e6c1d27e08cea220", size = 795438, upload-time = "2026-07-27T11:33:15.271Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f9/1c/01bfd571a64e7f270e6bab5e33777debe0edc56759233ce84f27dec92d14/tqdm-4.70.0-py3-none-any.whl", hash = "sha256:7f585706bfddbdebf89daac705b2dfcc16890130727d3197ca62c732b4310953", size = 80184, upload-time = "2026-07-27T11:33:13.167Z" },
+]
+
+[[package]]
+name = "truststore"
+version = "0.10.4"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/53/a3/1585216310e344e8102c22482f6060c7a6ea0322b63e026372e6dcefcfd6/truststore-0.10.4.tar.gz", hash = "sha256:9d91bd436463ad5e4ee4aba766628dd6cd7010cf3e2461756b3303710eebc301", size = 26169, upload-time = "2025-08-12T18:49:02.73Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/19/97/56608b2249fe206a67cd573bc93cd9896e1efb9e98bce9c163bcdc704b88/truststore-0.10.4-py3-none-any.whl", hash = "sha256:adaeaecf1cbb5f4de3b1959b42d41f6fab57b2b1666adb59e89cb0b53361d981", size = 18660, upload-time = "2025-08-12T18:49:01.46Z" },
 ]
 
 [[package]]

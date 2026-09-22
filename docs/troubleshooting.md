@@ -170,6 +170,12 @@ That is announced, not silent — any non-prod stage prints `stage: <name> · hu
 <url>` to stderr on every invocation, so check that line. `nethackers --prod`
 forces production; `--hub URL` or `$NETHACKERS_HUB` overrides explicitly.
 
+If the URL is right, suspect a network that inspects HTTPS: a corporate
+firewall or an antivirus that re-signs every certificate with its own CA.
+nethackers accepts those certificates when that CA is in your OS trust store
+(on Linux, the system bundle that `update-ca-certificates` builds). If it isn't
+there, ask IT to install it or to exempt `nethackers.dunnolab.ai`.
+
 ### "invalid hub URL"
 
 Include the scheme: `--hub http://localhost:8000`, not `--hub localhost:8000`.
@@ -218,6 +224,10 @@ debugging the machinery, check:
 - **Is your login still good?** An expired access token is refreshed
   automatically; only a missing or failed refresh degrades the run to a
   `local-only` registration reason rather than a hard failure.
+- **Does the hub reason say `CERTIFICATE_VERIFY_FAILED`?** Check `hub_reason`
+  in the run's `~/.nethackers/evolve/runs/<id>/metrics.jsonl`. That error means
+  something on your network re-signs HTTPS; see
+  ["cannot reach the hub"](#cannot-reach-the-hub--is-it-running) above.
 - **Are the "wins" real?** Improvements on the 15 fixed public seeds per identity
   can sit inside the noise floor. A stalled loop is often correct behavior — the
   frontier is genuinely hard to move — rather than a bug.
