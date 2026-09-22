@@ -12,6 +12,7 @@ dependencies = [
     "rich>=13",
     "rich-argparse>=1.5",
     "textual>=8.2.8",
+    "truststore>=0.10.4",
 ]
 
 [project.urls]
