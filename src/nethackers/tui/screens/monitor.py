@@ -373,7 +373,19 @@ class RunMonitor(Screen):
             with Horizontal(id="main"):
                 with Vertical(id="left", classes="panel"):
                     yield OptionList(id="iters")
-                with Vertical(id="right"), TabbedContent(id="tabs", initial="tab_logs"):
+                # Logs is composed FIRST, which is what makes it the tab the
+                # monitor opens on -- do not reorder these panes. Passing
+                # `initial="tab_logs"` instead looks more explicit but is a
+                # trap: Textual's `Tabs._on_mount` assigns that id through
+                # `validate_active`, which RAISES `ValueError: No Tab with id
+                # …` when the panes haven't mounted yet -- e.g. when the app is
+                # torn down while this screen is still mounting (an
+                # `--evolve` launch that finishes immediately). Without it,
+                # `_on_mount` falls to "make the first tab active", which
+                # catches `NoMatches` and returns quietly. Linux CI hit the
+                # raise; macOS never did. `test_the_monitor_opens_on_logs_with
+                # _the_now_line` pins both the active tab and the pane order.
+                with Vertical(id="right"), TabbedContent(id="tabs"):
                     with TabPane("Logs", id="tab_logs"), VerticalScroll(
                             id="steps_scroll", classes="panel"):
                         yield Static(id="steps")
