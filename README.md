@@ -166,9 +166,10 @@ nethackers setup
 Don't have `uv`? It installs from https://astral.sh/uv. Python 3.11+ is required.
 
 `nethackers setup` gets this machine ready. It checks what's there, shows a
-plan and asks once; then it installs what it can, starts the container
-runtime, runs the logins back to back, and pulls the sandbox images. Running it
-again is safe: it plans only what's still missing.
+plan and asks once; then it runs the logins back to back (installing `gh` or
+your coding agent first if needed), installs and starts the container runtime,
+and pulls the sandbox images. The logins come first, so you can walk away once
+they're done. Running it again is safe: it plans only what's still missing.
 
 - **What it installs itself:** only what is one documented command and needs
   no `sudo` — Colima, Docker's CLI and `gh` through Homebrew on a Mac, and Claude
