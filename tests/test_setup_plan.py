@@ -89,15 +89,17 @@ def test_two_accounts_already_logged_in_is_a_todo_not_a_step():
     assert "gh is @bob but the hub login is @alice" in plan.yours[0].say
 
 
-def test_the_pull_shows_its_size():
+def test_the_pull_shows_its_size_as_an_upper_bound():
+    # The registry's size counts every layer; after a re-pin most of them are
+    # already here, so the real download is smaller -- never larger.
     plan = build_plan(sit(checks=checks(mutator_image="warn"), pull_size=432_400_000), macos)
     (pull,) = plan.steps
-    assert pull.title == "pull the mutator image" and pull.shows == "432 MB, first time only"
+    assert pull.title == "pull the mutator image" and pull.shows == "up to 432 MB"
 
 
-def test_an_unknown_pull_size_still_says_first_time_only():
+def test_an_unknown_pull_size_shows_nothing_extra():
     plan = build_plan(sit(checks=checks(arena_image="warn")), macos)
-    assert plan.steps[0].shows == "first time only"
+    assert plan.steps[0].shows == ""
 
 
 def test_scope_eval_plans_only_what_eval_needs():

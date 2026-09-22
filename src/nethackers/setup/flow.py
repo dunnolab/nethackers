@@ -37,7 +37,7 @@ from nethackers.setup.plan import (
     listed_command,
 )
 from nethackers.setup.runner import StepResult
-from nethackers.setup.support import mb_text, shown_command
+from nethackers.setup.support import shown_command
 
 EXAMPLE_OBJECTIVE = "val-dwa-law-fem"
 
@@ -215,8 +215,7 @@ def _run_one(step: Step, deps: SetupDeps, sit: Situation) -> StepResult:
             error = deps.pull(step.images, sit.pull_size)
             if error is not None:
                 return StepResult(False, time.monotonic() - start, error)
-            size = mb_text(sit.pull_size) if sit.pull_size else ""
-            return StepResult(True, time.monotonic() - start, size)
+            return StepResult(True, time.monotonic() - start)  # no size: it's an upper bound
     except Exception as exc:  # a failed step never stops the others
         return StepResult(False, time.monotonic() - start, f"{type(exc).__name__}: {exc}")
     raise ValueError(f"unknown step kind {step.kind!r}")

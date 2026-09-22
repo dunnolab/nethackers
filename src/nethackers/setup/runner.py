@@ -35,7 +35,7 @@ CAPTURED_ENV = {"NONINTERACTIVE": "1", "CODEX_NON_INTERACTIVE": "1"}
 class StepResult:
     ok: bool
     seconds: float
-    detail: str = ""                 # what went wrong, or a short result ("@you", "875 MB")
+    detail: str = ""                 # what went wrong, or a short result ("@you")
     tail: tuple[str, ...] = ()       # the command's last lines, kept for a failure
     skipped: bool = False            # not run: a step it needs didn't succeed
 

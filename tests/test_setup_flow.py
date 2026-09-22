@@ -173,6 +173,15 @@ def test_the_run_is_numbered_by_the_plans_own_step_numbers():
     assert "[3/3] pull the mutator image" in output(deps)
 
 
+def test_a_finished_pull_says_how_long_it_took_not_how_much_it_downloaded():
+    # The registry's figure is an upper bound (layers already here are
+    # skipped), so the finished line makes no size claim.
+    deps, rec = make(checks(mutator_image="warn"), checks())
+    flow.run_setup(opts(yes=True), deps)
+    line = next(ln for ln in output(deps).splitlines() if "✓ pull the mutator image" in ln)
+    assert line.rstrip().endswith(" s") and "MB" not in line
+
+
 def test_the_summary_uses_the_checklists_short_words():
     ref = "ghcr.io/dunnolab/nethackers-mutator@sha256:" + "a" * 64
     raw = [replace(c, detail=f"not local yet, but pullable — {ref}")

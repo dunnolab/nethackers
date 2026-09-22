@@ -143,8 +143,6 @@ def result_line(step: Step, result: StepResult) -> str:
     if not result.ok:
         return f"  {_GLYPH['fail']} {step.title} — {escape(result.detail)}"
     took = elapsed_text(result.seconds)
-    if step.kind == "pull" and result.detail:
-        return f"  {_GLYPH['ok']} {step.title}   [dim]{escape(result.detail)} in {took}[/]"
     extra = f"   {escape(result.detail)}" if result.detail else ""
     return f"  {_GLYPH['ok']} {step.title}   [dim]{took}[/]{extra}"
 

@@ -729,7 +729,13 @@ def _pull_progress(total: int | None = None) -> Iterator[Callable[[PullEvent], N
     rate -- with ``total`` (bytes, from the registry) as the length when known.
     Before any byte count arrives (Podman, or a pipe) the description shows the
     layer count. Redirected output gets plain lines instead, one per layer
-    change -- never one per byte update."""
+    change -- never one per byte update.
+
+    The registry total counts every layer, so it overclaims after a re-pin,
+    when most layers are already here: once docker says a layer "Already
+    exists" in the first image of the block, the bar's length becomes what
+    docker reports it is downloading. A later image's "Already exists" is a
+    layer shared with the image just pulled, which the total counted once."""
     if not err.is_terminal:
         def _on_event_plain(event: PullEvent) -> None:
             if event.phase == "layer" and event.detail.startswith(("Downloading", "Extracting")):
@@ -743,20 +749,25 @@ def _pull_progress(total: int | None = None) -> Iterator[Callable[[PullEvent], N
         task = progress.add_task("pulling", total=total)
         finished = 0   # bytes of images already pulled in this block
         current = 0
+        images_done = 0
+        upgrade = False   # layers were already here: the registry total overclaims
 
         def _on_event_bar(event: PullEvent) -> None:
-            nonlocal finished, current
+            nonlocal finished, current, images_done, upgrade
+            if event.detail == "Already exists" and images_done == 0:
+                upgrade = True
             if event.bytes_done is not None:
                 current = event.bytes_done
                 known = finished + (event.bytes_total or 0)
                 progress.update(task, description=f"pulling {event.kind}",
                                 completed=finished + current,
-                                total=max(total or 0, known) or None)
+                                total=(known if upgrade else max(total or 0, known)) or None)
             else:
                 progress.update(task, description=render_cli_line(event))
             if event.phase in ("done", "error"):
                 finished += current
                 current = 0
+                images_done += 1
 
         yield _on_event_bar
 

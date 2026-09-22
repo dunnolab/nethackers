@@ -182,7 +182,9 @@ def build_plan(sit: Situation, plat: ModuleType) -> Plan:
     runtime_ready = sit.runtime.runtime is not None or (bool(runtime_steps)
                                                         and not runtime_blocked)
     if pulls and runtime_ready:
-        size = f"{mb_text(sit.pull_size)}, first time only" if sit.pull_size else "first time only"
+        # The registry's size counts every layer; layers already here (an
+        # older pin's) are skipped, so the real download can only be smaller.
+        size = f"up to {mb_text(sit.pull_size)}" if sit.pull_size else ""
         title = "pull the sandbox images" if len(pulls) == 2 else f"pull the {pulls[0]} image"
         steps.append(Step("pull", title, "pull", size, needs=tuple(runtime_steps[-1:]),
                           images=pulls))

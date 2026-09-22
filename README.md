@@ -181,7 +181,8 @@ they're done. Running it again is safe: it plans only what's still missing.
 - **Logins:** `nethackers login` (GitHub), `gh auth login` (checked to be the
   same GitHub account), and your coding agent's own login.
 - **Sandbox images** (`ghcr.io/dunnolab/nethackers-arena` and `-mutator`, pinned
-  by digest in the CLI): about 1 GB to download and 4 GB on disk, first run only.
+  by digest in the CLI): about 1 GB to download the first time and 4 GB on disk;
+  later updates download only what changed.
 - `--for eval` sets up only what `eval` needs, `--operator codex` picks the
   coding agent, and `--yes` runs the plan without asking.
 - Native Windows isn't covered; run nethackers inside WSL2.

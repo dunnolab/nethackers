@@ -211,12 +211,63 @@ def test_setup_end_to_end_in_a_real_terminal(tmp_path):
     out = _drive(script, [(b"Continue?", b"y\r")])
     # Strip terminal escapes (colour, `rich`'s own number-highlighting) rather
     # than asserting on raw bytes: `clean` drops them without splitting a
-    # line, so a highlighted "432 MB, first time only" still reads as one run.
+    # line, so a highlighted "up to 432 MB" would still read as one run.
     text = "\n".join(ptyrun.clean(out))
     assert "Checking this machine" in text
-    assert "pull the mutator image" in text and "432 MB, first time only" in text
+    assert "pull the mutator image" in text and "up to 432 MB" in text
     assert "PULLED mutator" in text
     assert "ready to eval" in text and "Next: nethackers evolve" in text
+
+
+def _bar_totals(monkeypatch: pytest.MonkeyPatch, total: int, events: list) -> list:
+    """Feed ``events`` to the terminal progress bar; the bar's length after each."""
+    from nethackers.harness.pull_events import PullEvent
+
+    lengths: list = []
+
+    class Recording(cli.Progress):
+        def update(self, task_id, **kwargs) -> None:
+            super().update(task_id, **kwargs)
+            lengths.append(self.tasks[0].total)
+
+    monkeypatch.setattr(cli, "Progress", Recording)
+    monkeypatch.setattr(cli, "err", Console(file=io.StringIO(), force_terminal=True, width=100))
+    with cli._pull_progress(total=total) as on_event:
+        for kind, phase, detail, done, known in events:
+            on_event(PullEvent(kind=kind, ref="img", phase=phase, layers_total=None,
+                               layers_complete=None, detail=detail, bytes_done=done,
+                               bytes_total=known))
+    return lengths
+
+
+MB = 1_000_000
+
+
+def test_after_an_upgrade_the_bar_follows_what_docker_is_downloading(monkeypatch):
+    # A re-pin: most layers are already here ("Already exists"), so the
+    # registry's 875 MB overclaims. From the first such layer, the bar's
+    # length is what docker reports it is downloading.
+    lengths = _bar_totals(monkeypatch, 875 * MB, [
+        ("arena", "start", "", None, None),
+        ("arena", "layer", "Already exists", None, None),
+        ("arena", "layer", "Downloading [=>   ]  10MB/40MB", 10 * MB, 40 * MB),
+        ("arena", "layer", "Downloading [===> ]  30MB/60MB", 30 * MB, 60 * MB),
+    ])
+    assert lengths[-2:] == [40 * MB, 60 * MB]
+
+
+def test_a_first_pull_keeps_the_registry_total_even_for_layers_the_images_share(monkeypatch):
+    # The mutator reuses layers the arena pull just fetched ("Already exists");
+    # the registry total counted those once, so it stays the bar's length.
+    lengths = _bar_totals(monkeypatch, 875 * MB, [
+        ("arena", "start", "", None, None),
+        ("arena", "layer", "Downloading [=>   ]  100MB/500MB", 100 * MB, 500 * MB),
+        ("arena", "done", "", 500 * MB, 500 * MB),
+        ("mutator", "start", "", None, None),
+        ("mutator", "layer", "Already exists", None, None),
+        ("mutator", "layer", "Downloading [=>   ]  5MB/300MB", 5 * MB, 300 * MB),
+    ])
+    assert lengths[1] == 875 * MB and lengths[-1] == 875 * MB
 
 
 def test_plain_pull_progress_prints_layer_changes_not_every_byte(monkeypatch):

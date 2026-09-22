@@ -18,7 +18,8 @@ It runs `nethackers doctor`'s checks, then shows a plan:
    `colima start` (a new VM gets Rosetta), `docker desktop start`, `orb start`,
    `podman machine start`.
 4. **The sandbox images**, with a progress bar and the time left (about 1 GB
-   to download, 4 GB on disk).
+   to download the first time, 4 GB on disk; later updates download only what
+   changed).
 
 Anything that needs `sudo`, a GUI click, or logging out and back in is printed
 for you — on Linux that's the container runtime and `gh`. nethackers never runs

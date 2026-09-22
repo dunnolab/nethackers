@@ -31,7 +31,7 @@ INSTALL = Step("gh-install", "install the GitHub CLI", "captured", "brew install
                ("brew", "install", "gh"), macos.GH_INSTALL)
 LOGIN = Step("gh-login", "log you in to gh", "terminal", "gh auth login …", GH_LOGIN,
              needs=("gh-install",))
-PULL = Step("pull", "pull the sandbox images", "pull", "875 MB, first time only",
+PULL = Step("pull", "pull the sandbox images", "pull", "up to 875 MB",
             images=("arena", "mutator"))
 
 
@@ -76,7 +76,7 @@ def test_plan_lines_number_the_steps_and_mark_untested_recipes():
     text = text_of(*plan_lines(Plan(steps=(INSTALL, LOGIN, PULL)), machine="Mac"))
     assert "nethackers will:" in text
     assert "  1 install the GitHub CLI" in text and "(untested)" in text
-    assert "  3 pull the sandbox images" in text and "875 MB, first time only" in text
+    assert "  3 pull the sandbox images" in text and "up to 875 MB" in text
     assert "Step 2 needs you at the keyboard; the rest run on their own." in text
     assert "haven't been run on a real Mac yet" in text
 
@@ -151,7 +151,8 @@ def test_plan_lines_list_what_only_you_can_do_and_what_comes_after():
 
 def test_result_lines():
     assert "34 s" in result_line(INSTALL, StepResult(True, 34.2))
-    assert "875 MB in 51 s" in result_line(PULL, StepResult(True, 51.0, "875 MB"))
+    pulled = result_line(PULL, StepResult(True, 51.0))
+    assert "pull the sandbox images" in pulled and "51 s" in pulled and "MB" not in pulled
     failed = result_line(LOGIN, StepResult(False, 3.0, "exited 1"))
     assert "[red]✗[/]" in failed and "exited 1" in failed
     skipped = result_line(LOGIN, StepResult(False, 0.0, "needs: install the GitHub CLI",

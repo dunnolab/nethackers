@@ -52,8 +52,8 @@ nethackers
 https://astral.sh/uv. `nethackers setup` checks the machine, shows a plan,
 asks once, then runs the logins (installing `gh` or a coding agent with its
 vendor's installer when needed), installs and starts the container runtime
-(Homebrew on a Mac), and pulls the sandbox images (about 1 GB, first run
-only). It never runs `sudo`; what needs it is printed. The last command opens
+(Homebrew on a Mac), and pulls the sandbox images (about 1 GB the first
+time). It never runs `sudo`; what needs it is printed. The last command opens
 the dashboard.
 
 **Coding agents:** run `nethackers setup` first. Without a terminal it changes
