@@ -90,7 +90,8 @@ header, so the BROKER injects 100% of the auth and codex needs no credential in
 the box. That ``-c`` override lives in the ``codex exec`` command
 (``operator._codex_cmd``, threaded via ``container_operator.build_docker_argv``'s
 ``broker_base``), NOT this module; ``auth_broker_args`` here supplies only the
-cage ``~/.codex`` -- now an EMPTY, world-writable directory (container agent must write it) + ``CODEX_HOME``
+cage ``~/.codex`` -- now an EMPTY, world-writable directory (container agent
+must write it) + ``CODEX_HOME``
 (codex needs a writable ``$CODEX_HOME`` for its app-server socket/state; no
 token, no config, B1). ``broker_credential`` then injects the real
 ``Authorization: Bearer`` and, authoritatively, the ``ChatGPT-Account-Id``
