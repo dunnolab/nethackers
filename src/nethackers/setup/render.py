@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 from rich.markup import escape
 
+from nethackers.diagnostics import _short_digest
 from nethackers.setup.plan import NEEDS_TERMINAL, Plan, Step, Todo
 from nethackers.setup.runner import StepResult, elapsed_text
 from nethackers.setup.support import NotCovered, Support, Untested
@@ -73,9 +74,14 @@ def plan_lines(plan: Plan, *, machine: str) -> list[str]:
     out: list[str] = []
     if plan.steps:
         out += ["", "nethackers will:"]
+        # Wide enough for every title in THIS plan -- a fixed guess (34) fit
+        # every OS-recipe title but not plan.py's own "check gh and the hub
+        # are one account" (36), which then ran straight into the command
+        # column with no gap at all.
+        width = max(len(step.title) for step in plan.steps)
         for n, step in enumerate(plan.steps, 1):
             marker = _marker(step.recipe.support) if step.recipe is not None else ""
-            out.append(f"  {n}  {step.title:<34} [cyan]{escape(step.shows)}[/]{marker}")
+            out.append(f"  {n}  {step.title:<{width}} [cyan]{escape(step.shows)}[/]{marker}")
     if plan.yours:
         out += ["", "You'll need to (nethackers never runs sudo):"]
         out += [f"  • {escape(t.say)}{_marker(t.support)}" for t in plan.yours]
@@ -114,7 +120,10 @@ def _summary_lines(s: Summary, glyph: dict[str, str], esc) -> list[str]:
         if s.ready:
             lines.append(f"{glyph['ok']} ready to {' · '.join(s.ready)}")
         lines.append(f"{glyph['fail']} not ready to {' · '.join(s.not_ready)}")
-        lines += [f"  {label}: {esc(detail)}" for label, detail in s.failing]
+        # A pinned image ref's raw detail (arena_image/mutator_image) runs to
+        # ~150 characters -- doctor's own render shortens it the same way
+        # (diagnostics._short_digest) so it doesn't hard-wrap mid-digest here.
+        lines += [f"  {label}: {esc(_short_digest(detail))}" for label, detail in s.failing]
     if s.commands:
         lines.append("Run these logins yourself (each prints a code or a link to open):")
         lines += [f"  {esc(c)}" for c in s.commands]
