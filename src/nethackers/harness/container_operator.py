@@ -23,10 +23,17 @@ alternative to the credential mount above: when set, ``run`` starts one
 container's whole lifetime, in place of ``auth_docker_args``. claude/codex
 each have exactly one upstream/credential, so that's a single broker via
 ``auth_inject.auth_broker_args`` -- claude by a base-URL env + placeholder key
-(no ``-v`` mount), codex by a minimal cage ``~/.codex`` (placeholder JWT +
-real account-id + a ``config.toml`` ``openai_base_url``, two files mounted
-read-only) because a ChatGPT-subscription codex ignores ``OPENAI_BASE_URL``
-for its model endpoint. OpenCode 2 is multi-provider -- its base-URL override
+(no ``-v`` mount), codex by a ``-c model_providers.…`` INVOCATION override
+(``operator._codex_cmd``, threaded through ``build_docker_argv``'s
+``broker_base``) pointing codex at a CUSTOM UNAUTHENTICATED provider. That
+override survives ``codex exec --ignore-user-config`` (which discards
+``~/.codex/config.toml`` -- why the earlier cage ``openai_base_url`` config
+was silently ignored), and, carrying no ``requires_openai_auth``/``env_key``,
+makes codex send its POST with NO credential -- the broker injects 100% of
+the auth host-side. codex's cage ``~/.codex`` is therefore just an EMPTY,
+writable dir + ``CODEX_HOME`` (it needs a writable ``$CODEX_HOME`` for its
+app-server socket/state); no token or config crosses the boundary. OpenCode 2
+is multi-provider -- its base-URL override
 is a per-provider JSON field, not one env var -- so it starts one broker PER
 BROKERABLE PROVIDER instead, via ``auth_inject.opencode2_broker_targets``
 (resolve) / ``opencode2_broker_docker_args`` (rewrite the cage config);
@@ -68,16 +75,21 @@ from nethackers.harness.operator import (
 from nethackers.harness.sandbox_preflight import mutator_platform_args
 
 # The provider API host CredBroker forwards to, per harness -- fixed at
-# construction (CredBroker is a single-upstream proxy, never open-relay).
+# construction (CredBroker is a single-upstream proxy, never open-relay). The
+# broker forwards `upstream_base + request.path`.
 # Codex's backend is the ChatGPT-SUBSCRIPTION one (`auth_mode: chatgpt`): a
-# subscription login talks to `chatgpt.com/backend-api/codex`, NOT the
-# plain-API-key `api.openai.com`. The cage login routes codex there via config
-# `openai_base_url` (see auth_inject's "Codex broker" section); this pins the
-# broker's single upstream to the same host. Validated by Task 8's live smoke
-# -- see auth_inject's module docstring for the codex broker's live-gated items.
+# subscription login talks to `chatgpt.com/backend-api/codex/responses`, NOT
+# the plain-API-key `api.openai.com`. This endpoint is VERIFIED via research
+# (codex-rs source + OpenCode's plugin + several third-party proxies), not a
+# guess. The upstream is the HOST ONLY (`https://chatgpt.com`): codex's `-c`
+# provider `base_url` already ends in `/backend-api/codex`, so codex POSTs
+# `/backend-api/codex/responses` and `upstream + path` reconstructs the full
+# `https://chatgpt.com/backend-api/codex/responses` -- doubling the prefix
+# here would 404. (See _codex_cmd for the `-c` routing and auth_inject's
+# "Codex broker" section for the injected Authorization/ChatGPT-Account-Id.)
 _BROKER_UPSTREAM_BASE = {
     "claude": "https://api.anthropic.com",
-    "codex": "https://chatgpt.com/backend-api/codex",
+    "codex": "https://chatgpt.com",
 }
 
 
@@ -140,6 +152,7 @@ def build_docker_argv(
     docker: str = "docker",
     extra_args: list[str] | None = None,
     userns_args: list[str] | None = None,
+    broker_base: str | None = None,
 ) -> list[str]:
     """Assemble ``docker run`` argv for one mutator iteration: fixed docker
     prefix (name + caps + security-opt + extra_args + workspace mount), then
@@ -171,6 +184,15 @@ def build_docker_argv(
     it, for ``--add-host host.docker.internal:host-gateway`` (the container
     needs a route to the host-side broker). ``None`` (the default) keeps the
     argv byte-identical to before this existed.
+
+    ``broker_base``, when given, is the host-gateway base URL of the codex
+    credential broker; it is threaded into the in-cage ``codex exec`` command
+    as the ``-c model_providers.…`` provider override that routes codex's
+    model endpoint at the broker (see ``operator._codex_cmd``). It is
+    consumed by the codex branch ONLY -- claude routes via an ``ANTHROPIC_BASE_URL``
+    env in ``auth_args`` and opencode2 via its per-provider cage config, so both
+    pass ``None`` here. ``None`` (the default, and every non-broker run) keeps
+    codex on its mounted-``~/.codex`` auth with a byte-identical argv.
     """
     argv = [
         docker, "run", *mutator_platform_args(image), "--rm",
@@ -193,19 +215,22 @@ def build_docker_argv(
     argv += auth_args
     argv += [image]
     argv += ["timeout", str(caps.timeout_s)]
-    argv += _in_cage_cmd(harness, cli, brief, model, effort)
+    argv += _in_cage_cmd(harness, cli, brief, model, effort, broker_base)
     return argv
 
 
 def _in_cage_cmd(
     harness: str, cli: str | None, brief: str, model: str | None, effort: str | None,
+    broker_base: str | None = None,
 ) -> list[str]:
     if harness == "claude":
         return _claude_cmd(cli or "claude", brief, model, effort) + [
             "--dangerously-skip-permissions",
         ]
     if harness == "codex":
-        cmd = _codex_cmd(cli or "codex", brief, model, effort)
+        # `broker_base` (broker path only) routes codex at the broker via a `-c`
+        # provider override; None (the mount path) leaves the codex argv as-is.
+        cmd = _codex_cmd(cli or "codex", brief, model, effort, broker_base=broker_base)
         return [
             "--dangerously-bypass-approvals-and-sandbox" if tok == "--approve-for-me" else tok
             for tok in cmd
@@ -330,8 +355,11 @@ class ContainerOperator:
                 # instead of a credential mount. Broker(s) are started here,
                 # before the docker argv is even built -- the auth args need
                 # each broker's (host-gateway) base URL, which only exists
-                # once `start()` has run.
-                auth, extra_args = self._start_broker_auth(broker_procs)
+                # once `start()` has run. `broker_base` is codex-only (the
+                # host-gateway URL its `-c` provider override needs baked into
+                # the in-cage command); None for claude/opencode2, which route
+                # via auth env / per-provider cage config instead.
+                auth, extra_args, broker_base = self._start_broker_auth(broker_procs)
             else:
                 # Resolve auth/config BEFORE shelling out to docker: login-only
                 # backends fail early instead of mounting an empty path. OpenCode 2
@@ -342,11 +370,12 @@ class ContainerOperator:
                     self.harness, system=self.system, home=self.home, _require_exists=True,
                 )
                 extra_args = None
+                broker_base = None
             argv = build_docker_argv(
                 harness=self.harness, image=self.image, name=name, worktree=worktree,
                 cli=self.cli, model=self.model, effort=self.effort, caps=self.caps,
                 auth_args=auth, brief=brief, refs=refs, docker=self.docker,
-                extra_args=extra_args, userns_args=self.userns_args,
+                extra_args=extra_args, userns_args=self.userns_args, broker_base=broker_base,
             )
             done = threading.Event()
             watcher: threading.Thread | None = None
@@ -410,13 +439,20 @@ class ContainerOperator:
 
     def _start_broker_auth(
         self, broker_procs: list[_CredBrokerLike],
-    ) -> tuple[list[str], list[str] | None]:
+    ) -> tuple[list[str], list[str] | None, str | None]:
         """Start whatever ``CredBroker``(s) this run's harness needs and
-        return the ``(auth_args, extra_args)`` pair ``run`` splices into the
-        docker argv -- the broker-path counterpart to the plain
-        ``auth_docker_args`` call in ``run``'s ``else`` branch. Every broker
-        started is appended to ``broker_procs`` (the caller's list) so its
-        ``finally`` stops all of them, however many there turned out to be.
+        return the ``(auth_args, extra_args, broker_base)`` triple ``run``
+        splices into the docker argv -- the broker-path counterpart to the
+        plain ``auth_docker_args`` call in ``run``'s ``else`` branch. Every
+        broker started is appended to ``broker_procs`` (the caller's list) so
+        its ``finally`` stops all of them, however many there turned out to be.
+
+        ``broker_base`` (the third element) is the codex broker's host-gateway
+        URL, needed by ``build_docker_argv`` to bake codex's ``-c`` provider
+        override into the in-cage command; it is ``None`` for claude and
+        opencode2, whose broker routing is entirely in ``auth_args`` (an
+        ``ANTHROPIC_BASE_URL`` env / the per-provider cage config) rather than
+        the codex command.
 
         claude/codex each have exactly one upstream/credential -- unchanged
         from before this method existed: one ``CredBroker``, one
@@ -431,13 +467,14 @@ class ContainerOperator:
         rather than mount an empty broker config behind an unused
         ``--add-host``.
         """
+        codex_broker_base: str | None = None
         if self.harness == "opencode2":
             targets = opencode2_broker_targets(home=self.home, environ=os.environ)
             if not targets:
                 auth = auth_docker_args(
                     self.harness, system=self.system, home=self.home, _require_exists=True,
                 )
-                return auth, None
+                return auth, None, None
             broker_bases: dict[tuple[str, str], str] = {}
             for target in targets:
                 proc = self._cred_broker_factory(
@@ -458,17 +495,27 @@ class ContainerOperator:
             )
             broker_procs.append(proc)
             broker_base = _host_gateway_url(proc.start())
-            # `home=` is required for the codex cage login (auth.json +
-            # config.toml written under ~/.nethackers/codex-cage/ and mounted
-            # read-only); the claude branch ignores it.
+            # `home=` is required for the codex cage: an EMPTY, writable
+            # `~/.codex` dir + `CODEX_HOME` env (codex needs a writable
+            # $CODEX_HOME for its app-server socket/state) -- no token, no
+            # config crosses (routing is the `-c` override below; auth is
+            # broker-injected). The claude branch ignores `home`.
             auth = auth_broker_args(self.harness, broker_base=broker_base, home=self.home)
+            # codex's model endpoint is routed by a `-c model_providers.…`
+            # INVOCATION override (it survives `codex exec --ignore-user-config`,
+            # which discards ~/.codex/config.toml), so the broker's host-gateway
+            # base URL must reach `build_docker_argv` too -- not just
+            # `auth_broker_args`. claude routes via the ANTHROPIC_BASE_URL env
+            # `auth_broker_args` already emits, so it needs nothing here.
+            if self.harness == "codex":
+                codex_broker_base = broker_base
         # The container needs a route to the host-side broker(s);
         # `host.docker.internal` only resolves with this on Linux docker
         # (Docker Desktop/macOS already provides it) -- one add-host serves
         # every broker above, since they all listen on loopback and share
         # the same host-gateway rewrite (`_host_gateway_url`).
         extra_args = ["--add-host", "host.docker.internal:host-gateway"]
-        return auth, extra_args
+        return auth, extra_args, codex_broker_base
 
     def _maybe_kill_on_stop(self, name: str, stop: threading.Event | None) -> None:
         """Single check-and-act step, kept separate from the watcher's poll

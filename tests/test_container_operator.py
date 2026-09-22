@@ -515,10 +515,11 @@ def test_broker_path_claude_env_and_add_host_no_mount(tmp_path):
     assert holder["broker"].stopped is True
 
 
-def test_broker_path_codex_cage_login_at_chatgpt_upstream(tmp_path):
+def test_broker_path_codex_via_c_override_at_chatgpt_host_upstream(tmp_path):
     seen = {}
     op, holder = _broker_op(tmp_path, harness="codex")
-    # codex cage login reads the real (non-secret) account_id host-side
+    # a host ~/.codex login exists (the broker reads it host-side) -- present
+    # here to prove its real tokens still never reach the container argv
     _write_codex_cage_source(tmp_path, account_id="acct-777")
     wt = tmp_path / "work" / "iter-1"
     wt.mkdir(parents=True)
@@ -528,14 +529,25 @@ def test_broker_path_codex_cage_login_at_chatgpt_upstream(tmp_path):
 
     cmd = seen["cmd"]
     joined = " ".join(cmd)
-    # broker is built at the ChatGPT-SUBSCRIPTION backend, not api.openai.com
-    assert holder["broker"].upstream_base == "https://chatgpt.com/backend-api/codex"
-    # cage login, not the env-var shape: no OPENAI_BASE_URL / OPENAI_API_KEY env
+    # broker forwards to the ChatGPT-subscription HOST only -- codex's `-c`
+    # base_url adds /backend-api/codex, so `upstream + path` reconstructs the
+    # full endpoint (doubling the prefix here would 404)
+    assert holder["broker"].upstream_base == "https://chatgpt.com"
+    # routed by `-c` INVOCATION overrides (survive --ignore-user-config), not a
+    # cage config.toml or the OPENAI_BASE_URL env (chatgpt mode ignores it)
     assert "OPENAI_BASE_URL" not in joined
     assert "OPENAI_API_KEY=proxy-managed" not in joined
+    assert "model_provider=nethackers-broker" in cmd
+    provider_c = next(t for t in cmd if t.startswith("model_providers.nethackers-broker="))
+    # broker_base is the host-gateway URL (_FakeBroker's 9999 via host.docker.internal)
+    assert 'base_url = "http://host.docker.internal:9999/backend-api/codex"' in provider_c
+    assert "supports_websockets = false" in provider_c
+    # unauthenticated custom provider -> codex sends no auth; the broker injects it
+    assert "requires_openai_auth" not in provider_c
     assert "--add-host" in cmd
-    # real tokens never reach argv (account_id, a non-secret, may); nor the
-    # broker's real header value (it's held host-side in the broker)
+    # writable cage dir + CODEX_HOME; no token/config crosses the boundary
+    assert "CODEX_HOME=/home/agent/.codex" in cmd
+    # real tokens never reach argv, nor the broker's held header value
     assert "REAL-OAUTH" not in joined
     assert "REAL-REF" not in joined
     assert "REAL-ID" not in joined
@@ -584,6 +596,9 @@ def test_broker_off_by_default_keeps_the_mount_and_no_add_host(tmp_path):
     assert "--add-host" not in cmd
     assert f"{tmp_path}/.codex:/home/agent/.codex" in cmd
     assert "OPENAI_BASE_URL" not in " ".join(cmd)
+    # the broker-only `-c` provider override must never leak onto the mount path
+    assert "model_provider=nethackers-broker" not in cmd
+    assert "CODEX_HOME=/home/agent/.codex" not in cmd
 
 
 def test_broker_fails_loud_with_no_login_never_falls_back_to_mount(tmp_path):

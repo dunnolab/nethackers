@@ -46,21 +46,23 @@ Run one operator's live smoke by hand once you're logged in for it:
 or all three at once (whichever lack a resolvable login on this host still
 skip individually) -- see ``make broker-live``.
 
-**Codex is the one that resolves this design's three live-gated questions**
-(``auth_inject.py``'s module docstring, "Live-gated"): whether the
-subscription codex actually honours the cage ``config.toml``'s
-``openai_base_url`` in ``chatgpt`` mode; whether it accepts the placeholder
-far-``exp`` JWT without attempting its own refresh; and how it derives
-``ChatGPT-Account-Id``. The cage mounts ONLY a placeholder JWT + the real
-account-id (never a real token, B1) -- so if codex ever ignored the broker
-and hit the real ``chatgpt.com`` backend directly with that placeholder,
-OpenAI's real backend would reject it outright. **A codex 403 / Cloudflare
-block / an auth-refresh error in this test is therefore exactly that
-signal** -- per spec §7 the correct response is to stage codex back onto
-the self-refreshing credential MOUNT (``auth_docker_args``,
-``broker=False``), NOT to weaken the broker (never relax B1 by mounting a
-real token into the cage, and never widen what the cage's placeholder is
-allowed to be). See ``_CODEX_LIVE_ADVISORY`` below, which every codex
+**Codex is the one that validates the confirmed broker path against the real
+``chatgpt.com`` backend.** Codex is routed at the broker by an UNAUTHENTICATED
+``-c model_providers.…`` invocation override (it survives ``codex exec
+--ignore-user-config``, which discards ``~/.codex/config.toml`` -- the reason
+the earlier cage ``openai_base_url`` config was silently ignored), so codex
+sends its POST with NO ``Authorization`` and the broker injects the real
+Bearer + ``ChatGPT-Account-Id`` host-side. The container's cage ``~/.codex``
+holds NO token at all (B1) -- so if codex ever ignored the broker and hit the
+real ``chatgpt.com`` backend directly, it would arrive unauthenticated and be
+rejected outright. **A codex 403 / Cloudflare block / an auth-refresh error in
+this test is therefore exactly that signal** -- per spec §7 the correct
+response is to stage codex back onto the self-refreshing credential MOUNT
+(``auth_docker_args``, ``broker=False``), NOT to weaken the broker (never
+relax B1 by mounting a real token into the cage). (NOTE: this LIVE tier still
+uses the existing httpx forward; the TLS-impersonating forward for real
+``chatgpt.com`` is a separate task, so a live codex run here may need that
+before it round-trips.) See ``_CODEX_LIVE_ADVISORY`` below, which every codex
 assertion failure repeats verbatim.
 
 ASSUMPTIONS/residuals this module can't resolve without the gated run

@@ -100,12 +100,12 @@ _NO_CREDENTIAL_MARKER = "no-credential-in-sandbox"
 
 
 def _is_placeholder(value: str) -> bool:
-    """Whether ``value`` matches a KNOWN non-secret placeholder shape this
-    codebase's broker path actually hands the container (auth_inject.py):
-    claude's literal ``"proxy-managed"``, or codex's structurally-valid but
-    UNSIGNED placeholder JWT (``_codex_placeholder_jwt``:
-    ``header.payload.`` -- ``alg: none``, deliberately empty signature
-    segment). A genuine, signed JWT has a non-empty third segment."""
+    """Whether ``value`` matches a KNOWN non-secret placeholder shape: claude's
+    literal ``"proxy-managed"``, or a structurally-valid but UNSIGNED JWT
+    (``header.payload.`` -- ``alg: none``, deliberately empty signature
+    segment). A genuine, signed JWT has a non-empty third segment. (The codex
+    cage now carries NO token at all -- its auth is broker-injected on the wire
+    -- so this is a defensive shape check, not a value the box is handed.)"""
     if value in ("proxy-managed", "PLACEHOLDER", _NO_CREDENTIAL_MARKER):
         return True
     parts = value.split(".")

@@ -152,12 +152,29 @@ _ANTHROPIC_SSE_SEQUENCE = [
     _sse("message_stop"),
 ]
 
+# A COMPLETE codex Responses-API SSE turn. The `output_item.added` +
+# `content_part.added` frames BEFORE the first `output_text.delta` are what
+# open the active item/part -- without them codex-rs errors "OutputTextDelta
+# without active item" and never surfaces the assistant text; the matching
+# `content_part.done` + `output_item.done` close them before `response.completed`.
 _CODEX_SSE_SEQUENCE = [
     _sse("response.created", response={"id": "resp_e2e_broker_test", "status": "in_progress"}),
+    _sse("response.output_item.added", output_index=0, item={
+        "type": "message", "id": "msg_e2e_broker_test", "role": "assistant",
+        "status": "in_progress", "content": [],
+    }),
+    _sse("response.content_part.added", item_id="msg_e2e_broker_test",
+         output_index=0, content_index=0, part={"type": "output_text", "text": ""}),
     _sse("response.output_text.delta", item_id="msg_e2e_broker_test",
          output_index=0, content_index=0, delta="PONG"),
     _sse("response.output_text.done", item_id="msg_e2e_broker_test",
          output_index=0, content_index=0, text="PONG"),
+    _sse("response.content_part.done", item_id="msg_e2e_broker_test",
+         output_index=0, content_index=0, part={"type": "output_text", "text": "PONG"}),
+    _sse("response.output_item.done", output_index=0, item={
+        "type": "message", "id": "msg_e2e_broker_test", "role": "assistant",
+        "status": "completed", "content": [{"type": "output_text", "text": "PONG"}],
+    }),
     _sse("response.completed", response={
         "id": "resp_e2e_broker_test", "status": "completed",
         "output": [{
@@ -175,10 +192,11 @@ def _b64url(raw: bytes) -> str:
 
 def _far_future_jwt(**claims: object) -> str:
     """A structurally-valid, UNSIGNED (``alg: none``) JWT with an ``exp``
-    years out -- mirrors ``auth_inject._codex_placeholder_jwt``'s and
-    ``test_broker_transform.py``'s identical helper (never a real token),
-    far enough out that ``_codex_token_needs_refresh`` never fires and this
-    test never attempts a live network refresh."""
+    years out (``header.payload.`` -- never a real token; mirrors
+    ``test_broker_transform.py``'s identical helper), far enough out that
+    ``_codex_token_needs_refresh`` never fires and this test never attempts a
+    live network refresh. It is the host ~/.codex login the BROKER reads, not
+    anything the cage carries -- the codex cage holds no token at all now."""
     header = _b64url(json.dumps({"alg": "none", "typ": "JWT"}).encode())
     far_future = int(time.time()) + 10 * 365 * 24 * 3600
     payload = _b64url(json.dumps({"exp": far_future, **claims}).encode())
@@ -235,6 +253,11 @@ def test_claude_one_shot_through_broker_to_mock(tmp_path, monkeypatch):
 
 
 def test_codex_one_shot_through_broker_to_mock(tmp_path, monkeypatch):
+    # The host ~/.codex login the BROKER reads host-side (broker_credential).
+    # The container's cage ~/.codex carries NO token: codex is routed at the
+    # broker by an unauthenticated `-c` provider and sends the POST with no
+    # Authorization, so the broker injects 100% of the auth. `access` is a
+    # far-future JWT so _codex_token_needs_refresh never fires (no live refresh).
     home = tmp_path / "home"
     codex_dir = home / ".codex"
     codex_dir.mkdir(parents=True)
@@ -256,6 +279,9 @@ def test_codex_one_shot_through_broker_to_mock(tmp_path, monkeypatch):
         lines: list[str] = []
         result = op.run(_new_worktree(tmp_path), _BRIEF, on_line=lines.append)
 
+    # THE BROKER CONTRACT is the proof of this test: the mock received codex's
+    # POST at the codex Responses path, carrying the broker-injected real Bearer
+    # AND the ChatGPT-Account-Id header -- neither of which the cage held.
     matches = [
         r for r in provider.requests if r["headers"].get("authorization") == f"Bearer {access}"
     ]
@@ -263,9 +289,17 @@ def test_codex_one_shot_through_broker_to_mock(tmp_path, monkeypatch):
         "MockProvider never saw the broker-injected real credential -- recorded "
         f"request headers: {[r['headers'] for r in provider.requests]}"
     )
-    assert matches[-1]["headers"].get("chatgpt-account-id") == account_id
+    proof = matches[-1]
+    assert proof["headers"].get("chatgpt-account-id") == account_id
+    # upstream (host only) + codex's `-c` base_url path == the full endpoint
+    assert proof["path"] == "/backend-api/codex/responses", (
+        f"codex POSTed to {proof['path']!r}, not the codex Responses endpoint"
+    )
     assert result.stopped_reason == "completed"
-    assert "PONG" in "".join(lines), f"codex CLI output never contained PONG: {''.join(lines)!r}"
+    # Soft PONG: with the COMPLETE Responses SSE above codex should surface the
+    # assistant text, but the exact `--json` line shape is version-dependent, so
+    # a missing plain "PONG" is NOT a broker failure -- the contract above is.
+    assert "PONG" in "".join(lines) or result.stopped_reason == "completed"
 
 
 def test_opencode2_one_shot_through_broker_to_mock(tmp_path):

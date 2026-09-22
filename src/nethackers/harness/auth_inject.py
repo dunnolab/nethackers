@@ -40,10 +40,11 @@ real credential, it hands it a placeholder plus a way to reach
 ``cred_broker.CredBroker`` -- which holds the real credential host-side and
 injects it only into requests it forwards to the one provider host. For
 Claude that's a placeholder token + a base-URL env override; for Codex it's a
-minimal CAGE ``~/.codex`` (placeholder JWT + real account-id +
-``config.toml`` ``openai_base_url``, two files mounted read-only) because a
-ChatGPT-subscription codex ignores ``OPENAI_BASE_URL`` for its model
-endpoint. ``broker_credential`` is the host-side read that gets the broker
+``-c model_providers.…`` invocation override (in the ``codex exec`` command,
+not this module) pointing codex at a CUSTOM UNAUTHENTICATED provider, so codex
+sends NO credential and the broker injects it all -- this module's codex
+branch supplies only an EMPTY, writable cage ``~/.codex`` + ``CODEX_HOME``.
+``broker_credential`` is the host-side read that gets the broker
 its real ``HeaderRewrite``, reusing this module's exact login paths (macOS
 Keychain / ``.credentials.json`` for Claude, ``~/.codex`` for Codex) rather
 than duplicating them. ``ContainerOperator``'s ``broker`` flag chooses
@@ -67,36 +68,43 @@ refresh must not be touched), falling back to the ~8h keychain/
 ``.credentials.json`` login token with a logged warning when no setup-token
 was provisioned.
 
-**Codex broker (chatgpt.com backend + cage login).** A ChatGPT-subscription
-codex login (``~/.codex/auth.json`` is ``auth_mode: chatgpt`` with an empty
-``OPENAI_API_KEY`` and a rotating ``tokens.access_token``) talks to
-``chatgpt.com/backend-api/codex`` and IGNORES ``OPENAI_BASE_URL`` for its
-model endpoint. So the codex broker path does NOT set that env var; instead
-``auth_broker_args`` writes a minimal cage ``~/.codex`` (``_codex_cage_args``)
--- an ``auth.json`` holding a PLACEHOLDER far-``exp`` JWT (never a real token)
-plus the real, non-secret ``account_id`` (B1: an identifier may enter the
-box, tokens never do), and a ``config.toml`` whose top-level
-``openai_base_url`` routes the model endpoint at the broker -- and mounts only
-those two files read-only (the container's own ``~/.codex`` stays
-writable+ephemeral for sessions). ``broker_credential`` then injects the real
+**Codex broker (chatgpt.com backend + `-c` unauthenticated provider).** A
+ChatGPT-subscription codex login (``~/.codex/auth.json`` is ``auth_mode:
+chatgpt`` with an empty ``OPENAI_API_KEY`` and a rotating
+``tokens.access_token``) POSTs to ``chatgpt.com/backend-api/codex/responses``
+and IGNORES ``OPENAI_BASE_URL`` for its model endpoint. Worse, the mutator
+runs ``codex exec --ignore-user-config``, which DISCARDS
+``~/.codex/config.toml`` -- so an earlier cage that routed via a ``config.toml``
+``openai_base_url`` was silently ignored, codex fell back to ``api.openai.com``,
+and the call 401'd (NOT an auth/placeholder problem: a routing one). The
+CONFIRMED fix (proven in our own E2E, and OpenAI's own ``responses-api-proxy``
+recipe) is to route codex by a ``-c`` INVOCATION override -- which applies even
+under ``--ignore-user-config`` -- pointing it at a CUSTOM provider named
+``nethackers-broker`` with ``base_url`` ending in ``/backend-api/codex`` and no
+``requires_openai_auth``/``env_key``. With no auth configured codex uses its
+``unauthenticated_auth_provider()`` and sends the POST with NO ``Authorization``
+header, so the BROKER injects 100% of the auth and codex needs no credential in
+the box. That ``-c`` override lives in the ``codex exec`` command
+(``operator._codex_cmd``, threaded via ``container_operator.build_docker_argv``'s
+``broker_base``), NOT this module; ``auth_broker_args`` here supplies only the
+cage ``~/.codex`` -- now an EMPTY, owner-only, writable directory + ``CODEX_HOME``
+(codex needs a writable ``$CODEX_HOME`` for its app-server socket/state; no
+token, no config, B1). ``broker_credential`` then injects the real
 ``Authorization: Bearer`` and, authoritatively, the ``ChatGPT-Account-Id``
-header, and refreshes the rotating token PROACTIVELY by its ``exp``
-(``_codex_token_needs_refresh`` / ``_codex_refresh``) rather than pinning one
-~8h snapshot -- writing the rotated single-use token back to the canonical
-file (the broker is the sole writer during a broker run; the container has no
-``~/.codex`` mount). This replaces the earlier ``api.openai.com`` +
-``OPENAI_BASE_URL`` env shape, which was wrong for a subscription login.
+header (exact case), preserving codex's own ``originator: codex_cli_rs`` +
+``User-Agent`` (a real server-side first-party allowlist -- the broker forwards
+every non-injected header unchanged), and refreshes the rotating token
+PROACTIVELY by its ``exp`` (``_codex_token_needs_refresh`` / ``_codex_refresh``,
+at ``auth.openai.com/oauth/token``) rather than pinning one ~8h snapshot --
+writing the rotated single-use token back to the canonical file (the broker is
+the sole writer during a broker run; the container has no ``~/.codex`` mount).
 
-Live-gated (Task 8's live smoke resolves these; the contract here is the
-plausible one built ahead of it, not a correctness claim):
-
-- whether the subscription codex honours ``config.toml``'s ``openai_base_url``
-  for the model endpoint in chatgpt mode (fallback if not: stage codex back to
-  the self-refreshing mount);
-- whether it accepts the placeholder far-``exp`` JWT without attempting its
-  own refresh;
-- how it derives ``ChatGPT-Account-Id`` (config field vs. token JWT claim) --
-  the broker injects the host account-id either way (multi-header capability).
+Validated on a MOCK provider (``test_broker_e2e`` / ``test_broker_transform``);
+the TLS-impersonating forward for the real ``chatgpt.com`` is a separate task,
+so C1 uses the existing httpx forward (fine against the mock). Fallback, if a
+live smoke shows codex refuses to start against a fully empty ``~/.codex``: a
+minimal VALID ``auth.json`` (a 3-part ``id_token`` with a non-empty 3rd
+segment) -- not the placeholder-JWT + ``config.toml`` cage this replaced.
 
 **OpenCode 2's broker path is per-provider.** OpenCode's base-URL override is
 a per-provider JSON config field (``options.baseURL``), not a single env var
@@ -220,18 +228,20 @@ def auth_broker_args(
     """Point ``harness`` at the credential broker (``cred_broker.CredBroker``,
     started at ``broker_base``) instead of mounting its host login.
 
-    Claude gets a PLACEHOLDER token plus its base-URL env override, no ``-v``
-    mount. Codex is different: a ChatGPT-subscription login IGNORES
-    ``OPENAI_BASE_URL`` for its model endpoint, so it's routed by a minimal
-    CAGE ``~/.codex`` instead -- an ``auth.json`` with a placeholder far-``exp``
-    JWT + the real (non-secret) ``account_id`` and a ``config.toml`` whose
-    ``openai_base_url`` points the model endpoint at the broker -- with only
-    those two files mounted read-only (so ``home`` is REQUIRED for codex; the
-    container's own ``~/.codex`` stays writable+ephemeral for sessions). No
-    real token crosses the boundary either way. See this module's docstring
-    for the codex broker's live-gated items, and ``ContainerOperator``'s
-    ``broker`` flag for how a caller opts into this instead of
-    ``auth_docker_args``'s mount (the default).
+    Claude gets a PLACEHOLDER token plus its ``ANTHROPIC_BASE_URL`` env
+    override, no ``-v`` mount. Codex is routed at the broker NOT here but by a
+    ``-c model_providers.…`` invocation override in its ``codex exec`` command
+    (``container_operator``/``operator._codex_cmd``) -- a ChatGPT-subscription
+    login ignores ``OPENAI_BASE_URL`` for its model endpoint, and ``codex exec
+    --ignore-user-config`` discards a cage ``config.toml``, so only a ``-c``
+    override reaches it. That override is UNAUTHENTICATED, so codex sends no
+    credential and the broker injects it all host-side (``broker_credential``).
+    All this codex branch supplies is the cage ``~/.codex`` itself: an EMPTY,
+    owner-only, writable dir mounted at ``~/.codex`` plus ``CODEX_HOME`` (codex
+    needs a writable ``$CODEX_HOME`` for its app-server socket/state) -- so
+    ``home`` is REQUIRED for codex, but no token and no config cross the
+    boundary. See ``ContainerOperator``'s ``broker`` flag for how a caller opts
+    into this instead of ``auth_docker_args``'s mount (the default).
     """
     if harness == "claude":
         # OAuth mode via CLAUDE_CODE_OAUTH_TOKEN (not ANTHROPIC_API_KEY): Claude
@@ -245,8 +255,8 @@ def auth_broker_args(
 
     if harness == "codex":
         if home is None:
-            raise ValueError("auth_broker_args('codex') requires home= for the cage login")
-        return _codex_cage_args(home, broker_base)
+            raise ValueError("auth_broker_args('codex') requires home= for the cage dir")
+        return _codex_cage_args(home)
 
     if harness == "opencode2":
         # OpenCode's base-URL override is a per-provider JSON config field
@@ -878,118 +888,49 @@ def _codex_token_needs_refresh(token: str) -> bool:
     return exp - time.time() < _CODEX_REFRESH_MARGIN_S
 
 
-def _b64url(raw: bytes) -> str:
-    """Unpadded base64url of ``raw`` -- JWT segment encoding."""
-    return base64.urlsafe_b64encode(raw).rstrip(b"=").decode("ascii")
+def _codex_cage_args(home: Path) -> list[str]:
+    """Build the codex broker cage and return its ``-v`` mount + ``CODEX_HOME``
+    env. Routing and auth no longer live in the cage: codex is pointed at the
+    broker by a ``-c model_providers.…`` INVOCATION override
+    (``container_operator``/``operator._codex_cmd``), which applies even under
+    ``codex exec --ignore-user-config`` (that flag discards
+    ``~/.codex/config.toml`` -- the reason the earlier cage ``config.toml``
+    ``openai_base_url`` was silently ignored, codex fell back to
+    ``api.openai.com``, and the call 401'd). The override carries no
+    ``requires_openai_auth``/``env_key``, so codex uses its unauthenticated
+    auth provider and sends the POST with NO ``Authorization``; the real
+    ``Authorization: Bearer`` + ``ChatGPT-Account-Id`` are injected on the wire
+    by the broker (``broker_credential``). So NO token and NO config ever enter
+    the cage (B1).
 
+    The cage is therefore an EMPTY, owner-only directory mounted read-WRITE at
+    ``~/.codex`` with ``CODEX_HOME`` pointed at it: docker creates a bind-mount's
+    parent dir root-owned, but the mutator entrypoint drops to the ``agent``
+    user, so codex needs a dir it can actually write its app-server
+    socket/session state into ("Permission denied", os error 13 otherwise --
+    confirmed by the real E2E). Any stale ``auth.json``/``config.toml`` left by
+    an older code version is removed so the cage genuinely carries neither.
 
-def _codex_placeholder_jwt(account_id: str | None) -> str:
-    """A structurally-valid but UNSIGNED (``alg:none``) JWT with a far-future
-    ``exp`` for the cage ``auth.json`` -- never a real token. Its whole job is
-    to look current enough that the caged codex treats its login as valid and
-    does NOT try to self-refresh (the broker swaps the real Bearer on the
-    wire). The real, non-secret ``account_id`` is embedded in the
-    ``chatgpt_account_id`` claim so codex derives the same account the broker
-    injects ``ChatGPT-Account-Id`` for.
-
-    LIVE-GATED (Task 8's live smoke): whether codex accepts this far-``exp``
-    placeholder without attempting its own refresh, and how it derives the
-    account-id header, are validated there -- this builds the plausible
-    contract ahead of it.
+    (Fallback, if a live smoke shows codex refuses to start against a fully
+    empty ``~/.codex``: a minimal VALID ``auth.json`` -- a 3-part ``id_token``
+    with a non-empty 3rd segment -- rather than the placeholder-JWT +
+    ``config.toml`` cage this replaced.)
     """
-    far_future = int(time.time()) + 10 * 365 * 24 * 3600  # ~10 years
-    header = _b64url(json.dumps({"alg": "none", "typ": "JWT"}).encode())
-    payload = _b64url(json.dumps({
-        "exp": far_future,
-        "https://api.openai.com/auth": {"chatgpt_account_id": account_id},
-    }).encode())
-    return f"{header}.{payload}."
-
-
-def _write_codex_cage_file(home: Path, name: str, content: str) -> Path:
-    """Write one codex cage-login file under owner-only
-    ``~/.nethackers/codex-cage/``, replaced atomically (mkstemp + os.replace,
-    mirroring ``_write_cage_config``). Raises ``AuthUnavailable`` if it can't
-    be written -- the broker path fails loud (B3) rather than mount a
-    stale/missing login file."""
-    target = home / ".nethackers" / "codex-cage" / name
-    tmp: str | None = None
+    cage_dir = home / ".nethackers" / "codex-cage"
     try:
-        target.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=f".{name}.")
-        with os.fdopen(fd, "w") as f:
-            f.write(content)
-        os.replace(tmp, target)
-    except OSError as exc:
-        if tmp is not None:
+        cage_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+        # Defensive: drop the two files an older (placeholder-JWT + config.toml)
+        # cage wrote, so an upgraded host's cage is empty as promised. Codex's
+        # own runtime state (sockets, etc.) is left untouched.
+        for stale in ("auth.json", "config.toml"):
             with contextlib.suppress(OSError):
-                os.unlink(tmp)
+                (cage_dir / stale).unlink()
+    except OSError as exc:
         raise AuthUnavailable(
             "codex",
-            "could not write the codex broker cage login -- check ~/.nethackers "
+            "could not create the codex broker cage dir -- check ~/.nethackers "
             "permissions, then retry",
         ) from exc
-    return target
-
-
-def _codex_cage_args(home: Path, broker_base: str) -> list[str]:
-    """Build the codex broker cage login and return the single read-write
-    mount of its cage directory (§3.2/§3.3). A ChatGPT-subscription codex talks
-    to ``chatgpt.com/backend-api/codex`` and IGNORES ``OPENAI_BASE_URL`` for
-    its model endpoint, so this routes it by CONFIG instead:
-
-    - ``auth.json``: a minimal ``chatgpt``-mode login carrying a PLACEHOLDER
-      far-``exp`` JWT (``_codex_placeholder_jwt`` -- never a real token, B1)
-      and the real, non-secret ``account_id`` read host-side from the
-      canonical ``~/.codex`` (``_codex_creds``). The broker swaps the real
-      ``Authorization: Bearer`` on the wire (``broker_credential``).
-    - ``config.toml``: top-level ``openai_base_url`` pointing the model
-      endpoint at the broker.
-
-    The cage DIRECTORY is mounted read-WRITE at ``~/.codex`` (not the two files
-    read-only): docker creates a bind-mount's parent dir root-owned, but the
-    mutator entrypoint drops to the ``agent`` user, so a two-read-only-files
-    cage leaves codex unable to write its app-server socket/session state into
-    ``~/.codex`` ("Permission denied", os error 13 -- confirmed by the real
-    E2E). The dir holds ONLY the placeholder ``auth.json`` + ``config.toml``
-    (no real token, so B1 still holds); the real Bearer is swapped on the wire
-    by ``broker_credential``.
-
-    LIVE-GATED (Task 8's live smoke): whether a subscription codex honours
-    ``config.toml``'s ``openai_base_url`` for the model endpoint in chatgpt
-    mode is validated there -- this is the plausible contract built ahead of
-    it (§3.2's fallback if it can't be proxied is staging codex back to the
-    self-refreshing mount).
-    """
-    creds = _codex_creds(home)
-    raw_tokens = creds.get("tokens")
-    tokens = raw_tokens if isinstance(raw_tokens, dict) else {}
-    account_id = tokens.get("account_id")
-    account_id = account_id if isinstance(account_id, str) and account_id else None
-    placeholder = _codex_placeholder_jwt(account_id)
-    auth_json = json.dumps({
-        "OPENAI_API_KEY": "",
-        "auth_mode": "chatgpt",
-        "tokens": {
-            "access_token": placeholder,
-            "refresh_token": "proxy-managed",
-            "account_id": account_id,
-            "id_token": placeholder,
-        },
-    })
-    # `openai_base_url` (top-level) is the override that routes codex's model
-    # endpoint at the broker even in chatgpt mode. The OPENAI_BASE_URL env var
-    # is deliberately NOT set: chatgpt mode ignores it for the model endpoint,
-    # which is exactly why the base URL has to live in config.toml (§3.2).
-    config_toml = f'openai_base_url = "{broker_base}"\n'
-    _write_codex_cage_file(home, "auth.json", auth_json)
-    _write_codex_cage_file(home, "config.toml", config_toml)
-    cage_dir = home / ".nethackers" / "codex-cage"
-    # Mount the cage DIR read-write, NOT the two files read-only: docker creates
-    # a bind-mount's parent dir root-owned, but the mutator entrypoint drops to
-    # `agent`, so a 2-ro-files cage leaves codex unable to write its app-server
-    # socket/session state into ~/.codex ("Permission denied", os error 13,
-    # confirmed by the real E2E). The dir holds ONLY the placeholder auth.json +
-    # config.toml (no real token -- B1 holds), so rw is safe; the real Bearer is
-    # swapped on the wire by broker_credential.
-    return ["-v", f"{cage_dir}:/home/agent/.codex"]
+    # A single writable dir mount (NOT two :ro files) + CODEX_HOME; the real
+    # Bearer is swapped on the wire by broker_credential, never mounted here.
+    return ["-v", f"{cage_dir}:/home/agent/.codex", "-e", "CODEX_HOME=/home/agent/.codex"]

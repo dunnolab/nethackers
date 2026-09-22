@@ -30,11 +30,6 @@ def _make_jwt(exp, **claims) -> str:
     return f"{header}.{payload}."
 
 
-def _decode_jwt_payload(token: str) -> dict:
-    seg = token.split(".")[1]
-    return json.loads(base64.urlsafe_b64decode(seg + "=" * (-len(seg) % 4)))
-
-
 def test_codex_mounts_the_one_canonical_dir():
     args = auth_docker_args("codex", system="Linux", home=Path("/h"))
     assert args == ["-v", "/h/.codex:/home/agent/.codex"]
@@ -242,13 +237,17 @@ def test_claude_uses_broker_base_and_placeholder():
     assert "REAL" not in joined                    # no real key crosses the boundary
 
 
-def test_codex_uses_broker_base_cage_login_no_real_token(tmp_path):
-    # Codex broker path routes via a CAGE `~/.codex` mounted read-WRITE as a
-    # single directory (so the caged codex can write its app-server socket/
-    # state -- a two-ro-files cage fails with "Permission denied", os error 13),
-    # NOT the `OPENAI_BASE_URL` env var (a ChatGPT-subscription login ignores
-    # that for its model endpoint). auth.json carries a PLACEHOLDER far-exp JWT
-    # + the real (non-secret) account_id; no real token in the cage.
+def test_codex_uses_broker_base_writable_cage_no_token_no_config(tmp_path):
+    # Codex broker path routes via a `-c` INVOCATION override + broker header
+    # injection (build_docker_argv/_codex_cmd + broker_credential), NOT a cage
+    # auth.json/config.toml (a ChatGPT-subscription login ignores OPENAI_BASE_URL,
+    # and `codex exec --ignore-user-config` discards config.toml anyway). So
+    # `auth_broker_args('codex')` returns ONLY a writable cage `~/.codex` dir +
+    # CODEX_HOME (codex needs a writable $CODEX_HOME for its app-server socket/
+    # state); the cage is EMPTY -- no token, no config crosses the boundary.
+    #
+    # A host ~/.codex login is present but MUST NOT be read/copied here: the
+    # broker reads it host-side (broker_credential); the cage never sees it.
     (tmp_path / ".codex").mkdir()
     (tmp_path / ".codex" / "auth.json").write_text(json.dumps({
         "OPENAI_API_KEY": "",
@@ -264,41 +263,41 @@ def test_codex_uses_broker_base_cage_login_no_real_token(tmp_path):
 
     args = auth_broker_args("codex", broker_base=broker_base, home=tmp_path)
 
-    # a SINGLE writable dir mount, no env, no :ro
+    # exactly a writable dir mount + CODEX_HOME env, no :ro, no OPENAI_BASE_URL
     cage_dir = tmp_path / ".nethackers" / "codex-cage"
-    assert args == ["-v", f"{cage_dir}:/home/agent/.codex"]
-    assert str(cage_dir).endswith("/.nethackers/codex-cage")
-    assert "-e" not in args
-    assert "OPENAI_BASE_URL" not in " ".join(args)
-    assert ":ro" not in args[1]
+    assert args == [
+        "-v", f"{cage_dir}:/home/agent/.codex",
+        "-e", "CODEX_HOME=/home/agent/.codex",
+    ]
+    joined = " ".join(args)
+    assert "OPENAI_BASE_URL" not in joined
+    assert ":ro" not in joined
 
-    auth_doc = json.loads((cage_dir / "auth.json").read_text())
-    assert auth_doc["auth_mode"] == "chatgpt"
-    assert auth_doc["tokens"]["account_id"] == "acct-xyz"
-    assert auth_doc["tokens"]["refresh_token"] == "proxy-managed"
-
-    # placeholder access_token: a JWT with a far-future exp carrying the real
-    # (non-secret) account_id claim, so the caged codex treats it as valid and
-    # does not self-refresh, and derives the same account.
-    placeholder = auth_doc["tokens"]["access_token"]
-    payload = _decode_jwt_payload(placeholder)
-    assert payload["exp"] > time.time() + 365 * 24 * 3600   # far future (years out)
-    assert payload["https://api.openai.com/auth"]["chatgpt_account_id"] == "acct-xyz"
-    # id_token is a placeholder JWT too
-    assert _decode_jwt_payload(auth_doc["tokens"]["id_token"])["exp"] > time.time()
-
-    # config.toml routes codex's model endpoint at the broker
-    config_text = (cage_dir / "config.toml").read_text()
-    assert f'openai_base_url = "{broker_base}"' in config_text
-
-    # NO real token anywhere in the cage (account_id, an identifier, may appear)
-    blob = (cage_dir / "auth.json").read_text() + config_text
-    assert "REAL-OAUTH-TOKEN" not in blob
-    assert "REAL-REFRESH-TOKEN" not in blob
-    assert "REAL-ID-TOKEN" not in blob
-
-    # owner-only cage dir
+    # the cage is a real, owner-only, EMPTY dir -- no token, no config file
+    assert cage_dir.is_dir()
     assert cage_dir.stat().st_mode & 0o777 == 0o700
+    assert not (cage_dir / "auth.json").exists()
+    assert not (cage_dir / "config.toml").exists()
+    assert list(cage_dir.iterdir()) == []
+
+    # nothing from the host login (its real tokens) entered the cage or argv
+    assert "REAL-OAUTH-TOKEN" not in joined
+    assert "REAL-REFRESH-TOKEN" not in joined
+    assert "REAL-ID-TOKEN" not in joined
+
+
+def test_codex_cage_removes_stale_files_from_an_older_cage(tmp_path):
+    # An older (placeholder-JWT + config.toml) cage left files behind; the new
+    # empty-cage builder must clear them so the cage genuinely carries neither.
+    cage_dir = tmp_path / ".nethackers" / "codex-cage"
+    cage_dir.mkdir(parents=True)
+    (cage_dir / "auth.json").write_text('{"stale": true}')
+    (cage_dir / "config.toml").write_text('openai_base_url = "http://old:1"\n')
+
+    auth_broker_args("codex", broker_base="http://x:1", home=tmp_path)
+
+    assert not (cage_dir / "auth.json").exists()
+    assert not (cage_dir / "config.toml").exists()
 
 
 def test_codex_broker_args_requires_home(tmp_path):
@@ -306,23 +305,18 @@ def test_codex_broker_args_requires_home(tmp_path):
         auth_broker_args("codex", broker_base="http://host.docker.internal:5001")
 
 
-def test_codex_broker_args_missing_login_raises(tmp_path):
-    # No ~/.codex at all -- fail loud (B3), never a silent empty cage.
-    with pytest.raises(AuthUnavailable):
-        auth_broker_args("codex", broker_base="http://x:1", home=tmp_path)
-
-
-def test_codex_broker_args_omits_account_id_when_absent(tmp_path):
-    (tmp_path / ".codex").mkdir()
-    (tmp_path / ".codex" / "auth.json").write_text(json.dumps({
-        "OPENAI_API_KEY": "",
-        "auth_mode": "chatgpt",
-        "tokens": {"access_token": "REAL", "refresh_token": "REAL2"},   # no account_id
-    }))
+def test_codex_broker_args_needs_no_host_login(tmp_path):
+    # The cage carries no token now (auth is broker-injected), so building it
+    # never reads the host ~/.codex -- it just makes the empty writable cage,
+    # even with no ~/.codex present. (Fail-loud on a missing login is
+    # broker_credential's job -- see test_broker_credential_codex_missing_login_raises.)
     args = auth_broker_args("codex", broker_base="http://x:1", home=tmp_path)
-    cage_dir = Path(args[1].rpartition(":")[0])
-    auth_doc = json.loads((cage_dir / "auth.json").read_text())
-    assert auth_doc["tokens"]["account_id"] is None
+    cage_dir = tmp_path / ".nethackers" / "codex-cage"
+    assert args == [
+        "-v", f"{cage_dir}:/home/agent/.codex",
+        "-e", "CODEX_HOME=/home/agent/.codex",
+    ]
+    assert list(cage_dir.iterdir()) == []
 
 
 def test_opencode2_broker_not_implemented():

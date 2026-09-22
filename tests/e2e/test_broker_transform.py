@@ -39,9 +39,9 @@ def _b64url(raw: bytes) -> str:
 
 def _far_future_jwt(**claims: object) -> str:
     """A structurally-valid, UNSIGNED (``alg: none``) JWT with an ``exp``
-    years out -- mirrors ``auth_inject._codex_placeholder_jwt``'s shape
-    (never a real token), far enough that ``_codex_token_needs_refresh``
-    never fires and no refresh network call is attempted."""
+    years out (``header.payload.`` -- never a real token), far enough that
+    ``_codex_token_needs_refresh`` never fires and no refresh network call is
+    attempted."""
     header = _b64url(json.dumps({"alg": "none", "typ": "JWT"}).encode())
     far_future = int(time.time()) + 10 * 365 * 24 * 3600
     payload = _b64url(json.dumps({"exp": far_future, **claims}).encode())

@@ -182,7 +182,10 @@ def _opencode2_cmd(cli: str, model: str | None, effort: str | None) -> list[str]
     return cmd
 
 
-def _codex_cmd(cli: str, brief: str, model: str | None, effort: str | None) -> list[str]:
+def _codex_cmd(
+    cli: str, brief: str, model: str | None, effort: str | None,
+    *, broker_base: str | None = None,
+) -> list[str]:
     # --skip-git-repo-check is MANDATORY, not hygiene: the operator worktree is
     # a plain shutil.copytree of the elite tree (loop.py -- no .git), and
     # `codex exec` otherwise refuses with "Not inside a trusted directory and
@@ -199,10 +202,35 @@ def _codex_cmd(cli: str, brief: str, model: str | None, effort: str | None) -> l
     cmd = [cli, "exec", brief, "--json", "--approve-for-me", "--skip-git-repo-check",
            "--ephemeral", "--ignore-user-config", "--ignore-rules"]
     # --ignore-user-config drops ~/.codex/config.toml -- including its `model`
-    # and `model_reasoning_effort` -- so pin them back explicitly here (a `-c`
-    # override still applies on top of --ignore-user-config).
+    # and `model_reasoning_effort` -- so pin them back explicitly here. A `-c`
+    # INVOCATION override still applies on top of --ignore-user-config (which
+    # only discards the config FILE, not `-c` flags) -- that is exactly the
+    # property the broker path below relies on.
     if model:
         cmd += ["-m", model]
     if effort:
         cmd += ["-c", f"model_reasoning_effort={effort}"]
+    # Credential-broker routing (broker path only; None keeps the mount path's
+    # argv byte-identical). `codex exec --ignore-user-config` DISCARDS
+    # ~/.codex/config.toml, so a cage `openai_base_url` there is silently
+    # ignored -- codex falls back to api.openai.com and 401s. The fix (OpenAI's
+    # own responses-api-proxy recipe) is a `-c` override -- which survives
+    # --ignore-user-config -- pointing codex at a CUSTOM provider. With no
+    # `requires_openai_auth`/`env_key`, codex uses its unauthenticated auth
+    # provider and sends the POST with NO Authorization header, so the broker
+    # injects 100% of the auth host-side and no credential ever enters the box.
+    # `base_url` ends in /backend-api/codex, so codex POSTs
+    # `<broker_base>/backend-api/codex/responses` and the broker forwards
+    # `upstream + path` = chatgpt.com + /backend-api/codex/responses.
+    # `supports_websockets = false` avoids codex's WS-first attempt. The `-c`
+    # value is parsed as TOML; an inline table is the single-line form.
+    if broker_base is not None:
+        cmd += [
+            "-c", "model_provider=nethackers-broker",
+            "-c", (
+                'model_providers.nethackers-broker={ name = "nethackers-broker", '
+                'base_url = "' + broker_base + '/backend-api/codex", '
+                'wire_api = "responses", supports_websockets = false }'
+            ),
+        ]
     return cmd

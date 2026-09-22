@@ -151,6 +151,33 @@ def test_codex_cmd_pins_model_and_effort_when_set():
     assert "-c" in cmd and "model_reasoning_effort=max" in cmd
 
 
+def test_codex_cmd_broker_base_adds_unauthenticated_custom_provider():
+    # Broker path: `-c` INVOCATION overrides route codex at a CUSTOM provider.
+    # They apply even under --ignore-user-config (which discards config.toml --
+    # why the old cage `openai_base_url` was silently ignored).
+    cmd = _codex_cmd("codex", "BRIEF", None, None, broker_base="http://host.docker.internal:7788")
+    assert "model_provider=nethackers-broker" in cmd
+    provider = next(t for t in cmd if t.startswith("model_providers.nethackers-broker="))
+    # base_url ends in /backend-api/codex, so codex POSTs
+    # `<broker_base>/backend-api/codex/responses` and the broker forwards
+    # `upstream + path` = chatgpt.com + /backend-api/codex/responses.
+    assert 'base_url = "http://host.docker.internal:7788/backend-api/codex"' in provider
+    assert 'wire_api = "responses"' in provider
+    assert "supports_websockets = false" in provider   # avoid codex's WS-first attempt
+    # NO requires_openai_auth/env_key -> codex uses unauthenticated_auth_provider()
+    # and sends the POST with no Authorization; the broker injects 100% of auth.
+    assert "requires_openai_auth" not in provider
+    assert "env_key" not in provider
+
+
+def test_codex_cmd_no_broker_base_is_the_mount_path_unchanged():
+    # default (mount) path: no provider override, byte-identical to before
+    assert _codex_cmd("codex", "B", "m", "high") == _codex_cmd(
+        "codex", "B", "m", "high", broker_base=None
+    )
+    assert "model_provider=nethackers-broker" not in _codex_cmd("codex", "B", None, None)
+
+
 def test_opencode2_cmd_is_headless_auto_approved_and_pinned():
     cmd = _opencode2_cmd("opencode2", "openai/gpt-5", "high")
     assert cmd[:2] == ["opencode2", "run"]
