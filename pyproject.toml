@@ -83,6 +83,7 @@ module = [
     "nle.*",
     "numba.*",
     "cv2.*",
+    "curl_cffi.*",
     "scipy.*",
     "nltk.*",
     "toolz.*",

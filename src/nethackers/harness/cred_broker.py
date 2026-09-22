@@ -122,7 +122,7 @@ class CredBroker:
             # dependency). Only the codex broker ever sets `impersonate`, so
             # only a codex run ever reaches this branch.
             try:
-                from curl_cffi import requests as _cffi  # type: ignore[import-not-found]
+                from curl_cffi import requests as _cffi
             except ImportError as exc:
                 raise RuntimeError(
                     "the codex broker forwards to Cloudflare-fronted chatgpt.com, which "
