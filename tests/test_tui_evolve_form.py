@@ -1098,6 +1098,30 @@ async def test_the_publish_check_runs_when_the_form_opens(monkeypatch):
         assert "wins won't publish" in warn        # shown before any Start
 
 
+async def test_set_creds_reruns_the_publish_check(monkeypatch):
+    """Minor 9 / spec §4.1: an in-app login or logout must re-check publish
+    readiness for the NEW identity, not just at mount -- `set_creds` calls
+    `_check_publish` again. Never asserted before: check `#f_publish_warn`
+    actually changes after `set_creds`."""
+    monkeypatch.setattr(ef, "gh_state", lambda: ("", "unauthed"))
+    app = _Host(None)   # mounts logged out -> the offline note, gh_state unused
+    async with app.run_test(size=(100, 40)) as pilot:
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        form = app.query_one(ef.EvolveForm)
+        before = str(app.query_one("#f_publish_warn", Static).render())
+        assert "running offline" in before
+
+        form.set_creds(Credentials("castiel", "tok"))   # an in-app login
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        after = str(app.query_one("#f_publish_warn", Static).render())
+        assert after != before
+        assert "wins won't publish" in after and "gh auth login" in after
+
+
 async def test_iterations_default_to_100():
     app = _Host(None)
     async with app.run_test(size=(100, 50)) as pilot:

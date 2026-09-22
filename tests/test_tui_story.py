@@ -462,8 +462,26 @@ def test_a_run_that_fails_before_any_state_does_not_look_live():
     view = story.section_view(run, 0, clock.t)
     assert plain(view.rows[0].mark) == "✗"
     assert view.rows[0].dur == "10s"                 # frozen at finished_at(1010), not now(1200)
-    assert plain(view.footer) == "✗ setup didn't finish"
+    assert plain(view.footer) == "✗ the run failed during setup"
     assert plain(story.iter_label(run, 0)[0]) == "✗ setup   failed"
+
+
+def test_a_user_stop_during_setup_reads_differently_from_a_crash():
+    """Minor 3: _setup_footer hardcoded FAIL_MARK for any not-running run, so
+    a user Stop during setup showed a red ✗ and "setup didn't finish" --
+    disagreeing with iter_label and the now line, which both correctly say
+    "■ … stopped" for the very same run. Must use _crash_word(run), as
+    iter_label already does, so a Stop never reads as a crash."""
+    clock = Clock()
+    run = _new(clock)
+    clock.t = 1006
+    run.apply_state(_state("cold-start"))
+    run.request_stop()
+    clock.t = 1010
+    run.finish()   # no error, but Stop was requested -> status "stopped"
+    view = story.section_view(run, 0, clock.t)
+    assert plain(view.footer) == "■ the run stopped during setup"
+    assert plain(story.iter_label(run, 0)[0]) == "■ setup   stopped"
 
 
 def test_a_user_stop_mid_iteration_reads_differently_from_a_crash():
@@ -538,7 +556,10 @@ def test_the_single_identity_keep_rule_uses_a_seed_cells_measured_score():
     view = story.section_view(run, 1, clock.t)
     assert plain(view.rows[-1].label) == "decide: keep it if its average beats 0.09"
     setup_footer = plain(story.section_view(run, 0, clock.t).footer)
-    assert "best so far 0.09 (AutoAscend)" in setup_footer
+    # Minor 4: a seed cell's label is "the starting bot", never "AutoAscend"
+    # (reserved for the true no-cell floor) -- matches the setup step's own
+    # "the starting bot" group name and open_best's source line for it.
+    assert "best so far 0.09 (the starting bot)" in setup_footer
 
 
 def test_seed_setup_row_says_no_hub_champion_yet():
@@ -844,3 +865,16 @@ def test_an_error_after_a_completed_dev_batch_still_reads_as_an_error():
     assert labels[2] == "played the edited bot · 45 games · avg 0.30"
     assert plain(view.rows[2].mark) == "✓"
     assert labels[3] == "the iteration hit an error: hub write failed"
+
+
+def test_legend_lines_fit_the_progress_panes_content_width():
+    """Important 2: #legend's content width at 120 columns is 78 -- each of
+    the three lines must fit without wrapping, or the legend costs extra rows
+    of a 34-row terminal (the screen-level height==3 check lives in
+    test_tui_monitor.py, which carries the real stylesheet)."""
+    from rich.cells import cell_len
+
+    lines = story.LEGEND.split("\n")
+    assert len(lines) == 3
+    for line in lines:
+        assert cell_len(line) <= 78, (cell_len(line), line)

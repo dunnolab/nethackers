@@ -21,6 +21,14 @@ from nethackers.tui.status import EvolveConfig
 CFG = EvolveConfig("wiz-elf-cha-mal,wiz-orc-cha-mal,val-dwa-law-fem", "claude", 3,
                    model="opus", effort="high", operator_version="1.2.7")
 
+# Important 1: a hub's `reference.commit` is a FULL `git rev-parse HEAD` (40
+# hex chars), never a toy value like the old "11"/"33" fixtures -- those never
+# exercised _origin_label's 7-char shortening, so every render pass missed the
+# score getting pushed out of the Progress table. Real sha1 hexdigests here so
+# the per-cell width guard (_assert_cells_fit_their_columns) actually binds.
+SHA_CHAMPION = "751c36deb6c2b3554db43f5dc56664e56eef7c56"
+SHA_UNION = "2167738659b0ae057f0eb52c56e6d9595b11bb2b"
+
 
 def _run() -> Run:
     r = Run("r1", CFG)
@@ -29,10 +37,10 @@ def _run() -> Run:
     # elites (its own handle/sha/repo) -- matches real cold-start, where the
     # union cell is seeded from the board's overall champion, not necessarily
     # any one identity's own champion (harness/loop.py select.overall_champion).
-    origins = {f"d:{i}": {"kind": "hub", "handle": "clyde", "sha": "11",
+    origins = {f"d:{i}": {"kind": "hub", "handle": "clyde", "sha": SHA_CHAMPION,
                           "repo": "github.com/t/a", "iteration": None}
                for i in ids}
-    origins["u1"] = {"kind": "hub", "handle": "clyde", "sha": "33",
+    origins["u1"] = {"kind": "hub", "handle": "clyde", "sha": SHA_UNION,
                       "repo": "github.com/t/u", "iteration": None}
     r.apply_state({"phase": "cold-start", "iteration": 0, "identities": ids,
                    "cells": [{"identity": i, "score": 0.4, "digest": f"d:{i}"} for i in ids],
@@ -118,6 +126,18 @@ class _CellSel:
 
     def __init__(self, row: int, col: int) -> None:
         self.coordinate = Coordinate(row, col)
+
+
+def test_origin_label_shortens_a_full_hub_sha():
+    """Important 1: run.py's `_origin_label` shortens a hub sha to 7 chars
+    (git's own abbreviation length) -- the ONE place this fix needs to land,
+    since the Progress table, setup/iteration prose and DetailView titles all
+    read the label through it."""
+    r = _run()
+    label = r.origin_label("d:wiz-elf-cha-mal")
+    assert label == f"clyde @{SHA_CHAMPION[:7]}"
+    assert SHA_CHAMPION not in label
+    assert len(label) <= 15   # fits status.best_cell's `{label:<15}` padding
 
 
 async def test_progress_table_has_best_overall_and_role_groups():
@@ -719,6 +739,20 @@ async def test_the_legend_explains_the_marks():
         await pilot.pause()
         legend = str(host.screen.query_one("#legend", Static).render())
         assert "score = average progression" in legend and "BEST OVERALL" in legend
+
+
+async def test_the_legend_renders_as_exactly_three_rows():
+    """Important 2: story.LEGEND's three lines must each fit #legend's
+    content width at 120 columns (78) so the legend never wraps into five
+    ragged lines -- costing two extra rows of a 34-row terminal."""
+    host = _Host(_run())
+    async with host.run_test(size=(120, 34)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        mon.query_one("#tabs", TabbedContent).active = "tab_score"
+        await pilot.pause()
+        legend_widget = mon.query_one("#legend", Static)
+        assert legend_widget.size.height == 3
 
 
 async def test_the_detail_view_says_avg_and_games():

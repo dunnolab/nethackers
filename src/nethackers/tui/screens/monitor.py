@@ -1,7 +1,8 @@
-"""The evolution monitor: a left iteration list (init + every iteration, each
-marked live/registered/rejected/pending) next to Logs · Progress · Mutator Logs
-tabs, rendered from an app-owned ``Run``. Replaces the old cockpit/2-tab
-screen, built on real ``Run`` accessors.
+"""The evolution monitor: a left iteration list (setup + every iteration, each
+marked live / improved / no gain / failed test / agent failed / error /
+stopped / not run) next to Logs · Progress · Mutator Logs tabs, rendered from
+an app-owned ``Run``. Replaces the old cockpit/2-tab screen, built on real
+``Run`` accessors.
 
 Opening it **backfills** the whole view from the run's accumulated state (the
 iteration list + the currently-viewed iteration's Progress table), then the
@@ -611,7 +612,7 @@ class RunMonitor(Screen):
     def _render_statusline(self) -> None:
         live = self._live_section()
         live_name = _section_name(live) if live is not None and live != self.sel_iter else None
-        improved = sum(1 for k, r in self.run.iter_results.items() if k > 0 and r.registered)
+        improved = story.improved_count(self.run)
         self.query_one("#statusline", Static).update(S.status_line(
             _section_name(self.sel_iter), live_name, improved, self.run.cfg.iterations,
             self.run.run_time(), self.run.finished_usage()))

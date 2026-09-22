@@ -219,16 +219,12 @@ def test_apply_state_captures_origins_and_baseline():
     assert r.aa_baseline()["val-dwa-law-fem"] == 0.28
 
 
-def test_roles_and_token_usage():
+def test_roles_present_and_role_of():
     r = Run("r1", EvolveConfig("wiz-elf-cha-mal,val-dwa-law-fem,wiz-orc-cha-mal", "claude", 3))
     r.apply_state(_state("cold-start",
                          identities=["wiz-elf-cha-mal", "val-dwa-law-fem", "wiz-orc-cha-mal"]))
     assert r.roles_present() == ["wiz", "val"]       # first-seen order, deduped
     assert r.role_of("val-dwa-law-fem") == "val"
-    r.apply_log("iter 1/3", '{"type":"result","usage":{"input_tokens":10,"output_tokens":5,'
-                            '"cache_creation_input_tokens":3,"cache_read_input_tokens":100}}')
-    u = r.token_usage()
-    assert (u.input, u.output, u.cache_creation, u.cache_read) == (10, 5, 3, 100)
 
 
 def _cold(**kw):
@@ -509,7 +505,11 @@ def test_incumbent_trusts_a_seed_cells_measured_score_not_the_aa_floor():
     harness/loop.py records its origin as kind "seed" (`_origin("seed")`),
     not "hub" -- incumbent() must still use ITS MEASURED score (what
     CellArchive.insert actually compares new children against), not the
-    AutoAscend floor (which --from-seed leaves empty: 0.0)."""
+    AutoAscend floor (which --from-seed leaves empty: 0.0). Round-2 minor 4:
+    the LABEL must read "the starting bot", never "AutoAscend" -- that string
+    is reserved for the true no-cell floor (the else branch below, untouched
+    here) and would otherwise contradict the setup step's own "the starting
+    bot" group name and open_best's source line for this very cell."""
     ident = "val-dwa-law-fem"
     r = Run("r1", EvolveConfig(ident, "claude", 3, from_seed=True))
     r.apply_state({
@@ -521,8 +521,8 @@ def test_incumbent_trusts_a_seed_cells_measured_score_not_the_aa_floor():
         "coverage": (1, 1), "cell": None, "generation": 0,
         "baseline_dev": 0.0, "best_dev": 0.0, "wins": 0, "tokens": 0, "detail": "",
         "parent_digest": "", "parent_dev": 0.0})
-    score, _, kind, j = r.incumbent(ident, 1)
-    assert (score, kind, j) == (0.09, "aa", None)   # measured, NOT the empty 0.0 floor
+    score, label, kind, j = r.incumbent(ident, 1)
+    assert (score, label, kind, j) == (0.09, "the starting bot", "aa", None)
 
 
 def test_seed_row_translates_raw_nle_end_status_codes_to_words():
@@ -703,6 +703,25 @@ def _five_iteration_run(clock: _Clock) -> Run:
     clock.t = 400
     r.apply_state(_state("mutating", iteration=2))
     return r
+
+
+def test_pace_left_between_iterations_has_no_current_iteration_term():
+    """Minor 8: the docstring's "with no iteration in progress (between
+    iterations), it is simply mean x iterations left" branch (current is
+    None) had no direct test -- every existing pace_left test drives straight
+    into the next iteration's "mutating" state, so `running_iteration()` was
+    never actually None while durations existed."""
+    clock = _Clock()
+    r = Run("r1", EvolveConfig("val-dwa-law-fem", "claude", 5), clock=clock)
+    clock.t = 100
+    r.apply_state(_state("mutating", iteration=1))
+    clock.t = 400   # a 300 s iteration
+    r.apply_iteration(1, IterationResult(False, "no-cell-improved"))
+    r.apply_state(_state("rejected", iteration=1))
+    assert r.running_iteration() is None       # genuinely between iterations
+    clock.t = 450
+    # mean(300) x (5 iterations - 1 decided) = 1200, no overrun/current term
+    assert r.pace_left() == 1200
 
 
 def test_pace_left_is_none_until_an_iteration_finishes_then_projects_this_runs_pace():

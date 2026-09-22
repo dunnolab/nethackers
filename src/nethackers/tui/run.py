@@ -463,21 +463,28 @@ class Run:
                 out.append(role)
         return out
 
-    def token_usage(self) -> TokenUsage:
-        total = TokenUsage()
-        for meter in self.meters.values():
-            total = total + meter.usage
-        return total
-
     def _origin_label(self, digest: str) -> tuple[str, str]:
-        """(label, kind) for a program digest from the origins map."""
+        """(label, kind) for a program digest from the origins map. A hub
+        origin's ``sha`` is hubclient/publish.py's full ``git rev-parse HEAD``
+        (40 hex chars) -- shortened to 7 here (git's own abbreviation length;
+        the spec's own examples read `clyde @a1b2c3d`), the ONE place this
+        label is built, so every surface that shows it (the Progress table,
+        the setup/iteration prose, the union group name, DetailView titles)
+        gets the short form for free. A seed origin (--seed/--from-seed, no
+        hub champion) reads "the starting bot", matching the setup step and
+        open_best's own source line for the same cell -- never "AutoAscend",
+        which is reserved for the true no-cell floor (incumbent()'s own
+        no-cell branch, untouched here)."""
         o = self.origins().get(digest)
         if o is None:
             return "seed", "aa"
         if o["kind"] == "hub":
-            return f"{o.get('handle') or '?'} @{o.get('sha') or '?'}", "hub"
+            sha = o.get("sha")
+            return f"{o.get('handle') or '?'} @{sha[:7] if sha else '?'}", "hub"
         if o["kind"] == "run":
             return f"run · iter {o.get('iteration')}", "run"
+        if o["kind"] == "seed":
+            return "the starting bot", "aa"
         return "AutoAscend", "aa"
 
     def _completed_iters(self, upto_k: int) -> list[tuple[int, IterationResult]]:
@@ -624,16 +631,6 @@ class Run:
         if batch and batch.rows() and self.identities():
             return max(1, int(batch.rows()[0].get("total", 0)) // len(self.identities()))
         return 0
-
-    def iteration_status(self, k: int) -> str:
-        if k == 0:
-            return "init"
-        res = self.iter_results.get(k)
-        if res is not None:
-            return "registered" if res.registered else "rejected"
-        if self.state.get("iteration") == k and self.running:
-            return "running"
-        return "pending"
 
     def iter_target(self, k: int) -> str | None:
         """The cell/identity iteration ``k`` mutates (or "union"), from the

@@ -34,8 +34,8 @@ STOP_MARK = f"[{S._PARCHMENT}]■[/]"
 WARN_MARK = f"[{_WARN}]⚠[/]"
 
 LEGEND = (
-    "score = average progression over the games (0 = never left level 1 · 1.0 = ascended)\n"
-    "✎ being improved this iteration · ▲ beats the best so far · click a score for its games\n"
+    "score = average progression per game (0 = never left level 1 · 1.0 = ascended)\n"
+    "✎ being improved this iteration · ▲ beats best so far · a score is clickable\n"
     "★ BEST OVERALL = the one bot with the best average across all your identities")
 
 _SMOKE = "smoke test: one short game to check the edited bot runs"
@@ -108,7 +108,9 @@ def _decided(run: Run) -> dict[int, IterationResult]:
     return {k: r for k, r in run.iter_results.items() if k > 0}
 
 
-def _improved_count(run: Run) -> int:
+def improved_count(run: Run) -> int:
+    """How many decided iterations improved -- the one place this is counted
+    (Minor 5: monitor.py's status line used to recompute it inline)."""
     return sum(1 for r in _decided(run).values() if r.registered)
 
 
@@ -273,7 +275,12 @@ def _setup_next(run: Run) -> str:
 
 def _setup_footer(run: Run) -> str:
     if run.setup_ended_at is None:
-        return _setup_next(run) if run.running else f"{FAIL_MARK} setup didn't finish"
+        if run.running:
+            return _setup_next(run)
+        # Same distinction iter_label already makes for the same run (Minor
+        # 3): a user Stop must never read as a crash, and vice versa.
+        mark, word = _crash_word(run)
+        return f"{mark} the run {word} during setup"
     ids = run.identities()
     best = ""
     if len(ids) > 1:
@@ -611,7 +618,7 @@ def _iteration_now(run: Run, now: float, stopping: bool) -> str:
 def now_line(run: Run, now: float) -> str:
     """The monitor's always-visible "what's happening now" line."""
     total = run.cfg.iterations
-    improved = _improved_count(run)
+    improved = improved_count(run)
     if run.reopened:
         return f"{DONE_MARK} Reopened from an earlier session · {improved} of {total} improved"
     if run.status == "failed":
