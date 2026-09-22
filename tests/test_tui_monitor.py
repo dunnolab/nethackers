@@ -4,7 +4,7 @@ Mutator Logs/Logs tabs + a clickable Progress table, rendered from a ``Run``.
 from __future__ import annotations
 
 from textual.app import App
-from textual.widgets import DataTable
+from textual.widgets import DataTable, Static, TabbedContent, TabPane
 
 from nethackers.harness.loop import IterationResult
 from nethackers.tui.run import Run
@@ -427,3 +427,53 @@ async def test_empty_detail_table_survives_a_click_without_crashing():
         await pilot.click("#d_table", offset=(3, 0))    # header click -> used to IndexError
         await pilot.pause()
         assert mon.detail_open is True                  # survived, no crash
+
+
+async def test_the_monitor_opens_on_logs_with_the_now_line():
+    host = _Host(_run())
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        tabs = mon.query_one("#tabs", TabbedContent)
+        assert tabs.active == "tab_logs"
+        assert [p.id for p in tabs.query(TabPane)] == ["tab_logs", "tab_score", "tab_mutator"]
+        assert mon.steps_view is not None and "Setup" in mon.steps_view.header
+        assert "Setup" in str(mon.query_one("#now", Static).render())
+
+
+async def test_the_status_line_and_footer_say_where_you_are_and_how_to_leave():
+    host = _Host(_run())
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        text = str(mon.query_one("#statusline", Static).render())
+        assert text.strip().startswith("viewing setup") and "tokens in" in text
+    descriptions = {key: desc for key, _action, desc in RunMonitor.BINDINGS}
+    assert descriptions == {"escape": "Dashboard (run keeps going)", "s": "Stop run",
+                            "q": "Quit (stops the run)"}
+
+
+async def test_stop_records_the_request_and_the_now_line_says_so():
+    r = _run()
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        mon.action_stop()
+        await pilot.pause()
+        assert r.stop.is_set() and r.stop_requested_at is not None
+        assert "Stopping" in str(mon.query_one("#now", Static).render())
+
+
+async def test_logs_follow_the_selected_iteration():
+    r = _run()
+    ids = ["wiz-elf-cha-mal", "wiz-orc-cha-mal", "val-dwa-law-fem"]
+    r.apply_state({**r.state, "phase": "mutating", "iteration": 1, "cell": ids[0]})
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        mon._select(1)
+        await pilot.pause()
+        assert mon.steps_view is not None
+        assert "Iteration 1 of 3" in mon.steps_view.header

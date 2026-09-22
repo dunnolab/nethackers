@@ -137,9 +137,12 @@ def mutator_title(cfg: EvolveConfig) -> Text:
     return Text.from_markup(f"[dim]mutator[/] [b {_PARCHMENT}]{agent}[/]{ver}{model}{effort}")
 
 
-def token_subline(usage, seconds: float) -> Text:
-    return Text.from_markup(
-        f"[dim]tokens[/]  in [b]{_compact(usage.input)}[/] · out [b]{_compact(usage.output)}[/] "
-        f"· cached [dim]([/]write [b]{_compact(usage.cache_creation)}[/] · "
-        f"read [b]{_compact(usage.cache_read)}[/][dim])[/]      [dim]·[/]      "
-        f"[dim]time[/] [b]{dur(seconds)}[/]")
+def status_line(viewing: str, live: str | None, improved: int, total: int,
+                seconds: float, usage) -> str:
+    """The monitor's bottom bar: orientation first, tokens last -- a narrow
+    terminal truncates the least important part. ``usage`` is a TokenUsage of
+    FINISHED edits (Run.finished_usage)."""
+    where = f"viewing {viewing}" + (f" (live: {live})" if live else "")
+    return (f" {where} · {improved} of {total} improved · run time {short_time(seconds)} · "
+            f"tokens in {_compact(usage.input)} · out {_compact(usage.output)} · "
+            f"cache write {_compact(usage.cache_creation)} · read {_compact(usage.cache_read)} ")

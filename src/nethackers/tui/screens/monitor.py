@@ -21,9 +21,11 @@ from __future__ import annotations
 
 from statistics import pstdev
 
+from rich.console import Group
+from rich.table import Table
 from rich.text import Text
 from textual.app import ComposeResult
-from textual.containers import Horizontal, Vertical
+from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.css.query import NoMatches
 from textual.screen import Screen
 from textual.widgets import (
@@ -40,7 +42,7 @@ from textual.widgets.data_table import RowKey
 from textual.widgets.option_list import Option
 
 from nethackers.harness.loop import IterationResult
-from nethackers.tui import status as S
+from nethackers.tui import status as S, story
 from nethackers.tui.run import EvalView, Run
 from nethackers.tui.screens._clicktable import ClickTable
 
@@ -48,6 +50,30 @@ from nethackers.tui.screens._clicktable import ClickTable
 # line "kind" -- the same map the old monitor used for its agent-log tab.
 _KIND_STYLE = {"assistant": "", "tool": "cyan", "result": "green b", "meta": "dim",
                "brief": "#d2a24c"}
+
+
+def _section_name(k: int) -> str:
+    return "setup" if k == 0 else f"iter {k}"
+
+
+def _section_renderable(view: story.SectionView) -> Group:
+    """A story.SectionView as the Logs tab draws it: header, intro, then the
+    step rows in a mark | label | right-aligned-duration grid, then a footer."""
+    parts: list = [Text.from_markup(view.header)]
+    if view.intro:
+        parts.append(Text.from_markup(view.intro))
+    if view.rows:
+        grid = Table.grid(expand=True, padding=(0, 1))
+        grid.add_column(width=1, no_wrap=True)
+        grid.add_column(ratio=1)
+        grid.add_column(justify="right", width=8, no_wrap=True)
+        for row in view.rows:
+            grid.add_row(Text.from_markup(row.mark), Text.from_markup(row.label),
+                         Text(row.dur, style="#7c745f"))
+        parts += [Text(""), grid]
+    if view.footer:
+        parts += [Text(""), Text.from_markup(view.footer)]
+    return Group(*parts)
 
 
 class DetailView(Vertical):
@@ -210,7 +236,7 @@ class RunMonitor(Screen):
     RunMonitor #titlebar { height: 1; }
     RunMonitor #title_name { width: 1fr; padding: 0 1; }
     RunMonitor #title_mutator { width: auto; padding: 0 1; }
-    RunMonitor #obj { height: 1; padding: 0 1; color: #d7c9a2; }
+    RunMonitor #now { height: auto; padding: 0 1; background: #20202b; }
     RunMonitor #stage { height: 1fr; }
     RunMonitor #main { height: 1fr; }
     RunMonitor #left { width: 30; }
@@ -223,7 +249,7 @@ class RunMonitor(Screen):
     RunMonitor #d_src { height: auto; color: #7c745f; padding: 0 0 1 0; }
     RunMonitor #d_table { height: 1fr; }
     RunMonitor #back { margin: 1 0 0 0; width: auto; }
-    RunMonitor #proclog { height: 1fr; }
+    RunMonitor #steps_scroll { height: 1fr; }
     RunMonitor TabbedContent { height: 1fr; }
     RunMonitor DataTable > .datatable--cursor {
         background: #d2a24c; color: #0b0b0e; text-style: bold;
@@ -231,9 +257,9 @@ class RunMonitor(Screen):
     RunMonitor DataTable:focus > .datatable--cursor { background: #ffd54a; color: #0b0b0e; }
     """
     BINDINGS = [
-        ("escape", "nav_back", "Back"),
-        ("s", "stop", "Stop"),
-        ("q", "app.quit", "Quit"),
+        ("escape", "nav_back", "Dashboard (run keeps going)"),
+        ("s", "stop", "Stop run"),
+        ("q", "app.quit", "Quit (stops the run)"),
     ]
 
     def __init__(self, run: Run) -> None:
@@ -243,6 +269,7 @@ class RunMonitor(Screen):
         self._row_keys: dict[str, RowKey] = {}              # ident -> its table row key
         self._last_cursor_row = 0
         self._mutlog_shown = 0    # #mutlog lines already written, for the viewed iteration
+        self._steps_view: story.SectionView | None = None
         # False until on_mount finishes building the view. push_screen returns
         # (synchronously) before this screen's own compose/on_mount actually
         # runs (that's scheduled on the message pump) -- so a run whose worker
@@ -265,20 +292,21 @@ class RunMonitor(Screen):
         with Horizontal(id="titlebar"):
             yield Static("[b #d2a24c]⚔ NetHackers · evolve monitor[/]", id="title_name")
             yield Static(id="title_mutator")
-        yield Static(id="obj")   # the token topline (in/out/cache · time)
+        yield Static(id="now")   # the always-visible "what's happening now" line
         with Vertical(id="stage"):
             with Horizontal(id="main"):
                 with Vertical(id="left", classes="panel"):
                     yield OptionList(id="iters")
-                with Vertical(id="right"), TabbedContent(id="tabs"):
+                with Vertical(id="right"), TabbedContent(id="tabs", initial="tab_logs"):
+                    with TabPane("Logs", id="tab_logs"), VerticalScroll(
+                            id="steps_scroll", classes="panel"):
+                        yield Static(id="steps")
                     with TabPane("Progress", id="tab_score"), Vertical(id="progress_pane"):
                         yield ClickTable(id="idents", cursor_type="cell",
                                          zebra_stripes=True, classes="panel")
                     with TabPane("Mutator Logs", id="tab_mutator"):
                         yield RichLog(id="mutlog", classes="panel",
                                      wrap=True, markup=True, highlight=False)
-                    with TabPane("Logs", id="tab_proclog"):
-                        yield Static(id="proclog", classes="panel")
             yield DetailView(self.run, id="detailview", classes="panel")
         yield Static(id="statusline", classes="statusline")
         yield Footer()
@@ -288,7 +316,7 @@ class RunMonitor(Screen):
         self.query_one("#title_mutator", Static).update(S.mutator_title(self.run.cfg))
         self.query_one("#detailview").display = False
         self._render_iters()
-        # #idents/#mutlog/#proclog live inside a TabbedContent's TabPanes,
+        # #idents/#mutlog/#steps_scroll live inside a TabbedContent's TabPanes,
         # which -- per Textual -- aren't mounted yet during the SCREEN's own
         # on_mount (matches the old monitor's identical, already-documented
         # hazard for its own TabbedContent panes); retry next frame until
@@ -301,7 +329,7 @@ class RunMonitor(Screen):
         try:
             idents = self.query_one("#idents", ClickTable)
             self.query_one("#mutlog").border_title = " mutator · coding-agent transcript "
-            self.query_one("#proclog").border_title = " process log · what's happening now "
+            self.query_one("#steps_scroll").border_title = " what's happening "
         except NoMatches:
             self.call_after_refresh(self._backfill)
             return
@@ -322,8 +350,9 @@ class RunMonitor(Screen):
         self._select(self.sel_iter)
 
     def action_stop(self) -> None:
-        self.run.stop.set()
+        self.run.request_stop()
         self.app.notify(f"stopping run {self.run.rid} …", timeout=4)
+        self._render_now()
 
     def action_nav_back(self) -> None:
         self.dismiss()
@@ -457,130 +486,61 @@ class RunMonitor(Screen):
     def _render_mutator(self) -> None:
         log = self.query_one("#mutlog", RichLog)
         log.clear()
+        if self.sel_iter == 0:
+            log.write(Text("setup doesn't run the agent — pick an iteration on the left",
+                           style="dim"))
+            self._mutlog_shown = 0
+            return
         lines = self.run.logs.get(self.run.tag(self.sel_iter), [])
         for kind, text in lines:
             log.write(Text(text, style=_KIND_STYLE.get(kind, "")))
         self._mutlog_shown = len(lines)
 
-    def _render_proclog(self) -> None:
-        self.query_one("#proclog", Static).update(
-            Text.from_markup("\n".join(self._proclog_lines(self.sel_iter))))
+    # ---- the story: now line, Logs step list, status line ----------------------
+    @property
+    def steps_view(self) -> story.SectionView | None:
+        """The step list the Logs tab shows right now."""
+        return self._steps_view
 
-    def _proclog_lines(self, k: int) -> list[str]:
-        if self.run.reopened:
-            return self._reopened_proclog(k)
-        status = self.run.iteration_status(k)
-        if k == 0:
-            lines = ["[dim]cold-start · seeding identities from the hub[/]"]
-            for ident in self.run.identities():
-                inc = self.run.incumbent(ident, 0)
-                lines.append(f"  {ident:<18} ← {inc[1]}   ({inc[0]:.2f})")
-            bo = self.run.best_overall(0)
-            lines.append(f"best overall = {bo[1]}   x̄ {bo[0]:.2f}")
-            scored = sum(len(b.rows_by_index) for b in self.run.batches)
-            if self.run.state.get("phase") == "cold-start":
-                lines.append(f"[dim]no mutation at init — evaluating the seeds "
-                             f"· {scored} episode(s) scored ⊙[/]")
-            else:
-                lines.append(f"[dim]no mutation at init — {scored} seed episode(s) "
-                             f"evaluated[/]")
-            return lines
-        if status == "pending":
-            return ["[dim]iteration not started[/]"]
-        meta = self.run.iter_meta.get(k) or {}
-        cfg = self.run.cfg
-        bits = [f"operator={cfg.backend}"]
-        if cfg.model:
-            bits.append(f"model={cfg.model}")
-        if cfg.effort:
-            bits.append(f"effort={cfg.effort}")
-        lines = [f"[dim]── iter {k} ──[/]",
-                 f"seed parent   ← {meta.get('seed_desc', '—')}",
-                 "invoke mutator   " + "  ".join(bits)]
-        evals = self.run.iteration_evals(k)
-        for ident in self.run.identities():
-            ev = self._row_eval(ident, evals)
-            if ev.revealed == 0:
-                lines.append(f"  {ident:<18}  0/{ev.total}  [dim]queued[/]")
-            elif ev.done:
-                lines.append(f"  {ident:<18}  {ev.revealed:>2}/{ev.total}  x̄ {ev.avg:.2f}")
-            else:
-                lines.append(f"  {ident:<18}  {ev.revealed:>2}/{ev.total}  "
-                             f"x̄ {ev.avg:.2f}  [dim]⊙[/]")
-        if status == "running":
-            lines.append("[dim]… evaluating …[/]")
-        elif status == "registered":
-            lines.append("[green]gate: registered · new best[/]")
-        else:
-            lines.append("[dim]gate: rejected · no improvement[/]")
-        return lines
+    def _render_now(self) -> None:
+        self.query_one("#now", Static).update(
+            Text.from_markup(story.now_line(self.run, self.run.now())))
 
-    def _reopened_proclog(self, k: int) -> list[str]:
-        """Process log for a run rebuilt from disk: the per-iteration facts the
-        durable log kept (dev fitness, improved cells, gate, death causes). The
-        per-seed detail is gone, so it points at the Mutator Logs instead."""
-        cfg = self.run.cfg
-        if k == 0:
-            return [f"[dim]reopened · {cfg.objective}[/]",
-                    "[dim]cold-start seeding wasn't recorded[/]"]
-        res = self.run.iter_results.get(k)
-        if res is None:
-            return ["[dim]this iteration wasn't recorded[/]"]
-        bits = [f"operator={cfg.backend}"]
-        if cfg.model:
-            bits.append(f"model={cfg.model}")
-        if cfg.effort:
-            bits.append(f"effort={cfg.effort}")
-        lines = [f"[dim]── iter {k} ──[/]", "invoke mutator   " + "  ".join(bits)]
-        if res.dev_fitness is not None:
-            lines.append(f"dev fitness   x̄ {res.dev_fitness:.2f}")
-        if res.improved:
-            lines.append(f"improved   {', '.join(res.improved)}")
-        lines.append("[green]gate: registered[/]" if res.registered
-                     else f"[dim]gate: rejected · {res.reason}[/]")
-        if res.causes:
-            top = ", ".join(f"{c}×{n}" for c, n in sorted(
-                res.causes.items(), key=lambda kv: kv[1], reverse=True)[:4])
-            lines.append(f"[dim]deaths: {top}[/]")
-        lines.append("[dim]per-seed detail not recorded — the mutator transcript is "
-                     "in the Mutator Logs tab[/]")
-        return lines
+    def _render_steps(self) -> None:
+        view = story.section_view(self.run, self.sel_iter, self.run.now())
+        self._steps_view = view
+        self.query_one("#steps", Static).update(_section_renderable(view))
 
-    def _render_topline(self) -> None:
-        # tokens (in/out/cache-write/cache-read) + total wall time -- always
-        # advancing, so it lives up top away from the per-iteration table.
-        self.query_one("#obj", Static).update(
-            S.token_subline(self.run.token_usage(), self.run.run_time()))
+    def _live_section(self) -> int | None:
+        """What the run is working on now: 0 during setup, then the running
+        iteration; None between iterations and once the run is over."""
+        if not self.run.running or self.run.reopened:
+            return None
+        if self.run.setup_ended_at is None:
+            return 0
+        return self.run.running_iteration()
+
+    def _last_ran(self) -> int:
+        """The last iteration that started (0 if none did)."""
+        ran = [k for k in range(1, self.run.cfg.iterations + 1)
+               if k in self.run.iter_results or k in self.run.iter_times]
+        return max(ran) if ran else 0
 
     def _render_statusline(self) -> None:
-        viewing = "init" if self.sel_iter == 0 else f"iter {self.sel_iter}"
-        if self.run.reopened:
-            # no persisted per-identity scores -> no honest "best overall" to show
-            self.query_one("#statusline", Static).update(
-                f" reopened from an earlier session · rebuilt from disk   "
-                f"·   viewing {viewing} ")
-            return
-        bo = self.run.best_overall(self.sel_iter)
-        run_k = next((k for k in range(1, self.run.cfg.iterations + 1)
-                      if self.run.iteration_status(k) == "running"), None)
-        if run_k is not None:
-            where = f"iter {run_k}/{self.run.cfg.iterations} running"
-        elif self.run.state.get("phase") == "cold-start":
-            where = "cold-starting"
-        elif not self.run.running:
-            where = "all iterations done"
-        else:
-            where = f"{self.run.cfg.iterations} iterations"
-        self.query_one("#statusline", Static).update(
-            f" best overall x̄ {bo[0]:.2f}   ·   {where}   ·   viewing {viewing} ")
+        live = self._live_section()
+        live_name = _section_name(live) if live is not None and live != self.sel_iter else None
+        improved = sum(1 for k, r in self.run.iter_results.items() if k > 0 and r.registered)
+        self.query_one("#statusline", Static).update(S.status_line(
+            _section_name(self.sel_iter), live_name, improved, self.run.cfg.iterations,
+            self.run.run_time(), self.run.finished_usage()))
 
     def _select(self, index: int) -> None:
         self.sel_iter = index
         self._rebuild_score()
         self._render_mutator()
-        self._render_proclog()
+        self._render_steps()
         self._render_statusline()
-        self._render_topline()
+        self._render_now()
 
     # ---- detail open/close -----------------------------------------------------
     def _open_detail(self) -> None:
@@ -730,27 +690,25 @@ class RunMonitor(Screen):
             return   # pre-mount race (see __init__) -- on_mount will backfill
         self._render_iters()
         if self.sel_iter == 0 and self.run.state.get("phase") == "cold-start":
-            # Cold-start streams cells in one champion at a time (loop.py emits
-            # per insert). Rebuild the init Progress table + proclog on each
-            # frame so the identities appear and their scores fill in live,
-            # instead of the table sitting empty until the whole cold-start ends.
             self._rebuild_score()
-            self._render_proclog()
         elif self.run.iteration_status(self.sel_iter) == "running":
             self._update_score()
+        self._render_steps()
         self._render_statusline()
-        self._render_topline()
+        self._render_now()
 
     def render_episode(self, label: str, ep: dict) -> None:
         if not self._ready:
             return
         self._update_score()
-        self._render_proclog()
+        self._render_steps()
+        self._render_now()
         self._refresh_detail_if_open()   # a live open_run() table gains a row
 
     def render_log(self, tag: str) -> None:
         if not self._ready:
             return
+        self._render_now()               # the live action count
         if tag != self.run.tag(self.sel_iter):
             return   # not the viewed iteration -- its log isn't on screen
         log = self.query_one("#mutlog", RichLog)
@@ -758,23 +716,25 @@ class RunMonitor(Screen):
         for kind, text in lines[self._mutlog_shown:]:
             log.write(Text(text, style=_KIND_STYLE.get(kind, "")))
         self._mutlog_shown = len(lines)
+        self._render_steps()             # the action count + last action
 
     def render_iteration(self, iteration: int, result: IterationResult) -> None:
         if not self._ready:
             return
-        self._render_iters()   # status rollover: running -> registered/rejected
+        self._render_iters()   # status rollover: running -> decided
         if iteration <= self.sel_iter:
-            # a decided iteration at-or-before the viewed one: its own row
-            # needs its final (not live-streaming) rendering, and/or it may
-            # have raised the incumbent/BEST OVERALL baseline the viewed
-            # iteration's row is computed against.
             self._rebuild_score()
+        self._render_steps()
+        self._render_statusline()
+        self._render_now()
         # a still-open open_run() table upgrades from live (cause/time "—")
         # to the decided iteration's full per-seed detail (§5.5).
         self._refresh_detail_if_open()
 
     def _tick(self) -> None:
-        # the run-time clock + cumulative tokens advance every second even
-        # between worker events -- keep the status line's subline live.
+        # elapsed times and the pace move every second, between worker events
+        if not self._ready:
+            return
+        self._render_now()
+        self._render_steps()
         self._render_statusline()
-        self._render_topline()

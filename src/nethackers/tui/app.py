@@ -374,7 +374,7 @@ class NetHackersApp(App):
     def stop_run(self, rid: str) -> None:
         run = self._runs.get(rid)
         if run is not None:
-            run.stop.set()
+            run.request_stop()
 
     def action_quit(self) -> None:  # type: ignore[override]
         for run in self._runs.values():
