@@ -380,13 +380,15 @@ async def test_cold_start_frame_populates_the_progress_table_live():
     # yet -- loop.py's early emit), render_state must rebuild the Progress table
     # so the identities appear immediately, instead of the table staying empty
     # until the whole cold-start eval finishes.
+    # Task 5: Run.identities() now falls back to the resolved objective, so the
+    # table already has rows before this first frame -- see the first assertion.
     r = Run("r1", CFG)   # _INITIAL_STATE carries no "identities"
     host = _Host(r)
     async with host.run_test(size=(140, 42)) as pilot:
         await pilot.pause()
         mon = host.screen
         dt = mon.query_one("#idents", DataTable)
-        assert dt.row_count == 0                       # empty before any cold-start frame
+        assert dt.row_count > 0            # rows now come from the objective before the first state
         ids = ["wiz-elf-cha-mal", "wiz-orc-cha-mal", "val-dwa-law-fem"]
         r.apply_state({"phase": "cold-start", "iteration": 0, "identities": ids,
                        "cells": [], "origins": {}, "aa_baseline": {i: 0.3 for i in ids},

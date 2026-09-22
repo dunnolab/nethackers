@@ -1,7 +1,10 @@
 """Unit tests for the app-owned run state (tui.run.Run)."""
 from __future__ import annotations
 
-from nethackers.tui.run import Run
+import json
+
+from nethackers.harness.loop import IterationResult
+from nethackers.tui.run import Run, outcome_word
 from nethackers.tui.status import EvolveConfig
 
 CFG = EvolveConfig("val-dwa-law-fem", "claude", 3)
@@ -172,10 +175,10 @@ def test_identities_and_parent_means_read_from_state():
     assert r.parent_means() == {"a": 0.1, "b": 0.2}
 
 
-def test_identities_and_parent_means_default_empty_when_absent():
-    r = Run("r1", CFG)
-    r.apply_state(_state("mutating"))  # single/random objectives never set these keys
-    assert r.identities() == []
+def test_identities_fall_back_to_the_objective_before_the_loop_names_them():
+    r = Run("r1", CFG)                      # objective "val-dwa-law-fem"
+    r.apply_state(_state("mutating"))       # a state without "identities"
+    assert r.identities() == ["val-dwa-law-fem"]
     assert r.parent_means() == {}
 
 
@@ -518,3 +521,157 @@ def test_seed_row_translates_raw_nle_end_status_codes_to_words():
     assert _seed_row({"status": "completed"})["status"] == "died"
     # a word-valued end_status (fixtures / future arena) passes straight through.
     assert _seed_row({"status": "completed", "end_status": "died"})["status"] == "died"
+
+
+IDS3 = ["val-dwa-law-fem", "val-hum-neu-fem", "wiz-elf-cha-mal"]
+
+
+class _Clock:
+    def __init__(self, t: float = 100.0) -> None:
+        self.t = t
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def test_identities_fallback_is_empty_for_an_unresolvable_objective():
+    assert Run("r", EvolveConfig("v1,v2", "claude", 3)).identities() == []
+
+
+def test_games_come_from_the_objectives_dev_spec():
+    r = Run("r", EvolveConfig(",".join(IDS3), "claude", 3))
+    assert r.games_total() == 45 and r.games_per_identity() == 15
+    assert Run("r", EvolveConfig("v1,v2", "claude", 3)).games_total() == 0
+
+
+def test_iteration_steps_are_stamped_from_the_loop_phases():
+    clock = _Clock()
+    r = Run("r1", CFG, clock=clock)
+    clock.t = 110
+    r.apply_state(_state("mutating", iteration=1))
+    clock.t = 200
+    r.apply_state(_state("gating", iteration=1))
+    clock.t = 220
+    r.apply_state(_state("evaluating-dev", iteration=1))
+    clock.t = 400
+    r.apply_state(_state("registered", iteration=1))
+    t = r.iter_times[1]
+    assert (t.edit_start, t.edit_end, t.smoke_end, t.decided) == (110, 200, 220, 400)
+    assert r.iteration_duration(1) == 290
+
+
+def test_a_gate_rejection_and_an_agent_error_close_their_steps():
+    clock = _Clock()
+    r = Run("r1", CFG, clock=clock)
+    r.apply_state(_state("mutating", iteration=1))
+    clock.t = 150
+    r.apply_state(_state("gating", iteration=1))
+    clock.t = 160
+    r.apply_state(_state("rejected", iteration=1, detail="gate: crashed"))
+    assert r.iter_times[1].smoke_end == 160 and r.iter_times[1].decided == 160
+    clock.t = 170
+    r.apply_state(_state("mutating", iteration=2))
+    clock.t = 190
+    r.apply_state(_state("error", iteration=2, detail="boom"))
+    assert r.iter_times[2].edit_end == 190 and r.iter_times[2].decided == 190
+
+
+def test_the_dev_batch_completing_stamps_play_end():
+    clock = _Clock()
+    r = Run("r1", CFG, clock=clock)
+    r.apply_state(_state("mutating", iteration=1))
+    for i, at in ((0, 300.0), (1, 330.0)):
+        clock.t = at
+        r.apply_episode("iter 1/3 · dev", {"index": i, "total": 2, "progress": 0.1,
+                                          "status": "completed"})
+    assert r.iter_times[1].play_end == 330
+    batch = r.batch_for("iter 1/3 · dev")
+    assert batch is not None and batch.done and batch.ended == 330 and batch.total == 2
+
+
+def test_first_state_and_setup_end_are_stamped():
+    clock = _Clock()
+    r = Run("r1", CFG, clock=clock)
+    assert r.first_state_at is None
+    clock.t = 106
+    r.apply_state(_state("cold-start", iteration=0))
+    clock.t = 500
+    r.apply_state(_state("mutating", iteration=1))
+    assert r.first_state_at == 106 and r.setup_ended_at == 500
+    assert r.setup_duration() == 400
+
+
+def test_actions_are_the_agents_tool_lines_for_every_operator():
+    lines = {
+        "claude": json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Edit", "input": {"file_path": "bot.py"}}]}}),
+        "codex": json.dumps({"type": "item.started", "item": {
+            "type": "file_change", "changes": [{"path": "/w/bot.py"}]}}),
+        "opencode2": json.dumps({"type": "tool_use", "part": {"tool": "shell", "state": {
+            "status": "completed", "input": {"command": "pytest -q"}}}}),
+    }
+    expected = {"claude": ["edit bot.py"], "codex": ["edit bot.py"],
+                "opencode2": ["shell pytest -q"]}
+    for backend, line in lines.items():
+        r = Run("r", EvolveConfig("val-dwa-law-fem", backend, 3))
+        r.apply_log(r.tag(1), line)
+        assert r.actions(1) == expected[backend], backend
+
+
+def test_finished_usage_counts_only_edits_that_have_ended():
+    clock = _Clock()
+    r = Run("r1", CFG, clock=clock)
+    r.apply_state(_state("mutating", iteration=1))
+    r.apply_log(r.tag(1), json.dumps({"type": "assistant", "message": {
+        "usage": {"input_tokens": 100, "output_tokens": 10}, "content": []}}))
+    assert r.edit_usage(1).spend == 110
+    assert r.finished_usage().spend == 0         # the edit is still running
+    r.apply_state(_state("gating", iteration=1))
+    assert r.finished_usage().spend == 110
+
+
+def test_outcome_words_follow_the_loops_reasons():
+    assert outcome_word(IterationResult(True, "registered")) == "improved"
+    assert outcome_word(IterationResult(False, "no-cell-improved")) == "no gain"
+    assert outcome_word(IterationResult(False, "gate:crashed")) == "failed test"
+    assert outcome_word(IterationResult(False, "operator-error:exit 1")) == "agent failed"
+    assert outcome_word(IterationResult(False, "error:boom")) == "error"
+
+
+def _five_iteration_run(clock: _Clock) -> Run:
+    r = Run("r1", EvolveConfig("val-dwa-law-fem", "claude", 5), clock=clock)
+    clock.t = 100
+    r.apply_state(_state("mutating", iteration=1))
+    clock.t = 400
+    r.apply_iteration(1, IterationResult(False, "no-cell-improved"))
+    r.apply_state(_state("rejected", iteration=1))
+    clock.t = 400
+    r.apply_state(_state("mutating", iteration=2))
+    return r
+
+
+def test_pace_left_is_none_until_an_iteration_finishes_then_projects_this_runs_pace():
+    clock = _Clock()
+    r = Run("r1", EvolveConfig("val-dwa-law-fem", "claude", 5), clock=clock)
+    r.apply_state(_state("mutating", iteration=1))
+    assert r.pace_left() is None                  # nothing measured yet
+    r = _five_iteration_run(clock)
+    clock.t = 500                                 # 100 s into iteration 2
+    # 300 s per iteration x 3 after the current one + (300 - 100) left of it
+    assert r.pace_left() == 1100
+
+
+def test_pace_left_never_lets_an_overrun_eat_later_iterations():
+    clock = _Clock()
+    r = _five_iteration_run(clock)
+    clock.t = 850                                 # 450 s into iteration 2 (> 300)
+    assert r.pace_left() == 900
+
+
+def test_request_stop_records_when_and_ends_the_projection():
+    clock = _Clock()
+    r = _five_iteration_run(clock)
+    clock.t = 450
+    r.request_stop()
+    assert r.stop.is_set() and r.stop_requested_at == 450
+    assert r.pace_left() is None

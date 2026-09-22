@@ -55,3 +55,15 @@ def test_mutator_title_includes_agent_version_model_effort():
 def test_token_subline_shows_four_kinds():
     txt = str(S.token_subline(TokenUsage(12000, 3000, 6000, 500000), 3660))
     assert "12.0k" in txt and "500.0k" in txt and "1h 01m" in txt
+
+
+def test_short_time_is_seconds_then_minutes_then_hours():
+    assert S.short_time(45) == "45s"
+    assert S.short_time(420) == "7m"
+    assert S.short_time(3840) == "1h 04m"
+
+
+def test_agent_name_covers_every_operator():
+    assert S.agent_name(EvolveConfig("x", "opencode2", 1)) == "OpenCode"
+    assert S.agent_name(EvolveConfig("x", "codex", 1)) == "Codex"
+    assert S.agent_name(EvolveConfig("x", "claude", 1)) == "Claude Code"

@@ -4,14 +4,18 @@ opened, left, and reopened. Pure data + the same worker->UI reductions the old
 ``EvolveScreen`` applied inline -- no Textual widgets, so it's unit-tested."""
 from __future__ import annotations
 
+import re
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from statistics import pstdev
 
 from nethackers.harness.aggregate import end_status_word
 from nethackers.harness.loop import IterationResult
 from nethackers.harness.metering import Meter, TokenUsage
+from nethackers.harness.seeds import dev_spec
+from nethackers.hub.selector import resolve
 from nethackers.tui.prettify import prettify
 from nethackers.tui.status import EvolveConfig
 
@@ -23,6 +27,9 @@ _INITIAL_STATE: dict = {
     "cell": None, "cells": [], "coverage": (0, 0),
 }
 
+# harness/loop.py labels an iteration's dev eval `iter <k>/<n> · dev`
+_DEV_LABEL = re.compile(r"^iter (\d+)/\d+ · dev$")
+
 
 @dataclass
 class Batch:
@@ -32,6 +39,8 @@ class Batch:
     label: str
     rows_by_index: dict[int, dict] = field(default_factory=dict)
     done: bool = False
+    ended: float | None = None   # when the last expected episode arrived (run clock)
+    total: int = 0               # episodes this batch plays (from the stream)
 
     def rows(self) -> list[dict]:
         return [self.rows_by_index[k] for k in sorted(self.rows_by_index)]
@@ -100,13 +109,40 @@ def _seed_row(raw: dict) -> dict:
     }
 
 
+@dataclass
+class IterTimes:
+    """When one iteration reached each step, on the run's clock; None until then."""
+
+    edit_start: float | None = None
+    edit_end: float | None = None
+    smoke_end: float | None = None
+    play_end: float | None = None
+    decided: float | None = None
+
+
+def outcome_word(result: IterationResult) -> str:
+    """The plain word for a decided iteration -- improved | no gain |
+    failed test | agent failed | error -- from the loop's reason. Never
+    "kept"/"discarded": the loop sends every scored bot to the hub."""
+    if result.registered:
+        return "improved"
+    reason = result.reason or ""
+    if reason.startswith("gate:"):
+        return "failed test"
+    if reason.startswith("operator-error:"):
+        return "agent failed"
+    if reason.startswith("error:"):
+        return "error"
+    return "no gain"
+
+
 class Run:
     """One evolution's live state. ``apply_*`` are the worker->UI reductions
     (called on the UI thread, from the app's run worker); the read helpers
     feed a monitor's backfill and the Runs list."""
 
-    def __init__(self, rid: str, cfg: EvolveConfig,
-                 stop: threading.Event | None = None) -> None:
+    def __init__(self, rid: str, cfg: EvolveConfig, stop: threading.Event | None = None,
+                 *, clock: Callable[[], float] | None = None) -> None:
         self.rid = rid
         self.cfg = cfg
         self.status = "running"  # running | done | failed | stopped
@@ -119,7 +155,8 @@ class Run:
         self.results: object | None = None
         self.error: BaseException | None = None
         self.stop = stop if stop is not None else threading.Event()
-        self.started = time.monotonic()   # wall-clock start (for run_time)
+        self._clock = clock or time.monotonic
+        self.started = self._clock()   # wall-clock start (for run_time)
         self.finished_at: float | None = None
 
         self.state: dict = dict(_INITIAL_STATE)
@@ -147,9 +184,24 @@ class Run:
         self.eval_step: tuple[int, int, float] | None = None
         self.mut_start = 0.0
 
+        # The story's timeline, on the run's clock (see tui/story.py).
+        self.first_state_at: float | None = None      # the pre-state hub fetch ended
+        self.setup_ended_at: float | None = None      # the phase first left cold-start
+        self.stop_requested_at: float | None = None   # Stop was pressed
+        self.iter_times: dict[int, IterTimes] = {}
+        self._objective_ids: list[str] | None = None
+        self._games_total: int | None = None
+
     # ---- worker -> UI reductions (UI thread) --------------------------------
     def apply_state(self, state: dict) -> None:
         prev = self.state.get("phase")
+        now = self._clock()
+        if self.first_state_at is None:
+            self.first_state_at = now
+        if (prev == "cold-start" and state["phase"] != "cold-start"
+                and self.setup_ended_at is None):
+            self.setup_ended_at = now
+        self._stamp(state["phase"], int(state.get("iteration") or 0), now)
         self.state = state
         if state.get("phase") == "cold-start":
             self.init_cells = {c["identity"]: c for c in (state.get("cells") or [])}
@@ -157,7 +209,7 @@ class Run:
             self.init_cell_results = state.get("cell_results") or {}
         phase = state["phase"]
         if phase == "mutating":
-            self.mut_start = time.monotonic()
+            self.mut_start = self._clock()
             tag = self.tag(state["iteration"])
             self.logs.setdefault(tag, [])
             self.sel_tag = tag
@@ -190,11 +242,35 @@ class Run:
             self.ledger_rows.append(
                 (state["iteration"], False, state["detail"] or "rejected"))
 
+    def _stamp(self, phase: str, k: int, now: float) -> None:
+        """Record when iteration k reached each step, from the loop's phases:
+        mutating -> gating (edit done) -> evaluating-dev (smoke test passed) ->
+        registered/rejected (decided); a gate rejection ends at the smoke test,
+        an error/abort ends the edit."""
+        if k <= 0:
+            return
+        if phase == "mutating":
+            self.iter_times[k] = IterTimes(edit_start=now)
+            return
+        if phase not in ("gating", "evaluating-dev", "registered", "rejected",
+                         "error", "aborted"):
+            return
+        t = self.iter_times.setdefault(k, IterTimes())
+        if t.edit_start is None:
+            t.edit_start = now     # a state that skipped "mutating" still started it
+        if t.edit_end is None:
+            t.edit_end = now
+        if phase in ("evaluating-dev", "registered", "rejected") and t.smoke_end is None:
+            t.smoke_end = now
+        if phase in ("registered", "rejected", "error", "aborted") and t.decided is None:
+            t.decided = now
+
     def apply_episode(self, label: str, ep: dict) -> None:
+        now = self._clock()
         batch = self.current_batch()
         if batch is None or batch.label != label:
             if batch is not None:
-                batch.done = True
+                self._seal(batch, now)
             batch = Batch(label=label)
             self.batches.append(batch)
             self.counts = {}
@@ -203,14 +279,29 @@ class Run:
         rows = batch.rows()
         mean = sum(float(r["progress"]) for r in rows) / len(rows)
         total = int(ep["total"])
+        batch.total = total
         # Each callback represents a finished episode. Seal the batch as soon
         # as every expected result has arrived; otherwise a completed batch
         # incorrectly keeps showing "running… n/n" throughout a following
         # non-evaluation phase such as mutation.
-        batch.done = len(rows) >= total
+        if len(rows) >= total:
+            self._seal(batch, now)
         # done/total = how many of this batch's episodes have finished (a true
         # completed-count), not the arriving episode's own (out-of-order) index.
         self.eval_step = (len(rows), total, mean)
+
+    def _seal(self, batch: Batch, now: float) -> None:
+        """Mark a batch finished, once: when -- and, for an iteration's dev
+        batch, when that iteration's games ended."""
+        if batch.ended is not None:
+            return
+        batch.done = True
+        batch.ended = now
+        m = _DEV_LABEL.match(batch.label)
+        if m:
+            t = self.iter_times.setdefault(int(m.group(1)), IterTimes())
+            if t.play_end is None:
+                t.play_end = now
 
     def apply_log(self, tag: str, line: str) -> None:
         self.logs.setdefault(tag, []).extend(prettify(self.cfg.backend, line))
@@ -227,10 +318,10 @@ class Run:
                error: BaseException | None = None) -> None:
         self.results = results
         self.error = error
-        self.finished_at = time.monotonic()
+        self.finished_at = self._clock()
         batch = self.current_batch()
         if batch is not None:
-            batch.done = True
+            self._seal(batch, self.finished_at)
         if error is not None:
             self.status = "failed"
         elif self.stop.is_set():
@@ -266,12 +357,12 @@ class Run:
 
     def run_time(self) -> float:
         """Wall-clock seconds since the run started (frozen once finished)."""
-        end = self.finished_at if self.finished_at is not None else time.monotonic()
+        end = self.finished_at if self.finished_at is not None else self._clock()
         return end - self.started
 
     def elapsed(self) -> float:
         if self.state.get("phase") == "mutating":
-            return time.monotonic() - self.mut_start
+            return self._clock() - self.mut_start
         return 0.0
 
     def split(self) -> str:
@@ -286,10 +377,19 @@ class Run:
         return "held" if (batch and "held" in batch.label) else "dev"
 
     def identities(self) -> list[str]:
-        """The set objective's identities, or [] -- the loop only puts
-        "identities" in state for set objectives; single/random runs never
-        set it, so this stays empty for them."""
-        return list(self.state.get("identities") or [])
+        """The objective's identities: the loop's own list once a state names
+        them, else resolved from the objective itself -- so the monitor has its
+        rows before the hub fetch finishes. [] for an objective that doesn't
+        resolve (e.g. a test's made-up identities)."""
+        named = self.state.get("identities")
+        if named:
+            return list(named)
+        if self._objective_ids is None:
+            try:
+                self._objective_ids = sorted(resolve(self.cfg.objective).identities)
+            except ValueError:
+                self._objective_ids = []
+        return list(self._objective_ids)
 
     def cells(self) -> list[dict]:
         """The MAP-Elites cell archive as of the last state: one
@@ -471,6 +571,9 @@ class Run:
 
     def _per_ident_total(self) -> int:
         """Best-effort per-identity seed count for progress ratios (seeds/ident)."""
+        exact = self.games_per_identity()
+        if exact:
+            return exact
         cr = self.init_cell_results or {}
         # per-identity episode counts from the cold-start snapshot; use them only
         # if ANY is non-zero (a dict of empty lists -- early cold-start, before
@@ -499,3 +602,101 @@ class Run:
         "mutating" state recorded into ``iter_meta`` -- None before that
         iteration has started."""
         return (self.iter_meta.get(k) or {}).get("target")
+
+    # ---- the story's data (tui/story.py) --------------------------------------
+    def now(self) -> float:
+        """The run's clock: monotonic seconds, injectable for tests."""
+        return self._clock()
+
+    def request_stop(self) -> None:
+        """Stop the run, remembering when (the story words a stop by it)."""
+        if self.stop_requested_at is None:
+            self.stop_requested_at = self._clock()
+        self.stop.set()
+
+    def batch_for(self, label: str) -> Batch | None:
+        """The most recent batch the loop streamed under ``label``."""
+        return next((b for b in reversed(self.batches) if b.label == label), None)
+
+    def origin_label(self, digest: str) -> str:
+        """A program's display label: ``clyde @a1b2c3d``, ``run · iter 3``."""
+        return self._origin_label(digest)[0]
+
+    def games_total(self) -> int:
+        """Games in one full evaluation (every identity's seeds), from the
+        harness's own dev spec; 0 if the objective doesn't resolve."""
+        if self._games_total is None:
+            try:
+                self._games_total = len(dev_spec(self.cfg.objective).batch)
+            except (ValueError, KeyError):
+                self._games_total = 0
+        return self._games_total
+
+    def games_per_identity(self) -> int:
+        n = len(self.identities())
+        return self.games_total() // n if n else 0
+
+    def actions(self, k: int) -> list[str]:
+        """Iteration k's agent actions -- its prettified "tool" lines, which
+        every operator streams live (unlike token usage: codex reports that
+        once, when the edit ends)."""
+        return [text for kind, text in self.logs.get(self.tag(k), []) if kind == "tool"]
+
+    def edit_usage(self, k: int) -> TokenUsage:
+        meter = self.meters.get(self.tag(k))
+        return meter.usage if meter is not None else TokenUsage()
+
+    def edit_finished(self, k: int) -> bool:
+        t = self.iter_times.get(k)
+        return (t is not None and t.edit_end is not None) or k in self.iter_results
+
+    def finished_usage(self) -> TokenUsage:
+        """Tokens of FINISHED edits only -- the same meaning for every agent,
+        since codex reports usage only when an edit ends."""
+        total = TokenUsage()
+        for k in range(1, self.cfg.iterations + 1):
+            if self.edit_finished(k):
+                total = total + self.edit_usage(k)
+        return total
+
+    def iteration_duration(self, k: int) -> float | None:
+        t = self.iter_times.get(k)
+        if t is None or t.edit_start is None or t.decided is None:
+            return None
+        return t.decided - t.edit_start
+
+    def running_iteration(self) -> int | None:
+        """The iteration in progress (started, not decided), or None."""
+        if not self.running:
+            return None
+        for k in sorted(self.iter_times):
+            t = self.iter_times[k]
+            if t.edit_start is not None and t.decided is None:
+                return k
+        return None
+
+    def setup_duration(self) -> float | None:
+        return None if self.setup_ended_at is None else self.setup_ended_at - self.started
+
+    def pace_left(self, now: float | None = None) -> float | None:
+        """'At this pace': the mean time of this run's finished iterations x the
+        iterations after the current one, plus what's left of the mean for the
+        current one (never negative: an overrun doesn't eat into later
+        iterations). None until one iteration has finished, while stopping, and
+        for runs reopened from disk (no timings)."""
+        if self.reopened or not self.running or self.stop.is_set():
+            return None
+        durations = [d for k in sorted(self.iter_times)
+                     if (d := self.iteration_duration(k)) is not None]
+        if not durations:
+            return None
+        now = self._clock() if now is None else now
+        per = sum(durations) / len(durations)
+        current = self.running_iteration()
+        after = self.cfg.iterations - len(durations) - (1 if current is not None else 0)
+        left = per * max(0, after)
+        if current is not None:
+            started = self.iter_times[current].edit_start
+            if started is not None:
+                left += max(0.0, per - (now - started))
+        return left
