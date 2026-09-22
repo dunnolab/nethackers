@@ -810,6 +810,35 @@ async def test_open_candidate_updates_live_as_more_games_land():
         assert "2/45 games" in head
 
 
+async def test_a_finished_run_never_says_still_playing_via_open_candidate():
+    """Ruling 16(a)/18: open_run already had this coverage
+    (test_a_finished_run_never_says_still_playing_on_a_cut_short_batch) --
+    open_candidate needs the same. A crashed/stopped run's cut-short
+    candidate batch must never read as still in progress."""
+    r = _run()
+    r.apply_state({"phase": "evaluating-dev", "iteration": 1, "identities": IDS3,
+                   "cells": [{"identity": i, "score": 0.4, "digest": f"d:{i}"} for i in IDS3],
+                   "origins": {}, "aa_baseline": {i: 0.3 for i in IDS3}, "union": None,
+                   "cell_results": {i: [] for i in IDS3}, "coverage": (3, 3),
+                   "cell": IDS3[0], "generation": 1,
+                   "baseline_dev": 0.0, "best_dev": 0.0, "wins": 0, "tokens": 0, "detail": "",
+                   "parent_digest": "", "parent_dev": 0.0})
+    ep = {"index": 0, "total": 45, "seed": 5, "character": IDS3[0],
+          "progress": 0.3, "status": "died", "turns": 200, "depth": 2}
+    r.apply_episode("iter 1/3 · dev", ep)
+    r.finish()   # crashed/stopped mid-iteration -- the batch never completed
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        mon._select(1)
+        mon.open_candidate()
+        await pilot.pause()
+        head = str(mon.query_one("#d_head", Static).render())
+        assert "1/45 games" in head
+        assert "still playing" not in head
+
+
 async def test_setup_best_overall_open_cell_opens_the_same_program_as_best_so_far():
     """Ruling 16(c): at setup, once the union has scored, the BEST OVERALL
     row's "this iteration" cell (col 2) is clickable and opens the SAME
@@ -825,3 +854,20 @@ async def test_setup_best_overall_open_cell_opens_the_same_program_as_best_so_fa
         assert mon.detail_open is True
         dv = mon.query_one("#detailview")
         assert dv.kind == "program"   # open_program's kind, not open_candidate's
+
+
+async def test_the_progress_table_never_scrolls_horizontally():
+    """Ruling 17: 18/26/30 (+ 2 cells of padding per column = 80) must fit
+    the Progress tab's real viewport with no horizontal scroll, both at a
+    120- and at a 140-column terminal -- the identity column and the role
+    headers must never sit off-screen at first paint."""
+    for size in ((120, 34), (140, 42)):
+        host = _Host(_run())
+        async with host.run_test(size=size) as pilot:
+            await pilot.pause()
+            mon = host.screen
+            mon.query_one("#tabs", TabbedContent).active = "tab_score"
+            await pilot.pause()
+            dt = mon.query_one("#idents", DataTable)
+            assert dt.virtual_size.width <= dt.container_size.width, size
+            assert dt.show_horizontal_scrollbar is False, size

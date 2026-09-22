@@ -217,6 +217,15 @@ class DetailView(Vertical):
             ev = self.run.iteration_evals(it)[ident]
             self._render_eval(ev.rows, ev.total)
 
+    def _still_playing_suffix(self, shown: int, total: int) -> str:
+        """Ruling 16(a): "   still playing…" only for a genuinely running
+        run -- a finished (crashed/stopped) run's cut-short batch never
+        claims to still be playing, whatever its row count. The one place
+        this honesty rule lives, shared by _render_eval and
+        _render_candidate so it can't drift between them (Ruling 18)."""
+        done = total > 0 and shown >= total
+        return "" if done or not self.run.running else "   [dim]still playing…[/]"
+
     def _render_eval(self, rows: list[dict], total: int) -> None:
         if not rows:
             head = Text.from_markup("[dim]no games yet[/]")
@@ -224,10 +233,7 @@ class DetailView(Vertical):
             scores = [float(r["progress"]) for r in rows]
             avg = sum(scores) / len(scores)
             std = pstdev(scores) if len(scores) > 1 else 0.0
-            # Ruling 16(a): a finished run's cut-short batch never claims to
-            # still be playing -- only a genuinely running run can be.
-            more = ("" if (total > 0 and len(rows) >= total) or not self.run.running
-                    else "   [dim]still playing…[/]")
+            more = self._still_playing_suffix(len(rows), total)
             head = Text.from_markup(
                 f"avg [b #ffd54a]{avg:.2f}[/]   std [b]{std:.2f}[/]   "
                 f"[b]{len(rows)}/{total}[/] games{more}")
@@ -265,8 +271,7 @@ class DetailView(Vertical):
         total = sum(view.total for view in evals.values())
         if rows:
             avg = sum(float(r["progress"]) for _i, r in rows) / len(rows)
-            more = ("" if len(rows) >= total or not self.run.running
-                    else "   [dim]still playing…[/]")
+            more = self._still_playing_suffix(len(rows), total)
             head = f"avg [b #ffd54a]{avg:.2f}[/]   [b]{len(rows)}/{total}[/] games{more}"
         else:
             head = "[dim]no games yet[/]"
@@ -394,9 +399,9 @@ class RunMonitor(Screen):
         # content-width measurement to idle, so at first paint they truncate
         # cells to the *header* width ("sam-hu", "vkurenkov @" with the score
         # cut). Fixed widths render the full identity / champion@sha / score.
-        idents.add_column("identity", key="id", width=22)
+        idents.add_column("identity", key="id", width=18)
         idents.add_column("best so far", key="best", width=26)
-        idents.add_column("this iteration", key="run", width=31)
+        idents.add_column("this iteration", key="run", width=30)
         idents.border_title = " progress by identity "
         idents._valid_fn = self._valid_cell        # hover only on clickable cells
         # #idents now has its columns -- safe to render into it. Flip the
