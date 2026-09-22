@@ -165,6 +165,32 @@ def test_yes_in_a_terminal_runs_every_step_without_asking():
     assert [c[0] for c in rec.calls] == ["hub_login", "terminal", "pull"]
 
 
+def test_the_run_is_numbered_by_the_plans_own_step_numbers():
+    # Without a terminal the hub login (1) isn't run and the account check (2)
+    # is skipped; the pull is still step 3 of 3, as the plan showed it.
+    deps, rec = make(checks(hub_login="fail", mutator_image="warn"), creds=None)
+    flow.run_setup(opts(interactive=False, yes=True), deps)
+    assert "[3/3] pull the mutator image" in output(deps)
+
+
+def test_the_summary_uses_the_checklists_short_words():
+    ref = "ghcr.io/dunnolab/nethackers-mutator@sha256:" + "a" * 64
+    raw = [replace(c, detail=f"not local yet, but pullable — {ref}")
+           if c.id == "mutator_image" else c for c in checks(mutator_image="warn")]
+    deps, rec = make(raw, confirm=lambda: False)
+    flow.run_setup(opts(), deps)
+    assert rec.reports[0].failing == (("mutator image", "not pulled yet"),)
+
+
+def test_setup_prints_its_own_lines_without_recolouring_numbers():
+    console = Console(file=io.StringIO(), width=120, force_terminal=True,
+                      color_system="standard")
+    deps, rec = make(checks(container_runtime="fail", arena_image="warn", mutator_image="warn"),
+                     runtime=NONE, detect_host=lambda: UBUNTU, console=console)
+    flow.run_setup(opts(), deps)
+    assert "real Ubuntu 24.04 LTS yet" in output(deps)   # "24.04" not highlighted
+
+
 def test_answering_no_changes_nothing():
     deps, rec = make(checks(mutator_image="warn"), confirm=lambda: False)
     assert flow.run_setup(opts(), deps) == 1

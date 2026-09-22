@@ -12,6 +12,7 @@ nethackers to run -- only instructions for the person -- never asks.
 """
 from __future__ import annotations
 
+import functools
 import time
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass
@@ -108,8 +109,14 @@ def choose_agent(opts: SetupOptions, deps: SetupDeps,
     return None
 
 
+def _say(deps: SetupDeps) -> Callable[..., None]:
+    """Print setup's own lines as written: rich's highlighter would recolour
+    numbers and digest fragments in them. The shared console stays as it is."""
+    return functools.partial(deps.console.print, highlight=False)
+
+
 def run_setup(opts: SetupOptions, deps: SetupDeps) -> int:
-    say = deps.console.print
+    say = _say(deps)
     say("Checking this machine…")  # before the checks: they take a few seconds (hub, registry)
     checks = deps.run_checks(operator=opts.operator, hub=opts.hub)
     facts = deps.detect_host()
@@ -121,8 +128,7 @@ def run_setup(opts: SetupOptions, deps: SetupDeps) -> int:
     wanted = in_scope(checks, opts.scope)
     evolve = opts.scope in (None, "evolve")
     logged_in = {op: deps.agent_logged_in(op) for op in ("claude", "codex")} if evolve else {}
-    for line in render.checklist(_rows(wanted, logged_in)):
-        say(line)
+    say(render.checklist(_rows(wanted, logged_in)))
     agent = choose_agent(opts, deps, logged_in) if evolve else None
     runtime = deps.probe_runtime()
     gh_login, gh_state = deps.gh_state()
@@ -149,8 +155,8 @@ def run_setup(opts: SetupOptions, deps: SetupDeps) -> int:
 
     if plan.empty:
         return finish(checks)
-    for line in render.plan_lines(plan, machine=_machine(facts)):
-        say(line)
+    for part in render.plan_lines(plan, machine=_machine(facts)):
+        say(part)
     if not plan.steps:  # only instructions: a yes (or --yes) would run nothing
         return finish(checks)
     if not opts.interactive and not opts.yes:
@@ -172,15 +178,16 @@ def run_setup(opts: SetupOptions, deps: SetupDeps) -> int:
 
 def _run_steps(steps: list[Step], plan: Plan, deps: SetupDeps,
                sit: Situation) -> dict[str, StepResult]:
-    say = deps.console.print
+    say = _say(deps)
     titles = {s.id: s.title for s in plan.steps}
+    number = {s.id: n for n, s in enumerate(plan.steps, 1)}  # as the plan showed them
     results: dict[str, StepResult] = {}
-    for n, step in enumerate(steps, 1):
+    for step in steps:
         missing = [titles.get(i, i) for i in step.needs if not (i in results and results[i].ok)]
         if missing:
             result = StepResult(False, 0.0, f"needs: {', '.join(missing)}", skipped=True)
         else:
-            say(f"[b][{n}/{len(steps)}] {escape(step.title)}[/]")
+            say(f"[b][{number[step.id]}/{len(plan.steps)}] {escape(step.title)}[/]")
             result = _run_one(step, deps, sit)
         results[step.id] = result
         say(render.result_line(step, result))
@@ -284,8 +291,9 @@ def _summary(checks: list[CheckResult], opts: SetupOptions, plan: Plan | None, *
     ready = tuple(c for c in caps if capability_ready(checks, c))
     not_ready = tuple(c for c in caps if c not in ready)
     wanted = in_scope(checks, opts.scope)
-    failing = tuple((LABELS[r.id], r.detail) for r in wanted.values()
-                    if (r.severity == "hard" and r.status != "ok") or r.status == "fail")
+    failing = tuple((row.label, row.detail) for row in (
+        _row(r) for r in wanted.values()   # the checklist's short words, not doctor's raw detail
+        if (r.severity == "hard" and r.status != "ok") or r.status == "fail"))
     next_command = None
     if "evolve" in caps and capability_ready(checks, "evolve"):
         next_command = (f"nethackers evolve {EXAMPLE_OBJECTIVE} --seed autoascend "

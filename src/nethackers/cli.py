@@ -836,7 +836,7 @@ def _setup(args: argparse.Namespace, stage: Stage) -> int:
 
     def report(checks, summary) -> None:
         emit(to_json(checks), args.output,
-             table=lambda _d: setup_render.summary_markup(summary),
+             table=lambda _d: setup_render.summary_rich(summary),
              plain=lambda _d: setup_render.summary_plain(summary))
 
     deps = setup_flow.SetupDeps(
