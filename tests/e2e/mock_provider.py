@@ -39,7 +39,19 @@ class _MockProviderHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Type", "text/event-stream")
             self.end_headers()
             for event in owner.sse_events:
-                self.wfile.write(f"data: {event}\n\n".encode())
+                # A plain string is a bare `data: <event>\n\n` frame (Task 6's
+                # original shape -- kept byte-identical for its own tests). A
+                # (event_type, data) pair additionally emits the `event:
+                # <type>` line real provider SSE carries (Anthropic Messages /
+                # OpenAI Responses both frame every event this way) -- Task
+                # 7's real-CLI tier needs it because some SSE clients dispatch
+                # on the `event:` line rather than sniffing the JSON `type`
+                # field alone.
+                if isinstance(event, tuple):
+                    event_type, data = event
+                    self.wfile.write(f"event: {event_type}\ndata: {data}\n\n".encode())
+                else:
+                    self.wfile.write(f"data: {event}\n\n".encode())
                 self.wfile.flush()
             return
 
@@ -71,16 +83,20 @@ class MockProvider:
     - ``.status``: the HTTP status every response carries (default 200);
       settable any time, including mid-test, to exercise 401/429/5xx
       forwarding.
-    - ``sse_events``: when given (a list of strings), every request gets an
-      SSE response (``Content-Type: text/event-stream``, one
-      ``data: <event>\\n\\n`` per event, flushed individually as it's
-      written -- never buffered whole) instead of the canned JSON body.
+    - ``sse_events``: when given (a list of strings and/or ``(event_type,
+      data)`` pairs), every request gets an SSE response (``Content-Type:
+      text/event-stream``); a bare string is ``data: <event>\\n\\n``, a pair
+      additionally emits ``event: <event_type>\\n`` first (the real
+      Anthropic-Messages/OpenAI-Responses SSE framing) -- each flushed
+      individually as it's written, never buffered whole -- instead of the
+      canned JSON body.
     - ``json_body``: the canned JSON response body when ``sse_events`` is
       not set (default ``{"ok": True}``).
     """
 
     def __init__(self, *, json_body: dict | None = None,
-                 sse_events: list[str] | None = None, status: int = 200) -> None:
+                 sse_events: list[str | tuple[str, str]] | None = None,
+                 status: int = 200) -> None:
         self.requests: list[dict] = []
         self.json_body: dict = {"ok": True} if json_body is None else json_body
         self.sse_events = sse_events

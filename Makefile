@@ -1,5 +1,5 @@
 # NetHackers -- dev convenience targets. Requires: uv, docker, curl.
-.PHONY: install uninstall nle-base arena mutator stack up down wait-hub hub hub-down hub-reset test check smoke
+.PHONY: install uninstall nle-base arena mutator stack up down wait-hub hub hub-down hub-reset test check smoke broker-e2e
 
 # Load this worktree's allocated stage vars as MAKE variables (not just shell
 # env), so `?=`/`$(or ...)` defaults below (ARENA_IMAGE, MUTATOR_IMAGE) can
@@ -136,3 +136,13 @@ check:
 	uv run ruff check .
 smoke:
 	uv run pytest -m docker -q
+
+# Gated real-CLI-in-container broker E2E (Task 7, design §4.2): the real
+# claude/codex/opencode2 CLI, in the real mutator container, through a real
+# broker into tests/e2e's MockProvider -- plus the hostile-code probe. Needs
+# Docker + the amd64 mutator image present locally (`make mutator`, or a
+# `docker pull` of the pinned digest -- see sandbox_preflight.resolve_image);
+# skips cleanly without NETHACKERS_E2E=1, so this is never run by `make test`
+# or CI, only by hand.
+broker-e2e:
+	NETHACKERS_E2E=1 uv run python -m pytest tests/e2e/test_broker_e2e.py -m broker_e2e -q
