@@ -142,8 +142,9 @@ What we do about it:
 - **The coding agent runs in a container** with `no-new-privileges`, pid/memory
   (swap-capped)/CPU limits, a non-root user (it starts as root only to remap uids,
   then drops), and a wall-clock `timeout`. Instruction-bearing files (`CLAUDE.md`,
-  `AGENTS.md`, `.mcp.json`, …) are stripped from the tree it is handed, and an
-  opt-in credential broker can keep your model key out of the container entirely.
+  `AGENTS.md`, `.mcp.json`, …) are stripped from the tree it is handed, and the
+  credential broker (on by default) keeps your model key out of the container
+  entirely — injected host-side on the wire, never mounted in.
 
 What we don't do:
 
@@ -151,10 +152,10 @@ What we don't do:
   with the solution on its `sys.path`, so a self-reported number is a claim you
   take on trust. Sealing the container does not change that. It is why the Private
   Dungeons (verified) tier exists.
-- **The credential broker is opt-in.** By default the agent's container still has
-  your coding-agent credentials mounted (for Codex, writable) and open network
-  egress. The agent CLIs need their model APIs, and egress allow-listing is
-  designed but not on by default.
+- **Network egress is open by default.** The agent CLIs need their model APIs, so
+  the container can reach the network; egress allow-listing is designed but not on
+  by default. (Your model *credential* is kept out of the container by the default
+  broker — `--no-broker` opts back into mounting it instead, writable for Codex.)
 - **The threat model is accident-grade.** It defends against a runaway or confused
   agent and the blast radius of one, not a determined adversary. A container is
   not a boundary against a kernel exploit. If you are evaluating code you have

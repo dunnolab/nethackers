@@ -385,9 +385,10 @@ Two things are true and worth stating up front:
 - **A bot can influence its own score.** It runs in the same process as the
   scorer (see (a)), so a self-reported number is a claim you take on trust. That
   is the whole reason for the verified (Private Dungeons) tier.
-- **Your coding-agent credentials are in reach of the agent by default.** There's
-  an opt-in broker that removes them (see (b)), but until you turn it on, they're
-  mounted.
+- **Your coding-agent credentials stay out of the agent by default.** The
+  credential broker (see (b)) is on by default and keeps them host-side, injecting
+  them only on the wire to the one real provider; `--no-broker` opts back into
+  mounting them into the container.
 
 If you're running code from people you don't trust on a machine that matters,
 treat the container as something that limits the blast radius, not as a wall
@@ -514,26 +515,47 @@ docker run --rm \
   there is no restriction. An egress allow-list is designed but not on by default;
   the credential-broker path below is the one mode that constrains egress (to the
   broker alone). This is the largest hole in the default sandbox.
-- **Your coding-agent credentials are in reach.** By default `/workspace` is not
-  the only writable mount: for **Codex** the host's real `~/.codex` is bind-mounted
-  **read-write** (code in the cage can influence your *next host-side* `codex`
-  run); for **Claude** on Linux a read-only credentials file is mounted, and on
-  macOS the OAuth token is passed as an env var (visible in `docker inspect`); for
-  **OpenCode** a read-only copy of your provider definitions is mounted, and the
-  keys they name arrive as env vars. An agent that wanted to exfiltrate those
-  could, and for Codex could modify them.
-  **Opt-in mitigation:** `ContainerOperator(broker=True)` swaps the credential
-  mount for a host-side [`cred_broker.CredBroker`](../src/nethackers/harness/cred_broker.py):
-  the container gets a placeholder key and a base URL pointing back at the broker
-  over the host gateway, egress is constrained to it, and the real key is injected
-  host-side per request and never enters the container. Codex's broker forwards to
-  `chatgpt.com` over a Chrome-TLS-impersonating `curl_cffi` client instead of plain
-  `httpx` (that upstream is Cloudflare-fronted and JA3/TLS-fingerprinted) -- this
-  needs `pip install curl_cffi` on the host; it's a lazy, host-side-only import,
-  never a packaged dependency. It is off by default and
-  not yet wired to a CLI/TUI flag, and per-agent auth (Claude's OAuth vs an API
-  key, Codex's host) is still being verified live, so treat it as available rather
-  than finished.
+- **Your coding-agent credentials are in reach under `--no-broker`.** The default
+  is the credential broker below (which keeps them out of the container); this is
+  the exposure when you opt out of it with `--no-broker` (the credential mount).
+  Then `/workspace` is not the only writable mount: for **Codex** the host's real
+  `~/.codex` is bind-mounted **read-write** (code in the cage can influence your
+  *next host-side* `codex` run); for **Claude** on Linux a read-only credentials
+  file is mounted, and on macOS the OAuth token is passed as an env var (visible
+  in `docker inspect`); for **OpenCode** a read-only copy of your provider
+  definitions is mounted, and the keys they name arrive as env vars. An agent that
+  wanted to exfiltrate those could, and for Codex could modify them.
+  **Default mitigation (the credential broker).** `nethackers evolve`, the evolve
+  loop, and the TUI now run the broker path BY DEFAULT (`--broker`; `--no-broker`
+  opts back into the credential mount described above, and the TUI has a toggle).
+  It swaps the mount for a host-side
+  [`cred_broker.CredBroker`](../src/nethackers/harness/cred_broker.py): the
+  container gets a placeholder key and a base URL pointing back at the broker over
+  the docker host-gateway, the credential's egress is constrained to the broker,
+  and the real key is injected host-side per request and never enters the
+  container. Verified live end-to-end for Claude (OAuth Bearer → api.anthropic.com)
+  and Codex (ChatGPT subscription → chatgpt.com) on both macOS and native Linux.
+  Codex's broker forwards to `chatgpt.com` over a Chrome-TLS-impersonating
+  `curl_cffi` client instead of plain `httpx` (that upstream is Cloudflare-fronted
+  and JA3/TLS-fingerprinted) — `pip install curl_cffi` on the host to run the Codex
+  broker; it is a lazy, host-side-only import, never a packaged dependency. (The
+  low-level `ContainerOperator(broker=…)` API param still defaults False;
+  `evolve`/launch pass `broker=True`.)
+
+  **Linux firewall (ufw) — one-time setup.** The broker listens on the host's
+  docker-bridge gateway on a port in `11700–11749`. On native Linux the sandbox
+  reaches it via that gateway, which `ufw` blocks by default — so on a ufw host,
+  allow it once with a PORT-SCOPED rule (never a blanket `allow in on docker0`,
+  which would open every host service to the untrusted sandbox):
+
+  ```
+  sudo ufw allow in on docker0 to <docker0-gateway> port 11700:11749 proto tcp
+  ```
+
+  If the sandbox can't reach the broker the run FAILS LOUD, printing this exact
+  rule with the gateway filled in — it never silently drops to `--no-broker`
+  (which would expose the credential). Docker Desktop (macOS) needs none of this,
+  and stock Linux docker with no restrictive firewall works without the rule too.
 - **Blast radius is not confined to the worktree.** Host-side steps after the run
   (`copytree` into the tree store, into the next `/refs`, and into the published
   repo) follow symlinks by default. Combined with register-all publishing, a
