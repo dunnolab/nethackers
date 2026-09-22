@@ -65,7 +65,7 @@ class EvolveParams:
     seed: str  # cold-start seed root (the MAP-Elites loop seeds cells from the hub itself)
     operator: str = "claude"
     iterations: int = 1
-    max_parallel_evals: int = 8
+    max_parallel_evals: int | None = None   # None: sized from the machine
     # The container CLI every `<runtime> run` uses (docker OR podman -- issue
     # #50). Defaults to "docker"; BOTH launch paths -- the CLI evolve handler
     # and the TUI evolve form's Start -- resolve the actual one via

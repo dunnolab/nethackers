@@ -2,6 +2,7 @@
 import pytest
 
 import nethackers.diagnostics as _diagnostics
+import nethackers.eval.runner as _eval_runner
 import nethackers.harness.launch as _launch
 import nethackers.tui.screens.evolve_form as _ef
 from nethackers.harness.discovery import CliInfo
@@ -111,6 +112,18 @@ def _hermetic_userns_probe(monkeypatch):
     # (test_containers.py), so this never hides it.
     monkeypatch.setattr(_launch, "nonroot_userns_args", lambda *a, **kw: [], raising=False)
 
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_runtime_capacity(monkeypatch):
+    # eval_batch sizes the arena box from `containers.runtime_capacity` -- a
+    # real `<runtime> info` subprocess on every eval. Same hermetic-suite rule:
+    # answer "couldn't read it", so every eval-path test gets the fixed
+    # fallback (DEFAULT_MAX_PARALLEL_EVALS) on any box, CI or a dev Mac alike.
+    # eval_batch looks the name up at call time, so this patch takes effect;
+    # tests of the sizing itself re-patch it with a machine of their own, and
+    # test_containers.py tests the probe directly with an injected `run`.
+    monkeypatch.setattr(_eval_runner, "runtime_capacity", lambda *a, **kw: None, raising=False)
 
 # The NETHACKERS_* stage keys that `load_stage`/`_find_stack_file` consume.
 _STAGE_ENV_KEYS = (

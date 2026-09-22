@@ -7,15 +7,15 @@ consume the same ``PullEvent`` stream from the same emitter
 (``sandbox_preflight._pull_image``/``ensure_image``) -- one source of truth
 for "how far along is this pull", rendered two different ways.
 
-Progress is counted in LAYERS, never bytes. ``docker pull``'s own
-non-terminal output aggregates several layers downloading concurrently, each
-at its own pace -- turning that into one faithful byte-percent would mean
-summing per-layer, in-flight byte counters that docker never reports as a
-stable total up front. Layer-count is coarser but exact and monotonic: a
-layer is either not yet done or done, counted once each way, with nothing to
-drift out of sync. NO image-size field either, for the same reason (size is
-deferred by ruling, not merely unimplemented -- do not add one, not even
-``Optional``).
+Progress is counted in layers AND, when docker prints them, bytes. A pull
+runs in a pseudo-terminal (``sandbox_preflight._pull_image``), so docker
+prints its per-layer byte progress (``Downloading [==>  ]  45.2MB/355MB``);
+``parse_pull_line`` keeps each layer's current/total and every event carries
+the sums. That reverses an earlier ruling ("layers, never bytes"): with one
+355 MB layer in an 875 MB pull, a layer count sat still for most of the
+download and looked stuck (spec 2026-09-22 D8). Bytes are ``None`` whenever
+no byte line has been seen -- Podman's output, or a pull through a pipe --
+and consumers fall back to the layer count.
 
 Kept a leaf module: no docker, no TUI/CLI import. Rendering the ref through
 ``diagnostics._short_digest`` is fine (diagnostics itself is documented as a
@@ -37,6 +37,38 @@ from dataclasses import dataclass, field
 
 _LAYER_LINE_RE = re.compile(r"^([0-9a-f]{12}): (.*)$")
 _DONE_STATUSES = {"Pull complete", "Already exists"}
+
+# docker's per-layer byte progress, as printed on a terminal. Sizes use docker's
+# decimal units (go-units HumanSize).
+_BYTES_RE = re.compile(
+    r"^(Downloading|Extracting)\s+\[[=> ]*\]\s+([\d.]+)\s*([kMGT]?B)/([\d.]+)\s*([kMGT]?B)")
+_UNITS = {"B": 1, "kB": 10**3, "MB": 10**6, "GB": 10**9, "TB": 10**12}
+_DOWNLOADED = {"Download complete", "Verifying Checksum", "Pull complete"}
+
+
+def _bytes(number: str, unit: str) -> int:
+    return int(float(number) * _UNITS[unit])
+
+
+def byte_sums(state: PullParseState) -> tuple[int | None, int | None]:
+    """(bytes downloaded, bytes known) over ``state``'s layers; ``(None, None)``
+    when no byte line has been seen."""
+    if not state.progress:
+        return None, None
+    return (sum(done for _i, done, _t in state.progress),
+            sum(total for _i, _d, total in state.progress))
+
+
+def is_byte_progress(line: str) -> bool:
+    """Is ``line`` one of docker's in-place byte-progress redraws
+    (``<layer id>: Downloading``/``Extracting  [...]  1MB/2MB``) -- the same
+    lines ``parse_pull_line`` folds into ``bytes_done``/``bytes_total``
+    instead of a discrete status change? A pty pull sees these on every
+    redraw (many times a second), unlike the piped path's one-line-per-status
+    output, so a raw-line consumer (``on_line``) should drop them rather than
+    flood; see ``sandbox_preflight._pull_image``."""
+    m = _LAYER_LINE_RE.match(line.rstrip())
+    return m is not None and _BYTES_RE.match(m.group(2)) is not None
 
 
 @dataclass(frozen=True)
@@ -63,6 +95,8 @@ class PullEvent:
       there's nothing beyond what ``phase`` already says). Not re-parsed by
       anything -- purely for a consumer that wants more than the aggregate
       counts.
+    ``bytes_done`` / ``bytes_total``: the byte sums over layers docker has
+      printed progress for; ``None`` when there are none.
     """
 
     kind: str
@@ -71,6 +105,8 @@ class PullEvent:
     layers_total: int | None
     layers_complete: int | None
     detail: str
+    bytes_done: int | None = None    # bytes downloaded so far, when docker printed them
+    bytes_total: int | None = None   # the layers' sizes seen so far (grows as layers start)
 
 
 @dataclass(frozen=True)
@@ -85,6 +121,8 @@ class PullParseState:
 
     seen: frozenset[str] = field(default_factory=frozenset)
     complete: frozenset[str] = field(default_factory=frozenset)
+    # (layer id, bytes downloaded, layer size), sorted by id.
+    progress: tuple[tuple[str, int, int], ...] = ()
 
 
 def parse_pull_line(
@@ -99,14 +137,9 @@ def parse_pull_line(
     itself is never mutated in place -- a fresh instance is always
     returned, and the one passed in remains valid.
 
-    Recognizes exactly one line shape -- docker's own stable per-layer
-    status vocabulary (spec S5.5's ground truth), NOT the in-place
-    byte-progress text (``Downloading [==>    ]  3MB/12MB``) that only ever
-    appears when docker itself is attached to a real terminal; captured
-    through a pipe (always true here -- see
-    ``sandbox_preflight._pull_image``) docker prints the plain
-    discrete-line form instead, one line per status change, which is
-    exactly what this matches:
+    Recognizes docker's per-layer status lines, "<12-hex layer id>: <status>",
+    including the byte-progress ones docker prints on a terminal (see the
+    module docstring).
 
     * ``"<12-hex layer id>: <status>"`` -- a per-layer status line. The id
       counts toward ``layers_total`` the first time it's seen, whatever
@@ -137,9 +170,23 @@ def parse_pull_line(
         layer_id, status = m.group(1), m.group(2)
         seen = state.seen | {layer_id}
         complete = state.complete | {layer_id} if status in _DONE_STATUSES else state.complete
-        new_state = PullParseState(seen=seen, complete=complete)
+        progress = {i: (done, total) for i, done, total in state.progress}
+        size = _BYTES_RE.match(status)
+        if size is not None and size.group(1) == "Downloading":
+            progress[layer_id] = (_bytes(size.group(2), size.group(3)),
+                                  _bytes(size.group(4), size.group(5)))
+        elif layer_id in progress and (status in _DOWNLOADED or status.startswith("Extracting")):
+            total = progress[layer_id][1]
+            progress[layer_id] = (total, total)
+        elif status == "Already exists":
+            progress.pop(layer_id, None)
+        new_state = PullParseState(
+            seen=seen, complete=complete,
+            progress=tuple(sorted((i, d, t) for i, (d, t) in progress.items())))
+        done, known = byte_sums(new_state)
         event = PullEvent(kind=kind, ref=ref, phase="layer", layers_total=len(seen),
-                          layers_complete=len(complete), detail=status)
+                          layers_complete=len(complete), detail=status,
+                          bytes_done=done, bytes_total=known)
         return new_state, event
     return state, None
 
@@ -160,6 +207,9 @@ def render_cli_line(event: PullEvent) -> str:
     """
     from nethackers.diagnostics import _short_digest  # deferred: see module docstring
 
+    if event.phase == "layer" and event.bytes_done is not None and event.bytes_total:
+        return (f"pulling {event.kind}  {event.bytes_done / 1e6:.0f}/"
+                f"{event.bytes_total / 1e6:.0f} MB")
     if event.phase == "layer" and event.layers_total is not None:
         return f"pulling {event.kind}  {event.layers_complete}/{event.layers_total} layers"
     short_ref = _short_digest(event.ref)

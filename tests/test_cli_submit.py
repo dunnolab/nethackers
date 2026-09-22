@@ -120,6 +120,7 @@ def test_submit_gh_unauthed(monkeypatch, tmp_path, capsys):
     assert rc == 1
     err = capsys.readouterr().err
     assert "gh not authed" in err and "gh auth login" in err
+    assert "nethackers setup --for publish" in err
 
 
 def test_submit_gh_did_not_answer(monkeypatch, tmp_path, capsys):

@@ -511,7 +511,7 @@ def preflight_model(
     # OpenCode 2 without a provider key still serves OpenCode's free models,
     # so only a pinned model it can't serve (checked below) refuses.
     if cli.logged_in is False and backend != "opencode2":
-        login_cmd = {"codex": "codex login", "claude": "claude auth"}[backend]
+        login_cmd = {"codex": "codex login", "claude": "claude auth login"}[backend]
         return Preflight("refuse", f"{backend} is not logged in — run `{login_cmd}`.", cli, None)
     if not model:
         return Preflight("proceed", "", cli, None)   # harness default: nothing pinned to check

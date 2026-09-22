@@ -37,8 +37,18 @@ from nethackers.diagnostics import (
 from nethackers.harness import sandbox_preflight
 from nethackers.hubclient.client import HubUnreachable
 from nethackers.hubclient.credentials import Credentials
+from nethackers.setup.host import HostFacts
 
 _HEX64 = "a" * 64
+
+# A Mac with Homebrew and a running Docker Desktop: the realistic default for
+# these tests, and a platform setup covers (so fix hints point at setup).
+_MAC = HostFacts(system="Darwin", machine="arm64", brew=True,
+                 installed=frozenset({"docker", "docker-desktop"}),
+                 docker_context="desktop-linux", docker_desktop_cli=True,
+                 host_rosetta=True, cpus=10, memory_gb=32)
+_WINDOWS = HostFacts(system="Windows", machine="AMD64")
+_UBUNTU = HostFacts(system="Linux", machine="x86_64", distro="debian")
 
 
 def _runtime_ok(runtime="docker"):
@@ -94,7 +104,8 @@ def _healthy_kwargs(**overrides):
         # Harmless to gating either way (the check is soft, and eval/evolve
         # are gated purely by their own hard checks) -- but this file's whole
         # premise is that every probe is faked.
-        rosetta=lambda: ("ok", "Rosetta is accelerating amd64 emulation"),
+        rosetta=lambda: ("ok", "Rosetta is accelerating amd64 emulation", None),
+        host_facts=lambda: _MAC,
     )
     kwargs.update(overrides)
     return kwargs
@@ -213,7 +224,8 @@ def test_only_with_operator_but_not_mutator_image_treats_mutator_as_absent():
     # should behave as if the mutator image is absent (the safe default),
     # not crash or silently reuse a stale value.
     results = run_checks(**_healthy_kwargs(
-        only={"operator"}, preflight_operator=lambda operator: "not logged in"))
+        only={"operator"}, preflight_operator=lambda operator: "not logged in",
+        host_facts=lambda: _WINDOWS))
     assert {r.id for r in results} == {"operator"}
     op = next(r for r in results if r.id == "operator")
     assert "sandbox" in op.fix   # the mutator-image-absent fix wording, not the plain-login one
@@ -291,7 +303,7 @@ def test_operator_ready_when_at_least_one_agent_logged_in():
     out = run_checks(**_healthy_kwargs(
         operator=None, preflight_operator=lambda op: "not logged in"))
     op2 = next(r for r in out if r.id == "operator")
-    assert op2.status == "fail" and "login" in (op2.fix or "")
+    assert op2.status == "fail" and op2.fix == "run `nethackers setup`"
 
 
 def test_operator_narrows_to_a_single_named_agent():
@@ -480,7 +492,7 @@ def test_to_json_keeps_the_full_unshortened_digest():
     assert data["checks"][0]["detail"] == detail  # byte-for-byte, not just "contains"
 
 
-def test_gh_three_states_get_distinct_fixes():
+def test_gh_states_get_distinct_details_and_setup_fixes():
     missing = run_checks(**_healthy_kwargs(gh_state=lambda: (None, "missing")))
     unauthed = run_checks(**_healthy_kwargs(gh_state=lambda: (None, "unauthed")))
     authed = run_checks(**_healthy_kwargs(gh_state=lambda: ("castiel", "authed")))
@@ -488,12 +500,30 @@ def test_gh_three_states_get_distinct_fixes():
     gh_unauthed = next(r for r in unauthed if r.id == "gh")
     gh_authed = next(r for r in authed if r.id == "gh")
 
-    assert gh_missing.status == "fail" and "install" in gh_missing.fix.lower()
-    assert gh_unauthed.status == "fail" and "gh auth login" in gh_unauthed.fix
+    # never collapse "not installed" and "installed but not logged in" (spec
+    # S5.6): the details stay distinct even though setup fixes both on a Mac.
+    assert gh_missing.detail == "gh is not installed"
+    assert gh_unauthed.detail == "gh is installed but not logged in"
+    assert gh_missing.fix == gh_unauthed.fix == "run `nethackers setup`"
     assert gh_authed.status == "ok" and gh_authed.fix is None
-    # never collapse "not installed" and "installed but unauthed" into the
-    # same message (spec S5.6) -- distinct fix text for distinct fixes.
-    assert gh_missing.fix != gh_unauthed.fix
+
+
+def test_gh_missing_on_linux_prints_the_distro_install_line():
+    results = run_checks(**_healthy_kwargs(gh_state=lambda: (None, "missing"),
+                                           host_facts=lambda: _UBUNTU))
+    gh = next(r for r in results if r.id == "gh")
+    assert gh.fix == ("install the GitHub CLI: `sudo apt install gh` (or see "
+                      "https://github.com/cli/cli/blob/trunk/docs/install_linux.md); "
+                      "then run `nethackers setup`")
+
+
+def test_without_setup_support_gh_fixes_keep_the_direct_commands():
+    missing = run_checks(**_healthy_kwargs(gh_state=lambda: (None, "missing"),
+                                           host_facts=lambda: _WINDOWS))
+    unauthed = run_checks(**_healthy_kwargs(gh_state=lambda: (None, "unauthed"),
+                                            host_facts=lambda: _WINDOWS))
+    assert "install" in next(r for r in missing if r.id == "gh").fix.lower()
+    assert "gh auth login" in next(r for r in unauthed if r.id == "gh").fix
 
 
 def test_gh_that_does_not_answer_is_a_warning_not_a_missing_install():
@@ -513,6 +543,20 @@ def test_operator_check_uses_the_given_operator_name():
     assert seen == ["codex"]
     op = next(r for r in results if r.id == "operator")
     assert op.status == "fail" and op.severity == "hard" and "codex" in op.fix
+
+
+def test_operator_fix_names_setup_with_the_agent():
+    results = run_checks(**_healthy_kwargs(operator="claude",
+                                           preflight_operator=lambda op: "not logged in"))
+    op = next(r for r in results if r.id == "operator")
+    assert op.fix == "run `nethackers setup --operator claude`"
+
+
+def test_operator_fallback_uses_the_real_claude_login_command():
+    results = run_checks(**_healthy_kwargs(operator="claude", host_facts=lambda: _WINDOWS,
+                                           preflight_operator=lambda op: "not logged in"))
+    op = next(r for r in results if r.id == "operator")
+    assert "`claude auth login`" in op.fix and "`claude login`" not in op.fix
 
 
 def test_image_present_vs_pullable_vs_unreachable_statuses():
@@ -548,7 +592,7 @@ def test_hub_login_check_ok_and_not_logged_in():
 
     assert next(r for r in ok if r.id == "hub_login").status == "ok"
     hl = next(r for r in out if r.id == "hub_login")
-    assert hl.status == "fail" and "login" in hl.fix
+    assert hl.status == "fail" and hl.fix == "run `nethackers setup`"
     assert capability_ready(out, "publish") is False
 
 
@@ -713,7 +757,7 @@ def test_fingerprint_mutator_nobody_built_says_it_builds_on_first_use():
     ))
     mutator = next(r for r in results if r.id == "mutator_image")
     assert mutator.status == "warn"
-    assert "doctor --pull" in mutator.fix and "make" not in mutator.fix
+    assert mutator.fix == "run `nethackers setup`"
 
 
 def test_short_digest_also_shortens_fingerprint_tags():
@@ -740,3 +784,43 @@ def test_doctor_probe_is_not_stricter_than_the_acquisition_probe():
     assert diagnostics._manifest_reachable(ref, run=_run) is True
     assert sandbox_preflight._remote_image_exists(ref, runtime="docker", run=_run) is True
     assert seen["manifest"] == sandbox_preflight.MANIFEST_PROBE_TIMEOUT >= 30
+
+
+# --- container runtime fixes come from the OS files -------------------------
+
+
+def _runtime_fix(facts: HostFacts, report) -> str | None:
+    results = run_checks(**_healthy_kwargs(runtime_report=lambda: report,
+                                           host_facts=lambda: facts))
+    return next(r for r in results if r.id == "container_runtime").fix
+
+
+def test_container_runtime_fix_on_a_mac_with_homebrew_is_setup():
+    fresh = HostFacts(system="Darwin", machine="arm64", brew=True)
+    assert _runtime_fix(fresh, _runtime_none()) == "run `nethackers setup`"
+
+
+def test_container_runtime_fix_on_linux_prints_the_install_then_setup():
+    fix = _runtime_fix(_UBUNTU, _runtime_none())
+    assert fix is not None
+    assert fix.startswith("install Docker: `curl -fsSL https://get.docker.com | sudo sh`")
+    assert fix.endswith("then run `nethackers setup`")
+
+
+def test_container_runtime_fix_on_native_windows_says_not_covered():
+    from nethackers.setup.host import NOT_COVERED
+    assert _runtime_fix(_WINDOWS, _runtime_none()) == NOT_COVERED
+
+
+def test_host_facts_are_probed_lazily_and_at_most_once():
+    calls: list[int] = []
+
+    def facts() -> HostFacts:
+        calls.append(1)
+        return _MAC
+
+    run_checks(**_healthy_kwargs(host_facts=facts))          # all healthy: nothing needs them
+    assert calls == []
+    run_checks(**_healthy_kwargs(host_facts=facts, load_creds=lambda: None,
+                                 gh_state=lambda: (None, "unauthed")))
+    assert calls == [1]                                       # two fixes, one probe

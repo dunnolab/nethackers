@@ -64,6 +64,12 @@ mutating flag (acquires both sandbox images, streaming progress to
 ``err``, then re-checks). The hub/login checks reuse ``whoami``'s own
 ``HubClient(...).hub_mode()``/``_load_creds`` primitives -- one source of
 truth (INV5), not a second implementation.
+
+``setup`` gets a machine ready in one command: it runs doctor's checks,
+builds a plan from the OS recipes (``nethackers.setup``), asks once, runs what
+it can -- never ``sudo`` -- and prints the rest. The orchestration lives in
+``setup/flow.py`` behind ``SetupDeps``; this module only builds the real
+dependencies (``_setup``) and shares ``_do_login`` with ``login``.
 """
 
 from __future__ import annotations
@@ -71,6 +77,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import sys
 import time
 from collections.abc import Callable, Iterator
@@ -82,12 +89,22 @@ import httpx
 from rich.live import Live
 from rich.markup import escape
 from rich.panel import Panel
+from rich.progress import (
+    BarColumn,
+    DownloadColumn,
+    Progress,
+    SpinnerColumn,
+    TextColumn,
+    TimeRemainingColumn,
+    TransferSpeedColumn,
+)
+from rich.prompt import Confirm, Prompt
 from rich.text import Text
 from rich_argparse import RichHelpFormatter
 
 from nethackers import browser, clipboard, config, crashfile
 from nethackers.config import Stage, load_stage
-from nethackers.containers import container_runtime
+from nethackers.containers import container_runtime, probe_container_runtime
 from nethackers.diagnostics import (
     CAPABILITIES,
     _short_digest,
@@ -103,9 +120,11 @@ from nethackers.harness.discovery import ModelInfo, list_models, preflight_model
 from nethackers.harness.launch import EvolveParams, _now, prepare_evolve
 from nethackers.harness.pull_events import PullEvent, render_cli_line
 from nethackers.harness.sandbox_preflight import (
+    download_size,
     ensure_image,
     image_present,
     preflight as sandbox_preflight,
+    preflight_operator,
     preflight_runtime,
     resolve_image,
     sandbox_platform_mismatch,
@@ -139,6 +158,8 @@ from nethackers.hubclient.render import (
     render_show as rich_show,
 )
 from nethackers.operators import DEFAULT_OPERATOR, OPERATORS
+from nethackers.setup import flow as setup_flow, render as setup_render, runner as setup_runner
+from nethackers.setup.host import detect_host, read_text
 from nethackers.solution_root import SolutionRootError
 from nethackers.tui.app import NetHackersApp
 
@@ -430,13 +451,33 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
     )
     do.add_argument(
         "--pull", action="store_true",
-        help="Pull the arena+mutator sandbox images first (progress on stderr), "
-        "then re-check.",
+        help="Pull the arena+mutator sandbox images first (progress on stderr), then "
+        "re-check. `nethackers setup` does this and the rest of setting up.",
     )
     do.add_argument(
         "--operator", choices=list(OPERATORS), default=None,
         help="Restrict the operator-readiness check to one agent "
         "(default: all registered coding agents).",
+    )
+
+    su = sub.add_parser(
+        "setup", parents=[common], formatter_class=RichHelpFormatter,
+        help="Get this machine ready: container runtime, sandbox images, logins, coding "
+        "agent. Shows its plan and asks once; never runs sudo.",
+    )
+    su.add_argument(
+        "--for", dest="for_capability", choices=list(CAPABILITIES), default=None,
+        help="Set up only what one capability needs (default: everything).",
+    )
+    su.add_argument(
+        "--operator", choices=list(OPERATORS), default=None,
+        help="The coding agent evolve should use (default: one already logged in, "
+        "or ask).",
+    )
+    su.add_argument(
+        "-y", "--yes", action="store_true",
+        help="Run the plan without asking. With no terminal, runs the unattended steps "
+        "and lists the logins to run.",
     )
 
     sub.add_parser(
@@ -453,8 +494,9 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
     e.add_argument("--objective", required=True, help="A catalog objective name.")
     e.add_argument("--image", default=stage.arena_image, help="Arena image to run.")
     e.add_argument(
-        "--max-parallel-evals", type=int, default=8,
-        help="Cap on episodes the arena runs concurrently (default: %(default)s).",
+        "--max-parallel-evals", type=int, default=None,
+        help="Cap on episodes the arena runs concurrently (default: one per CPU the "
+             "container runtime has, bounded by its memory and the batch).",
     )
 
     mo = sub.add_parser(
@@ -505,8 +547,9 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
         help="Improvement rounds to run: each picks a random cell and mutates "
              "its elite (default: %(default)s).")
     evolve.add_argument(
-        "--max-parallel-evals", type=int, default=8,
-        help="Cap on episodes the arena runs concurrently per eval (default: %(default)s).",
+        "--max-parallel-evals", type=int, default=None,
+        help="Cap on episodes the arena runs concurrently per eval (default: one per "
+             "CPU the container runtime has, bounded by its memory and the batch).",
     )
     evolve.add_argument("--image", default=stage.arena_image)
     evolve.add_argument(
@@ -614,8 +657,9 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
     sm.add_argument("--objective", required=True,
                     help="A catalog objective name to evaluate on (self-reported score).")
     sm.add_argument("--image", default=stage.arena_image, help="Arena image to run.")
-    sm.add_argument("--max-parallel-evals", type=int, default=8,
-                    help="Cap on concurrent episodes (default: %(default)s).")
+    sm.add_argument("--max-parallel-evals", type=int, default=None,
+                    help="Cap on concurrent episodes (default: one per CPU the container "
+                         "runtime has, bounded by its memory and the batch).")
 
     return parser
 
@@ -665,44 +709,170 @@ def _arena_preflight(image: str, *, runtime: str | None) -> str | None:
     or podman -- issue #50), passed once by the caller and threaded into
     ``ensure_image`` so the pull uses the same binary the gate accepted.
     ``preflight_runtime`` stays the gate (and the source of the styled "no
-    runtime" message), so a ``None`` runtime is caught there, not here."""
-    rt_err = preflight_runtime()
+    runtime" message), so a ``None`` runtime is caught there, not here.
+
+    Shows the same CLI progress display as ``setup``/``doctor --pull``
+    (``_pull_progress``) rather than a raw docker dump -- ``eval``'s and
+    ``submit``'s first pull gets megabytes, speed, and time left too."""
+    rt_err = preflight_runtime(scope="eval")
     if rt_err is not None:
         return rt_err
-    return ensure_image(image, "arena", runtime=runtime or "docker",
-                        on_line=lambda ln: err.print(f"[dim]{ln}[/]"))
+    with _pull_progress() as on_event:
+        return ensure_image(image, "arena", runtime=runtime or "docker", on_event=on_event)
 
 
 @contextmanager
-def _pull_progress() -> Iterator[Callable[[PullEvent], None]]:
-    """A ``PullEvent`` consumer for CLI sandbox provisioning -- the CLI half
-    of the shared typed pull-progress seam (spec S5.5; the TUI has its own
-    consumer). While attached to a real terminal, renders ``render_cli_line``
-    as a single rewriting status line via ``rich.live.Live`` (the same
-    in-place-update convention ``EpisodeStream`` below already uses for the
-    per-episode table, ``transient=True`` here since the surrounding
-    "checking/pulling…"/"✓ ready" prints already bracket it with a permanent
-    record). Redirected output (no tty, e.g. ``-o json``/CI logs) instead
-    gets plain sequential lines -- rewriting a line only makes sense on a
-    real terminal. Deliberately minimal: a compact one-liner, not a
-    progress bar.
+def _pull_progress(total: int | None = None) -> Iterator[Callable[[PullEvent], None]]:
+    """A ``PullEvent`` consumer for CLI sandbox provisioning (spec S5.5; the
+    TUI has its own). On a terminal: one bar across every image pulled inside
+    this block -- megabytes, speed, and time left once rich has measured a
+    rate -- with ``total`` (bytes, from the registry) as the length when known.
+    Before any byte count arrives (Podman, or a pipe) the description shows the
+    layer count. Redirected output gets plain lines instead, one per layer
+    change -- never one per byte update.
 
-    Used INSTEAD OF the raw ``on_line`` docker-text dump at its two call
-    sites below (fix round 1) -- passing both would show the user the full
-    raw transcript AND a redundant compact line underneath it, which
-    defeats the point of a compact typed surface. ``on_line`` itself stays
-    a valid parameter on ``ensure_image``/``_pull_image``/``_build_image``
-    for any other caller (e.g. ``_arena_preflight``) that still wants the
-    raw text."""
+    The registry total counts every layer, so it overclaims after a re-pin,
+    when most layers are already here: once docker says a layer "Already
+    exists" in the first image of the block, the bar's length becomes what
+    docker reports it is downloading. A later image's "Already exists" is a
+    layer shared with the image just pulled, which the total counted once."""
     if not err.is_terminal:
         def _on_event_plain(event: PullEvent) -> None:
+            if event.phase == "layer" and event.detail.startswith(("Downloading", "Extracting")):
+                return
             err.print(f"[dim]{render_cli_line(event)}[/]")
         yield _on_event_plain
         return
-    with Live(console=err, auto_refresh=False, transient=True) as live:
-        def _on_event_live(event: PullEvent) -> None:
-            live.update(f"[dim]{render_cli_line(event)}[/]", refresh=True)
-        yield _on_event_live
+    columns = (SpinnerColumn(), TextColumn("{task.description}"), BarColumn(),
+               DownloadColumn(), TransferSpeedColumn(), TimeRemainingColumn())
+    with Progress(*columns, console=err, transient=True) as progress:
+        task = progress.add_task("pulling", total=total)
+        finished = 0   # bytes of images already pulled in this block
+        current = 0
+        images_done = 0
+        upgrade = False   # layers were already here: the registry total overclaims
+
+        def _on_event_bar(event: PullEvent) -> None:
+            nonlocal finished, current, images_done, upgrade
+            if event.detail == "Already exists" and images_done == 0:
+                upgrade = True
+            if event.bytes_done is not None:
+                current = event.bytes_done
+                known = finished + (event.bytes_total or 0)
+                progress.update(task, description=f"pulling {event.kind}",
+                                completed=finished + current,
+                                total=(known if upgrade else max(total or 0, known)) or None)
+            else:
+                progress.update(task, description=render_cli_line(event))
+            if event.phase in ("done", "error"):
+                finished += current
+                current = 0
+                images_done += 1
+
+        yield _on_event_bar
+
+
+def _do_login(stage: Stage) -> str:
+    """The GitHub device flow, stored as the hub credential; returns the login.
+    Shared by `login` and `setup`, so there is one copy of it."""
+    tok = device_login(prompt=_login_prompt, client_id=stage.github_client_id)
+    login = whoami_from_token(tok["access_token"])
+    _cred.save(Credentials(
+        login=login,
+        access_token=tok["access_token"],
+        refresh_token=tok["refresh_token"],
+        expires_at=(_time_now() + tok["expires_in"]) if tok["expires_in"] else None,
+    ))
+    return login
+
+
+def _setup_pull(kinds: tuple[str, ...], total: int | None) -> str | None:
+    """Pull the named sandbox images with the CLI's progress display; the first
+    error, or ``None``. ``total`` (bytes) is used by the progress bar."""
+    runtime = container_runtime()
+    if runtime is None:
+        return "no usable container runtime"
+    with _pull_progress(total) as on_event:
+        for kind in kinds:
+            perr = ensure_image(resolve_image(None, kind), kind, runtime=runtime,
+                                on_event=on_event)
+            if perr is not None:
+                return perr
+    return None
+
+
+def _setup_pull_size(kinds: tuple[str, ...]) -> int | None:
+    """Bytes a pull of ``kinds`` will download, from the registry: layers
+    shared by both images counted once, minus the layers of an image already
+    here. ``None`` when it can't be read (no runtime yet, offline, Podman)."""
+    runtime = container_runtime()
+    if runtime is None:
+        return None
+    present = []
+    for k in ("arena", "mutator"):
+        if k in kinds:
+            continue
+        ref = resolve_image(None, k)
+        if image_present(ref, runtime=runtime):
+            present.append(ref)
+    return download_size([resolve_image(None, k) for k in kinds], present, runtime=runtime)
+
+
+def _setup_confirm() -> bool:
+    """setup's one question. End of input (Ctrl-D, or a script's empty stdin)
+    is a no: nothing runs without an explicit yes."""
+    try:
+        return Confirm.ask("Continue?", default=True, console=err)
+    except EOFError:
+        err.print()  # end the prompt's line
+        return False
+
+
+def _setup_ask_agent() -> str:
+    """Which coding agent evolve should use. End of input aborts setup the way
+    Ctrl-C does (``main`` prints "aborted", exit 130), rather than taking the
+    default as an answer."""
+    try:
+        return Prompt.ask("Which coding agent will evolve use?", choices=list(OPERATORS),
+                          default=DEFAULT_OPERATOR, console=err)
+    except EOFError:
+        err.print()
+        raise KeyboardInterrupt from None
+
+
+def _setup(args: argparse.Namespace, stage: Stage) -> int:
+    interactive = sys.stdin is not None and sys.stdin.isatty() and err.is_terminal
+    opts = setup_flow.SetupOptions(scope=args.for_capability, operator=args.operator,
+                                   yes=args.yes, interactive=interactive, hub=args.hub)
+
+    def report(checks, summary) -> None:
+        emit(to_json(checks), args.output,
+             table=lambda _d: setup_render.summary_rich(summary),
+             plain=lambda _d: setup_render.summary_plain(summary))
+
+    deps = setup_flow.SetupDeps(
+        console=err,
+        run_checks=run_checks,
+        detect_host=detect_host,
+        probe_runtime=probe_container_runtime,
+        gh_state=gh_state,
+        load_creds=_load_creds,
+        agent_logged_in=lambda op: preflight_operator(op) is None,
+        resolve_exe=lambda name: setup_flow.resolve_exe(name, which=shutil.which,
+                                                         home=Path.home()),
+        which=shutil.which,
+        read_text=read_text,
+        hub_login=lambda: _do_login(stage),
+        pull=_setup_pull,
+        pull_size=_setup_pull_size,
+        run_terminal=setup_runner.run_terminal,
+        run_captured=lambda argv, title: setup_runner.run_captured(argv, title=title,
+                                                                   console=err),
+        ask_agent=_setup_ask_agent,
+        confirm=_setup_confirm,
+        report=report,
+    )
+    return setup_flow.run_setup(opts, deps)
 
 
 def _run(argv: list[str] | None) -> int:
@@ -754,14 +924,7 @@ def _run(argv: list[str] | None) -> int:
         return 0
 
     if args.cmd == "login":
-        tok = device_login(prompt=_login_prompt, client_id=stage.github_client_id)
-        login = whoami_from_token(tok["access_token"])
-        _cred.save(Credentials(
-            login=login,
-            access_token=tok["access_token"],
-            refresh_token=tok["refresh_token"],
-            expires_at=(_time_now() + tok["expires_in"]) if tok["expires_in"] else None,
-        ))
+        login = _do_login(stage)
         err.print(f"logged in as [b]@{login}[/]")
         return 0
 
@@ -833,6 +996,9 @@ def _run(argv: list[str] | None) -> int:
             plain=lambda _d: render_plain(checks),
         )
         return exit_code(checks, args.for_capability)
+
+    if args.cmd == "setup":
+        return _setup(args, stage)
 
     if args.cmd == "report":
         # Read-only and offline, unlike every other branch above/below that
@@ -975,10 +1141,12 @@ def _run(argv: list[str] | None) -> int:
             _gh_login, _gh_state = gh_state()
             if _gh_state == "missing":
                 err.print("[yellow]wins won't publish[/] — install the GitHub CLI "
-                          "(`gh`), then run `gh auth login`")
+                          "(`gh`), then run `gh auth login` — or run "
+                          "`nethackers setup --for publish`")
             elif _gh_state == "unauthed":
                 err.print("[yellow]wins won't publish[/] — run `gh auth login` "
-                          "(separate from `nethackers login`)")
+                          "(separate from `nethackers login`) — or run "
+                          "`nethackers setup --for publish`")
             elif _gh_state == "unknown":
                 err.print("[yellow]couldn't check GitHub publishing[/] — `gh` didn't answer "
                           "in 10s (check your network)")
@@ -1118,16 +1286,19 @@ def _run(argv: list[str] | None) -> int:
         if gh is None:
             if gh_st == "missing":
                 err.print("[yellow]gh not installed[/] — install the GitHub CLI "
-                          "(`gh`), then run `gh auth login`")
+                          "(`gh`), then run `gh auth login` — or run "
+                          "`nethackers setup --for publish`")
             elif gh_st == "unknown":
                 err.print("[yellow]gh didn't answer[/] — check your network and retry")
             else:  # unauthed
                 err.print("[yellow]gh not authed[/] — run `gh auth login` "
-                          "(separate from `nethackers login`)")
+                          "(separate from `nethackers login`) — or run "
+                          "`nethackers setup --for publish`")
             return 1
         if gh != creds.login:
             err.print(f"gh is authed as [b]@{gh}[/] but you're logged in as "
-                      f"[b]@{creds.login}[/] — sign in to the same account")
+                      f"[b]@{creds.login}[/] — sign in to the same account "
+                      "(`nethackers setup --for publish` checks this)")
             return 1
         token = _authed_token()
         if token is None:  # unreachable (creds is set) -- narrows for the type checker
@@ -1184,6 +1355,19 @@ def main(argv: list[str] | None = None) -> int:
     ``NETHACKERS_DEBUG=1`` to re-raise and get the full traceback instead.
     (argparse usage errors raise ``SystemExit`` and pass straight through --
     they're already user-friendly.)"""
+    # Verify TLS against the OS trust store as well as certifi's bundle, the
+    # way gh, git and the browser do. Behind a TLS-inspecting corporate
+    # firewall the firewall's CA is only in the OS store, so certifi-only
+    # httpx failed every hub call with CERTIFICATE_VERIFY_FAILED. Process-wide
+    # on purpose: this is the application entry point, and truststore must
+    # never be injected from library code. ImportError = a runtime truststore
+    # can't serve; certifi alone still works there.
+    try:
+        import truststore
+    except ImportError:
+        pass
+    else:
+        truststore.inject_into_ssl()
     try:
         return _run(argv)
     except KeyboardInterrupt:

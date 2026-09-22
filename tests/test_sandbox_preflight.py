@@ -4,6 +4,9 @@ the container-runtime check, and the None/message contract ``preflight`` returns
 for the CLI and TUI to display. No real docker, network, or login is touched --
 ``shutil.which`` / the ``run`` callable / ``auth_docker_args`` are injected.
 """
+import json
+import stat
+import sys
 import threading
 import time
 from pathlib import Path
@@ -65,8 +68,8 @@ def test_preflight_message_when_docker_down(monkeypatch):
     assert msg is not None
     low = msg.lower()
     assert "sandbox unavailable" in low
-    # carries the bring-up hint (colima on mac / docker|podman elsewhere)
-    assert "colima" in low or "podman" in low or "docker" in low
+    # points at the one command that brings a runtime up
+    assert "nethackers setup" in low
 
 
 def test_preflight_message_when_auth_unavailable(monkeypatch):
@@ -500,3 +503,80 @@ def test_ensure_image_dedup_registry_is_cleaned_up_after_completion():
         run=lambda *a, **k: SimpleNamespace(returncode=1),
     )
     assert ref not in sp._inflight_pulls
+
+
+def test_manifest_layers_reads_docker_verbose_output():
+    doc = {"Descriptor": {"platform": {"os": "linux", "architecture": "amd64"}},
+           "SchemaV2Manifest": {"layers": [{"digest": "sha256:a", "size": 10},
+                                           {"digest": "sha256:b", "size": 20}]}}
+    run = lambda argv, **kw: SimpleNamespace(returncode=0, stdout=json.dumps(doc))  # noqa: E731
+    assert sp.manifest_layers("img@sha256:x", runtime="docker", run=run) == {"sha256:a": 10,
+                                                                             "sha256:b": 20}
+
+
+def test_manifest_layers_picks_amd64_from_an_index_and_gives_up_on_garbage():
+    arm = {"Descriptor": {"platform": {"os": "linux", "architecture": "arm64"}},
+           "OCIManifest": {"layers": [{"digest": "sha256:arm", "size": 1}]}}
+    amd = {"Descriptor": {"platform": {"os": "linux", "architecture": "amd64"}},
+           "OCIManifest": {"layers": [{"digest": "sha256:amd", "size": 2}]}}
+    run = lambda argv, **kw: SimpleNamespace(returncode=0, stdout=json.dumps([arm, amd]))  # noqa: E731
+    assert sp.manifest_layers("img", runtime="docker", run=run) == {"sha256:amd": 2}
+    bad = lambda argv, **kw: SimpleNamespace(returncode=0, stdout="not json")  # noqa: E731
+    assert sp.manifest_layers("img", runtime="docker", run=bad) is None
+    failed = lambda argv, **kw: SimpleNamespace(returncode=1, stdout="")  # noqa: E731
+    assert sp.manifest_layers("img", runtime="docker", run=failed) is None
+
+
+def test_download_size_counts_shared_layers_once_and_skips_what_is_present():
+    layers = {"arena": {"sha256:base": 400, "sha256:arena": 40},
+              "mutator": {"sha256:base": 400, "sha256:node": 430}}
+    run = lambda argv, **kw: SimpleNamespace(  # noqa: E731
+        returncode=0, stdout=json.dumps({"SchemaV2Manifest": {"layers": [
+            {"digest": d, "size": s} for d, s in layers[argv[-1]].items()]}}))
+    assert sp.download_size(["arena", "mutator"], [], runtime="docker", run=run) == 870
+    assert sp.download_size(["mutator"], ["arena"], runtime="docker", run=run) == 430
+
+
+def test_a_real_pty_pull_reports_bytes(tmp_path):
+    """A fake `docker` script that redraws its progress the way docker does on a
+    terminal (\\r, cursor moves) -- run through a real pseudo-terminal."""
+    script = tmp_path / "fakedocker"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        "w = sys.stdout.write\n"
+        "w('0a1b2c3d4e5f: Pulling fs layer\\n')\n"
+        "w('\\x1b[1A\\x1b[2K\\r0a1b2c3d4e5f: Downloading [==>   ]  1MB/4MB\\r\\x1b[1B')\n"
+        "w('\\x1b[1A\\x1b[2K\\r0a1b2c3d4e5f: Downloading [=====>]  4MB/4MB\\r\\x1b[1B')\n"
+        "w('\\x1b[1A\\x1b[2K\\r0a1b2c3d4e5f: Pull complete\\r\\x1b[1B\\n')\n"
+        "sys.stdout.flush()\n")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    events = []
+    assert sp._pull_image("img@sha256:x", "arena", runtime=str(script), on_event=events.append,
+                          tty=True) is None
+    assert max(e.bytes_done or 0 for e in events) == 4_000_000
+    assert events[-1].phase == "done" and events[-1].bytes_total == 4_000_000
+
+
+def test_pty_pull_keeps_on_line_to_discrete_status_lines(tmp_path):
+    """A raw ``on_line`` consumer must see docker's discrete status lines,
+    exactly as it did through the old pipe path, but NONE of a pty's in-place
+    byte-progress redraws -- those would otherwise flood a plain-line
+    consumer with a line per redraw (fix round 1, spec 2026-09-22)."""
+    script = tmp_path / "fakedocker"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        "w = sys.stdout.write\n"
+        "w('0a1b2c3d4e5f: Pulling fs layer\\n')\n"
+        "w('\\x1b[1A\\x1b[2K\\r0a1b2c3d4e5f: Downloading [==>   ]  1MB/4MB\\r\\x1b[1B')\n"
+        "w('\\x1b[1A\\x1b[2K\\r0a1b2c3d4e5f: Downloading [=====>]  4MB/4MB\\r\\x1b[1B')\n"
+        "w('\\x1b[1A\\x1b[2K\\r0a1b2c3d4e5f: Pull complete\\r\\x1b[1B\\n')\n"
+        "sys.stdout.flush()\n")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    lines: list[str] = []
+    assert sp._pull_image("img@sha256:x", "arena", runtime=str(script), on_line=lines.append,
+                          tty=True) is None
+    assert "0a1b2c3d4e5f: Pulling fs layer" in lines
+    assert "0a1b2c3d4e5f: Pull complete" in lines
+    assert not any("Downloading [" in ln for ln in lines)

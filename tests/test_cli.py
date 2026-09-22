@@ -33,6 +33,31 @@ def _stub_arena_preflight(monkeypatch):
     monkeypatch.setattr(C, "container_runtime", lambda **kw: "docker")
 
 
+def test_arena_preflight_passes_on_event_not_on_line_to_ensure_image(monkeypatch):
+    """``_arena_preflight`` (eval/submit's shared gate) must drive
+    ``ensure_image`` through the CLI's progress display (``on_event``), never
+    the raw ``on_line`` dump -- a pty pull's byte-redraw text would otherwise
+    flood straight past the bar (fix round 1, spec 2026-09-22)."""
+    import io
+
+    from rich.console import Console
+
+    monkeypatch.setattr(C, "err", Console(file=io.StringIO(), force_terminal=False, width=100))
+    monkeypatch.setattr(C, "preflight_runtime", lambda **kw: None)
+    seen = {}
+
+    def fake_ensure_image(image, kind, **kwargs):
+        seen["image"], seen["kind"], seen["kwargs"] = image, kind, kwargs
+        return None
+
+    monkeypatch.setattr(C, "ensure_image", fake_ensure_image)
+
+    assert C._arena_preflight("my/arena:tag", runtime="docker") is None
+    assert seen["image"] == "my/arena:tag" and seen["kind"] == "arena"
+    assert "on_line" not in seen["kwargs"]
+    assert callable(seen["kwargs"]["on_event"])
+
+
 def test_cli_eval_invokes_eval_batch_with_resolved_objective(
         monkeypatch, capsys, tmp_path, clean_stage):
     _stub_arena_preflight(monkeypatch)
@@ -63,7 +88,7 @@ def test_cli_eval_invokes_eval_batch_with_resolved_objective(
     # sentinel (arena_image=None) resolves to the pinned ref, not the in-repo
     # :dev tag (see resolve_image's ladder).
     assert seen["image"] == _image_pins.ARENA_IMAGE
-    assert seen["max_parallel_evals"] == 8  # default, unset here
+    assert seen["max_parallel_evals"] is None  # unset: eval_batch sizes it from the machine
 
     out = json.loads(capsys.readouterr().out)
     assert out["mean_progress"] == 0.1

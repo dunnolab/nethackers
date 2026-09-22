@@ -9,7 +9,7 @@ from pathlib import Path
 from nethackers._image_pins import ARENA_IMAGE
 from nethackers.arena.seeds import secret_fingerprint
 from nethackers.contracts.models import ObjectiveSpec
-from nethackers.eval.runner import DEFAULT_MAX_PARALLEL_EVALS, eval_batch
+from nethackers.eval.runner import eval_batch
 from nethackers.hub.objectives import CATALOG, IDENTITIES
 from nethackers.hubclient.pull import pull
 
@@ -35,7 +35,7 @@ def verified_identity_spec(identity: str, seeds) -> ObjectiveSpec:
 def compute_hidden_baseline(client, token, config, tree, *, image=ARENA_IMAGE,
                             eval_fn=eval_batch, now_fn=_now, identities=IDENTITIES,
                             log=_log,
-                            max_parallel_evals=DEFAULT_MAX_PARALLEL_EVALS) -> str:
+                            max_parallel_evals=None) -> str:
     """Compute AutoAscend's hidden-seed floor from a local ``tree`` and submit
     it per identity, returning ``"succeeded"``/``"failed"``.
 
@@ -99,7 +99,7 @@ def _covered_identities(client, per_identity_total: int) -> frozenset[str]:
 
 def verify_program(client, token, config, reference, *, image=ARENA_IMAGE, pull_fn=pull,
                    eval_fn=eval_batch, now_fn=_now, identities=IDENTITIES,
-                   max_parallel_evals=DEFAULT_MAX_PARALLEL_EVALS) -> str:
+                   max_parallel_evals=None) -> str:
     secret = config["secret"]
     seeds = tuple(config["seeds"])
     fp = secret_fingerprint(secret)

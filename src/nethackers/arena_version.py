@@ -186,6 +186,74 @@ ARENA_MAJOR_BY_DIGEST: dict[str, int] = {
     # scoring-path code changed, so a re-run has nothing to disconfirm. Same
     # shape as the v0.33.1 entry.
     "sha256:ddbe03a69604a6069a7436583c221e5f81fff2a668540474756f3968fc61d517": 2,
+    # v0.34.2, rebuilt for the same reason as the v0.34.1 digest above: uv.lock
+    # is an arena input and the release moves the project's own version in it,
+    # 0.34.1 -> 0.34.2. Everything else that differs is host-side eval sizing --
+    # eval/runner.py, containers.py and sandbox_flags.py (the `docker run`
+    # flags the host wraps around this image), plus cli.py, harness/ and
+    # worker/ passing an unset --max-parallel-evals through -- none of which
+    # the arena's entrypoint (`python -m nethackers.arena.run`) imports.
+    # arena/ and contracts/ are untouched (`git diff v0.34.1...HEAD --
+    # src/nethackers/arena src/nethackers/contracts` is empty), and so are
+    # nle-base/Dockerfile and arena/Dockerfile. No package version moves, so
+    # the installed environment is identical. Also the linux/amd64 LEG, not an
+    # index -- checked with scripts/check_one_manifest.sh (I7). Read from the
+    # diff, NOT measured: no scoring-path code changed, so a re-run has nothing
+    # to disconfirm. (The new host flags are not scoring either: on the v0.34.0
+    # arena, episodes played under the old and the new caps came out
+    # identical.) Same shape as the v0.34.1 entry.
+    "sha256:fd68b5ef42f07c1448467ec31348b4682f8b71b6d7a9dee83242653c3374e40c": 2,
+    # v0.34.3, rebuilt because uv.lock is an arena input and this release
+    # changes it twice: the project's own version (0.34.2 -> 0.34.3) and one
+    # added package, truststore 0.10.4. That package is the only change to the
+    # installed environment -- every other package keeps its version -- and it
+    # is inert here: pure Python, no .pth startup hook, imported only by
+    # cli.main to verify host-side HTTPS against the OS trust store. The
+    # arena's entrypoint (`python -m nethackers.arena.run`) loads neither
+    # nethackers.cli nor truststore (checked: both absent from sys.modules
+    # after importing it). The rest of the diff is docs. arena/ and contracts/
+    # are untouched (`git diff v0.34.2...HEAD -- src/nethackers/arena
+    # src/nethackers/contracts` is empty), and so are nle-base/Dockerfile and
+    # arena/Dockerfile. Also the linux/amd64 LEG, not an index -- checked with
+    # scripts/check_one_manifest.sh (I7). Read from the diff, NOT measured: no
+    # scoring-path code changed and the new package never loads, so a re-run
+    # has nothing to disconfirm. Same shape as the v0.34.2 entry, plus that
+    # one package.
+    "sha256:6059f96ce188915430499d498dbbeacadea83613555c11f819d16f7477796fbe": 2,
+    # v0.34.4, rebuilt for the same reason as the v0.34.2 digest above: uv.lock
+    # is an arena input and the release moves the project's own version in it,
+    # 0.34.3 -> 0.34.4. That line is the whole uv.lock change, so no package
+    # version moves and the installed environment is identical. The one code
+    # change is hubclient/publish.py, the host-side `git push` of a win to the
+    # owner's repo, which the arena's entrypoint (`python -m
+    # nethackers.arena.run`) never loads (checked: no nethackers.hubclient
+    # module in sys.modules after importing it). arena/ and contracts/ are
+    # untouched (`git diff v0.34.3...HEAD -- src/nethackers/arena
+    # src/nethackers/contracts` is empty), and so are nle-base/Dockerfile and
+    # arena/Dockerfile. Also the linux/amd64 LEG, not an index -- checked with
+    # scripts/check_one_manifest.sh (I7). Read from the diff, NOT measured: no
+    # scoring-path code changed, so a re-run has nothing to disconfirm. Same
+    # shape as the v0.34.2 entry.
+    "sha256:63dad174666973067ee8e1c407e30ed8b03287a4e184464ea9aec2a6bb143f18": 2,
+    # v0.35.0 (`nethackers setup`), rebuilt for the same reason as the two
+    # digests above: uv.lock is an arena input and the release moves the
+    # project's own version in it, 0.34.4 -> 0.35.0. That line is the whole
+    # uv.lock change, so every dependency version is the one the previous
+    # arena installed. The release's code changes are all host-side -- the new
+    # `nethackers.setup` package, cli.py, diagnostics.py, ptyrun.py,
+    # hubclient/publish.py and four harness modules -- and the arena's
+    # entrypoint loads none of them (checked: importing `nethackers.arena.run`
+    # leaves sys.modules holding only nethackers.arena.* and
+    # nethackers.contracts.*). arena/ and contracts/ are untouched (`git diff
+    # v0.34.4...HEAD -- src/nethackers/arena src/nethackers/contracts` is
+    # empty), and so are nle-base/Dockerfile and arena/Dockerfile. Also the
+    # linux/amd64 LEG, not an index -- CI resolves that leg and
+    # scripts/repin_images.py refuses an index. Read from the diff, NOT
+    # measured: no scoring-path code changed, so a re-run has nothing to
+    # disconfirm. As on every rebuild, the base layer is whatever
+    # `python:3.11-slim` resolves to today, which is why the digest moves at
+    # all; the pinned dependency set on top of it does not.
+    "sha256:301cb0a99227c109fcf9b9c354148c5ea978f5adbc44b636ddf86fada6058d4f": 2,
 }
 
 

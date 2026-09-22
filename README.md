@@ -104,10 +104,12 @@ Other hosts emulate, and that's required, not optional: the same seed plays a
 different game of NetHack on a different CPU architecture, so a native arm64
 score isn't comparable — the hub refuses it.
 
-On Apple Silicon, turn on Rosetta in Docker Desktop (Settings → General →
-Apple Virtualization framework → "Use Rosetta for x86_64/amd64 emulation").
-It's worth doing: the same 15-episode batch on the same machine took 823s
-under QEMU and 224s with Rosetta. `nethackers doctor` reports whether it's on.
+On Apple Silicon, run amd64 through Rosetta rather than QEMU: the same
+15-episode batch on the same machine took 823s under QEMU and 224s with
+Rosetta. `nethackers setup` starts a new Colima VM with Rosetta; with Docker
+Desktop, turn it on in Settings → General → Apple Virtualization framework →
+"Use Rosetta for x86_64/amd64 emulation"; OrbStack uses it already.
+`nethackers doctor` reports whether it's on.
 
 ## Safety: this runs untrusted code
 
@@ -117,8 +119,8 @@ Three things execute code that neither you nor we wrote or reviewed:
 
 1. **Bots you evaluate.** `nethackers eval` and every eval inside `evolve` import
    and run a `bot.py`. If you pulled it from the hub, someone else wrote it.
-2. **The coding agent.** `nethackers evolve` runs Claude Code or Codex with
-   permission prompts fully disabled (`--dangerously-skip-permissions` /
+2. **The coding agent.** `nethackers evolve` runs Claude Code, Codex, or OpenCode
+   with permission prompts fully disabled (`--dangerously-skip-permissions` /
    `--dangerously-bypass-approvals-and-sandbox`). It writes and executes code
    unattended, for hours.
 3. **Programs you `pull`.** `nethackers pull` clones a repo. Nothing runs at
@@ -127,46 +129,85 @@ Three things execute code that neither you nor we wrote or reviewed:
 
 What we do about it:
 
-- **Bot evaluation runs in a container with `--network none`** and the bot mounted
-  read-only at `/sol`. No egress is the strongest control we have here.
-- **The coding agent runs in a container** with `--pids-limit`, `--memory` (swap
-  capped to the same value), `--cpus`, `--security-opt no-new-privileges`,
-  dropping to a non-root user, under a wall-clock `timeout`.
+- **The bot evaluator is a sealed box.** Every eval runs in a container with no
+  network (`--network none`), a read-only root filesystem, a `noexec,nosuid`
+  tmpfs for scratch, every Linux capability dropped, `no-new-privileges`, a
+  non-root user, and pid/memory/CPU caps. The bot is mounted read-only, and the
+  hidden seeds never enter the container: the secret is expanded to concrete
+  per-game seeds on the host and piped in over stdin, so it is never on the
+  container's argv or in its environment.
+- **Fetching is github-only and hardened.** `pull` and hub registration accept
+  only `github.com/<owner>/<repo>@<commit>` references. The host is parsed rather
+  than string-matched, so lookalikes like `github.com.evil.com` or
+  `git@github.com:...` are refused, and the clone allows only https, with
+  submodules, symlink checkout, and tags disabled.
+- **The coding agent runs in a container** with `no-new-privileges`, pid/memory
+  (swap-capped)/CPU limits, a non-root user (it starts as root only to remap uids,
+  then drops), and a wall-clock `timeout`. Instruction-bearing files (`CLAUDE.md`,
+  `AGENTS.md`, `.mcp.json`, …) are stripped from the tree it is handed, and an
+  opt-in credential broker can keep your model key out of the container entirely.
 
-What we do **not** do — stated plainly, because an audit of these docs against the
-code found earlier drafts claiming more than the implementation delivers:
+What we don't do:
 
-- The threat model is **accident-grade** and was written for the coding agent:
-  our own model's code, on our own machine. It defends against runaway processes
-  and blast radius from a confused agent — **not** against a determined adversary.
-- **The evaluation container has no resource limits.** The cgroup caps above are
-  on the *agent* container only. The surface that runs strangers' bots has no
-  pid, memory, or CPU cap, and runs as root inside the container.
-- **A bot can influence its own score.** The scorer puts the solution on its own
-  import path, so a self-reported number is an unaudited claim — which is the
-  whole reason the Private Dungeons tier exists.
-- **The mutator container has open network egress**, and your coding-agent
-  credentials are reachable from inside it (for Codex, writable).
-- A container is not a security boundary against a kernel exploit. If you are
-  evaluating code you have reason to distrust, run it on a machine you are
-  willing to lose.
+- **A bot can still influence its own score.** The scorer runs the bot in-process
+  with the solution on its `sys.path`, so a self-reported number is a claim you
+  take on trust. Sealing the container does not change that. It is why the Private
+  Dungeons (verified) tier exists.
+- **The credential broker is opt-in.** By default the agent's container still has
+  your coding-agent credentials mounted (for Codex, writable) and open network
+  egress. The agent CLIs need their model APIs, and egress allow-listing is
+  designed but not on by default.
+- **The threat model is accident-grade.** It defends against a runaway or confused
+  agent and the blast radius of one, not a determined adversary. A container is
+  not a boundary against a kernel exploit. If you are evaluating code you have
+  reason to distrust, run it on a machine you are willing to lose.
 
-Details, per-surface, in [`docs/harness.md`](docs/harness.md#3-safety-and-sandboxing) —
+Details, per-surface, are in [`docs/harness.md`](docs/harness.md#3-safety-and-sandboxing),
 written to be reused by anyone building a harness of their own.
 
 ## Install
 
-**Requirements**
+```bash
+uv tool install nethackers      # or: pip install nethackers
+nethackers setup
+```
 
-Every row also needs Python 3.11+; the rest are additive per row, not cumulative
-down the table.
+Don't have `uv`? It installs from https://astral.sh/uv. Python 3.11+ is required.
+
+`nethackers setup` gets this machine ready. It checks what's there, shows a
+plan and asks once; then it runs the logins back to back (installing `gh` or
+your coding agent first if needed), installs and starts the container runtime,
+and pulls the sandbox images. The logins come first, so you can walk away once
+they're done. Running it again is safe: it plans only what's still missing.
+
+- **What it installs itself:** only what is one documented command and needs
+  no `sudo` — Colima, Docker's CLI and `gh` through Homebrew on a Mac, and Claude
+  Code or Codex with the vendor's own installer. Anything that needs `sudo`, a
+  GUI click, or logging out and back in is printed for you instead (on Linux,
+  that's the container runtime and `gh`). nethackers never runs `sudo`.
+- **Container runtime:** a fresh Mac gets Colima, started with Rosetta. An
+  installed Docker Desktop, OrbStack or Podman is kept and started.
+- **Logins:** `nethackers login` (GitHub), `gh auth login` (checked to be the
+  same GitHub account), and your coding agent's own login.
+- **Sandbox images** (`ghcr.io/dunnolab/nethackers-arena` and `-mutator`, pinned
+  by digest in the CLI): about 1 GB to download the first time and 4 GB on disk;
+  later updates download only what changed.
+- `--for eval` sets up only what `eval` needs, `--operator codex` picks the
+  coding agent, and `--yes` runs the plan without asking.
+- Native Windows isn't covered; run nethackers inside WSL2.
+
+What has actually been run on real machines, and what is written from vendor
+docs but untested, is in [`docs/setup.md`](docs/setup.md).
+
+**Requirements** — what setup takes care of. Every row also needs Python 3.11+;
+the rest are additive per row, not cumulative down the table.
 
 | To do this | You need |
 |---|---|
 | Browse the hub (TUI, boards, frontier) | nothing else |
 | `eval` — score a bot | Docker or Podman |
-| `evolve` — run the loop | Docker or Podman, a coding agent CLI (`claude`, `codex`, or `opencode2`) logged in on the host, and `nethackers login` |
-| `submit` — publish a solution | Docker or Podman (it evaluates before pushing), `nethackers login`, and [`gh`](https://cli.github.com/) authenticated as the **same** GitHub account |
+| `evolve` — run the loop | Docker or Podman, a coding agent CLI (`claude`, `codex`, or `opencode2`) logged in on the host, `nethackers login`, and — to publish its wins — [`gh`](https://cli.github.com/) authenticated as the **same** GitHub account |
+| `submit` — publish a solution | Docker or Podman (it evaluates before pushing), `nethackers login`, and `gh` authenticated as the **same** GitHub account |
 
 OpenCode 2 needs nothing installed on the host: its CLI ships in the sandbox.
 Give it models by defining providers in your global
@@ -179,36 +220,20 @@ key as `{env:NAME}` or a literal `apiKey`: a `{file:...}` key, a login made with
 models, and `doctor` says so. How each coding agent behaves in the sandbox, with
 OpenCode 2 in detail, is in [`docs/harness.md`](docs/harness.md#the-coding-agents).
 
-Note that `doctor`'s `publish` capability checks the hub, your login, and `gh` —
-but not the container runtime, so it can report `publish` ready on a machine where
-`submit` will still stop at its arena evaluation.
-
-**Install the CLI**
-
-```bash
-pip install nethackers
-# or, isolated:
-uv tool install nethackers
-```
-
-Don't have `uv`? It installs from https://astral.sh/uv.
-
-**Check your machine**
+**Check your machine** without changing anything:
 
 ```bash
 nethackers doctor
 ```
 
 `doctor` runs eight checks and folds them into four capabilities — `browse`,
-`eval`, `evolve`, `publish` — telling you exactly which ones this machine can do
-and what to fix for the rest. It honors `-o json` if you want to gate a script on
-it. It reaches the network (a hub round-trip, and a registry probe for any
-sandbox image you don't have locally), and it changes nothing unless you pass
-`--pull`.
-
-The sandbox images (`ghcr.io/dunnolab/nethackers-arena` and `-mutator`) are
-pinned by digest in the CLI and pulled on first use — several GB, so the first
-`eval` takes a while. Nothing else needs building.
+`eval`, `evolve`, `publish` — telling you which ones this machine can do.
+Where setup can fix a check, its fix says `nethackers setup`. It honors `-o
+json` if you want to gate a script on it, and it reaches the network (a hub
+round-trip, and a registry probe for any sandbox image you don't have
+locally). Its `publish` capability checks the hub, your login and `gh` but not
+the container runtime, so it can report `publish` ready on a machine where
+`submit` will still stop at its arena evaluation.
 
 ## Quickstart
 
@@ -293,9 +318,10 @@ We deliberately do not run an artifact store, an identity provider, or a code
 host. GitHub is all three, which keeps the hub small enough to be honest about.
 
 - **A program *is* a `repo@commit`.** The hub stores the link, the manifest, and
-  the scores — never the code. Registration is rejected unless the commit exists
-  (the hub checks it against the GitHub API using *your* token), so a board row
-  always pointed at a real tree when it was made. Two honest limits: the hub does
+  the scores — never the code. Registration is rejected unless the reference is a
+  real `github.com/<owner>/<repo>` (the host is parsed, so lookalikes are refused)
+  and the commit exists (the hub checks it against the GitHub API using *your*
+  token), so a board row always pointed at a real tree, on GitHub, when it was made. Two honest limits: the hub does
   not check repo *visibility*, so a private repo can be registered and will not be
   fetchable by others — `submit` forces the repo public, a hand-rolled `register`
   does not — and a link is only as durable as the repo behind it, which its owner
@@ -312,10 +338,6 @@ host. GitHub is all three, which keeps the hub small enough to be honest about.
   `nethack`/`nethackers`, and adds a short README if there is none — it never
   overwrites a description, website or README you wrote, and all of it is yours
   to edit or delete.
-- **Lineage is recorded, not yet used.** An `evolve` registration carries its
-  parent's digest; `submit` and `register` send none. The hub stores those edges
-  but no endpoint reads them today, so treat ancestry as data being collected for
-  later, not as a graph you can query.
 - **CI is the deploy lever.** Pushing a `vX.Y.Z` tag builds the hub image, pushes
   it to GHCR, and flips production by digest with a health check and automatic
   rollback (skippable with `[skip hub-deploy]` in the tagged commit message). The sandbox images are built by workflow and pinned by digest into

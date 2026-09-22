@@ -7,6 +7,7 @@ from nethackers.containers import (
     container_runtime,
     label_args,
     nonroot_userns_args,
+    runtime_capacity,
 )
 
 
@@ -158,3 +159,50 @@ def test_nonroot_userns_args_probe_asks_for_the_rootless_field():
 
     nonroot_userns_args("podman", run=run)
     assert seen == [["podman", "info", "--format", "{{.Host.Security.Rootless}}"]]
+
+
+# --- runtime_capacity: what the runtime can give its containers ------------
+# The arena box is sized from this (eval/runner.py's _size_box), so it must
+# answer on docker AND podman, and degrade to None -- today's fixed default --
+# on any failure rather than guess.
+
+
+def _info_by_template(answers):
+    """A `run` stub answering `<exe> info --format <template>` per template:
+    a string is stdout at rc 0, None is the template error (rc 1)."""
+    seen = []
+
+    def run(cmd, **kw):
+        fmt = cmd[cmd.index("--format") + 1]
+        seen.append(fmt)
+        out = answers.get(fmt)
+        return SimpleNamespace(returncode=1 if out is None else 0, stdout=out or "", stderr="")
+
+    run.seen = seen
+    return run
+
+
+def test_runtime_capacity_reads_dockers_fields():
+    run = _info_by_template({"{{.NCPU}} {{.MemTotal}}": "10 8341884928\n"})
+    assert runtime_capacity("docker", run=run) == (10, 8341884928)
+
+
+def test_runtime_capacity_falls_through_to_podmans_host_block():
+    # podman errors on docker's top-level NCPU; its numbers live under Host.
+    run = _info_by_template({"{{.Host.CPUs}} {{.Host.MemTotal}}": "96 404620763136\n"})
+    assert runtime_capacity("podman", run=run) == (96, 404620763136)
+    assert run.seen == ["{{.NCPU}} {{.MemTotal}}", "{{.Host.CPUs}} {{.Host.MemTotal}}"]
+
+
+def test_runtime_capacity_is_none_when_nothing_answers():
+    assert runtime_capacity("docker", run=_info_by_template({})) is None
+    garbled = _info_by_template({"{{.NCPU}} {{.MemTotal}}": "<no value>",
+                                 "{{.Host.CPUs}} {{.Host.MemTotal}}": "0 0"})
+    assert runtime_capacity("docker", run=garbled) is None
+
+
+def test_runtime_capacity_is_none_when_the_probe_fails():
+    def run(*a, **k):
+        raise OSError("no such binary")
+
+    assert runtime_capacity("docker", run=run) is None

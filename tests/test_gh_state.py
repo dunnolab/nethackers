@@ -44,3 +44,19 @@ def test_gh_login_passes_a_ten_second_timeout():
 
     gh_state(which=lambda _: "/usr/bin/gh", run=run)
     assert seen["timeout"] == 10
+
+
+def test_gh_login_gives_up_on_a_hung_gh():
+    """A hung `gh` never hangs the caller (origin/main's contract) -- but it
+    now RAISES ``TimeoutExpired`` instead of returning ``None``, so ``gh_state``
+    can report "unknown" rather than the wrong "not logged in" (spec §4)."""
+    import pytest
+
+    from nethackers.hubclient.publish import gh_login
+
+    def hung(cmd, **kw):
+        assert kw.get("timeout") == 10
+        raise subprocess.TimeoutExpired(cmd, 10)
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        gh_login(run=hung)
