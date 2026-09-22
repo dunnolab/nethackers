@@ -582,3 +582,209 @@ def test_opencode2_broker_docker_args_mounts_owner_only_even_with_a_literal_key(
     args = opencode2_broker_docker_args(tmp_path, environ={}, broker_bases=broker_bases)
     mounted = _mounted_ro(args, "/home/agent/.config/opencode/opencode.json")
     assert mounted.stat().st_mode & 0o077 == 0
+
+
+# --- Codex OAuth refresh (§3.3, Task 4a): _codex_creds + _codex_refresh ----
+#
+# `_codex_creds` is the parsed `~/.codex/auth.json`, raising `AuthUnavailable`
+# on a missing/unreadable/malformed file -- the same failure mode
+# `_codex_token` already raises. `_codex_refresh` does the broker's
+# proactive/reactive OAuth refresh (§3.3): POST `grant_type=refresh_token` to
+# auth.openai.com, then WRITE BACK the rotated access_token + refresh_token to
+# the canonical file (the refresh token is single-use, so skipping the
+# write-back bricks the host's own `codex login`). Not yet wired into
+# `broker_credential` -- that's Task 4b.
+
+from nethackers.harness.auth_inject import (  # noqa: E402
+    CODEX_OAUTH_CLIENT_ID,
+    _codex_creds,
+    _codex_refresh,
+)
+
+_CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token"
+
+
+def _codex_auth_doc(**overrides) -> dict:
+    doc = {
+        "OPENAI_API_KEY": None,
+        "auth_mode": "chatgpt",
+        "last_refresh": "2026-09-01T00:00:00Z",
+        "tokens": {
+            "access_token": "old-access",
+            "refresh_token": "old-refresh",
+            "id_token": "old-id-token",
+            "account_id": "acct-123",
+        },
+    }
+    doc.update(overrides)
+    return doc
+
+
+def _write_codex_auth(home: Path, doc: dict) -> Path:
+    codex_dir = home / ".codex"
+    codex_dir.mkdir(parents=True, exist_ok=True)
+    path = codex_dir / "auth.json"
+    path.write_text(json.dumps(doc))
+    return path
+
+
+class _FakeTokenResponse:
+    def __init__(self, status_code: int, payload: dict | None = None):
+        self.status_code = status_code
+        self._payload = payload if payload is not None else {}
+
+    def json(self) -> dict:
+        return self._payload
+
+
+def _fake_post(status_code: int, payload: dict | None = None, *, calls: list | None = None):
+    """A ``post(url, *, data)``-shaped fake standing in for ``httpx.post``,
+    never touching the network. Records every call into ``calls`` when given
+    one, so a test can assert the exact OAuth request sent."""
+
+    def post(url, *, data):
+        if calls is not None:
+            calls.append({"url": url, "data": data})
+        return _FakeTokenResponse(status_code, payload)
+
+    return post
+
+
+def test_codex_creds_returns_parsed_auth_json(tmp_path):
+    doc = _codex_auth_doc()
+    _write_codex_auth(tmp_path, doc)
+    assert _codex_creds(tmp_path) == doc
+
+
+def test_codex_creds_missing_file_raises(tmp_path):
+    with pytest.raises(AuthUnavailable):
+        _codex_creds(tmp_path)
+
+
+def test_codex_creds_malformed_json_raises(tmp_path):
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir(parents=True)
+    (codex_dir / "auth.json").write_text("not json")
+    with pytest.raises(AuthUnavailable):
+        _codex_creds(tmp_path)
+
+
+def test_codex_creds_non_dict_json_raises(tmp_path):
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir(parents=True)
+    (codex_dir / "auth.json").write_text("[]")
+    with pytest.raises(AuthUnavailable):
+        _codex_creds(tmp_path)
+
+
+def test_codex_refresh_writes_back_new_tokens_and_returns_access_token(tmp_path):
+    path = _write_codex_auth(tmp_path, _codex_auth_doc())
+    post = _fake_post(200, {"access_token": "new-acc", "refresh_token": "new-ref"})
+
+    result = _codex_refresh(tmp_path, post=post)
+
+    assert result == "new-acc"
+    doc = json.loads(path.read_text())
+    assert doc["tokens"]["access_token"] == "new-acc"
+    assert doc["tokens"]["refresh_token"] == "new-ref"
+    assert doc["auth_mode"] == "chatgpt"
+    assert doc["tokens"]["account_id"] == "acct-123"
+    assert doc["tokens"]["id_token"] == "old-id-token"
+    assert doc["last_refresh"] == "2026-09-01T00:00:00Z"
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_codex_refresh_posts_the_correct_oauth_request(tmp_path):
+    _write_codex_auth(tmp_path, _codex_auth_doc())
+    calls: list = []
+    post = _fake_post(200, {"access_token": "new-acc", "refresh_token": "new-ref"}, calls=calls)
+
+    _codex_refresh(tmp_path, post=post)
+
+    assert calls == [{
+        "url": _CODEX_TOKEN_URL,
+        "data": {
+            "grant_type": "refresh_token",
+            "client_id": CODEX_OAUTH_CLIENT_ID,
+            "refresh_token": "old-refresh",
+        },
+    }]
+
+
+def test_codex_refresh_is_single_use_old_refresh_token_gone(tmp_path):
+    path = _write_codex_auth(tmp_path, _codex_auth_doc())
+    post = _fake_post(200, {"access_token": "new-acc", "refresh_token": "new-ref"})
+
+    _codex_refresh(tmp_path, post=post)
+
+    raw = path.read_text()
+    assert "old-refresh" not in raw
+    assert json.loads(raw)["tokens"]["refresh_token"] == "new-ref"
+
+
+def test_codex_refresh_keeps_old_refresh_token_when_endpoint_omits_one(tmp_path):
+    path = _write_codex_auth(tmp_path, _codex_auth_doc())
+    post = _fake_post(200, {"access_token": "new-acc"})  # no refresh_token in the response
+
+    result = _codex_refresh(tmp_path, post=post)
+
+    assert result == "new-acc"
+    assert json.loads(path.read_text())["tokens"]["refresh_token"] == "old-refresh"
+
+
+def test_codex_refresh_updates_id_token_when_endpoint_returns_one(tmp_path):
+    path = _write_codex_auth(tmp_path, _codex_auth_doc())
+    post = _fake_post(200, {
+        "access_token": "new-acc", "refresh_token": "new-ref", "id_token": "new-id-token",
+    })
+
+    _codex_refresh(tmp_path, post=post)
+
+    assert json.loads(path.read_text())["tokens"]["id_token"] == "new-id-token"
+
+
+def test_codex_refresh_non_200_raises_and_leaves_file_unchanged(tmp_path):
+    path = _write_codex_auth(tmp_path, _codex_auth_doc())
+    before = path.read_bytes()
+    post = _fake_post(401, {"error": "invalid_grant"})
+
+    with pytest.raises(AuthUnavailable):
+        _codex_refresh(tmp_path, post=post)
+
+    assert path.read_bytes() == before
+
+
+def test_codex_refresh_missing_refresh_token_raises(tmp_path):
+    doc = _codex_auth_doc()
+    doc["tokens"].pop("refresh_token")
+    path = _write_codex_auth(tmp_path, doc)
+    before = path.read_bytes()
+    calls: list = []
+    post = _fake_post(200, {"access_token": "new-acc", "refresh_token": "new-ref"}, calls=calls)
+
+    with pytest.raises(AuthUnavailable):
+        _codex_refresh(tmp_path, post=post)
+
+    assert calls == []  # never even attempts the network call
+    assert path.read_bytes() == before
+
+
+def test_codex_refresh_malformed_auth_file_raises(tmp_path):
+    codex_dir = tmp_path / ".codex"
+    codex_dir.mkdir(parents=True)
+    (codex_dir / "auth.json").write_text("not json")
+    post = _fake_post(200, {"access_token": "new-acc", "refresh_token": "new-ref"})
+
+    with pytest.raises(AuthUnavailable):
+        _codex_refresh(tmp_path, post=post)
+
+
+def test_codex_refresh_no_access_token_in_response_raises_and_leaves_file_unchanged(tmp_path):
+    path = _write_codex_auth(tmp_path, _codex_auth_doc())
+    before = path.read_bytes()
+    post = _fake_post(200, {"refresh_token": "new-ref"})  # no access_token
+
+    with pytest.raises(AuthUnavailable):
+        _codex_refresh(tmp_path, post=post)
+
+    assert path.read_bytes() == before

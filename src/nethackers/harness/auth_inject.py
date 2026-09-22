@@ -112,11 +112,19 @@ from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlsplit
 
+import httpx
+
 from nethackers.harness.cred_broker import HeaderRewrite
 
 log = logging.getLogger(__name__)
 
 _CLAUDE_LOGIN_HINT = "run `claude` on this host to log in, then retry"
+
+# The codex CLI's own public OAuth app id (the id_token `aud` claim) -- not a
+# secret, pinned from the codex-rs source. `_CODEX_TOKEN_ENDPOINT` is OpenAI's
+# refresh endpoint for that app (§3.3).
+CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+_CODEX_TOKEN_ENDPOINT = "https://auth.openai.com/oauth/token"
 
 
 class AuthUnavailable(Exception):
@@ -675,21 +683,104 @@ def _claude_linux_token(home: Path) -> str:
     return token
 
 
+def _codex_creds(home: Path) -> dict:
+    """Parsed ``~/.codex/auth.json`` -- the same file ``auth_docker_args``
+    mounts whole and ``_codex_token``/``_codex_refresh`` read. Raises
+    ``AuthUnavailable`` on a missing, unreadable, or malformed (unparsable,
+    or not a JSON object) file."""
+    try:
+        doc = json.loads((home / ".codex" / "auth.json").read_text())
+    except (OSError, json.JSONDecodeError) as exc:
+        raise AuthUnavailable("codex", "run `codex login` on this host, then retry") from exc
+    if not isinstance(doc, dict):
+        raise AuthUnavailable("codex", "run `codex login` on this host, then retry")
+    return doc
+
+
 def _codex_token(home: Path) -> str:
     """Read a usable OpenAI credential out of the host's canonical
     ``~/.codex`` -- the same directory ``auth_docker_args`` mounts whole.
     Prefers a stable ``OPENAI_API_KEY`` login; falls back to the OAuth
     session's rotating ``access_token`` (see the module docstring's Broker
     section for the staleness this creates on a long mutator run)."""
-    try:
-        doc = json.loads((home / ".codex" / "auth.json").read_text())
-    except (OSError, json.JSONDecodeError) as exc:
-        raise AuthUnavailable("codex", "run `codex login` on this host, then retry") from exc
-    api_key = doc.get("OPENAI_API_KEY") if isinstance(doc, dict) else None
+    doc = _codex_creds(home)
+    api_key = doc.get("OPENAI_API_KEY")
     if isinstance(api_key, str) and api_key:
         return api_key
-    tokens = doc.get("tokens") if isinstance(doc, dict) else None
+    tokens = doc.get("tokens")
     access_token = tokens.get("access_token") if isinstance(tokens, dict) else None
     if isinstance(access_token, str) and access_token:
         return access_token
     raise AuthUnavailable("codex", "run `codex login` on this host, then retry")
+
+
+def _codex_refresh(home: Path, *, post=httpx.post) -> str:
+    """Refresh the rotating ChatGPT-subscription OAuth access token (§3.3)
+    and WRITE IT BACK to ``~/.codex/auth.json``: the refresh token is
+    single-use, so unless the new one is persisted, the *next* refresh --
+    including the host's own interactive ``codex`` login -- fails and the
+    login bricks. Returns the new ``access_token``.
+
+    ``post`` is an injectable ``httpx.post``-shaped callable (positional
+    ``url``, keyword ``data``), faked in tests so this never touches the
+    network. Raises ``AuthUnavailable`` on any failure -- no refresh token to
+    send, a non-200 response, or a 200 response missing ``access_token`` --
+    leaving the file byte-for-byte unchanged (INV B4: nothing here writes
+    unless the refresh actually succeeded).
+    """
+    doc = _codex_creds(home)
+    tokens = doc.get("tokens")
+    if not isinstance(tokens, dict):
+        raise AuthUnavailable("codex", "run `codex login` on this host, then retry")
+    refresh_token = tokens.get("refresh_token")
+    if not refresh_token:
+        raise AuthUnavailable("codex", "run `codex login` on this host, then retry")
+
+    resp = post(_CODEX_TOKEN_ENDPOINT, data={
+        "grant_type": "refresh_token",
+        "client_id": CODEX_OAUTH_CLIENT_ID,
+        "refresh_token": refresh_token,
+    })
+    if resp.status_code != 200:
+        raise AuthUnavailable(
+            "codex", "codex token refresh failed -- run `codex login` on this host, then retry"
+        )
+    payload = resp.json()
+    new_access = payload.get("access_token")
+    new_refresh = payload.get("refresh_token") or refresh_token  # some providers omit a new one
+    if not new_access:
+        raise AuthUnavailable(
+            "codex",
+            "codex token refresh returned no access_token -- run `codex login`, then retry",
+        )
+
+    tokens = dict(tokens)
+    tokens["access_token"] = new_access
+    tokens["refresh_token"] = new_refresh
+    if "id_token" in payload:
+        tokens["id_token"] = payload["id_token"]
+    new_doc = dict(doc)
+    new_doc["tokens"] = tokens
+
+    # Atomic, owner-only write-back (mirrors _write_cage_config's mkstemp +
+    # os.replace): the refresh token is single-use, so a torn/partial write
+    # here is as bad as not writing at all -- either way the next refresh
+    # (ours or the host's own `codex` login) is locked out until the user
+    # re-runs `codex login`.
+    target = home / ".codex" / "auth.json"
+    tmp: str | None = None
+    try:
+        fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=".auth.json.")
+        with os.fdopen(fd, "w") as f:
+            json.dump(new_doc, f)
+        os.replace(tmp, target)
+    except OSError as exc:
+        if tmp is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+        raise AuthUnavailable(
+            "codex",
+            "could not save the refreshed codex token -- run `codex login` on this host, "
+            "then retry",
+        ) from exc
+    return new_access
