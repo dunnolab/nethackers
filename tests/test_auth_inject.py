@@ -1,16 +1,38 @@
+import base64
 import json
 import logging
 import os
+import time
 from pathlib import Path
 
+import httpx
 import pytest
 
+from nethackers.harness import auth_inject
 from nethackers.harness.auth_inject import (
     AuthUnavailable,
     auth_docker_args,
     opencode2_has_provider_key,
 )
 from nethackers.harness.cred_broker import HeaderRewrite
+
+
+def _b64url_json(obj: dict) -> str:
+    return base64.urlsafe_b64encode(json.dumps(obj).encode()).rstrip(b"=").decode("ascii")
+
+
+def _make_jwt(exp, **claims) -> str:
+    """A structurally-valid unsigned (``alg:none``) JWT carrying ``exp`` (plus
+    any extra ``claims``) -- enough for the token-staleness / cage-login tests
+    to reason about, never a real token."""
+    header = _b64url_json({"alg": "none", "typ": "JWT"})
+    payload = _b64url_json({"exp": exp, **claims})
+    return f"{header}.{payload}."
+
+
+def _decode_jwt_payload(token: str) -> dict:
+    seg = token.split(".")[1]
+    return json.loads(base64.urlsafe_b64decode(seg + "=" * (-len(seg) % 4)))
 
 
 def test_codex_mounts_the_one_canonical_dir():
@@ -220,13 +242,87 @@ def test_claude_uses_broker_base_and_placeholder():
     assert "REAL" not in joined                    # no real key crosses the boundary
 
 
-def test_codex_uses_broker_base_and_placeholder():
-    args = auth_broker_args("codex", broker_base="http://host.docker.internal:5001")
-    joined = " ".join(args)
-    assert "OPENAI_BASE_URL=http://host.docker.internal:5001" in joined
-    assert "OPENAI_API_KEY=proxy-managed" in joined
-    assert "-v" not in args
-    assert "REAL" not in joined
+def test_codex_uses_broker_base_cage_login_no_real_token(tmp_path):
+    # Codex broker path routes via a CAGE `~/.codex` (auth.json + config.toml)
+    # mounted read-only, NOT the `OPENAI_BASE_URL` env var (a ChatGPT-subscription
+    # login ignores that for its model endpoint). auth.json carries a PLACEHOLDER
+    # far-exp JWT + the real (non-secret) account_id; no real token in the cage.
+    (tmp_path / ".codex").mkdir()
+    (tmp_path / ".codex" / "auth.json").write_text(json.dumps({
+        "OPENAI_API_KEY": "",
+        "auth_mode": "chatgpt",
+        "tokens": {
+            "access_token": "REAL-OAUTH-TOKEN",
+            "refresh_token": "REAL-REFRESH-TOKEN",
+            "account_id": "acct-xyz",
+            "id_token": "REAL-ID-TOKEN",
+        },
+    }))
+    broker_base = "http://host.docker.internal:5001"
+
+    args = auth_broker_args("codex", broker_base=broker_base, home=tmp_path)
+
+    # exactly the two :ro file mounts, no env at all
+    assert len(args) == 4
+    assert args[0] == "-v" and args[2] == "-v"
+    assert "-e" not in args
+    assert "OPENAI_BASE_URL" not in " ".join(args)
+    assert args[1].endswith(":/home/agent/.codex/auth.json:ro")
+    assert args[3].endswith(":/home/agent/.codex/config.toml:ro")
+    assert "/.nethackers/codex-cage/" in args[1]
+
+    cage_auth = Path(args[1].rsplit(":", 2)[0])
+    cage_config = Path(args[3].rsplit(":", 2)[0])
+    auth_doc = json.loads(cage_auth.read_text())
+    assert auth_doc["auth_mode"] == "chatgpt"
+    assert auth_doc["tokens"]["account_id"] == "acct-xyz"
+    assert auth_doc["tokens"]["refresh_token"] == "proxy-managed"
+
+    # placeholder access_token: a JWT with a far-future exp carrying the real
+    # (non-secret) account_id claim, so the caged codex treats it as valid and
+    # does not self-refresh, and derives the same account.
+    placeholder = auth_doc["tokens"]["access_token"]
+    payload = _decode_jwt_payload(placeholder)
+    assert payload["exp"] > time.time() + 365 * 24 * 3600   # far future (years out)
+    assert payload["https://api.openai.com/auth"]["chatgpt_account_id"] == "acct-xyz"
+    # id_token is a placeholder JWT too
+    assert _decode_jwt_payload(auth_doc["tokens"]["id_token"])["exp"] > time.time()
+
+    # config.toml routes codex's model endpoint at the broker
+    assert f'openai_base_url = "{broker_base}"' in cage_config.read_text()
+
+    # NO real token anywhere in the cage (account_id, an identifier, may appear)
+    blob = cage_auth.read_text() + cage_config.read_text()
+    assert "REAL-OAUTH-TOKEN" not in blob
+    assert "REAL-REFRESH-TOKEN" not in blob
+    assert "REAL-ID-TOKEN" not in blob
+
+    # owner-only cage dir
+    assert (tmp_path / ".nethackers" / "codex-cage").stat().st_mode & 0o777 == 0o700
+
+
+def test_codex_broker_args_requires_home(tmp_path):
+    with pytest.raises(ValueError, match="home"):
+        auth_broker_args("codex", broker_base="http://host.docker.internal:5001")
+
+
+def test_codex_broker_args_missing_login_raises(tmp_path):
+    # No ~/.codex at all -- fail loud (B3), never a silent empty cage.
+    with pytest.raises(AuthUnavailable):
+        auth_broker_args("codex", broker_base="http://x:1", home=tmp_path)
+
+
+def test_codex_broker_args_omits_account_id_when_absent(tmp_path):
+    (tmp_path / ".codex").mkdir()
+    (tmp_path / ".codex" / "auth.json").write_text(json.dumps({
+        "OPENAI_API_KEY": "",
+        "auth_mode": "chatgpt",
+        "tokens": {"access_token": "REAL", "refresh_token": "REAL2"},   # no account_id
+    }))
+    args = auth_broker_args("codex", broker_base="http://x:1", home=tmp_path)
+    cage_auth = Path(args[1].rsplit(":", 2)[0])
+    auth_doc = json.loads(cage_auth.read_text())
+    assert auth_doc["tokens"]["account_id"] is None
 
 
 def test_opencode2_broker_not_implemented():
@@ -332,29 +428,67 @@ def test_broker_credential_claude_falls_back_to_login_token_and_warns(tmp_path, 
     assert any("setup-token" in msg for msg in warnings)
 
 
-def test_broker_credential_codex_prefers_stable_api_key(tmp_path):
-    codex_dir = tmp_path / ".codex"
-    codex_dir.mkdir()
+def _write_codex_chatgpt_login(home: Path, *, access_token, account_id="acct-123") -> None:
+    """A ChatGPT-subscription `~/.codex/auth.json` (empty OPENAI_API_KEY,
+    rotating OAuth `tokens`) for the broker_credential codex tests."""
+    codex_dir = home / ".codex"
+    codex_dir.mkdir(parents=True, exist_ok=True)
+    tokens = {"access_token": access_token, "refresh_token": "old-refresh"}
+    if account_id is not None:
+        tokens["account_id"] = account_id
     (codex_dir / "auth.json").write_text(json.dumps({
-        "OPENAI_API_KEY": "sk-real",
-        "tokens": {"access_token": "should-not-be-used"},
+        "OPENAI_API_KEY": "", "auth_mode": "chatgpt", "tokens": tokens,
     }))
-    rw = broker_credential("codex", system="Linux", home=tmp_path)
-    assert rw.inject == (("Authorization", "Bearer sk-real"),)
 
 
-def test_broker_credential_codex_falls_back_to_oauth_access_token(tmp_path):
-    # No stable API-key login -- only a ChatGPT/OAuth session. This snapshots
-    # the rotating access_token once; see the module docstring's Broker
-    # section for the staleness caveat this creates on a long mutator run.
-    codex_dir = tmp_path / ".codex"
-    codex_dir.mkdir()
-    (codex_dir / "auth.json").write_text(json.dumps({
-        "OPENAI_API_KEY": None,
-        "tokens": {"access_token": "chatgpt-oauth-tok"},
-    }))
+def test_broker_credential_codex_fresh_token_injects_bearer_and_account_id(tmp_path, monkeypatch):
+    # A still-valid (far-exp) JWT: inject it as-is + the account-id header,
+    # and DO NOT refresh (a refresh here would be a bug).
+    fresh = _make_jwt(int(time.time()) + 86400)
+    _write_codex_chatgpt_login(tmp_path, access_token=fresh, account_id="acct-123")
+
+    def _no_refresh(home):
+        raise AssertionError("refresh must not run for a fresh token")
+    monkeypatch.setattr(auth_inject, "_codex_refresh", _no_refresh)
+
     rw = broker_credential("codex", system="Linux", home=tmp_path)
-    assert rw.inject == (("Authorization", "Bearer chatgpt-oauth-tok"),)
+    assert rw.inject == (
+        ("Authorization", f"Bearer {fresh}"),
+        ("ChatGPT-Account-Id", "acct-123"),
+    )
+
+
+def test_broker_credential_codex_near_expiry_refreshes(tmp_path, monkeypatch):
+    near = _make_jwt(int(time.time()) + 60)   # ~1 min left -- inside the margin
+    _write_codex_chatgpt_login(tmp_path, access_token=near, account_id="acct-7")
+    monkeypatch.setattr(auth_inject, "_codex_refresh", lambda home: "FRESH-ACCESS")
+
+    rw = broker_credential("codex", system="Linux", home=tmp_path)
+    assert rw.inject == (
+        ("Authorization", "Bearer FRESH-ACCESS"),
+        ("ChatGPT-Account-Id", "acct-7"),
+    )
+
+
+def test_broker_credential_codex_undecodable_token_refreshes(tmp_path, monkeypatch):
+    _write_codex_chatgpt_login(tmp_path, access_token="not-a-jwt", account_id="acct-9")
+    monkeypatch.setattr(auth_inject, "_codex_refresh", lambda home: "REFRESHED")
+
+    rw = broker_credential("codex", system="Linux", home=tmp_path)
+    assert ("Authorization", "Bearer REFRESHED") in rw.inject
+
+
+def test_broker_credential_codex_missing_account_id_omits_header(tmp_path, monkeypatch):
+    fresh = _make_jwt(int(time.time()) + 86400)
+    _write_codex_chatgpt_login(tmp_path, access_token=fresh, account_id=None)
+
+    def _no_refresh(home):
+        raise AssertionError("refresh must not run for a fresh token")
+    monkeypatch.setattr(auth_inject, "_codex_refresh", _no_refresh)
+
+    rw = broker_credential("codex", system="Linux", home=tmp_path)
+    assert rw.inject == (("Authorization", f"Bearer {fresh}"),)
+    assert not any(name == "ChatGPT-Account-Id" for name, _ in rw.inject)
 
 
 def test_broker_credential_codex_missing_login_raises(tmp_path):
@@ -599,6 +733,7 @@ from nethackers.harness.auth_inject import (  # noqa: E402
     CODEX_OAUTH_CLIENT_ID,
     _codex_creds,
     _codex_refresh,
+    _codex_token_needs_refresh,
 )
 
 _CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token"
@@ -788,3 +923,142 @@ def test_codex_refresh_no_access_token_in_response_raises_and_leaves_file_unchan
         _codex_refresh(tmp_path, post=post)
 
     assert path.read_bytes() == before
+
+
+# --- Codex proactive-refresh margin: _codex_token_needs_refresh (Task 4b) ---
+#
+# The broker refreshes the rotating access token by its JWT `exp` rather than
+# pinning one ~8h snapshot. "Refresh when uncertain" is the safe default: a
+# token that can't be decoded as a JWT with a numeric `exp` is treated as one
+# that may already be stale.
+
+def test_codex_token_needs_refresh_far_future_is_false():
+    assert _codex_token_needs_refresh(_make_jwt(int(time.time()) + 86400)) is False
+
+
+def test_codex_token_needs_refresh_near_expiry_is_true():
+    assert _codex_token_needs_refresh(_make_jwt(int(time.time()) + 60)) is True
+
+
+def test_codex_token_needs_refresh_expired_is_true():
+    assert _codex_token_needs_refresh(_make_jwt(int(time.time()) - 10)) is True
+
+
+def test_codex_token_needs_refresh_non_jwt_is_true():
+    assert _codex_token_needs_refresh("garbage") is True
+    assert _codex_token_needs_refresh("a.b.c") is True       # middle segment not base64 JSON
+    assert _codex_token_needs_refresh("") is True
+
+
+def test_codex_token_needs_refresh_jwt_without_exp_is_true():
+    header = _b64url_json({"alg": "none"})
+    payload = _b64url_json({"sub": "x"})   # no exp claim
+    assert _codex_token_needs_refresh(f"{header}.{payload}.") is True
+
+
+def test_codex_token_needs_refresh_non_numeric_exp_is_true():
+    header = _b64url_json({"alg": "none"})
+    payload = _b64url_json({"exp": "soon"})   # exp not a number
+    assert _codex_token_needs_refresh(f"{header}.{payload}.") is True
+
+
+# --- Task 4b: four parked Task-4a review findings folded into _codex_refresh -
+
+def test_codex_refresh_non_string_refresh_token_raises_cleanly(tmp_path):
+    # Finding (a): a malformed (non-string) refresh_token must raise a clean
+    # AuthUnavailable BEFORE any network call, mirroring _codex_token's
+    # access_token isinstance guard -- not a raw httpx error.
+    doc = _codex_auth_doc()
+    doc["tokens"]["refresh_token"] = 12345
+    path = _write_codex_auth(tmp_path, doc)
+    before = path.read_bytes()
+    calls: list = []
+    post = _fake_post(200, {"access_token": "x", "refresh_token": "y"}, calls=calls)
+
+    with pytest.raises(AuthUnavailable):
+        _codex_refresh(tmp_path, post=post)
+
+    assert calls == []                       # never even attempts the network call
+    assert path.read_bytes() == before
+
+
+def test_codex_refresh_httpx_error_becomes_auth_unavailable(tmp_path):
+    # Finding (b): a connect/timeout/transport failure surfaces as
+    # AuthUnavailable, not a raw httpx exception (a live run calls this).
+    path = _write_codex_auth(tmp_path, _codex_auth_doc())
+    before = path.read_bytes()
+
+    def post(url, *, data):
+        raise httpx.ConnectError("no route to host")
+
+    with pytest.raises(AuthUnavailable):
+        _codex_refresh(tmp_path, post=post)
+
+    assert path.read_bytes() == before
+
+
+def test_codex_refresh_unreadable_json_becomes_auth_unavailable(tmp_path):
+    # Finding (b): a 200 whose .json() raises becomes AuthUnavailable.
+    path = _write_codex_auth(tmp_path, _codex_auth_doc())
+    before = path.read_bytes()
+
+    class _Raises:
+        status_code = 200
+
+        def json(self):
+            raise ValueError("not json")
+
+    with pytest.raises(AuthUnavailable):
+        _codex_refresh(tmp_path, post=lambda url, *, data: _Raises())
+
+    assert path.read_bytes() == before
+
+
+def test_codex_refresh_non_dict_json_becomes_auth_unavailable(tmp_path):
+    # Finding (b): a 200 whose .json() is not a dict becomes AuthUnavailable
+    # (never an AttributeError on `.get`).
+    path = _write_codex_auth(tmp_path, _codex_auth_doc())
+    before = path.read_bytes()
+
+    class _ListJson:
+        status_code = 200
+
+        def json(self):
+            return ["not", "a", "dict"]
+
+    with pytest.raises(AuthUnavailable):
+        _codex_refresh(tmp_path, post=lambda url, *, data: _ListJson())
+
+    assert path.read_bytes() == before
+
+
+def test_codex_refresh_write_failure_raises_and_leaves_file_unchanged(tmp_path, monkeypatch):
+    # Finding (c): if the atomic write-back fails, raise AuthUnavailable and
+    # leave the canonical file byte-for-byte unchanged (INV B4).
+    path = _write_codex_auth(tmp_path, _codex_auth_doc())
+    before = path.read_bytes()
+    post = _fake_post(200, {"access_token": "new-acc", "refresh_token": "new-ref"})
+
+    def boom(src, dst):
+        raise OSError("disk full")
+    monkeypatch.setattr(os, "replace", boom)
+
+    with pytest.raises(AuthUnavailable):
+        _codex_refresh(tmp_path, post=post)
+
+    assert path.read_bytes() == before
+
+
+def test_codex_refresh_preserves_the_openai_api_key_field(tmp_path):
+    # Finding (d): OPENAI_API_KEY is carried across a refresh by name (a
+    # chatgpt-mode login keeps it as an empty string).
+    doc = _codex_auth_doc()
+    doc["OPENAI_API_KEY"] = ""
+    path = _write_codex_auth(tmp_path, doc)
+    post = _fake_post(200, {"access_token": "new-acc", "refresh_token": "new-ref"})
+
+    _codex_refresh(tmp_path, post=post)
+
+    reloaded = json.loads(path.read_text())
+    assert "OPENAI_API_KEY" in reloaded
+    assert reloaded["OPENAI_API_KEY"] == ""

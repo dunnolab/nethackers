@@ -456,6 +456,19 @@ class _FakeBroker:
         self.stopped = True
 
 
+def _write_codex_cage_source(home: Path, account_id="acct-1"):
+    """A minimal host `~/.codex/auth.json` the codex broker cage login reads
+    its (non-secret) account_id out of. Real-looking tokens are present so a
+    test can assert they never cross into the container's argv."""
+    codex = home / ".codex"
+    codex.mkdir(parents=True, exist_ok=True)
+    (codex / "auth.json").write_text(json.dumps({
+        "OPENAI_API_KEY": "", "auth_mode": "chatgpt",
+        "tokens": {"access_token": "REAL-OAUTH", "refresh_token": "REAL-REF",
+                   "account_id": account_id, "id_token": "REAL-ID"},
+    }))
+
+
 def _broker_op(tmp_path, harness="claude", **kw):
     holder = {}
 
@@ -501,9 +514,11 @@ def test_broker_path_claude_env_and_add_host_no_mount(tmp_path):
     assert holder["broker"].stopped is True
 
 
-def test_broker_path_codex_env_and_add_host_no_mount(tmp_path):
+def test_broker_path_codex_cage_login_at_chatgpt_upstream(tmp_path):
     seen = {}
     op, holder = _broker_op(tmp_path, harness="codex")
+    # codex cage login reads the real (non-secret) account_id host-side
+    _write_codex_cage_source(tmp_path, account_id="acct-777")
     wt = tmp_path / "work" / "iter-1"
     wt.mkdir(parents=True)
     op._popen = lambda cmd, **kw: seen.setdefault("cmd", cmd) and FakePopen(cmd, **kw)
@@ -512,19 +527,30 @@ def test_broker_path_codex_env_and_add_host_no_mount(tmp_path):
 
     cmd = seen["cmd"]
     joined = " ".join(cmd)
-    assert "OPENAI_BASE_URL=http://host.docker.internal:9999" in joined
-    assert "OPENAI_API_KEY=proxy-managed" in joined
+    # broker is built at the ChatGPT-SUBSCRIPTION backend, not api.openai.com
+    assert holder["broker"].upstream_base == "https://chatgpt.com/backend-api/codex"
+    # cage login, not the env-var shape: no OPENAI_BASE_URL / OPENAI_API_KEY env
+    assert "OPENAI_BASE_URL" not in joined
+    assert "OPENAI_API_KEY=proxy-managed" not in joined
     assert "--add-host" in cmd
+    # real tokens never reach argv (account_id, a non-secret, may); nor the
+    # broker's real header value (it's held host-side in the broker)
+    assert "REAL-OAUTH" not in joined
+    assert "REAL-REF" not in joined
+    assert "REAL-ID" not in joined
     assert "REAL-SECRET-VALUE" not in joined
+    # workspace mount + the two cage file mounts, mounted read-only
     v_values = [v for flag, v in zip(cmd, cmd[1:], strict=False) if flag == "-v"]
-    assert v_values == [f"{wt}:/workspace"]
-    assert holder["broker"].upstream_base == "https://api.openai.com"
+    assert f"{wt}:/workspace" in v_values
+    assert any(v.endswith(":/home/agent/.codex/auth.json:ro") for v in v_values)
+    assert any(v.endswith(":/home/agent/.codex/config.toml:ro") for v in v_values)
     assert holder["broker"].started is True
     assert holder["broker"].stopped is True
 
 
 def test_broker_stopped_even_if_the_run_raises(tmp_path):
     op, holder = _broker_op(tmp_path, harness="codex")
+    _write_codex_cage_source(tmp_path)   # so auth resolves; the raise is in _popen
     wt = tmp_path / "work" / "iter-1"
     wt.mkdir(parents=True)
 

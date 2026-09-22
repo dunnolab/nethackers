@@ -22,9 +22,12 @@ alternative to the credential mount above: when set, ``run`` starts one
 ``cred_broker.CredBroker`` per credential that needs brokering, for the
 container's whole lifetime, in place of ``auth_docker_args``. claude/codex
 each have exactly one upstream/credential, so that's a single broker via
-``auth_inject.auth_broker_args`` (base-URL env + placeholder key, no ``-v``
-mount). OpenCode 2 is multi-provider -- its base-URL override is a
-per-provider JSON field, not one env var -- so it starts one broker PER
+``auth_inject.auth_broker_args`` -- claude by a base-URL env + placeholder key
+(no ``-v`` mount), codex by a minimal cage ``~/.codex`` (placeholder JWT +
+real account-id + a ``config.toml`` ``openai_base_url``, two files mounted
+read-only) because a ChatGPT-subscription codex ignores ``OPENAI_BASE_URL``
+for its model endpoint. OpenCode 2 is multi-provider -- its base-URL override
+is a per-provider JSON field, not one env var -- so it starts one broker PER
 BROKERABLE PROVIDER instead, via ``auth_inject.opencode2_broker_targets``
 (resolve) / ``opencode2_broker_docker_args`` (rewrite the cage config);
 ``auth_broker_args`` itself stays claude/codex-only and is never called for
@@ -66,13 +69,15 @@ from nethackers.harness.sandbox_preflight import mutator_platform_args
 
 # The provider API host CredBroker forwards to, per harness -- fixed at
 # construction (CredBroker is a single-upstream proxy, never open-relay).
-# Codex's real backend (a plain API-key host vs. a ChatGPT/ChatGPT-plan
-# backend behind the OAuth login docs/harness.md describes) is UNVERIFIED;
-# this is the standard public-API host, parked for live confirmation like
-# the rest of the broker path -- see auth_inject's module docstring.
+# Codex's backend is the ChatGPT-SUBSCRIPTION one (`auth_mode: chatgpt`): a
+# subscription login talks to `chatgpt.com/backend-api/codex`, NOT the
+# plain-API-key `api.openai.com`. The cage login routes codex there via config
+# `openai_base_url` (see auth_inject's "Codex broker" section); this pins the
+# broker's single upstream to the same host. Validated by Task 8's live smoke
+# -- see auth_inject's module docstring for the codex broker's live-gated items.
 _BROKER_UPSTREAM_BASE = {
     "claude": "https://api.anthropic.com",
-    "codex": "https://api.openai.com",
+    "codex": "https://chatgpt.com/backend-api/codex",
 }
 
 
@@ -453,7 +458,10 @@ class ContainerOperator:
             )
             broker_procs.append(proc)
             broker_base = _host_gateway_url(proc.start())
-            auth = auth_broker_args(self.harness, broker_base=broker_base)
+            # `home=` is required for the codex cage login (auth.json +
+            # config.toml written under ~/.nethackers/codex-cage/ and mounted
+            # read-only); the claude branch ignores it.
+            auth = auth_broker_args(self.harness, broker_base=broker_base, home=self.home)
         # The container needs a route to the host-side broker(s);
         # `host.docker.internal` only resolves with this on Linux docker
         # (Docker Desktop/macOS already provides it) -- one add-host serves
