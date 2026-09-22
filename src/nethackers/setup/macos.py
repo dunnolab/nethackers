@@ -1,11 +1,13 @@
 """macOS: what ``nethackers setup`` does on a Mac, as recipes (``support``).
 
 A fresh Mac with Homebrew gets Colima, started with Rosetta: it's headless,
-free, needs no sudo, and its flags alone decide Rosetta. An installed Docker
-Desktop, OrbStack or Podman machine is kept and started. Anything that needs
-sudo or a GUI click is printed, never run. Which runtime ``docker`` talks to
-comes from ``docker context show`` -- Colima, Docker Desktop and OrbStack each
-set their own -- not from which apps happen to be installed.
+free, needs no sudo, and its flags alone decide Rosetta. Rosetta 2 itself
+must be there first, so without it the new VM waits for the next run. An
+installed Docker Desktop, OrbStack or Podman machine is kept and started.
+Anything that needs sudo or a GUI click is printed, never run. Which runtime
+``docker`` talks to comes from ``docker context show`` -- Colima, Docker
+Desktop and OrbStack each set their own -- not from which apps happen to be
+installed.
 
 ``emulation`` is doctor's Rosetta check, per runtime: Docker Desktop's
 settings file, Colima's config, OrbStack (always Rosetta), Podman (Rosetta
@@ -162,14 +164,26 @@ def colima_start(facts: HostFacts) -> Recipe:
     return replace(COLIMA_START_NEW, argv=tuple(argv), does=does)
 
 
+def _new_colima_vm(facts: HostFacts) -> tuple[Recipe, ...]:
+    """Create and start a Colima VM -- unless it would start with Rosetta on a
+    Mac that doesn't have Rosetta 2 yet (a new Mac gets it only when something
+    asks), which pops Apple's dialog or fails mid-run. Then the person installs
+    Rosetta first, and the start (and the pull after it) waits for the next
+    run."""
+    if facts.apple_silicon and facts.host_rosetta is False:
+        return (ROSETTA_INSTALL,)
+    return (colima_start(facts),)
+
+
 def runtime_recipes(facts: HostFacts, report: RuntimeReport) -> tuple[Recipe, ...]:
     """What gets a container runtime answering on this Mac; ``()`` when one
-    already does."""
+    already does. An existing VM or another runtime starts without Rosetta;
+    the emulation advice covers those after the run."""
     if report.runtime is not None:
         return ()
     provider = active_provider(facts)
     if provider == "colima":
-        return (colima_start(facts),)
+        return (COLIMA_START,) if facts.colima_vm else _new_colima_vm(facts)
     if provider == "docker-desktop":
         return (DOCKER_DESKTOP_START,) if facts.docker_desktop_cli else (DOCKER_DESKTOP_OPEN,)
     if provider == "orbstack":
@@ -177,7 +191,7 @@ def runtime_recipes(facts: HostFacts, report: RuntimeReport) -> tuple[Recipe, ..
     if provider == "podman":
         return (PODMAN_START,) if facts.podman_machine else (PODMAN_INIT,)
     if facts.brew:
-        return (COLIMA_INSTALL, colima_start(facts))
+        return (COLIMA_INSTALL, *_new_colima_vm(facts))
     return (NO_HOMEBREW,)
 
 

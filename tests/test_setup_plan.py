@@ -1,6 +1,8 @@
 """Planning is pure: doctor's results + host facts in, an ordered plan out."""
 from __future__ import annotations
 
+from dataclasses import replace
+
 from nethackers.containers import RuntimeCandidate, RuntimeReport
 from nethackers.diagnostics import CHECK_SPECS, CheckResult
 from nethackers.setup import linux, macos
@@ -125,6 +127,18 @@ def test_rosetta_advice_goes_after_the_run():
                       macos)
     assert ids(plan) == []
     assert plan.afterwards[0].say == macos.ROSETTA_DOCKER_DESKTOP.say
+
+
+def test_a_fresh_mac_without_rosetta_installs_colima_and_holds_the_vm_and_the_pull():
+    # Starting a Rosetta VM without Rosetta 2 pops Apple's dialog or fails
+    # mid-run, after the person was told they could walk away.
+    plan = build_plan(sit(facts=replace(MAC, host_rosetta=False), runtime=NONE,
+                          emulation=macos.ROSETTA_INSTALL,
+                          checks=checks(container_runtime="fail", arena_image="fail",
+                                        mutator_image="fail", rosetta="warn")), macos)
+    assert ids(plan) == ["runtime-1"] and plan.steps[0].recipe is macos.COLIMA_INSTALL
+    assert [t.say for t in plan.yours] == [macos.ROSETTA_INSTALL.say]
+    assert plan.afterwards == ()      # said once, before the run, not again after it
 
 
 def test_listed_commands_for_someone_without_a_terminal():

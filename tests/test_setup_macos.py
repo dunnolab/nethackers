@@ -70,6 +70,30 @@ def test_runtime_recipes(facts, report, expected):
     assert ids(macos.runtime_recipes(facts, report)) == expected
 
 
+COLIMA_NO_VM = dict(installed=frozenset({"docker", "colima"}), docker_context="colima")
+
+
+@pytest.mark.parametrize("facts,report,expected", [
+    # A new VM would start with --vz-rosetta: Rosetta 2 comes first (a new Mac
+    # doesn't have it until something asks), so the start waits for next run.
+    (mac(brew=True, host_rosetta=False), NONE, ["macos.colima.install", "macos.rosetta.install"]),
+    (mac(host_rosetta=False, **COLIMA_NO_VM), DOWN, ["macos.rosetta.install"]),
+    # An existing VM keeps its settings; other runtimes don't need Rosetta to
+    # start. The emulation advice covers them after the run.
+    (mac(host_rosetta=False, colima_vm=True, **COLIMA_NO_VM), DOWN, ["macos.colima.start"]),
+    (mac(host_rosetta=False, docker_desktop_cli=True, **DESKTOP), DOWN,
+     ["macos.docker-desktop.start"]),
+    (mac(host_rosetta=False, installed=frozenset({"docker", "orbstack"}),
+         docker_context="orbstack"), DOWN, ["macos.orbstack.start"]),
+    # Intel: no Rosetta involved at all.
+    (mac(machine="x86_64", host_rosetta=None, brew=True), NONE,
+     ["macos.colima.install", "macos.colima.start-new"]),
+], ids=["fresh-with-homebrew", "colima-no-vm-yet", "colima-vm-exists", "desktop", "orbstack",
+        "intel"])
+def test_without_rosetta_a_new_colima_vm_waits_for_it(facts, report, expected):
+    assert ids(macos.runtime_recipes(facts, report)) == expected
+
+
 def test_a_new_colima_vm_uses_rosetta_and_todays_size_on_a_big_mac():
     recipe = macos.colima_start(mac(cpus=10, memory_gb=32))
     assert recipe.argv == ("colima", "start", "--vm-type", "vz", "--vz-rosetta",

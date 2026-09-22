@@ -187,6 +187,7 @@ def build_plan(sit: Situation, plat: ModuleType) -> Plan:
         steps.append(Step("pull", title, "pull", size, needs=tuple(runtime_steps[-1:]),
                           images=pulls))
 
-    afterwards = ((_todo(sit.emulation),)
-                  if sit.emulation is not None and "rosetta" in wanted else ())
+    advice = _todo(sit.emulation) if sit.emulation is not None and "rosetta" in wanted else None
+    # Already a step before the run (installing Rosetta holds back a new VM): say it once.
+    afterwards = (advice,) if advice is not None and advice not in yours else ()
     return Plan(tuple(steps), tuple(yours), afterwards, tuple(notes))
