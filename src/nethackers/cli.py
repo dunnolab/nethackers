@@ -86,7 +86,6 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from rich.highlighter import NullHighlighter
 from rich.live import Live
 from rich.markup import escape
 from rich.panel import Panel
@@ -776,12 +775,6 @@ def _setup_pull_size(kinds: tuple[str, ...]) -> int | None:
 
 
 def _setup(args: argparse.Namespace, stage: Stage) -> int:
-    # The plan/progress lines carry live numbers (a pull's MB size, elapsed
-    # seconds, step counts): `rich`'s default highlighter re-styles a bare
-    # number as its own span, which on a real terminal splits e.g. "432 MB"
-    # into two separately-colored runs mid-word. Same fix the TUI already
-    # applies to its own dynamic lines (screens/monitor.py).
-    err.highlighter = NullHighlighter()
     interactive = sys.stdin is not None and sys.stdin.isatty() and err.is_terminal
     opts = setup_flow.SetupOptions(scope=args.for_capability, operator=args.operator,
                                    yes=args.yes, interactive=interactive, hub=args.hub)
@@ -809,7 +802,7 @@ def _setup(args: argparse.Namespace, stage: Stage) -> int:
         run_captured=lambda argv, title: setup_runner.run_captured(argv, title=title,
                                                                    console=err),
         ask_agent=lambda: Prompt.ask("Which coding agent will evolve use?",
-                                     choices=["claude", "codex", "opencode2"],
+                                     choices=list(OPERATORS),
                                      default=DEFAULT_OPERATOR, console=err, stream=sys.stdin),
         confirm=lambda: Confirm.ask("Continue?", default=True, console=err, stream=sys.stdin),
         report=report,

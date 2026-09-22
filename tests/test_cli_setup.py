@@ -3,6 +3,7 @@ is the same device flow `nethackers login` uses. The flow itself is faked."""
 from __future__ import annotations
 
 import nethackers.cli as cli
+from nethackers import ptyrun
 
 
 def test_flags_reach_the_flow(monkeypatch):
@@ -89,30 +90,47 @@ sys.exit(cli.main(["setup"]))
 
 def _drive(script, answers, timeout=60.0) -> str:
     """Run ``script`` with a pseudo-terminal as its whole terminal; whenever the
-    output contains the next ``(prompt, reply)`` prompt, type the reply."""
+    output contains the next ``(prompt, reply)`` prompt, type the reply.
+
+    A pty pair (not ``pty.fork()``, which forks THIS process -- already
+    multi-threaded under pytest -- and trips CPython's own "forkpty() in a
+    multi-threaded process may deadlock" warning) with the child on the slave
+    side, so it still sees a real terminal on stdin/stdout/stderr. Reads raw
+    bytes, not lines (``ptyrun.read_lines``): the "Continue?" prompt has no
+    trailing newline, so a line-buffered read would never surface it."""
+    import errno
     import os
     import pty
     import select
+    import subprocess
     import sys
     import time
 
-    pid, fd = pty.fork()
-    if pid == 0:
-        os.execv(sys.executable, [sys.executable, str(script)])
+    master, slave = pty.openpty()
+    proc = subprocess.Popen([sys.executable, str(script)], stdin=slave, stdout=slave,
+                            stderr=slave, start_new_session=True, close_fds=True)
+    os.close(slave)
     out, pending, deadline = b"", list(answers), time.monotonic() + timeout
     while time.monotonic() < deadline:
-        ready, _, _ = select.select([fd], [], [], 0.2)
+        ready, _, _ = select.select([master], [], [], 0.2)
         if ready:
             try:
-                chunk = os.read(fd, 65536)
-            except OSError:
+                chunk = os.read(master, 65536)
+            except OSError as exc:
+                if exc.errno != errno.EIO:  # Linux: every writer closed the pty
+                    raise
                 break
-            if not chunk:
+            if not chunk:  # macOS: end of output
                 break
             out += chunk
+        elif proc.poll() is not None:  # exited, and nothing left to read
+            break
         if pending and pending[0][0] in out:
-            os.write(fd, pending.pop(0)[1])
-    os.waitpid(pid, 0)
+            os.write(master, pending.pop(0)[1])
+    else:
+        proc.kill()
+    proc.wait()
+    os.close(master)
     return out.decode("utf-8", "replace")
 
 
@@ -121,11 +139,15 @@ def test_setup_end_to_end_in_a_real_terminal(tmp_path):
 
     import pytest
     if not hasattr(os, "fork"):
-        pytest.skip("needs pty.fork")
+        pytest.skip("needs a pty")
     script = tmp_path / "drive.py"
     script.write_text(_DRIVER)
     out = _drive(script, [(b"Continue?", b"y\r")])
-    assert "Checking this machine" in out
-    assert "pull the mutator image" in out and "432 MB, first time only" in out
-    assert "PULLED mutator" in out
-    assert "ready to eval" in out and "Next: nethackers evolve" in out
+    # Strip terminal escapes (colour, `rich`'s own number-highlighting) rather
+    # than asserting on raw bytes: `clean` drops them without splitting a
+    # line, so a highlighted "432 MB, first time only" still reads as one run.
+    text = "\n".join(ptyrun.clean(out))
+    assert "Checking this machine" in text
+    assert "pull the mutator image" in text and "432 MB, first time only" in text
+    assert "PULLED mutator" in text
+    assert "ready to eval" in text and "Next: nethackers evolve" in text
