@@ -5,18 +5,17 @@
 |_|\_\___|\__|_||_\__,_\__|_\_\___|_| /__/
 </pre>
 
-<p align="center">
-An open effort to build the first program that wins NetHack.<br>
-<a href="https://nethackers.dunnolab.ai">nethackers.dunnolab.ai</a> · <a href="https://pypi.org/project/nethackers/">PyPI</a> · Apache-2.0
-</p>
+<p align="center"><i>solving nethack, many stupid harnesses at a time</i></p>
+<p align="center"><a href="https://nethackers.dunnolab.ai"><code>nethackers.dunnolab.ai</code></a></p>
 
 <p align="center">
-<img src="docs/assets/dashboard.png" width="620" alt="The nethackers dashboard: a table of causes of death across evolved bots (soldier ant, starvation, a wand, a hill orc) above a tombstone that reads: no program has ascended NetHack 3.6.6 yet. Will yours be the first?">
+<a href="https://nethackers.dunnolab.ai"><img src="docs/assets/dashboard.png" width="620" alt="The nethackers dashboard: a table of causes of death across evolved bots (soldier ant, starvation, a wand, a hill orc) above a tombstone that reads: no program has ascended NetHack 3.6.6 yet. Will yours be the first?"></a>
 </p>
 <p align="center"><sub><code>nethackers</code>, the dashboard, on 22 September 2026. The causes of death are real.</sub></p>
 
-NetHackers is a CLI and a shared hub for programs that play NetHack 3.6.6.
-You write a bot, or point a coding agent at one. `nethackers eval` scores it
+NetHackers is an open effort to write the first program that wins NetHack.
+It is a CLI and a shared hub for programs that play NetHack 3.6.6. You write
+a bot, or point a coding agent at one. `nethackers eval` scores it
 on fixed seeds in a sandbox. The hub keeps the best program for each of the
 73 starting characters, and anyone can pull one, improve it, and register the
 result, so your improvement becomes the next person's starting point. How you
