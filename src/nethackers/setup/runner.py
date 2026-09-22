@@ -66,12 +66,20 @@ def run_captured(
     Ctrl-C stops the child before propagating."""
     start = clock()
     tail: deque[str] = deque(maxlen=TAIL_LINES)
-    proc, master = spawn(list(argv), env=env or {**os.environ, **CAPTURED_ENV})
+    proc: Any = None
+
     try:
-        lines = ptyrun.read_lines(master, done=lambda: proc.poll() is not None)
+        effective_env = env if env is not None else {**os.environ, **CAPTURED_ENV}
+
         if console.is_terminal:
             spinner = Spinner("dots", text=_live_text(title, 0.0, "", console.width))
             with Live(spinner, console=console, transient=True, refresh_per_second=10):
+                try:
+                    proc, master = spawn(list(argv), env=effective_env)
+                except FileNotFoundError:
+                    return StepResult(False, 0.0, f"`{argv[0]}` isn't installed")
+
+                lines = ptyrun.read_lines(master, done=lambda: proc.poll() is not None)
                 latest = ""
                 for batch in lines:
                     if batch:
@@ -80,12 +88,20 @@ def run_captured(
                     spinner.update(text=_live_text(title, clock() - start, latest,
                                                    console.width))
         else:
+            try:
+                proc, master = spawn(list(argv), env=effective_env)
+            except FileNotFoundError:
+                return StepResult(False, 0.0, f"`{argv[0]}` isn't installed")
+
+            lines = ptyrun.read_lines(master, done=lambda: proc.poll() is not None)
             for batch in lines:
                 if batch:
                     tail.extend(batch)
+
         code = proc.wait()
     except KeyboardInterrupt:
-        ptyrun.stop(proc)
+        if proc is not None:
+            ptyrun.stop(proc)
         raise
     seconds = clock() - start
     if code == 0:

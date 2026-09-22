@@ -63,6 +63,17 @@ def test_a_missing_tool_is_a_failed_step_not_a_crash():
     assert not result.ok and "`claude` isn't installed" in result.detail
 
 
+@pytest.mark.skipif(not ptyrun.available(), reason="needs a POSIX pty")
+def test_a_nonexistent_tool_in_captured_is_a_failed_step():
+    result = runner.run_captured(
+        ("nethackers-tool-that-does-not-exist-xyz",),
+        title="test",
+        console=_console()
+    )
+    assert (not result.ok and
+            "`nethackers-tool-that-does-not-exist-xyz` isn't installed" in result.detail)
+
+
 def test_time_formats():
     assert runner.clock_text(21.4) == "0:21" and runner.clock_text(64) == "1:04"
     assert runner.elapsed_text(34.2) == "34 s" and runner.elapsed_text(72) == "1m 12s"

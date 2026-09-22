@@ -55,3 +55,17 @@ def test_stop_ends_a_child_that_ignores_the_first_signal():
     ptyrun.stop(proc, grace=0.2)
     assert proc.poll() is not None
     list(ptyrun.read_lines(master, done=lambda: True))   # closes the pty
+
+
+def test_utf8_character_split_across_separate_writes():
+    script = (
+        "import sys, time; "
+        "sys.stdout.buffer.write(b'\\xc3'); sys.stdout.buffer.flush(); "
+        "time.sleep(0.05); "
+        "sys.stdout.buffer.write(b'\\xa9\\n'); sys.stdout.buffer.flush()"
+    )
+    proc, master = ptyrun.spawn([sys.executable, "-c", script])
+    lines = [ln for batch in ptyrun.read_lines(master, done=lambda: proc.poll() is not None)
+             if batch for ln in batch]
+    assert proc.wait() == 0
+    assert "é" in lines
