@@ -59,6 +59,18 @@ def byte_sums(state: PullParseState) -> tuple[int | None, int | None]:
             sum(total for _i, _d, total in state.progress))
 
 
+def is_byte_progress(line: str) -> bool:
+    """Is ``line`` one of docker's in-place byte-progress redraws
+    (``<layer id>: Downloading``/``Extracting  [...]  1MB/2MB``) -- the same
+    lines ``parse_pull_line`` folds into ``bytes_done``/``bytes_total``
+    instead of a discrete status change? A pty pull sees these on every
+    redraw (many times a second), unlike the piped path's one-line-per-status
+    output, so a raw-line consumer (``on_line``) should drop them rather than
+    flood; see ``sandbox_preflight._pull_image``."""
+    m = _LAYER_LINE_RE.match(line.rstrip())
+    return m is not None and _BYTES_RE.match(m.group(2)) is not None
+
+
 @dataclass(frozen=True)
 class PullEvent:
     """One observable step of a sandbox image's acquisition (``docker

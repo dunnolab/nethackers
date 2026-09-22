@@ -48,7 +48,13 @@ from rich.markup import escape
 from nethackers import _image_pins, image_inputs, ptyrun
 from nethackers.containers import container_runtime
 from nethackers.harness.auth_inject import AuthUnavailable, auth_docker_args
-from nethackers.harness.pull_events import PullEvent, PullParseState, byte_sums, parse_pull_line
+from nethackers.harness.pull_events import (
+    PullEvent,
+    PullParseState,
+    byte_sums,
+    is_byte_progress,
+    parse_pull_line,
+)
 from nethackers.setup.host import setup_supported
 
 
@@ -408,11 +414,15 @@ def _pull_image(ref: str, kind: str, *, runtime: str = "docker", on_line=None,
                 popen=subprocess.Popen, tty: bool | None = None,
                 spawn=ptyrun.spawn, clock=time.monotonic) -> str | None:
     """``docker pull ref``, streaming each output line to ``on_line`` (raw
-    text, back-compat) and folding it through ``parse_pull_line`` into typed
-    ``PullEvent``s for ``on_event`` (spec S5.5): a ``phase="start"`` event
-    first, exactly one final ``"done"``/``"error"`` event last (via
-    ``_final_pull_event``), and ``"layer"`` events between -- byte-only
-    updates at most every ``_BYTE_EVENT_INTERVAL`` seconds.
+    text, back-compat -- discrete status lines only, e.g. ``"Pull complete"``;
+    a pty's in-place byte-progress redraws, ``is_byte_progress``, are folded
+    into ``on_event`` instead and never reach ``on_line``, or a terminal
+    consumer would be flooded with a line per redraw) and folding it through
+    ``parse_pull_line`` into typed ``PullEvent``s for ``on_event`` (spec
+    S5.5): a ``phase="start"`` event first, exactly one final
+    ``"done"``/``"error"`` event last (via ``_final_pull_event``), and
+    ``"layer"`` events between -- byte-only updates at most every
+    ``_BYTE_EVENT_INTERVAL`` seconds.
 
     The real pull runs in a pseudo-terminal (``tty``; ``None`` means "yes for
     the real ``subprocess.Popen``, no for an injected fake"), so docker prints
@@ -440,7 +450,7 @@ def _pull_image(ref: str, kind: str, *, runtime: str = "docker", on_line=None,
         collected: list[str] = []
         for stripped in lines:
             collected.append(stripped + "\n")
-            if on_line is not None:
+            if on_line is not None and not is_byte_progress(stripped):
                 on_line(stripped)
             if on_event is not None:
                 state, event = parse_pull_line(state, stripped, kind=kind, ref=ref)
@@ -458,6 +468,8 @@ def _pull_image(ref: str, kind: str, *, runtime: str = "docker", on_line=None,
             ptyrun.stop(proc)
         raise
     except (OSError, subprocess.SubprocessError) as exc:
+        if proc is not None:
+            ptyrun.stop(proc)
         if on_event is not None:
             on_event(_final_pull_event(kind, ref, state, "error", detail=str(exc)))
         return _pull_error_message(kind, str(exc))

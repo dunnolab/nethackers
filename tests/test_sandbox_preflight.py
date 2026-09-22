@@ -556,3 +556,27 @@ def test_a_real_pty_pull_reports_bytes(tmp_path):
                           tty=True) is None
     assert max(e.bytes_done or 0 for e in events) == 4_000_000
     assert events[-1].phase == "done" and events[-1].bytes_total == 4_000_000
+
+
+def test_pty_pull_keeps_on_line_to_discrete_status_lines(tmp_path):
+    """A raw ``on_line`` consumer must see docker's discrete status lines,
+    exactly as it did through the old pipe path, but NONE of a pty's in-place
+    byte-progress redraws -- those would otherwise flood a plain-line
+    consumer with a line per redraw (fix round 1, spec 2026-09-22)."""
+    script = tmp_path / "fakedocker"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        "import sys\n"
+        "w = sys.stdout.write\n"
+        "w('0a1b2c3d4e5f: Pulling fs layer\\n')\n"
+        "w('\\x1b[1A\\x1b[2K\\r0a1b2c3d4e5f: Downloading [==>   ]  1MB/4MB\\r\\x1b[1B')\n"
+        "w('\\x1b[1A\\x1b[2K\\r0a1b2c3d4e5f: Downloading [=====>]  4MB/4MB\\r\\x1b[1B')\n"
+        "w('\\x1b[1A\\x1b[2K\\r0a1b2c3d4e5f: Pull complete\\r\\x1b[1B\\n')\n"
+        "sys.stdout.flush()\n")
+    script.chmod(script.stat().st_mode | stat.S_IEXEC)
+    lines: list[str] = []
+    assert sp._pull_image("img@sha256:x", "arena", runtime=str(script), on_line=lines.append,
+                          tty=True) is None
+    assert "0a1b2c3d4e5f: Pulling fs layer" in lines
+    assert "0a1b2c3d4e5f: Pull complete" in lines
+    assert not any("Downloading [" in ln for ln in lines)

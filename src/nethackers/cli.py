@@ -709,12 +709,16 @@ def _arena_preflight(image: str, *, runtime: str | None) -> str | None:
     or podman -- issue #50), passed once by the caller and threaded into
     ``ensure_image`` so the pull uses the same binary the gate accepted.
     ``preflight_runtime`` stays the gate (and the source of the styled "no
-    runtime" message), so a ``None`` runtime is caught there, not here."""
+    runtime" message), so a ``None`` runtime is caught there, not here.
+
+    Shows the same CLI progress display as ``setup``/``doctor --pull``
+    (``_pull_progress``) rather than a raw docker dump -- ``eval``'s and
+    ``submit``'s first pull gets megabytes, speed, and time left too."""
     rt_err = preflight_runtime(scope="eval")
     if rt_err is not None:
         return rt_err
-    return ensure_image(image, "arena", runtime=runtime or "docker",
-                        on_line=lambda ln: err.print(f"[dim]{ln}[/]"))
+    with _pull_progress() as on_event:
+        return ensure_image(image, "arena", runtime=runtime or "docker", on_event=on_event)
 
 
 @contextmanager
@@ -793,8 +797,13 @@ def _setup_pull_size(kinds: tuple[str, ...]) -> int | None:
     runtime = container_runtime()
     if runtime is None:
         return None
-    present = [resolve_image(None, k) for k in ("arena", "mutator")
-               if k not in kinds and image_present(resolve_image(None, k), runtime=runtime)]
+    present = []
+    for k in ("arena", "mutator"):
+        if k in kinds:
+            continue
+        ref = resolve_image(None, k)
+        if image_present(ref, runtime=runtime):
+            present.append(ref)
     return download_size([resolve_image(None, k) for k in kinds], present, runtime=runtime)
 
 
