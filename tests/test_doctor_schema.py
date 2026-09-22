@@ -32,6 +32,7 @@ from nethackers.containers import RuntimeCandidate, RuntimeReport
 from nethackers.diagnostics import CAPABILITIES, CHECK_SPECS, run_checks, to_json
 from nethackers.hubclient.client import HubUnreachable
 from nethackers.hubclient.credentials import Credentials
+from nethackers.setup.host import HostFacts
 
 _SCHEMA_PATH = Path(__file__).resolve().parent.parent / "src" / "nethackers" / "doctor.schema.json"
 
@@ -183,7 +184,8 @@ def _kwargs(**overrides):
         # documented "no real...call is made by this function's own test
         # suite" guarantee (test_diagnostics.py's `_healthy_kwargs` carries
         # the identical fake, for the identical reason).
-        rosetta=lambda: ("ok", "Rosetta is accelerating amd64 emulation"),
+        rosetta=lambda: ("ok", "Rosetta is accelerating amd64 emulation", None),
+        host_facts=lambda: HostFacts(system="Darwin", machine="arm64", brew=True),
     )
     kwargs.update(overrides)
     return kwargs

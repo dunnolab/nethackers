@@ -161,7 +161,9 @@ from nethackers.harness.cred_broker import HeaderRewrite
 
 log = logging.getLogger(__name__)
 
-_CLAUDE_LOGIN_HINT = "run `claude` on this host to log in, then retry"
+# `claude auth login` (main's setup recipes point at it) rather than a bare
+# `claude` -- the wording ebebdda standardized so doctor/setup hints agree.
+_CLAUDE_LOGIN_HINT = "run `claude auth login` on this host, then retry"
 
 # The codex CLI's own public OAuth app id (the id_token `aud` claim) -- not a
 # secret, pinned from the codex-rs source. `_CODEX_TOKEN_ENDPOINT` is OpenAI's

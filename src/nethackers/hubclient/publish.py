@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import base64
 import json
+import os
 import shutil
 import subprocess
 import tempfile
@@ -24,14 +25,24 @@ from pathlib import Path
 
 Run = Callable[..., "subprocess.CompletedProcess[str]"]
 
+# `git push` logs in with gh, like every gh call here. Left alone it would use
+# the machine's own git credential setup, which may have nothing for
+# github.com -- git then asks for a username on the terminal, and an unattended
+# evolve run waits on that prompt for hours. The empty helper drops every other
+# helper first.
+_GH_LOGIN = ["-c", "credential.helper=", "-c", "credential.helper=!gh auth git-credential"]
+
 
 class PublishError(Exception):
     """A `gh`/git step failed, or a precondition was not met."""
 
 
 def _run(run: Run, cmd: list[str], *, check: bool = True) -> subprocess.CompletedProcess[str]:
+    # Publishing runs unattended, so a missing login must fail the step, never
+    # prompt: GIT_TERMINAL_PROMPT=0 also reaches the git that `gh repo clone` runs.
+    env = {**os.environ, "GIT_TERMINAL_PROMPT": "0"}
     try:
-        return run(cmd, check=check, capture_output=True, text=True)
+        return run(cmd, check=check, capture_output=True, text=True, env=env)
     except FileNotFoundError as e:  # gh/git not installed
         raise PublishError(f"{cmd[0]} is not installed") from e
     except subprocess.CalledProcessError as e:
@@ -44,12 +55,14 @@ def gh_login(run: Run = subprocess.run) -> str | None:
     missing or not logged in.
 
     Never raises for the not-installed / not-authed case -- the caller turns
-    ``None`` into a friendly "set up gh" message rather than a crash.
+    ``None`` into a friendly "set up gh" message rather than a crash. A hung
+    ``gh`` (a slow network) is treated as not logged in after 10 seconds, the
+    subprocess convention elsewhere in this codebase.
     """
     try:
         proc = run(["gh", "api", "user", "-q", ".login"], check=True,
-                   capture_output=True, text=True)
-    except (FileNotFoundError, subprocess.CalledProcessError):
+                   capture_output=True, text=True, timeout=10)
+    except (FileNotFoundError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return None
     login = proc.stdout.strip()
     return login or None
@@ -260,7 +273,7 @@ def publish_solution(
             raise PublishError(f"git commit failed: {blob.strip()}")
     else:
         target = f"HEAD:{ref}" if ref is not None else "HEAD"
-        _run(run, ["git", "-C", str(repo), "push", "-u", "origin", target])
+        _run(run, ["git", "-C", str(repo), *_GH_LOGIN, "push", "-u", "origin", target])
 
     sha = _run(run, ["git", "-C", str(repo), "rev-parse", "HEAD"]).stdout.strip()
     if not sha:

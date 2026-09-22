@@ -1,3 +1,4 @@
+import os
 import subprocess
 from pathlib import Path
 
@@ -10,6 +11,18 @@ def _cp(args, returncode=0, stdout="", stderr=""):
     return subprocess.CompletedProcess(args, returncode, stdout=stdout, stderr=stderr)
 
 
+def _git_verb(cmd):
+    """The git subcommand, past any global options (``-C <dir>``, ``-c <k=v>``)."""
+    i = 1
+    while cmd[i] in ("-C", "-c"):
+        i += 2
+    return cmd[i]
+
+
+def _pushes(fake):
+    return [c for c in fake.calls if c[0] == "git" and _git_verb(c) == "push"]
+
+
 class FakeRun:
     """Scripts the gh/git commands `publish` shells out to, recording every
     call. `gh repo clone` materialises an (empty, or stale-seeded) repo dir so
@@ -20,6 +33,7 @@ class FakeRun:
                  has_readme=False, view_stdout=None, readme_put_fails=False,
                  about_fails=False):
         self.calls: list[list[str]] = []
+        self.envs: list[dict | None] = []   # the env= each call got, index-aligned with calls
         self.repo_exists = repo_exists
         self.visibility = visibility
         self.commit_rc = commit_rc
@@ -32,8 +46,10 @@ class FakeRun:
         self.readme_put_fails = readme_put_fails
         self.about_fails = about_fails
 
-    def __call__(self, cmd, *, check=False, capture_output=False, text=False):
+    def __call__(self, cmd, *, check=False, capture_output=False, text=False, env=None,
+                 timeout=None):
         self.calls.append(cmd)
+        self.envs.append(env)
         head = cmd[:3]
         if head == ["gh", "api", "user"]:
             return _cp(cmd, 0, stdout="sam\n")
@@ -71,8 +87,8 @@ class FakeRun:
             if self.seed_old:
                 (dest / "old.txt").write_text("stale")
             return _cp(cmd, 0)
-        if cmd[:2] == ["git", "-C"]:
-            sub = cmd[3]
+        if cmd[0] == "git":
+            sub = _git_verb(cmd)
             if sub == "commit":
                 if self.commit_rc != 0:
                     return _cp(cmd, self.commit_rc, stdout="nothing to commit, working tree clean")
@@ -258,7 +274,7 @@ def test_publish_solution_syncs_commits_and_returns_sha(tmp_path):
     assert (repo / "pkg" / "helper.py").exists()                # subdir copied
     assert not (repo / "old.txt").exists()                      # stale content removed
     assert (repo / ".git").exists()                             # .git preserved
-    verbs = [c[3] for c in fake.calls if c[:2] == ["git", "-C"]]
+    verbs = [_git_verb(c) for c in fake.calls if c[0] == "git"]
     assert verbs == ["add", "commit", "push", "rev-parse"]
 
 
@@ -267,9 +283,41 @@ def test_publish_pushes_to_the_given_ref(tmp_path):
     fake = FakeRun(sha="e" * 40)
     P.publish_solution(sol, "sam/nethacker", message="m", run=fake,
                        workdir=tmp_path / "wd", ref="evo-harness-v1/run-42")
-    pushes = [c for c in fake.calls if c[:2] == ["git", "-C"] and c[3] == "push"]
+    pushes = _pushes(fake)
     assert pushes, "expected a push"
     assert any("evo-harness-v1/run-42" in tok for c in pushes for tok in c)
+
+
+def test_push_logs_in_through_gh(tmp_path):
+    # Cloning a public repo needs no login, so the push is the first step that
+    # does -- and a bare `git push` logs in with the machine's own git
+    # credential setup, not gh's. Where that setup has nothing for github.com,
+    # git asks for a username on the run's terminal and the evolve loop waits
+    # on it for hours. The push must use the same gh login as every other step;
+    # the empty helper first drops every helper git would otherwise try.
+    fake = FakeRun()
+    P.publish_solution(_solution(tmp_path), "sam/nethacker", message="m", run=fake,
+                       workdir=tmp_path / "wd", ref="evo-harness-v1/run-1")
+    [push] = _pushes(fake)
+    i = push.index("credential.helper=")
+    assert push[i - 1] == "-c"
+    assert push[i + 1:i + 3] == ["-c", "credential.helper=!gh auth git-credential"]
+
+
+def test_git_never_asks_for_a_login(tmp_path, monkeypatch):
+    # gh's helper can still come up empty (gh logged out mid-run); git must
+    # then fail at once, not prompt. Cleared first because a shell that already
+    # exports it (Claude Code's does) would hide a missing one.
+    monkeypatch.delenv("GIT_TERMINAL_PROMPT", raising=False)
+    fake = FakeRun()
+    P.publish_solution(_solution(tmp_path), "sam/nethacker", message="m", run=fake,
+                       workdir=tmp_path / "wd")
+    network = [env for cmd, env in zip(fake.calls, fake.envs, strict=True)
+               if cmd[:3] == ["gh", "repo", "clone"] or cmd in _pushes(fake)]
+    assert len(network) == 2   # the clone and the push
+    for env in network:
+        assert env is not None and env["GIT_TERMINAL_PROMPT"] == "0"
+        assert env["PATH"] == os.environ["PATH"]   # the rest of the env still flows through
 
 
 def test_two_runs_push_distinct_refs(tmp_path):
@@ -280,9 +328,7 @@ def test_two_runs_push_distinct_refs(tmp_path):
                                  workdir=tmp_path / f"wd-{rid}",
                                  ref=f"evo-harness-v1/{rid}")
         assert out == sha
-        assert any(f"evo-harness-v1/{rid}" in tok
-                   for c in fake.calls if c[:2] == ["git", "-C"] and c[3] == "push"
-                   for tok in c)
+        assert any(f"evo-harness-v1/{rid}" in tok for c in _pushes(fake) for tok in c)
 
 
 def test_publish_excludes_pycache_and_build_junk(tmp_path):
@@ -316,7 +362,7 @@ def test_publish_solution_no_changes_skips_push(tmp_path):
     sha = P.publish_solution(sol, "sam/nethacker", message="noop", run=fake,
                              workdir=tmp_path / "wd")
     assert sha == "c" * 40
-    verbs = [c[3] for c in fake.calls if c[:2] == ["git", "-C"]]
+    verbs = [_git_verb(c) for c in fake.calls if c[0] == "git"]
     assert verbs == ["add", "commit", "rev-parse"]             # no push
 
 

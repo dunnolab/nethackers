@@ -255,3 +255,54 @@ def test_render_cli_line_start_done_error_include_kind_and_ref():
     assert "arena" in start and ref in start
     assert "arena" in done and ref in done
     assert "mutator" in error and ref in error
+
+
+# ============================================================================
+# byte progress (pulls run in a pseudo-terminal, so docker prints its bytes)
+# ============================================================================
+
+
+def _feed(lines):
+    state, events = PullParseState(), []
+    for line in lines:
+        state, event = parse_pull_line(state, line, kind="mutator", ref="img")
+        if event is not None:
+            events.append(event)
+    return state, events
+
+
+def test_downloading_lines_carry_bytes():
+    _, events = _feed(["0a1b2c3d4e5f: Downloading [==>      ]  45.21MB/355.2MB",
+                       "1b2c3d4e5f60: Downloading [=====>   ]  1.2MB/2.5MB"])
+    assert events[-1].bytes_done == 45_210_000 + 1_200_000
+    assert events[-1].bytes_total == 355_200_000 + 2_500_000
+
+
+def test_a_finished_download_counts_its_whole_size():
+    _, events = _feed(["0a1b2c3d4e5f: Downloading [==>      ]  45.21MB/355.2MB",
+                       "0a1b2c3d4e5f: Download complete"])
+    assert events[-1].bytes_done == events[-1].bytes_total == 355_200_000
+
+
+def test_extracting_means_the_download_is_done():
+    _, events = _feed(["0a1b2c3d4e5f: Downloading [==>      ]  1MB/2MB",
+                       "0a1b2c3d4e5f: Extracting [=>        ]  512kB/2MB"])
+    assert events[-1].bytes_done == 2_000_000
+
+
+def test_a_layer_that_already_exists_is_not_part_of_the_download():
+    _, events = _feed(["0a1b2c3d4e5f: Downloading [==>      ]  1MB/2MB",
+                       "1b2c3d4e5f60: Already exists"])
+    assert events[-1].bytes_total == 2_000_000
+
+
+def test_no_byte_lines_means_no_bytes():
+    _, events = _feed(["1b930d010525: Pulling fs layer", "1b930d010525: Pull complete"])
+    assert events[-1].bytes_done is None and events[-1].bytes_total is None
+
+
+def test_render_cli_line_shows_megabytes_once_known():
+    event = PullEvent(kind="mutator", ref="img", phase="layer", layers_total=19,
+                      layers_complete=5, detail="Downloading", bytes_done=212_000_000,
+                      bytes_total=432_000_000)
+    assert render_cli_line(event) == "pulling mutator  212/432 MB"
