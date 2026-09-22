@@ -399,6 +399,14 @@ class RunMonitor(Screen):
         # content-width measurement to idle, so at first paint they truncate
         # cells to the *header* width ("sam-hu", "vkurenkov @" with the score
         # cut). Fixed widths render the full identity / champion@sha / score.
+        # Budget (Ruling 19/20): the app's real, THEMED viewport at 120x34 is
+        # 76 columns (#left is fixed at 38; .panel's border + #progress_pane's
+        # padding cost the rest) -- DataTable adds 1 cell of padding on each
+        # side of each column, so 17+24+29 = 70 + 6 = 76, an exact fit.
+        # Accepted caveat: an objective with enough identities to scroll this
+        # table VERTICALLY costs 2 more columns for Textual's scrollbar,
+        # which clips the tail of "▲ new best" in "this iteration" -- the
+        # score and the game count, the load-bearing parts, stay visible.
         idents.add_column("identity", key="id", width=17)
         idents.add_column("best so far", key="best", width=24)
         idents.add_column("this iteration", key="run", width=29)
@@ -476,7 +484,7 @@ class RunMonitor(Screen):
             # spread across the three columns so the message isn't truncated to
             # the identity column's width.
             t.add_row(Text.from_markup("[dim]— not recorded[/]"),
-                      Text.from_markup("[dim]per-identity scores weren't saved[/]"),
+                      Text.from_markup("[dim]scores weren't saved[/]"),
                       Text.from_markup("[dim]see Mutator Logs ▸[/]"), key="norec")
             self._row_map.append(("norec", None))
             return
@@ -526,7 +534,7 @@ class RunMonitor(Screen):
             if kind == "overall":
                 if before_state or (self.run.init_union is None
                                     and self.run.setup_ended_at is None):
-                    best_txt = Text.from_markup("[#7c745f]scored at the end of setup[/]")
+                    best_txt = Text.from_markup("[#7c745f]scored when setup ends[/]")
                 else:
                     bo = self.run.best_overall(k)
                     best_txt, best = S.best_cell(bo), bo[0]

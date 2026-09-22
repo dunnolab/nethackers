@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 
+from rich.text import Text
 from textual.app import App
 from textual.coordinate import Coordinate
 from textual.widgets import DataTable, OptionList, Static, TabbedContent, TabPane
@@ -96,6 +97,19 @@ def _headers(dt: DataTable) -> str:
     return " | ".join(str(c.label) for c in dt.ordered_columns)
 
 
+def _assert_cells_fit_their_columns(dt: DataTable) -> None:
+    """Ruling 20: the guard that would have caught all three rounds of
+    column-width defects -- every rendered cell's width must not exceed its
+    own column's configured ``width``. A ``Text`` value is measured with
+    ``.cell_len`` (what Textual itself lays out by, so it matches markup
+    stripped to display cells); a plain ``str`` with ``len``."""
+    widths = [c.width for c in dt.ordered_columns]
+    for r in range(dt.row_count):
+        for width, value in zip(widths, dt.get_row_at(r), strict=True):
+            shown = value.cell_len if isinstance(value, Text) else len(str(value))
+            assert shown <= width, f"row {r}: {value!r} is {shown} wide, column is {width}"
+
+
 class _CellSel:
     """A minimal stand-in for ``DataTable.CellSelected``: the handler is a
     pure function of ``.coordinate`` (see its own docstring), so a fake
@@ -112,10 +126,12 @@ async def test_progress_table_has_best_overall_and_role_groups():
         await pilot.pause()
         mon = host.screen
         assert isinstance(mon, RunMonitor)
-        table_text = _dump(mon.query_one("#idents", DataTable))
+        dt = mon.query_one("#idents", DataTable)
+        table_text = _dump(dt)
         assert "BEST OVERALL" in table_text
         assert "Wizard" in table_text and "Valkyrie" in table_text   # role groups present
         assert "Claude Code" in str(mon.query_one("#title_mutator").render())
+        _assert_cells_fit_their_columns(dt)   # Ruling 20: during setup, fully populated
 
 
 async def test_the_setup_row_says_setup_does_not_edit():
@@ -406,6 +422,7 @@ async def test_rows_appear_before_the_first_state_then_fill_in():
         dt = mon.query_one("#idents", DataTable)
         text = _dump(dt)
         assert "wiz-elf-cha-mal" in text and "fetching…" in text   # rows from the first frame
+        _assert_cells_fit_their_columns(dt)   # Ruling 20: before the first state
         ids = ["wiz-elf-cha-mal", "wiz-orc-cha-mal", "val-dwa-law-fem"]
         r.apply_state({"phase": "cold-start", "iteration": 0, "identities": ids,
                        "cells": [], "origins": {}, "aa_baseline": {i: 0.3 for i in ids},
@@ -417,7 +434,29 @@ async def test_rows_appear_before_the_first_state_then_fill_in():
         await pilot.pause()
         text = _dump(dt)
         assert "fetching…" not in text and "AutoAscend" in text
-        assert "scored at the end of setup" in text   # BEST OVERALL waits for setup
+        assert "scored when setup ends" in text   # BEST OVERALL waits for setup
+        _assert_cells_fit_their_columns(dt)   # Ruling 20: during setup
+
+
+async def test_a_reopened_runs_progress_tab_shows_the_not_recorded_row():
+    """Ruling 20: a reopened run's Progress tab had never been rendered in a
+    test before -- its own "norec" placeholder row (the reason this whole
+    round exists: "per-identity scores weren't saved" was 33 characters in
+    a 24-wide column) needs the same cell-width guard as every other state."""
+    r = Run("r1", CFG)
+    r.reopened = True
+    r.status = "done"
+    host = _Host(r)
+    async with host.run_test(size=(120, 34)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        mon.query_one("#tabs", TabbedContent).active = "tab_score"
+        await pilot.pause()
+        dt = mon.query_one("#idents", DataTable)
+        text = _dump(dt)
+        assert "not recorded" in text and "scores weren't saved" in text
+        assert "see Mutator Logs" in text
+        _assert_cells_fit_their_columns(dt)   # Ruling 20: a reopened run
 
 
 async def test_empty_detail_table_survives_a_click_without_crashing():
@@ -671,6 +710,7 @@ async def test_this_iteration_says_what_the_run_waits_on():
         text = _dump(dt)
         assert "0.50  1/15 games" in text and "▲ new best" in text
         assert "1/45 games" in text          # BEST OVERALL: the candidate's average
+        _assert_cells_fit_their_columns(dt)   # Ruling 20: a live iteration
 
 
 async def test_the_legend_explains_the_marks():
@@ -865,10 +905,10 @@ async def test_setup_best_overall_open_cell_opens_the_same_program_as_best_so_fa
 
 
 async def test_the_progress_table_never_scrolls_horizontally():
-    """Ruling 17: 18/26/30 (+ 2 cells of padding per column = 80) must fit
-    the Progress tab's real viewport with no horizontal scroll, both at a
-    120- and at a 140-column terminal -- the identity column and the role
-    headers must never sit off-screen at first paint."""
+    """Ruling 19: 17/24/29 (+ 2 cells of padding per column = 76) must fit
+    the Progress tab's real, themed viewport with no horizontal scroll, both
+    at a 120- and at a 140-column terminal -- the identity column and the
+    role headers must never sit off-screen at first paint."""
     for size in ((120, 34), (140, 42)):
         host = _Host(_run())
         async with host.run_test(size=size) as pilot:
