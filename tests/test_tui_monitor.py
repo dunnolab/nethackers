@@ -1,7 +1,10 @@
-"""Screen-level tests for the reworked RunMonitor: iteration list + Progress/
-Mutator Logs/Logs tabs + a clickable Progress table, rendered from a ``Run``.
-(The worker->Run reductions themselves are covered by test_tui_run.py.)"""
+"""Screen-level tests for the reworked RunMonitor: iteration list + Logs ·
+Progress · Mutator Logs tabs + a clickable Progress table, rendered from a
+``Run``. (The worker->Run reductions themselves are covered by
+test_tui_run.py.)"""
 from __future__ import annotations
+
+import asyncio
 
 from textual.app import App
 from textual.widgets import DataTable, OptionList, Static, TabbedContent, TabPane
@@ -506,6 +509,14 @@ async def test_the_iteration_list_names_outcomes_and_marks_the_live_row():
         assert labels[0].startswith("✓ setup")
         assert "improved" in labels[1] and "failed test" in labels[2]
         assert mon.sel_iter == 3 and labels[3].startswith("▶ iter 3")   # opened on the live one
+        # str(prompt) is style-blind -- check the actual Text spans too: the
+        # highlighted (live) row is flattened to plain bold (no coloured
+        # spans, so the OptionList's dark-on-gold highlight isn't fighting
+        # them), while an unhighlighted decided row keeps its colour.
+        live_prompt = ol.get_option_at_index(3).prompt
+        assert live_prompt.style == "bold" and not live_prompt.spans
+        improved_prompt = ol.get_option_at_index(1).prompt
+        assert any(sp.style != "bold" for sp in improved_prompt.spans)
 
 
 async def test_the_view_follows_the_live_run_until_you_pick_another_iteration():
@@ -548,3 +559,77 @@ async def test_long_runs_keep_the_live_row_in_view():
         ol = mon.query_one("#iters", OptionList)
         assert mon.sel_iter == 60 and ol.highlighted == 60
         assert ol.scroll_offset.y > 0                  # scrolled down to it
+
+
+async def test_follow_live_does_not_thrash_on_back_to_back_state_events():
+    """Regression (task review, fix round 1): _render_iters() sets
+    ol.highlighted, which POSTS an OptionHighlighted message asynchronously
+    (Textual's watch_highlighted) -- if a second _follow_live()-triggered
+    _select() moves sel_iter on again before that message is dispatched,
+    the stale message used to read as a user pick of the OLD iteration,
+    flip ``following`` off and ``_select`` back to it, which posted another
+    stale message, repeating forever (reviewer's repro: ~660 cycles). Two
+    render_state() calls with NO pause between them reproduces the race;
+    Ruling 15 fixes it in the OptionList handlers."""
+    r = _run()
+    _phase(r, "mutating", 1)
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        assert mon.sel_iter == 1 and mon.following
+
+        calls = 0
+        orig_select = mon._select
+
+        def counting_select(index: int) -> None:
+            nonlocal calls
+            calls += 1
+            orig_select(index)
+        mon._select = counting_select
+
+        # Two live events back to back, each moving the follow-live target
+        # to a DIFFERENT iteration, with nothing draining the OptionList's
+        # message queue in between.
+        r.apply_iteration(1, IterationResult(False, "no-cell-improved", dev_fitness=0.1))
+        _phase(r, "rejected", 1)
+        _phase(r, "mutating", 2, cell=IDS3[1])
+        mon.render_state()   # live section -> 2
+
+        r.apply_iteration(2, IterationResult(False, "no-cell-improved", dev_fitness=0.1))
+        _phase(r, "rejected", 2, cell=IDS3[1])
+        _phase(r, "mutating", 3, cell=IDS3[2])
+        mon.render_state()   # live section -> 3, still no pause since fn1
+
+        # Bounded wait: a real livelock must surface as a clean failure
+        # instead of hanging the whole test run.
+        await asyncio.wait_for(pilot.pause(), timeout=5)
+        assert mon.sel_iter == 3
+        assert mon.following
+        assert calls <= 4   # a small, bounded number -- the thrash made it hundreds
+
+
+async def test_the_view_settles_on_the_last_iteration_once_the_run_ends():
+    """The untested branch of _follow_live: once the run stops running while
+    still following, it lands on (and stays on) the last iteration that
+    ran, and the now-line reports the run as done -- not stuck mid-render on
+    a section the run will never finish."""
+    r = _run()
+    _phase(r, "mutating", 1)
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        r.apply_iteration(1, IterationResult(False, "no-cell-improved", dev_fitness=0.1))
+        _phase(r, "rejected", 1)
+        _phase(r, "mutating", 2, cell=IDS3[1])
+        mon.render_state()
+        await pilot.pause()
+        assert mon.sel_iter == 2 and mon.following
+
+        r.finish()   # ends abruptly mid-iteration-2 (e.g. a crash) -- iter 2 never decided
+        mon.render_state()
+        await pilot.pause()
+        assert mon.sel_iter == 2               # the last iteration that ran
+        assert mon.following
+        assert "Done" in str(mon.query_one("#now", Static).render())

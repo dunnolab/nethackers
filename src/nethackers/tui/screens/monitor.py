@@ -626,12 +626,28 @@ class RunMonitor(Screen):
         self.following = k == self._live_section()
         self._select(k)
 
+    def _stale(self, event: OptionList.OptionHighlighted | OptionList.OptionSelected) -> bool:
+        """A change to ``OptionList.highlighted`` POSTS its event
+        asynchronously (Textual's ``watch_highlighted``) -- if a second
+        programmatic highlight change (another _render_iters()/_select(),
+        e.g. from a follow-live re-render) lands before this one is
+        dispatched, the event describes a moment that's no longer current.
+        Acting on it would drag the view back to the old index and re-post
+        the same event, thrashing forever (Ruling 15). The live OptionList
+        object always reflects the LATEST assignment, so a mismatch here
+        means a newer one has already superseded this event."""
+        return event.option_index != event.option_list.highlighted
+
     def on_option_list_option_highlighted(self, event: OptionList.OptionHighlighted) -> None:
         # populating #iters auto-highlights before #idents is ready -- _pick's
         # own _ready guard skips that, and _backfill's _select renders it.
+        if self._stale(event):
+            return
         self._pick(event.option.id or "")
 
     def on_option_list_option_selected(self, event: OptionList.OptionSelected) -> None:
+        if self._stale(event):
+            return
         self._pick(event.option.id or "")
 
     def _follow_live(self) -> None:
