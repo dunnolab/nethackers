@@ -354,3 +354,23 @@ def test_broker_impersonate_without_curl_cffi_raises_a_friendly_runtimeerror(mon
     broker = CredBroker("http://127.0.0.1:1", HeaderRewrite(), impersonate=True)
     with pytest.raises(RuntimeError, match=r"pip install curl_cffi"):
         broker.start()
+
+
+def test_broker_binds_a_port_from_the_fixed_range(fake_upstream):
+    from nethackers.harness.cred_broker import BROKER_PORT_RANGE
+    rewrite = HeaderRewrite(inject=(("Authorization", "Bearer t"),))
+    with CredBroker(fake_upstream.url, rewrite) as base:
+        # a fixed range (not an ephemeral OS port) so a ufw rule can scope to it
+        assert int(urlsplit(base).port) in BROKER_PORT_RANGE
+
+
+def test_broker_counts_requests_that_reach_it(fake_upstream):
+    rewrite = HeaderRewrite(inject=(("Authorization", "Bearer t"),))
+    broker = CredBroker(fake_upstream.url, rewrite)
+    base = broker.start()
+    try:
+        assert broker.requests_seen == 0
+        httpx.post(f"{base}/v1/messages", json={"hi": 1})
+        assert broker.requests_seen == 1
+    finally:
+        broker.stop()

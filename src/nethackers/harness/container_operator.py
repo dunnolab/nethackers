@@ -64,7 +64,7 @@ from nethackers.harness.auth_inject import (
     opencode2_broker_docker_args,
     opencode2_broker_targets,
 )
-from nethackers.harness.cred_broker import CredBroker, HeaderRewrite
+from nethackers.harness.cred_broker import BROKER_PORT_RANGE, CredBroker, HeaderRewrite
 from nethackers.harness.operator import (
     OperatorResult,
     _claude_cmd,
@@ -139,6 +139,17 @@ def _bridge_gateway_ip(runtime: str, *, run=subprocess.run) -> str | None:
         return None
     gateway = (getattr(result, "stdout", "") or "").strip()
     return gateway or None
+
+
+def ufw_rule_hint(gateway: str) -> str:
+    """The exact, port-SCOPED ufw rule that lets a docker container reach the
+    host-side broker on a ufw-firewalled Linux host (ufw blocks docker0->host
+    by default). Scoped to the broker's own fixed port range on the gateway --
+    NOT a blanket ``ufw allow in on docker0``, which would open every host
+    service to the untrusted sandbox. Reusable by ``doctor`` and (when it
+    lands) ``nethackers setup``."""
+    lo, hi = BROKER_PORT_RANGE.start, BROKER_PORT_RANGE.stop - 1
+    return f"sudo ufw allow in on docker0 to {gateway} port {lo}:{hi} proto tcp"
 
 
 @dataclass(frozen=True)
@@ -429,6 +440,16 @@ class ContainerOperator:
                     popen=self._popen,
                     stdin_text=brief if self.harness == "opencode2" else None,
                 )
+            except RuntimeError as exc:
+                # Fail-loud firewall hint: a broker run that failed with ZERO
+                # requests ever reaching the broker means the sandbox never
+                # reached it -- on native Linux that's docker0->host blocked by
+                # a firewall (ufw), not a provider/agent bug. Re-raise with the
+                # exact scoped rule instead of a bare "operator exited".
+                hint = self._firewall_hint_or_none(broker_procs)
+                if hint is not None:
+                    raise RuntimeError(f"{hint}\n\nOriginal error: {exc}") from exc
+                raise
             finally:
                 done.set()
                 if watcher is not None:
@@ -464,6 +485,27 @@ class ContainerOperator:
             # nesting above.
             for proc in broker_procs:
                 proc.stop()
+
+    def _firewall_hint_or_none(self, broker_procs: list[_CredBrokerLike]) -> str | None:
+        """A fail-loud firewall hint when a broker run failed but NO request
+        ever reached any broker -- on native Linux that means the sandbox
+        couldn't reach the host broker (docker0->host blocked, e.g. by ufw),
+        which is a host-networking problem, not a provider/agent bug. Returns
+        ``None`` (re-raise the original error unchanged) on macOS, when the
+        broker path wasn't taken, or when a broker WAS reached (the failure is
+        then something else)."""
+        if self.system == "Darwin" or not broker_procs:
+            return None
+        if any(getattr(p, "requests_seen", 0) for p in broker_procs):
+            return None
+        gateway = _bridge_gateway_ip(self.docker, run=self._run) or "<docker-bridge-gateway>"
+        return (
+            "the sandbox never reached the credential broker -- on Linux the docker "
+            "bridge->host path is likely blocked by a firewall (ufw). Allow it with:\n"
+            f"    {ufw_rule_hint(gateway)}\n"
+            "(or re-run with --no-broker to mount the credential into the sandbox, which "
+            "exposes it to the untrusted code)."
+        )
 
     def _start_broker_auth(
         self, broker_procs: list[_CredBrokerLike],

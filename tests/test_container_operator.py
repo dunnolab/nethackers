@@ -13,6 +13,7 @@ from nethackers.harness.container_operator import (
     ContainerOperator,
     _bridge_gateway_ip,
     build_docker_argv,
+    ufw_rule_hint,
 )
 from nethackers.harness.cred_broker import HeaderRewrite
 
@@ -900,3 +901,36 @@ def test_broker_binds_loopback_on_darwin(tmp_path, monkeypatch):
     op._popen = lambda cmd, **kw: FakePopen(cmd, **kw)
     op.run(wt, "BRIEF")
     assert holder["broker"].bind_host == "127.0.0.1"
+
+
+class _ReachedBroker:
+    requests_seen = 1
+
+
+class _UnreachedBroker:
+    requests_seen = 0
+
+
+def test_ufw_rule_hint_is_port_scoped_to_the_broker_range():
+    # scoped to the broker's fixed port range on the gateway, NOT a blanket
+    # `allow in on docker0` (which would open every host service to the sandbox)
+    assert ufw_rule_hint("172.17.0.1") == (
+        "sudo ufw allow in on docker0 to 172.17.0.1 port 11700:11749 proto tcp"
+    )
+
+
+def test_firewall_hint_fires_when_no_request_reached_the_broker(tmp_path):
+    op, _ = _broker_op(tmp_path, harness="claude")  # system="Linux"
+    hint = op._firewall_hint_or_none([_UnreachedBroker()])
+    assert hint is not None
+    assert "ufw allow in on docker0" in hint and "172.17.0.1" in hint and "--no-broker" in hint
+
+
+def test_no_firewall_hint_when_a_broker_was_reached(tmp_path):
+    op, _ = _broker_op(tmp_path, harness="claude")
+    assert op._firewall_hint_or_none([_ReachedBroker()]) is None
+
+
+def test_no_firewall_hint_on_darwin(tmp_path):
+    op, _ = _broker_op(tmp_path, harness="claude", system="Darwin")
+    assert op._firewall_hint_or_none([_UnreachedBroker()]) is None

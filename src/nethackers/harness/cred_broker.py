@@ -29,6 +29,17 @@ import httpx
 # same, already-tested `_proxy` body -- so covering them costs nothing extra.
 _METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 
+# The broker picks a free port from this FIXED range (not an ephemeral OS
+# port) so a host firewall rule can be scoped to exactly these ports. On
+# native Linux the sandbox reaches the broker via the docker bridge gateway,
+# which a locked-down firewall (ufw) blocks by default; a scoped
+# `ufw allow in on docker0 to <gateway> port 11700:11749 proto tcp` opens ONLY
+# the broker's ports -- not every host service -- which a blanket
+# `allow in on docker0` would. 50 ports covers far more concurrent broker
+# processes than a single host realistically runs (each evolve run starts one
+# broker per brokered provider). See container_operator.ufw_rule_hint.
+BROKER_PORT_RANGE = range(11700, 11750)
+
 # Response headers that describe the upstream's wire framing rather than the
 # content itself. Dropped because this broker streams the forward library's
 # already content-decoded bytes -- `httpx`'s `iter_bytes()` normally, or (see
@@ -101,6 +112,12 @@ class CredBroker:
         # reachable from the sandbox, NOT the host's public interface (never
         # 0.0.0.0). See container_operator._start_broker_auth.
         self._bind_host = bind_host
+        # Requests that reached the proxy (any method/status). Zero after a
+        # broker run means the sandbox never reached the broker at all -- the
+        # fail-loud signal ContainerOperator turns into a firewall hint
+        # (docker0->host blocked, e.g. by ufw) instead of a confusing agent
+        # timeout.
+        self.requests_seen = 0
         self._client: httpx.Client | None = None
         # Type is `Any`: `curl_cffi` is an optional, lazily-imported dep
         # (never installed for mypy/tests to see -- see `start`), so its
@@ -148,6 +165,7 @@ class CredBroker:
 
         class Handler(BaseHTTPRequestHandler):
             def _proxy(self) -> None:
+                broker.requests_seen += 1
                 if not broker._host_allowed(self.headers.get("Host")):
                     self.send_response(403)
                     self.end_headers()
@@ -242,7 +260,20 @@ class CredBroker:
         for method in _METHODS:
             setattr(Handler, f"do_{method}", Handler._proxy)
 
-        self._server = ThreadingHTTPServer((self._bind_host, 0), Handler)
+        server: ThreadingHTTPServer | None = None
+        for candidate in BROKER_PORT_RANGE:
+            try:
+                server = ThreadingHTTPServer((self._bind_host, candidate), Handler)
+                break
+            except OSError:
+                continue   # port busy (a concurrent broker, or something else) -- try the next
+        if server is None:
+            # Range exhausted (more concurrent brokers than the window). Fall
+            # back to an ephemeral port so the broker still starts; on a ufw
+            # host that port is outside the scoped rule, so the run then fails
+            # LOUD (firewall hint) rather than silently not starting at all.
+            server = ThreadingHTTPServer((self._bind_host, 0), Handler)
+        self._server = server
         # DELIBERATE: stop() joins the accept-loop thread (`self._thread`,
         # below) so `serve_forever` is guaranteed to have exited, but it
         # does NOT wait for whatever per-request worker thread ThreadingMixIn
