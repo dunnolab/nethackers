@@ -50,6 +50,7 @@ packages = ["src/nethackers"]
 [tool.hatch.build.targets.wheel.force-include]
 "src/nethackers/hub/web/index.html" = "nethackers/hub/web/index.html"
 "src/nethackers/hub/web/brief.md" = "nethackers/hub/web/brief.md"
+"src/nethackers/hub/web/social-preview.png" = "nethackers/hub/web/social-preview.png"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

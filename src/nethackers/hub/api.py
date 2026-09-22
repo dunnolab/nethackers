@@ -97,6 +97,10 @@ from nethackers.hub.views.verified import read_verified, read_verified_baseline
 # The index.html file shipped in the wheel package data.
 _INDEX = Path(__file__).parent / "web" / "index.html"
 
+# The link-preview card (1280x640), shipped in the wheel next to index.html and
+# served at /social-preview.png; the page head points og:image at it.
+_SOCIAL_PREVIEW = Path(__file__).parent / "web" / "social-preview.png"
+
 # The canonical public origin, used to build the absolute og:url a share card
 # needs. It is the same literal the page's own head already carries; keeping it
 # here means a hacker link previews as itself rather than as the front page.
@@ -372,6 +376,16 @@ def create_app(
         if not path.is_file():
             raise HTTPException(status_code=404, detail="no background track")
         return FileResponse(path, media_type="audio/mpeg")
+
+    @app.get("/social-preview.png")
+    def social_preview() -> FileResponse:
+        """The og:image / twitter:image card. Package data, so unlike the
+        background track it is never absent; a day of caching keeps the
+        crawlers that unfurl a shared link from re-fetching it per share."""
+        return FileResponse(
+            _SOCIAL_PREVIEW, media_type="image/png",
+            headers={"Cache-Control": "public, max-age=86400"},
+        )
 
     @app.get("/stats")
     def stats() -> dict[str, Any]:
