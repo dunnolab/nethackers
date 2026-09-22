@@ -9,6 +9,7 @@ reaches a real network.
 """
 from __future__ import annotations
 
+import gzip
 import http.client
 import json
 import threading
@@ -26,6 +27,11 @@ from nethackers.harness.cred_broker import CredBroker, HeaderRewrite
 # with the test so the expected concatenation can't drift from what the
 # handler actually sends.
 _SSE_EVENTS = tuple(f"data: {i}\n\n" for i in range(5))
+
+# The plain-JSON payload `/gzip` sends gzip-compressed -- shared with the
+# test so the decoded-body assertion can't drift from what the handler
+# actually compresses.
+_GZIP_PAYLOAD = {"ok": True, "compressed": True}
 
 
 class _FakeUpstreamHandler(BaseHTTPRequestHandler):
@@ -66,15 +72,33 @@ class _FakeUpstreamHandler(BaseHTTPRequestHandler):
             self.wfile.flush()
             time.sleep(0.02)
 
+    def _respond_gzip(self) -> None:
+        # A real provider response can arrive `Content-Encoding: gzip`
+        # (httpx sends `Accept-Encoding` by default) -- built directly here
+        # rather than relying on real negotiated compression, so the
+        # regression is deterministic regardless of what this broker/httpx
+        # does with the client's own Accept-Encoding header.
+        body = gzip.compress(json.dumps(_GZIP_PAYLOAD).encode())
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Encoding", "gzip")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self) -> None:
         if self.path == "/sse":
             self._respond_sse()
+        elif self.path == "/gzip":
+            self._respond_gzip()
         else:
             self._respond()
 
     def do_POST(self) -> None:
         if self.path == "/sse":
             self._respond_sse()
+        elif self.path == "/gzip":
+            self._respond_gzip()
         else:
             self._respond()
 
@@ -245,3 +269,20 @@ def test_broker_streams_sse_without_buffering(fake_upstream):
     # (b) no Content-Length: the broker couldn't have known the total size
     # up front, because it never held the whole response at once.
     assert "content-length" not in r.headers
+
+
+def test_broker_decodes_gzip_response(fake_upstream):
+    # `_respond_gzip` returns a real gzip-compressed body labeled
+    # `Content-Encoding: gzip` -- the shape a real provider sends. Streaming
+    # the upstream's RAW wire bytes through (`iter_raw()`) would forward
+    # the still-compressed bytes to the client with no `Content-Encoding`
+    # header to say so (that header is one this broker always drops) --
+    # undecodable garbage. `iter_bytes()` yields httpx's already-decoded
+    # bytes instead, so what's written matches the (correctly headerless)
+    # response: plain JSON.
+    rewrite = HeaderRewrite()
+    with CredBroker(fake_upstream.url, rewrite) as base:
+        r = httpx.get(f"{base}/gzip")
+    assert r.status_code == 200
+    assert "content-encoding" not in r.headers
+    assert json.loads(r.content) == _GZIP_PAYLOAD

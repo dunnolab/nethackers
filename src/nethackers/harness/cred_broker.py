@@ -29,10 +29,13 @@ import httpx
 _METHODS = ("GET", "POST", "PUT", "PATCH", "DELETE")
 
 # Response headers that describe the upstream's wire framing rather than the
-# content itself. Dropped and recomputed (or simply omitted) because this
-# broker reconstructs the response from `httpx`'s already-decoded `r.content`
-# -- forwarding them verbatim could describe bytes that no longer match what
-# gets written (e.g. a Content-Length measured before gzip decoding).
+# content itself. Dropped because this broker streams `httpx`'s already
+# content-decoded bytes (`iter_bytes()`, never the raw wire bytes) to the
+# client -- forwarding the upstream's own framing/encoding headers verbatim
+# would describe bytes that no longer match what's actually written (e.g. a
+# stale `Content-Encoding: gzip` once the body's already been decompressed,
+# or a fixed Content-Length/chunked Transfer-Encoding that doesn't match
+# this connection-close-delimited stream).
 _HOP_BY_HOP_RESPONSE_HEADERS = frozenset(
     {"transfer-encoding", "content-encoding", "connection", "content-length"}
 )
@@ -119,7 +122,7 @@ class CredBroker:
                         # stops instead.
                         self.close_connection = True
                         self.end_headers()
-                        for chunk in up.iter_raw():
+                        for chunk in up.iter_bytes():
                             self.wfile.write(chunk)
                             self.wfile.flush()
                 except Exception:
