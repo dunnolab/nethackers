@@ -119,8 +119,8 @@ Three things execute code that neither you nor we wrote or reviewed:
 
 1. **Bots you evaluate.** `nethackers eval` and every eval inside `evolve` import
    and run a `bot.py`. If you pulled it from the hub, someone else wrote it.
-2. **The coding agent.** `nethackers evolve` runs Claude Code or Codex with
-   permission prompts fully disabled (`--dangerously-skip-permissions` /
+2. **The coding agent.** `nethackers evolve` runs Claude Code, Codex, or OpenCode
+   with permission prompts fully disabled (`--dangerously-skip-permissions` /
    `--dangerously-bypass-approvals-and-sandbox`). It writes and executes code
    unattended, for hours.
 3. **Programs you `pull`.** `nethackers pull` clones a repo. Nothing runs at
@@ -129,31 +129,40 @@ Three things execute code that neither you nor we wrote or reviewed:
 
 What we do about it:
 
-- **Bot evaluation runs in a container with `--network none`** and the bot mounted
-  read-only at `/sol`. No egress is the strongest control we have here.
-- **The coding agent runs in a container** with `--pids-limit`, `--memory` (swap
-  capped to the same value), `--cpus`, `--security-opt no-new-privileges`,
-  dropping to a non-root user, under a wall-clock `timeout`.
+- **The bot evaluator is a sealed box.** Every eval runs in a container with no
+  network (`--network none`), a read-only root filesystem, a `noexec,nosuid`
+  tmpfs for scratch, every Linux capability dropped, `no-new-privileges`, a
+  non-root user, and pid/memory/CPU caps. The bot is mounted read-only, and the
+  hidden seeds never enter the container: the secret is expanded to concrete
+  per-game seeds on the host and piped in over stdin, so it is never on the
+  container's argv or in its environment.
+- **Fetching is github-only and hardened.** `pull` and hub registration accept
+  only `github.com/<owner>/<repo>@<commit>` references. The host is parsed rather
+  than string-matched, so lookalikes like `github.com.evil.com` or
+  `git@github.com:...` are refused, and the clone allows only https, with
+  submodules, symlink checkout, and tags disabled.
+- **The coding agent runs in a container** with `no-new-privileges`, pid/memory
+  (swap-capped)/CPU limits, a non-root user (it starts as root only to remap uids,
+  then drops), and a wall-clock `timeout`. Instruction-bearing files (`CLAUDE.md`,
+  `AGENTS.md`, `.mcp.json`, …) are stripped from the tree it is handed, and an
+  opt-in credential broker can keep your model key out of the container entirely.
 
-What we do **not** do — stated plainly, because an audit of these docs against the
-code found earlier drafts claiming more than the implementation delivers:
+What we don't do:
 
-- The threat model is **accident-grade** and was written for the coding agent:
-  our own model's code, on our own machine. It defends against runaway processes
-  and blast radius from a confused agent — **not** against a determined adversary.
-- **The evaluation container has no resource limits.** The cgroup caps above are
-  on the *agent* container only. The surface that runs strangers' bots has no
-  pid, memory, or CPU cap, and runs as root inside the container.
-- **A bot can influence its own score.** The scorer puts the solution on its own
-  import path, so a self-reported number is an unaudited claim — which is the
-  whole reason the Private Dungeons tier exists.
-- **The mutator container has open network egress**, and your coding-agent
-  credentials are reachable from inside it (for Codex, writable).
-- A container is not a security boundary against a kernel exploit. If you are
-  evaluating code you have reason to distrust, run it on a machine you are
-  willing to lose.
+- **A bot can still influence its own score.** The scorer runs the bot in-process
+  with the solution on its `sys.path`, so a self-reported number is a claim you
+  take on trust. Sealing the container does not change that. It is why the Private
+  Dungeons (verified) tier exists.
+- **The credential broker is opt-in.** By default the agent's container still has
+  your coding-agent credentials mounted (for Codex, writable) and open network
+  egress. The agent CLIs need their model APIs, and egress allow-listing is
+  designed but not on by default.
+- **The threat model is accident-grade.** It defends against a runaway or confused
+  agent and the blast radius of one, not a determined adversary. A container is
+  not a boundary against a kernel exploit. If you are evaluating code you have
+  reason to distrust, run it on a machine you are willing to lose.
 
-Details, per-surface, in [`docs/harness.md`](docs/harness.md#3-safety-and-sandboxing) —
+Details, per-surface, are in [`docs/harness.md`](docs/harness.md#3-safety-and-sandboxing),
 written to be reused by anyone building a harness of their own.
 
 ## Install
@@ -309,9 +318,10 @@ We deliberately do not run an artifact store, an identity provider, or a code
 host. GitHub is all three, which keeps the hub small enough to be honest about.
 
 - **A program *is* a `repo@commit`.** The hub stores the link, the manifest, and
-  the scores — never the code. Registration is rejected unless the commit exists
-  (the hub checks it against the GitHub API using *your* token), so a board row
-  always pointed at a real tree when it was made. Two honest limits: the hub does
+  the scores — never the code. Registration is rejected unless the reference is a
+  real `github.com/<owner>/<repo>` (the host is parsed, so lookalikes are refused)
+  and the commit exists (the hub checks it against the GitHub API using *your*
+  token), so a board row always pointed at a real tree, on GitHub, when it was made. Two honest limits: the hub does
   not check repo *visibility*, so a private repo can be registered and will not be
   fetchable by others — `submit` forces the repo public, a hand-rolled `register`
   does not — and a link is only as durable as the repo behind it, which its owner
@@ -328,10 +338,6 @@ host. GitHub is all three, which keeps the hub small enough to be honest about.
   `nethack`/`nethackers`, and adds a short README if there is none — it never
   overwrites a description, website or README you wrote, and all of it is yours
   to edit or delete.
-- **Lineage is recorded, not yet used.** An `evolve` registration carries its
-  parent's digest; `submit` and `register` send none. The hub stores those edges
-  but no endpoint reads them today, so treat ancestry as data being collected for
-  later, not as a graph you can query.
 - **CI is the deploy lever.** Pushing a `vX.Y.Z` tag builds the hub image, pushes
   it to GHCR, and flips production by digest with a health check and automatic
   rollback (skippable with `[skip hub-deploy]` in the tagged commit message). The sandbox images are built by workflow and pinned by digest into
