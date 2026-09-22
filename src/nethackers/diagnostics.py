@@ -447,9 +447,12 @@ def run_checks(
     as vacuously ready (INV6's fold has nothing to gate on).
 
     ``host_facts`` (default: ``setup.host.detect_host``) is what the fix hints
-    and the Rosetta check read. It is probed at most once, and only when a
-    check needs it -- a failing check's fix, or the default Rosetta probe -- so
-    a healthy run and the TUI's ``only=`` callers pay nothing for it.
+    and the Rosetta check read. It is probed at most once per call, and only
+    when something needs it: a failing check's fix, or the default Rosetta
+    probe. A caller that injects ``rosetta`` and whose checks all pass never
+    probes it; a caller that runs the Rosetta check with the default probe --
+    the TUI's evolve strip does, off the UI thread -- pays for one probe: a
+    few quick local commands (``docker context show`` and the like).
     """
     effective_hub = hub if hub is not None else load_stage().hub_url
     results: list[CheckResult] = []
