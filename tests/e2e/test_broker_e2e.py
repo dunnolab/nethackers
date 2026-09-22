@@ -42,11 +42,13 @@ this environment doesn't have):
   gets the SAME canned response above; if a real CLI's *first* call expects a
   different shape (a models list, an account/limits check) before its main
   turn, it may error there before ever emitting PONG.
-- **opencode2's model id.** ``anthropic/claude-3-5-haiku-20241022`` is
-  passed as ``--model`` so OpenCode picks the brokered "anthropic" provider;
-  if OpenCode validates model ids client-side against a cached catalog
-  (rather than only server-side), an unrecognized id could fail before any
-  network call happens.
+- **opencode2's model id.** ``anthropic/claude-haiku-4-5`` is
+  passed as ``--model`` so OpenCode picks the brokered "anthropic" provider.
+  OpenCode (1.18.31) validates model ids client-side against its catalog
+  before any provider call, so a since-retired id fails there with a generic
+  ``UnknownError`` and MOCK_COUNT=0 -- the original
+  ``claude-3-5-haiku-20241022`` went stale exactly this way; keep this a
+  currently-cataloged id.
 - **Container network reachability.** The mutator container is not
   ``--network none``'d, so `hostile_probe.py`'s direct-provider-call step
   genuinely reaches the real internet from inside the box (this is
@@ -150,7 +152,7 @@ def _sse(event_type: str, **fields: object) -> tuple[str, str]:
 _ANTHROPIC_SSE_SEQUENCE = [
     _sse("message_start", message={
         "id": "msg_e2e_broker_test", "type": "message", "role": "assistant",
-        "model": "claude-3-5-haiku-20241022", "content": [],
+        "model": "claude-haiku-4-5", "content": [],
         "stop_reason": None, "stop_sequence": None,
         "usage": {"input_tokens": 12, "output_tokens": 1},
     }),
@@ -341,7 +343,7 @@ def test_opencode2_one_shot_through_broker_to_mock(tmp_path):
         }))
         op = ContainerOperator(
             harness="opencode2", image=_mutator_image(), system="Linux", home=home,
-            model="anthropic/claude-3-5-haiku-20241022",
+            model="anthropic/claude-haiku-4-5",
             broker=True, caps=_CAPS, run_id=_run_id("opencode2"),
         )
         lines: list[str] = []

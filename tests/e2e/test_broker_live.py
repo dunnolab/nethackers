@@ -74,7 +74,7 @@ have):
 - **Which OpenCode provider is live-tested** depends entirely on this
   host's real global config: ``_opencode_live_target`` prefers whichever of
   ``anthropic``/``openai`` ``opencode2_broker_targets`` resolves (mirroring
-  Task 6/7's own ``anthropic/claude-3-5-haiku-20241022`` choice), or
+  Task 6/7's own ``anthropic/claude-haiku-4-5`` choice), or
   ``NETHACKERS_OPENCODE_LIVE_MODEL`` (``"<provider>/<model-id>"``) when set;
   a config with only an unrecognized custom provider name skips with a
   clear reason rather than guessing a model id blind.
@@ -192,10 +192,10 @@ def _codex_gate_reason() -> str | None:
 # provider name -> a cheap, known-current model id for the live smoke's
 # --model, when the real global OpenCode config brokers that provider but
 # this module has no other way to pin one. Mirrors test_broker_e2e.py's own
-# "anthropic/claude-3-5-haiku-20241022" choice; NETHACKERS_OPENCODE_LIVE_MODEL
+# "anthropic/claude-haiku-4-5" choice; NETHACKERS_OPENCODE_LIVE_MODEL
 # overrides this outright for any other brokered provider name.
 _OPENCODE_LIVE_MODEL_BY_PROVIDER = {
-    "anthropic": "claude-3-5-haiku-20241022",
+    "anthropic": "claude-haiku-4-5",
     "openai": "gpt-4o-mini",
 }
 
