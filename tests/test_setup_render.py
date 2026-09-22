@@ -76,7 +76,7 @@ def test_result_lines():
 
 def test_summary_when_everything_is_ready():
     s = Summary(ready=("eval", "evolve", "publish", "browse"), not_ready=(), failing=(),
-                yours=(), afterwards=(), commands=(), next_command=None, nothing_to_do=True)
+                yours=(), afterwards=(), next_command=None, nothing_to_do=True)
     assert summary_markup(s).startswith("[green]✓[/] ready to eval · evolve · publish · browse.")
     assert "Nothing to do." in summary_markup(s)
     assert summary_plain(s).startswith("OK ready to eval · evolve · publish · browse.")
@@ -85,11 +85,11 @@ def test_summary_when_everything_is_ready():
 def test_summary_when_something_is_left():
     s = Summary(ready=("eval",), not_ready=("publish",), failing=(("gh", "gh is not installed"),),
                 yours=(Todo("install gh", "install the GitHub CLI: `sudo apt install gh`"),),
-                afterwards=(), commands=("nethackers login",),
+                afterwards=(),
                 next_command="nethackers eval ./my-bot --objective val-dwa-law-fem")
     text = summary_markup(s)
     assert "not ready to publish" in text and "gh: gh is not installed" in text
-    assert "nethackers login" in text and "sudo apt install gh" in text
+    assert "sudo apt install gh" in text
     assert "run `nethackers setup` again" in text
     assert "Next: nethackers eval ./my-bot" in text
     assert "[" not in summary_plain(s)          # no rich markup in the plain variant
@@ -102,6 +102,6 @@ def test_summary_shortens_a_pinned_image_digest_like_doctor_does():
     ref = "ghcr.io/dunnolab/nethackers-mutator@sha256:" + "a" * 64
     s = Summary(ready=(), not_ready=("evolve",),
                failing=(("mutator image", f"not local yet, but pullable — {ref}"),),
-               yours=(), afterwards=(), commands=(), next_command=None)
+               yours=(), afterwards=(), next_command=None)
     assert ref not in summary_markup(s) and ref not in summary_plain(s)
     assert f"sha256:{'a' * 19}…" in summary_markup(s)

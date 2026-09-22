@@ -6,12 +6,13 @@ import io
 from dataclasses import replace
 from pathlib import Path
 
+import pytest
 from rich.console import Console
 
 from nethackers.containers import RuntimeCandidate, RuntimeReport
 from nethackers.diagnostics import CHECK_SPECS, CheckResult
 from nethackers.hubclient.credentials import Credentials
-from nethackers.setup import flow
+from nethackers.setup import flow, render
 from nethackers.setup.host import HostFacts
 from nethackers.setup.runner import StepResult
 
@@ -19,6 +20,10 @@ UP = RuntimeReport("docker", (RuntimeCandidate("docker", "usable", ""),))
 NONE = RuntimeReport(None, (RuntimeCandidate("docker", "absent", ""),
                             RuntimeCandidate("podman", "absent", "")))
 MAC = HostFacts("Darwin", "arm64", brew=True, host_rosetta=True, cpus=10, memory_gb=32)
+UBUNTU = HostFacts("Linux", "x86_64", distro="debian", distro_name="Ubuntu 24.04 LTS")
+DESKTOP_MAC = replace(MAC, installed=frozenset({"docker", "docker-desktop"}),
+                      docker_context="desktop-linux", docker_desktop_cli=True)
+ROSETTA_OFF = '{"UseVirtualizationFramework": true, "UseVirtualizationFrameworkRosetta": false}'
 
 
 def checks(**status: str) -> list[CheckResult]:
@@ -63,6 +68,7 @@ def make(before, after=None, *, runtime=UP, creds=Credentials("you", "t"),  # no
         load_creds=lambda: creds,
         agent_logged_in=lambda op: logged_in.get(op, op == "opencode2"),
         resolve_exe=lambda name: f"/usr/local/bin/{name}",
+        which=lambda name: f"/usr/local/bin/{name}",
         read_text=lambda path: None,
         hub_login=hub_login,
         pull=pull,
@@ -100,11 +106,63 @@ def test_without_a_terminal_and_without_yes_nothing_changes():
     assert "Nothing changed" in output(deps)
 
 
-def test_yes_without_a_terminal_runs_unattended_steps_and_lists_the_logins():
-    deps, rec = make(checks(hub_login="fail", mutator_image="warn"), creds=None)
+def test_yes_without_a_terminal_lists_the_logins_on_the_console_not_in_the_summary():
+    # A coding agent's stdout is a pipe (doctor's JSON goes there), so the
+    # logins it has to run itself are printed on the console (stderr).
+    deps, rec = make(checks(hub_login="fail", gh="fail", mutator_image="warn"), creds=None,
+                     gh=(None, "unauthed"))
     flow.run_setup(opts(interactive=False, yes=True), deps)
-    assert ("pull", ("mutator",)) in rec.calls and ("hub_login",) not in rec.calls
-    assert rec.reports[0].commands == ("nethackers login",)
+    assert ("pull", ("mutator",)) in rec.calls
+    assert not [c for c in rec.calls if c[0] in ("hub_login", "terminal")]
+    listed = output(deps).split("Run these logins yourself", 1)[1]
+    assert "\n  nethackers login\n" in listed
+    assert "  gh auth login --hostname github.com --git-protocol https --web" in listed
+    summary = render.summary_plain(rec.reports[0])
+    assert "Run these logins yourself" not in summary and "gh auth login" not in summary
+
+
+def test_a_listed_agent_login_names_the_file_when_only_local_bin_has_it():
+    # The vendor installer puts claude in ~/.local/bin, which this shell's
+    # PATH may not have yet: a bare `claude auth login` would not run.
+    local = "/Users/you/.local/bin/claude"
+    deps, rec = make(checks(), agents={"claude": False, "codex": False},
+                     which=lambda name: None,
+                     resolve_exe=lambda name: local if name == "claude" else None)
+    flow.run_setup(opts(interactive=False, yes=True, operator="claude"), deps)
+    assert f"  {local} auth login" in output(deps).split("Run these logins yourself", 1)[1]
+    deps, rec = make(checks(), agents={"claude": False, "codex": False})   # on PATH
+    flow.run_setup(opts(interactive=False, yes=True, operator="claude"), deps)
+    assert "\n  claude auth login" in output(deps).split("Run these logins yourself", 1)[1]
+
+
+@pytest.mark.parametrize("interactive", [True, False], ids=["terminal", "no-terminal"])
+@pytest.mark.parametrize("case", ["ubuntu-docker-install", "rosetta-off", "two-accounts"])
+def test_a_plan_with_nothing_for_nethackers_to_run_never_asks(case, interactive):
+    # Only instructions for the person: asking "Continue?" (or suggesting
+    # --yes) would promise a run that does nothing.
+    if case == "ubuntu-docker-install":
+        deps, rec = make(checks(container_runtime="fail", arena_image="warn",
+                                mutator_image="warn"), runtime=NONE, detect_host=lambda: UBUNTU)
+        said, code = "install Docker", 1
+    elif case == "rosetta-off":
+        deps, rec = make(checks(rosetta="warn"), detect_host=lambda: DESKTOP_MAC,
+                         read_text=lambda path: ROSETTA_OFF)
+        said, code = "turn on Rosetta", 0
+    else:
+        deps, rec = make(checks(), gh=("bob", "authed"))
+        said, code = "gh is @bob but the hub login is @you", 0
+    assert flow.run_setup(opts(interactive=interactive), deps) == code
+    assert rec.calls == []                      # no "confirm", and nothing ran
+    assert said in output(deps)
+    assert "--yes" not in output(deps) and "Nothing changed" not in output(deps)
+    assert len(rec.reports) == 1
+
+
+def test_yes_in_a_terminal_runs_every_step_without_asking():
+    deps, rec = make(checks(hub_login="fail", gh="fail", mutator_image="warn"), checks(),
+                     creds=None, gh=(None, "unauthed"))
+    assert flow.run_setup(opts(yes=True), deps) == 0
+    assert [c[0] for c in rec.calls] == ["hub_login", "terminal", "pull"]
 
 
 def test_answering_no_changes_nothing():

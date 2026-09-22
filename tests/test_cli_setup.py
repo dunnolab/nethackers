@@ -2,8 +2,75 @@
 is the same device flow `nethackers login` uses. The flow itself is faked."""
 from __future__ import annotations
 
+import io
+import sys
+from types import SimpleNamespace
+
+import pytest
+from rich.console import Console
+
 import nethackers.cli as cli
 from nethackers import ptyrun
+from nethackers.containers import RuntimeCandidate, RuntimeReport
+from nethackers.diagnostics import CHECK_SPECS, CheckResult
+from nethackers.setup.host import HostFacts
+
+
+def _checks(**status: str) -> list[CheckResult]:
+    return [CheckResult(id=cid, status=status.get(cid, "ok"), severity=sev, detail="d",
+                        fix=None, capabilities=caps) for cid, (sev, caps) in CHECK_SPECS.items()]
+
+
+class _TerminalAtEOF(io.StringIO):
+    """A stdin that looks like a terminal and has nothing left to read: what
+    Ctrl-D at a prompt gives."""
+
+    def isatty(self) -> bool:
+        return True
+
+
+def _real_flow_on_a_fake_machine(monkeypatch: pytest.MonkeyPatch, checks: list[CheckResult], *,
+                                 agents_logged_in: bool = True) -> tuple[list, io.StringIO]:
+    """The real flow and prompts, in a terminal-looking console with stdin at
+    its end, on a machine whose every probe and step is faked. Returns the
+    list of steps that ran (it must stay empty) and the console's buffer."""
+    ran: list = []
+    buf = io.StringIO()
+    monkeypatch.setattr(sys, "stdin", _TerminalAtEOF(""))
+    monkeypatch.setattr(cli, "err", Console(file=buf, force_terminal=True, width=100))
+    monkeypatch.setattr(cli, "run_checks", lambda **kw: checks)
+    monkeypatch.setattr(cli, "detect_host",
+                        lambda: HostFacts("Darwin", "arm64", brew=True, host_rosetta=True))
+    monkeypatch.setattr(cli, "probe_container_runtime", lambda: RuntimeReport(
+        "docker", (RuntimeCandidate("docker", "usable", ""),)))
+    monkeypatch.setattr(cli, "gh_state", lambda: ("you", "authed"))
+    monkeypatch.setattr(cli, "_load_creds", lambda: SimpleNamespace(login="you"))
+    monkeypatch.setattr(cli, "preflight_operator",
+                        lambda op: None if agents_logged_in else "not logged in")
+    monkeypatch.setattr(cli, "read_text", lambda path: None)
+    monkeypatch.setattr(cli.setup_flow, "resolve_exe", lambda name, **kw: f"/usr/local/bin/{name}")
+    monkeypatch.setattr(cli, "_setup_pull", lambda kinds, total: ran.append(("pull", kinds)))
+    monkeypatch.setattr(cli, "_setup_pull_size", lambda kinds: 432_000_000)
+    monkeypatch.setattr(cli.setup_runner, "run_captured", lambda *a, **k: ran.append("captured"))
+    monkeypatch.setattr(cli.setup_runner, "run_terminal", lambda *a, **k: ran.append("terminal"))
+    return ran, buf
+
+
+def test_end_of_input_at_continue_is_a_no(monkeypatch):
+    # Ctrl-D (or a script's empty stdin) must not count as the default yes:
+    # that would start installs, a VM and ~875 MB of pulls without consent.
+    ran, buf = _real_flow_on_a_fake_machine(monkeypatch, _checks(mutator_image="warn"))
+    assert cli.main(["setup"]) == 1
+    assert ran == []
+    assert "Continue?" in buf.getvalue() and "Nothing changed" in buf.getvalue()
+
+
+def test_end_of_input_at_the_agent_question_aborts(monkeypatch):
+    ran, buf = _real_flow_on_a_fake_machine(monkeypatch, _checks(mutator_image="warn"),
+                                            agents_logged_in=False)
+    assert cli.main(["setup"]) == 130
+    assert ran == []
+    assert "Which coding agent" in buf.getvalue() and "aborted" in buf.getvalue()
 
 
 def test_flags_reach_the_flow(monkeypatch):
@@ -137,7 +204,6 @@ def _drive(script, answers, timeout=60.0) -> str:
 def test_setup_end_to_end_in_a_real_terminal(tmp_path):
     import os
 
-    import pytest
     if not hasattr(os, "fork"):
         pytest.skip("needs a pty")
     script = tmp_path / "drive.py"

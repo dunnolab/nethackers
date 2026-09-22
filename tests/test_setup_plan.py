@@ -132,5 +132,7 @@ def test_listed_commands_for_someone_without_a_terminal():
                           gh_login=None, gh_state="unauthed"), macos)
     step = {s.id: s for s in plan.steps}
     assert listed_command(step["hub-login"]) == "nethackers login"
+    # The plan's row names the same command an agent would run.
+    assert step["hub-login"].shows == "nethackers login (a GitHub code, in your browser)"
     assert listed_command(step["gh-login"]) == (
         "gh auth login --hostname github.com --git-protocol https --web")

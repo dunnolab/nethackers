@@ -31,7 +31,6 @@ class Summary:
     failing: tuple[tuple[str, str], ...]   # (check label, detail) still failing in scope
     yours: tuple[Todo, ...]
     afterwards: tuple[Todo, ...]
-    commands: tuple[str, ...]              # logins left for someone to run themselves
     next_command: str | None
     nothing_to_do: bool = False
 
@@ -111,6 +110,13 @@ def result_line(step: Step, result: StepResult) -> str:
     return f"  {_GLYPH['ok']} {step.title}   [dim]{took}[/]{extra}"
 
 
+def listed_logins(commands: list[str]) -> list[str]:
+    """The logins setup couldn't run without a terminal, as commands to run --
+    on the console, where a coding agent reads them (its stdout is a pipe)."""
+    return ["", "Run these logins yourself (each prints a code or a link to open):",
+            *(f"  {escape(command)}" for command in commands)]
+
+
 def _summary_lines(s: Summary, glyph: dict[str, str], esc) -> list[str]:
     lines: list[str] = []
     if not s.not_ready:
@@ -124,16 +130,13 @@ def _summary_lines(s: Summary, glyph: dict[str, str], esc) -> list[str]:
         # ~150 characters -- doctor's own render shortens it the same way
         # (diagnostics._short_digest) so it doesn't hard-wrap mid-digest here.
         lines += [f"  {label}: {esc(_short_digest(detail))}" for label, detail in s.failing]
-    if s.commands:
-        lines.append("Run these logins yourself (each prints a code or a link to open):")
-        lines += [f"  {esc(c)}" for c in s.commands]
     if s.yours:
         lines.append("Still to do (nethackers never runs sudo):")
         lines += [f"  • {esc(t.say)}" for t in s.yours]
     if s.afterwards:
         lines.append("Afterwards:")
         lines += [f"  • {esc(t.say)}" for t in s.afterwards]
-    if s.not_ready or s.yours or s.commands:
+    if s.not_ready or s.yours:
         lines.append("Then run `nethackers setup` again. It picks up where it left off.")
     if s.next_command:
         lines.append(f"Next: {esc(s.next_command)}")

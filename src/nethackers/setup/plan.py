@@ -118,7 +118,7 @@ def build_plan(sit: Situation, plat: ModuleType) -> Plan:
     hub_planned = _not_ok(wanted, "hub_login")
     if hub_planned:
         steps.append(Step("hub-login", "log you in to the hub", "hub_login",
-                          "GitHub device code, in your browser"))
+                          "nethackers login (a GitHub code, in your browser)"))
 
     gh_planned = False
     if "gh" in wanted and sit.gh_state != "authed":

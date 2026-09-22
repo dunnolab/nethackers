@@ -807,6 +807,28 @@ def _setup_pull_size(kinds: tuple[str, ...]) -> int | None:
     return download_size([resolve_image(None, k) for k in kinds], present, runtime=runtime)
 
 
+def _setup_confirm() -> bool:
+    """setup's one question. End of input (Ctrl-D, or a script's empty stdin)
+    is a no: nothing runs without an explicit yes."""
+    try:
+        return Confirm.ask("Continue?", default=True, console=err)
+    except EOFError:
+        err.print()  # end the prompt's line
+        return False
+
+
+def _setup_ask_agent() -> str:
+    """Which coding agent evolve should use. End of input aborts setup the way
+    Ctrl-C does (``main`` prints "aborted", exit 130), rather than taking the
+    default as an answer."""
+    try:
+        return Prompt.ask("Which coding agent will evolve use?", choices=list(OPERATORS),
+                          default=DEFAULT_OPERATOR, console=err)
+    except EOFError:
+        err.print()
+        raise KeyboardInterrupt from None
+
+
 def _setup(args: argparse.Namespace, stage: Stage) -> int:
     interactive = sys.stdin is not None and sys.stdin.isatty() and err.is_terminal
     opts = setup_flow.SetupOptions(scope=args.for_capability, operator=args.operator,
@@ -827,6 +849,7 @@ def _setup(args: argparse.Namespace, stage: Stage) -> int:
         agent_logged_in=lambda op: preflight_operator(op) is None,
         resolve_exe=lambda name: setup_flow.resolve_exe(name, which=shutil.which,
                                                          home=Path.home()),
+        which=shutil.which,
         read_text=read_text,
         hub_login=lambda: _do_login(stage),
         pull=_setup_pull,
@@ -834,10 +857,8 @@ def _setup(args: argparse.Namespace, stage: Stage) -> int:
         run_terminal=setup_runner.run_terminal,
         run_captured=lambda argv, title: setup_runner.run_captured(argv, title=title,
                                                                    console=err),
-        ask_agent=lambda: Prompt.ask("Which coding agent will evolve use?",
-                                     choices=list(OPERATORS),
-                                     default=DEFAULT_OPERATOR, console=err, stream=sys.stdin),
-        confirm=lambda: Confirm.ask("Continue?", default=True, console=err, stream=sys.stdin),
+        ask_agent=_setup_ask_agent,
+        confirm=_setup_confirm,
         report=report,
     )
     return setup_flow.run_setup(opts, deps)

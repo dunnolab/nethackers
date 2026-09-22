@@ -5,7 +5,10 @@ functions and by tests from fakes, so no test shells out, logs in, or
 downloads anything. Modes (spec §4.7): interactive means stdin and stderr are
 both terminals. Interactive: show the plan, ask once (``--yes`` skips the
 question), run every step. Not interactive: print the plan and change nothing;
-with ``--yes``, run the unattended steps and list the logins as commands.
+with ``--yes``, run the unattended steps and list the logins as commands. That
+list goes to the console (stderr) like the plan: a coding agent's stdout is a
+pipe, so what it finds there is doctor's JSON. A plan with nothing for
+nethackers to run -- only instructions for the person -- never asks.
 """
 from __future__ import annotations
 
@@ -33,7 +36,7 @@ from nethackers.setup.plan import (
     listed_command,
 )
 from nethackers.setup.runner import StepResult
-from nethackers.setup.support import mb_text
+from nethackers.setup.support import mb_text, shown_command
 
 EXAMPLE_OBJECTIVE = "val-dwa-law-fem"
 
@@ -61,6 +64,7 @@ class SetupDeps:
     load_creds: Callable[[], Credentials | None]
     agent_logged_in: Callable[[str], bool]
     resolve_exe: Callable[[str], str | None]
+    which: Callable[[str], str | None]        # shutil.which: on this shell's PATH
     read_text: Callable[[Path], str | None]
     hub_login: Callable[[], str]
     pull: Callable[[tuple[str, ...], int | None], str | None]
@@ -112,7 +116,7 @@ def run_setup(opts: SetupOptions, deps: SetupDeps) -> int:
     plat = host.platform_for(facts)
     if plat is None:
         say(f"[yellow]{escape(host.NOT_COVERED)}[/]")
-        deps.report(checks, _summary(checks, opts, None, agent=None, ran=False))
+        deps.report(checks, _summary(checks, opts, None, agent=None))
         return 1
     wanted = in_scope(checks, opts.scope)
     evolve = opts.scope in (None, "evolve")
@@ -138,26 +142,32 @@ def run_setup(opts: SetupOptions, deps: SetupDeps) -> int:
         emulation=emulation,
     )
     plan = build_plan(sit, plat)
-    if plan.empty:
-        deps.report(checks, _summary(checks, opts, plan, agent=agent, ran=False,
-                                     nothing_to_do=True))
+
+    def finish(checks: list[CheckResult]) -> int:
+        deps.report(checks, _summary(checks, opts, plan, agent=agent))
         return setup_exit_code(checks, opts.scope)
+
+    if plan.empty:
+        return finish(checks)
     for line in render.plan_lines(plan, machine=_machine(facts)):
         say(line)
+    if not plan.steps:  # only instructions: a yes (or --yes) would run nothing
+        return finish(checks)
     if not opts.interactive and not opts.yes:
         say("[dim]Nothing changed. Run `nethackers setup --yes` to apply this plan, "
             "or run it in a terminal.[/]")
-        deps.report(checks, _summary(checks, opts, plan, agent=agent, ran=False))
-        return setup_exit_code(checks, opts.scope)
+        return finish(checks)
     if opts.interactive and not opts.yes and not deps.confirm():
         say("[dim]Nothing changed.[/]")
-        deps.report(checks, _summary(checks, opts, plan, agent=agent, ran=False))
-        return setup_exit_code(checks, opts.scope)
+        return finish(checks)
     runnable = [s for s in plan.steps if opts.interactive or s.kind not in NEEDS_TERMINAL]
     _run_steps(runnable, plan, deps, sit)
-    checks = deps.run_checks(operator=agent or opts.operator, hub=opts.hub)
-    deps.report(checks, _summary(checks, opts, plan, agent=agent, ran=True))
-    return setup_exit_code(checks, opts.scope)
+    logins = [] if opts.interactive else [_listed_command(s, deps) for s in plan.steps
+                                          if s.kind in NEEDS_TERMINAL]
+    if logins:
+        for line in render.listed_logins(logins):
+            say(line, soft_wrap=True)  # a command to copy: never broken across lines
+    return finish(deps.run_checks(operator=agent or opts.operator, hub=opts.hub))
 
 
 def _run_steps(steps: list[Step], plan: Plan, deps: SetupDeps,
@@ -215,6 +225,17 @@ def _same_account(deps: SetupDeps) -> StepResult:
                                   "run `gh auth switch` or `nethackers login` again")
 
 
+def _listed_command(step: Step, deps: SetupDeps) -> str:
+    """A login setup didn't run (no terminal), as a command to run instead. A
+    tool its vendor's installer just put in ~/.local/bin isn't on this shell's
+    PATH yet, so then the command names the file itself."""
+    if step.kind == "terminal" and deps.which(step.argv[0]) is None:
+        exe = deps.resolve_exe(step.argv[0])
+        if exe is not None:
+            return shown_command((exe, *step.argv[1:]))
+    return listed_command(step)
+
+
 def _machine(facts: HostFacts) -> str:
     return "Mac" if facts.system == "Darwin" else (facts.distro_name or "Linux machine")
 
@@ -258,16 +279,13 @@ def _rows(wanted: dict[str, CheckResult], logged_in: Mapping[str, bool]) -> list
 
 
 def _summary(checks: list[CheckResult], opts: SetupOptions, plan: Plan | None, *,
-             agent: str | None, ran: bool, nothing_to_do: bool = False) -> render.Summary:
+             agent: str | None) -> render.Summary:
     caps = CAPABILITIES if opts.scope is None else (opts.scope,)
     ready = tuple(c for c in caps if capability_ready(checks, c))
     not_ready = tuple(c for c in caps if c not in ready)
     wanted = in_scope(checks, opts.scope)
     failing = tuple((LABELS[r.id], r.detail) for r in wanted.values()
                     if (r.severity == "hard" and r.status != "ok") or r.status == "fail")
-    commands: tuple[str, ...] = ()
-    if plan is not None and ran and not opts.interactive:
-        commands = tuple(listed_command(s) for s in plan.steps if s.kind in NEEDS_TERMINAL)
     next_command = None
     if "evolve" in caps and capability_ready(checks, "evolve"):
         next_command = (f"nethackers evolve {EXAMPLE_OBJECTIVE} --seed autoascend "
@@ -278,4 +296,4 @@ def _summary(checks: list[CheckResult], opts: SetupOptions, plan: Plan | None, *
         ready=ready, not_ready=not_ready, failing=failing,
         yours=plan.yours if plan is not None else (),
         afterwards=plan.afterwards if plan is not None else (),
-        commands=commands, next_command=next_command, nothing_to_do=nothing_to_do)
+        next_command=next_command, nothing_to_do=plan is not None and plan.empty)
