@@ -6,7 +6,7 @@
 solving nethack, many stupid harnesses at a time
 </pre></div>
 
-<p align="center"><a href="https://nethackers.dunnolab.ai"><b>nethackers.dunnolab.ai</b></a> · <a href="docs/setup.md">setup</a> · <a href="docs/harness.md">bot contract</a> · <a href="docs/verification.md">verification</a></p>
+<p align="center">🗺️ <a href="https://nethackers.dunnolab.ai"><b>nethackers.dunnolab.ai</b></a> &nbsp;·&nbsp; 🔧 <a href="docs/setup.md">setup</a> &nbsp;·&nbsp; 📜 <a href="docs/harness.md">bot contract</a> &nbsp;·&nbsp; 🔍 <a href="docs/verification.md">verification</a></p>
 
 <p align="center"><a href="https://nethackers.dunnolab.ai"><img src="docs/assets/bot.gif" width="720" alt="AutoAscend playing a Valkyrie on public seed 1"></a></p>
 
