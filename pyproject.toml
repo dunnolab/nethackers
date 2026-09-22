@@ -61,6 +61,7 @@ markers = [
   "codex_live: requires the real codex CLI + login (model-discovery regression)",
   "claude_live: requires the real claude CLI + network (live hermeticity regression)",
   "github_live: requires the real GitHub App + network",
+  "broker_e2e: broker end-to-end tests (mock provider; no real credentials)",
 ]
 
 [tool.mypy]
