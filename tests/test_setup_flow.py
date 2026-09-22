@@ -200,6 +200,46 @@ def test_setup_prints_its_own_lines_without_recolouring_numbers():
     assert "real Ubuntu 24.04 LTS yet" in output(deps)   # "24.04" not highlighted
 
 
+@pytest.mark.parametrize("agents,operator,named", [
+    ({"claude": False, "codex": False}, None, "opencode2"),   # nobody logged in: free models
+    ({"claude": False, "codex": True}, None, "codex"),        # the one that is logged in
+    ({"claude": True, "codex": True}, "codex", "codex"),      # the chosen one
+])
+def test_next_never_names_an_agent_that_isnt_logged_in(agents, operator, named):
+    deps, rec = make(checks(), agents=agents)
+    flow.run_setup(opts(interactive=False, operator=operator), deps)
+    assert rec.reports[-1].next_command.endswith(f"--operator {named}")
+
+
+OPENCODE_NOTE = "free models unless a provider is configured in ~/.config/opencode/opencode.json"
+
+
+def test_with_opencode2_the_agent_row_says_it_is_ready():
+    deps, rec = make(checks(), agents={"claude": False, "codex": False})
+    flow.run_setup(opts(operator="opencode2"), deps)
+    text = " ".join(output(deps).split())      # the row may wrap inside its column
+    assert "✓ coding agent opencode2, ready" in text and OPENCODE_NOTE in text
+    assert "aren't logged in" not in text
+
+
+def test_choosing_opencode2_at_the_question_says_it_is_ready():
+    deps, rec = make(checks(), agents={"claude": False, "codex": False},
+                     ask_agent=lambda: "opencode2")
+    flow.run_setup(opts(), deps)
+    text = " ".join(output(deps).split())
+    assert text.index("aren't logged in") < text.index("opencode2, ready")
+    assert OPENCODE_NOTE in text
+
+
+def test_a_long_runtime_error_is_cut_with_an_ellipsis():
+    long = CheckResult(id="container_runtime", status="fail", severity="hard",
+                       detail="docker: " + "x" * 100, fix=None, capabilities=("eval",))
+    detail = flow._row(long).detail
+    assert len(detail) == 70 and detail.endswith("…")
+    short = replace(long, detail="docker: exited 1")
+    assert flow._row(short).detail == "docker: exited 1"
+
+
 def test_answering_no_changes_nothing():
     deps, rec = make(checks(mutator_image="warn"), confirm=lambda: False)
     assert flow.run_setup(opts(), deps) == 1

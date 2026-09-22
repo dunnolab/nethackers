@@ -24,7 +24,6 @@ from rich.markup import escape
 from nethackers.containers import RuntimeReport
 from nethackers.diagnostics import CAPABILITIES, CheckResult, capability_ready, exit_code
 from nethackers.hubclient.credentials import Credentials
-from nethackers.operators import DEFAULT_OPERATOR
 from nethackers.setup import host, render
 from nethackers.setup.host import HostFacts
 from nethackers.setup.plan import (
@@ -40,6 +39,10 @@ from nethackers.setup.runner import StepResult
 from nethackers.setup.support import shown_command
 
 EXAMPLE_OBJECTIVE = "val-dwa-law-fem"
+
+# OpenCode 2 installs and logs in nothing (its CLI ships in the sandbox).
+OPENCODE_READY = ("opencode2, ready (free models unless a provider is configured in "
+                  "~/.config/opencode/opencode.json)")
 
 LABELS = {"container_runtime": "container runtime", "arena_image": "arena image",
           "mutator_image": "mutator image", "hub": "hub", "hub_login": "hub login",
@@ -123,13 +126,15 @@ def run_setup(opts: SetupOptions, deps: SetupDeps) -> int:
     plat = host.platform_for(facts)
     if plat is None:
         say(f"[yellow]{escape(host.NOT_COVERED)}[/]")
-        deps.report(checks, _summary(checks, opts, None, agent=None))
+        deps.report(checks, _summary(checks, opts, None, agent=None, logged_in={}))
         return 1
     wanted = in_scope(checks, opts.scope)
     evolve = opts.scope in (None, "evolve")
     logged_in = {op: deps.agent_logged_in(op) for op in ("claude", "codex")} if evolve else {}
-    say(render.checklist(_rows(wanted, logged_in)))
+    say(render.checklist(_rows(wanted, logged_in, operator=opts.operator)))
     agent = choose_agent(opts, deps, logged_in) if evolve else None
+    if agent == "opencode2" and opts.operator is None:  # picked at the question
+        say(render.checklist([render.Row("ok", "coding agent", OPENCODE_READY)]))
     runtime = deps.probe_runtime()
     gh_login, gh_state = deps.gh_state()
     creds = deps.load_creds()
@@ -150,7 +155,7 @@ def run_setup(opts: SetupOptions, deps: SetupDeps) -> int:
     plan = build_plan(sit, plat)
 
     def finish(checks: list[CheckResult]) -> int:
-        deps.report(checks, _summary(checks, opts, plan, agent=agent))
+        deps.report(checks, _summary(checks, opts, plan, agent=agent, logged_in=logged_in))
         return setup_exit_code(checks, opts.scope)
 
     if plan.empty:
@@ -255,7 +260,7 @@ def _row(r: CheckResult) -> render.Row:
                           "not pulled yet" if r.status == "warn" else "can't reach the registry")
     if r.id == "container_runtime" and r.status != "ok":
         detail = ("none installed" if r.detail == "no docker or podman found on PATH"
-                  else r.detail[:70])
+                  else r.detail if len(r.detail) <= 70 else r.detail[:69] + "…")
         return render.Row("fail", LABELS[r.id], detail)
     if r.id == "rosetta":
         return render.Row("warn", LABELS[r.id], "off: amd64 runs under QEMU")
@@ -263,7 +268,8 @@ def _row(r: CheckResult) -> render.Row:
     return render.Row(r.status, LABELS[r.id], detail)
 
 
-def _rows(wanted: dict[str, CheckResult], logged_in: Mapping[str, bool]) -> list[render.Row]:
+def _rows(wanted: dict[str, CheckResult], logged_in: Mapping[str, bool], *,
+          operator: str | None) -> list[render.Row]:
     rows: list[render.Row] = []
     for cid, result in wanted.items():
         if cid == "operator" or (cid == "hub" and result.status == "ok"):
@@ -277,7 +283,9 @@ def _rows(wanted: dict[str, CheckResult], logged_in: Mapping[str, bool]) -> list
         at = rows.index(images[0])
         rows = [r for r in rows if r not in images]
         rows.insert(at, render.Row(images[0].status, "sandbox images", images[0].detail))
-    if logged_in:
+    if logged_in and operator == "opencode2":
+        rows.append(render.Row("ok", "coding agent", OPENCODE_READY))
+    elif logged_in:
         ready = [op for op, ok in logged_in.items() if ok]
         rows.append(render.Row("ok", "coding agent", f"{ready[0]}, logged in") if ready
                     else render.Row("fail", "coding agent", "claude and codex aren't logged in"))
@@ -285,7 +293,7 @@ def _rows(wanted: dict[str, CheckResult], logged_in: Mapping[str, bool]) -> list
 
 
 def _summary(checks: list[CheckResult], opts: SetupOptions, plan: Plan | None, *,
-             agent: str | None) -> render.Summary:
+             agent: str | None, logged_in: Mapping[str, bool]) -> render.Summary:
     caps = CAPABILITIES if opts.scope is None else (opts.scope,)
     ready = tuple(c for c in caps if capability_ready(checks, c))
     not_ready = tuple(c for c in caps if c not in ready)
@@ -295,8 +303,12 @@ def _summary(checks: list[CheckResult], opts: SetupOptions, plan: Plan | None, *
         if (r.severity == "hard" and r.status != "ok") or r.status == "fail"))
     next_command = None
     if "evolve" in caps and capability_ready(checks, "evolve"):
+        # Never an agent that isn't logged in: the chosen one, else one that
+        # is, else OpenCode's free models (always usable).
+        operator = agent or next((op for op in ("claude", "codex") if logged_in.get(op)),
+                                 "opencode2")
         next_command = (f"nethackers evolve {EXAMPLE_OBJECTIVE} --seed autoascend "
-                        f"--operator {agent or DEFAULT_OPERATOR}")
+                        f"--operator {operator}")
     elif "eval" in caps and capability_ready(checks, "eval"):
         next_command = f"nethackers eval ./my-bot --objective {EXAMPLE_OBJECTIVE}"
     return render.Summary(

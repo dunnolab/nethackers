@@ -73,6 +73,24 @@ def test_end_of_input_at_the_agent_question_aborts(monkeypatch):
     assert "Which coding agent" in buf.getvalue() and "aborted" in buf.getvalue()
 
 
+@pytest.mark.parametrize("checks,code", [(_checks(), 0), (_checks(mutator_image="warn"), 1)],
+                         ids=["ready", "answered-no"])
+def test_setup_json_is_doctors_json_shape(monkeypatch, capsys, checks, code):
+    # `-o json` (what an agent's piped stdout gets by default) is doctor's
+    # to_json, unchanged: it validates against the committed schema.
+    import json
+    from pathlib import Path
+
+    import jsonschema
+
+    _real_flow_on_a_fake_machine(monkeypatch, checks)
+    assert cli.main(["setup", "-o", "json"]) == code
+    report = json.loads(capsys.readouterr().out)
+    schema_path = Path(__file__).resolve().parent.parent / "src/nethackers/doctor.schema.json"
+    schema = json.loads(schema_path.read_text())
+    assert list(jsonschema.Draft202012Validator(schema).iter_errors(report)) == []
+
+
 def test_flags_reach_the_flow(monkeypatch):
     seen = {}
 

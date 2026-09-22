@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+import sys
 import time
 from collections import deque
 from collections.abc import Callable, Sequence
@@ -26,8 +27,10 @@ from nethackers import ptyrun
 # The same number sandbox_preflight keeps for a failed image build.
 TAIL_LINES = 15
 
-# Captured steps can't answer questions: Homebrew and the Codex installer both
-# read these to skip theirs.
+# Captured steps can't answer questions, and an empty stdin doesn't stop a
+# prompt read from /dev/tty. Homebrew reads NONINTERACTIVE; the Codex installer
+# (https://chatgpt.com/codex/install.sh) reads CODEX_NON_INTERACTIVE and
+# otherwise asks on /dev/tty.
 CAPTURED_ENV = {"NONINTERACTIVE": "1", "CODEX_NON_INTERACTIVE": "1"}
 
 
@@ -124,10 +127,12 @@ def run_terminal(
     run: Callable[..., Any] = subprocess.run,
     clock: Callable[[], float] = time.monotonic,
 ) -> StepResult:
-    """Run a login in this terminal: the tool asks its own questions."""
+    """Run a login in this terminal: the tool asks its own questions. Its
+    output goes to stderr, where the rest of setup's chrome is, so stdout
+    keeps only the final report (``nethackers setup > report.json``)."""
     start = clock()
     try:
-        code = run(list(argv)).returncode
+        code = run(list(argv), stdout=sys.stderr).returncode
     except FileNotFoundError:
         return StepResult(False, 0.0, f"`{argv[0]}` isn't installed")
     return StepResult(code == 0, clock() - start, "" if code == 0 else f"exited {code}")

@@ -47,17 +47,30 @@ def test_captured_steps_run_without_prompts():
 def test_a_terminal_step_reports_the_exit_code():
     ok = runner.run_terminal(
         ("gh", "auth", "login"),
-        run=lambda argv: SimpleNamespace(returncode=0)
+        run=lambda argv, **kw: SimpleNamespace(returncode=0)
     )
     bad = runner.run_terminal(
         ("gh", "auth", "login"),
-        run=lambda argv: SimpleNamespace(returncode=1)
+        run=lambda argv, **kw: SimpleNamespace(returncode=1)
     )
     assert ok.ok and not bad.ok and bad.detail == "exited 1"
 
 
+def test_a_login_writes_to_stderr_so_stdout_keeps_only_the_report():
+    # `nethackers setup > report.json`: the login's prompts still reach the
+    # terminal, and the file holds only setup's report.
+    seen = {}
+
+    def run(argv, **kwargs):
+        seen.update(kwargs)
+        return SimpleNamespace(returncode=0)
+
+    runner.run_terminal(("gh", "auth", "login"), run=run)
+    assert seen["stdout"] is sys.stderr
+
+
 def test_a_missing_tool_is_a_failed_step_not_a_crash():
-    def missing(argv):
+    def missing(argv, **kwargs):
         raise FileNotFoundError(argv[0])
     result = runner.run_terminal(("claude", "auth", "login"), run=missing)
     assert not result.ok and "`claude` isn't installed" in result.detail

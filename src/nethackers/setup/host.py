@@ -110,8 +110,7 @@ def detect_host(
     context = _first_line(run, ["docker", "context", "show"]) if "docker" in installed else None
     colima_config = None
     if "colima" in installed:
-        colima_home = (Path(environ["COLIMA_HOME"]) if environ.get("COLIMA_HOME")
-                       else home / ".colima")
+        colima_home = _colima_home(home, environ, exists)
         colima_config = colima_home / _colima_profile(context) / "colima.yaml"
     distro, distro_name = _distro(os_release) if system == "Linux" else (None, None)
     mem = (memory_bytes or _memory_bytes)()
@@ -168,6 +167,23 @@ def _podman_machine(run: Callable[..., Any]) -> bool:
     except ValueError:
         return False
     return isinstance(machines, list) and len(machines) > 0
+
+
+def _colima_home(home: Path, environ: Mapping[str, str],
+                 exists: Callable[[Path], bool]) -> Path:
+    """Colima's config directory, by Colima's own precedence
+    (https://github.com/abiosoft/colima/blob/main/config/files.go):
+    $COLIMA_HOME when it exists; else ~/.colima when it exists; else an
+    existing $XDG_CONFIG_HOME/colima (~/.config/colima when that is unset);
+    else ~/.colima, the macOS default."""
+    explicit = environ.get("COLIMA_HOME")
+    if explicit and exists(Path(explicit)):
+        return Path(explicit)
+    dot_colima = home / ".colima"
+    if exists(dot_colima):
+        return dot_colima
+    xdg = Path(environ.get("XDG_CONFIG_HOME") or home / ".config") / "colima"
+    return xdg if exists(xdg) else dot_colima
 
 
 def _colima_profile(context: str | None) -> str:

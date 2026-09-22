@@ -3,9 +3,12 @@
 Tools print their live progress -- docker's byte counts, curl's percentage,
 brew's bars -- only when attached to a terminal, and they redraw it in place
 with carriage returns and cursor moves. ``spawn`` gives the child a pty for
-stdout and stderr (stdin gets nothing, so a surprise prompt fails fast instead
-of hanging); ``read_lines`` turns the redraw stream into plain status lines:
-colors dropped, and every cursor move, ``\\r`` or ``\\n`` ending a line.
+stdout and stderr, and nothing on stdin: a surprise prompt that reads stdin
+fails fast instead of hanging. A tool that opens /dev/tty itself can still
+ask, on the person's terminal -- hence the environment variables the runner
+sets to switch installers' prompts off. ``read_lines`` turns the redraw
+stream into plain status lines: colors dropped, and every cursor move,
+``\\r`` or ``\\n`` ending a line.
 
 The child stays in our process group, so Ctrl-C reaches it too; ``stop``
 makes sure it is gone afterwards. POSIX only -- setup doesn't cover native
@@ -81,6 +84,9 @@ def spawn(argv: Sequence[str], *, env: dict[str, str] | None = None,
     master, slave = pty.openpty()
     try:
         fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 50, WIDTH, 0, 0))
+        # stdin: EOF for any prompt that reads it. No new session: the child
+        # shares our process group so Ctrl-C reaches it, which also leaves it
+        # our terminal as /dev/tty.
         proc = popen(list(argv), stdin=subprocess.DEVNULL, stdout=slave, stderr=slave,
                      env=env, close_fds=True)
     except BaseException:

@@ -5,6 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from nethackers.setup import host
 from nethackers.setup.host import HostFacts, detect_host, setup_supported
 
@@ -72,9 +74,27 @@ def test_the_colima_profile_follows_the_docker_context():
 
 
 def test_colima_home_overrides_the_default_location():
-    facts = _detect(which=_which("colima"), environ={"COLIMA_HOME": "/opt/colima"})
+    facts = _detect(which=_which("colima"), environ={"COLIMA_HOME": "/opt/colima"},
+                    exists=lambda p: p == Path("/opt/colima"))
     assert facts.colima_config == Path("/opt/colima/default/colima.yaml")
     assert facts.colima_vm is False
+
+
+# Colima's own precedence (config/files.go): $COLIMA_HOME when it exists; else
+# ~/.colima when it exists; else an existing $XDG_CONFIG_HOME/colima (or
+# ~/.config/colima); else ~/.colima.
+@pytest.mark.parametrize("environ,present,expected", [
+    ({"COLIMA_HOME": "/opt/colima"}, set(), HOME / ".colima"),          # set but not created
+    ({}, {HOME / ".config" / "colima"}, HOME / ".config" / "colima"),
+    ({"XDG_CONFIG_HOME": "/x/cfg"}, {Path("/x/cfg/colima")}, Path("/x/cfg/colima")),
+    ({"XDG_CONFIG_HOME": "/x/cfg"}, {HOME / ".config" / "colima"}, HOME / ".colima"),
+    ({}, {HOME / ".colima", HOME / ".config" / "colima"}, HOME / ".colima"),   # ~/.colima wins
+    ({}, set(), HOME / ".colima"),
+], ids=["colima-home-missing", "xdg-default-dir", "xdg-config-home", "xdg-elsewhere-unused",
+        "dot-colima-wins", "nothing-yet"])
+def test_colimas_config_directory_follows_colimas_own_precedence(environ, present, expected):
+    facts = _detect(which=_which("colima"), environ=environ, exists=lambda p: p in present)
+    assert facts.colima_config == expected / "default" / "colima.yaml"
 
 
 def test_orbstack_is_found_by_its_cli_or_its_app():

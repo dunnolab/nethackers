@@ -5,6 +5,7 @@ import re
 
 from nethackers.setup import docs, linux, macos
 from nethackers.setup.host import HostFacts, platform_for
+from nethackers.setup.plan import AGENT_LOGIN, GH_LOGIN
 from nethackers.setup.support import NotCovered, Tested, Untested
 
 ALL = macos.RECIPES + linux.RECIPES
@@ -23,6 +24,8 @@ def test_nothing_nethackers_runs_calls_sudo():
     for recipe in (*ALL, sized):
         if recipe.who == "nethackers":
             assert not any(_SUDO.search(part) for part in recipe.argv), recipe.id
+    for argv in (GH_LOGIN, *AGENT_LOGIN.values()):   # the logins setup runs itself
+        assert not any(_SUDO.search(part) for part in argv), argv
 
 
 def test_every_untested_recipe_links_the_document_it_follows():
