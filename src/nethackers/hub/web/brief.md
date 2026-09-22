@@ -8,9 +8,9 @@ Human-readable site: https://nethackers.dunnolab.ai/
 {{reset_bullet}}
 - **Scores are measured on linux/amd64.** NetHack generates a different dungeon
   from the same seed on arm64, so the hub refuses a natively-scored arm64
-  result. On Apple silicon enable Docker Desktop's Settings -> General ->
-  Apple Virtualization framework -> "Use Rosetta for x86_64/amd64 emulation"
-  before evaluating anything.
+  result. On Apple silicon, `nethackers setup` starts Colima with Rosetta;
+  with Docker Desktop, enable Settings -> General -> "Use Rosetta for
+  x86_64/amd64 emulation" before evaluating anything.
 - **The source repository is private.** Install from PyPI; cloning
   github.com/dunnolab/nethackers fails with a 404 unless you have access.
 - **`evolve` publishes, and runs a coding agent unattended.** It drives
@@ -40,24 +40,31 @@ Python 3.11+ is required. `eval` needs Docker or Podman. `evolve` needs
 that too, plus a coding agent CLI (`claude`, `codex`, or `opencode2`)
 logged in on the host, and `nethackers login`. `submit` additionally needs
 `nethackers login` and `gh` authenticated as the same GitHub account.
+`nethackers setup` takes care of all of that.
 
 ```bash
 uv tool install nethackers
-nethackers doctor
+nethackers setup
 nethackers
 ```
 
 `pip install nethackers` works too; `uv` itself installs from
-https://astral.sh/uv. `doctor` reports which of `browse`, `eval`, `evolve`
-and `publish` this machine can do, and what to fix for the rest. The last
-command opens the dashboard.
+https://astral.sh/uv. `nethackers setup` checks the machine, shows a plan,
+asks once, then runs the logins (installing `gh` or a coding agent with its
+vendor's installer when needed), installs and starts the container runtime
+(Homebrew on a Mac), and pulls the sandbox images (about 1 GB the first
+time). It never runs `sudo`; what needs it is printed. The last command opens
+the dashboard.
 
-The sandbox images are several GB and pull on first use;
-`nethackers doctor --pull` front-loads them.
+**Coding agents:** run `nethackers setup` first. Without a terminal it changes
+nothing and prints its plan. Summarize the plan for the user and ask one
+yes/no question; don't ask them to install things themselves. On yes, run
+`nethackers setup --yes --operator <claude|codex|opencode2>` with a long
+timeout (a first run downloads about 1 GB and can take several minutes), then
+run each login it lists and pass the user the code or link it prints.
 
 ```bash
 nethackers eval ./my-bot --objective val-dwa-law-fem
-nethackers login
 nethackers submit ./my-solution --objective val-dwa-law-fem
 ```
 

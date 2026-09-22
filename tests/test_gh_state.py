@@ -20,3 +20,15 @@ def test_gh_state_unauthed():
 
 def test_gh_state_authed():
     assert gh_state(which=lambda _: "/usr/bin/gh", run=_run_ok) == ("octocat", "authed")
+
+
+def test_gh_login_gives_up_on_a_hung_gh():
+    import subprocess
+
+    from nethackers.hubclient.publish import gh_login
+
+    def hung(cmd, **kw):
+        assert kw.get("timeout") == 10
+        raise subprocess.TimeoutExpired(cmd, 10)
+
+    assert gh_login(run=hung) is None

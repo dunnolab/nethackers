@@ -46,3 +46,9 @@ def test_evolve_warns_when_gh_missing(monkeypatch, capsys):
 def test_evolve_quiet_when_gh_authed(monkeypatch, capsys):
     err = _run_evolve(monkeypatch, capsys, ("octocat", "authed"))
     assert "wins won't publish" not in err
+
+
+def test_evolve_gh_warnings_point_at_setup(monkeypatch, capsys):
+    for state in ("unauthed", "missing"):
+        err = _run_evolve(monkeypatch, capsys, (None, state))
+        assert "nethackers setup --for publish" in err

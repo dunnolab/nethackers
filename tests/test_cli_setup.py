@@ -1,0 +1,310 @@
+"""`nethackers setup` wiring: flags reach the flow, and the hub login it runs
+is the same device flow `nethackers login` uses. The flow itself is faked."""
+from __future__ import annotations
+
+import io
+import sys
+from types import SimpleNamespace
+
+import pytest
+from rich.console import Console
+
+import nethackers.cli as cli
+from nethackers import ptyrun
+from nethackers.containers import RuntimeCandidate, RuntimeReport
+from nethackers.diagnostics import CHECK_SPECS, CheckResult
+from nethackers.setup.host import HostFacts
+
+
+def _checks(**status: str) -> list[CheckResult]:
+    return [CheckResult(id=cid, status=status.get(cid, "ok"), severity=sev, detail="d",
+                        fix=None, capabilities=caps) for cid, (sev, caps) in CHECK_SPECS.items()]
+
+
+class _TerminalAtEOF(io.StringIO):
+    """A stdin that looks like a terminal and has nothing left to read: what
+    Ctrl-D at a prompt gives."""
+
+    def isatty(self) -> bool:
+        return True
+
+
+def _real_flow_on_a_fake_machine(monkeypatch: pytest.MonkeyPatch, checks: list[CheckResult], *,
+                                 agents_logged_in: bool = True) -> tuple[list, io.StringIO]:
+    """The real flow and prompts, in a terminal-looking console with stdin at
+    its end, on a machine whose every probe and step is faked. Returns the
+    list of steps that ran (it must stay empty) and the console's buffer."""
+    ran: list = []
+    buf = io.StringIO()
+    monkeypatch.setattr(sys, "stdin", _TerminalAtEOF(""))
+    monkeypatch.setattr(cli, "err", Console(file=buf, force_terminal=True, width=100))
+    monkeypatch.setattr(cli, "run_checks", lambda **kw: checks)
+    monkeypatch.setattr(cli, "detect_host",
+                        lambda: HostFacts("Darwin", "arm64", brew=True, host_rosetta=True))
+    monkeypatch.setattr(cli, "probe_container_runtime", lambda: RuntimeReport(
+        "docker", (RuntimeCandidate("docker", "usable", ""),)))
+    monkeypatch.setattr(cli, "gh_state", lambda: ("you", "authed"))
+    monkeypatch.setattr(cli, "_load_creds", lambda: SimpleNamespace(login="you"))
+    monkeypatch.setattr(cli, "preflight_operator",
+                        lambda op: None if agents_logged_in else "not logged in")
+    monkeypatch.setattr(cli, "read_text", lambda path: None)
+    monkeypatch.setattr(cli.setup_flow, "resolve_exe", lambda name, **kw: f"/usr/local/bin/{name}")
+    monkeypatch.setattr(cli, "_setup_pull", lambda kinds, total: ran.append(("pull", kinds)))
+    monkeypatch.setattr(cli, "_setup_pull_size", lambda kinds: 432_000_000)
+    monkeypatch.setattr(cli.setup_runner, "run_captured", lambda *a, **k: ran.append("captured"))
+    monkeypatch.setattr(cli.setup_runner, "run_terminal", lambda *a, **k: ran.append("terminal"))
+    return ran, buf
+
+
+def test_end_of_input_at_continue_is_a_no(monkeypatch):
+    # Ctrl-D (or a script's empty stdin) must not count as the default yes:
+    # that would start installs, a VM and ~875 MB of pulls without consent.
+    ran, buf = _real_flow_on_a_fake_machine(monkeypatch, _checks(mutator_image="warn"))
+    assert cli.main(["setup"]) == 1
+    assert ran == []
+    assert "Continue?" in buf.getvalue() and "Nothing changed" in buf.getvalue()
+
+
+def test_end_of_input_at_the_agent_question_aborts(monkeypatch):
+    ran, buf = _real_flow_on_a_fake_machine(monkeypatch, _checks(mutator_image="warn"),
+                                            agents_logged_in=False)
+    assert cli.main(["setup"]) == 130
+    assert ran == []
+    assert "Which coding agent" in buf.getvalue() and "aborted" in buf.getvalue()
+
+
+@pytest.mark.parametrize("checks,code", [(_checks(), 0), (_checks(mutator_image="warn"), 1)],
+                         ids=["ready", "answered-no"])
+def test_setup_json_is_doctors_json_shape(monkeypatch, capsys, checks, code):
+    # `-o json` (what an agent's piped stdout gets by default) is doctor's
+    # to_json, unchanged: it validates against the committed schema.
+    import json
+    from pathlib import Path
+
+    import jsonschema
+
+    _real_flow_on_a_fake_machine(monkeypatch, checks)
+    assert cli.main(["setup", "-o", "json"]) == code
+    report = json.loads(capsys.readouterr().out)
+    schema_path = Path(__file__).resolve().parent.parent / "src/nethackers/doctor.schema.json"
+    schema = json.loads(schema_path.read_text())
+    assert list(jsonschema.Draft202012Validator(schema).iter_errors(report)) == []
+
+
+def test_flags_reach_the_flow(monkeypatch):
+    seen = {}
+
+    def fake_run_setup(opts, deps):
+        seen["opts"] = opts
+        return 0
+
+    monkeypatch.setattr(cli.setup_flow, "run_setup", fake_run_setup)
+    assert cli.main(["setup", "--for", "eval", "--operator", "codex", "--yes"]) == 0
+    opts = seen["opts"]
+    assert (opts.scope, opts.operator, opts.yes) == ("eval", "codex", True)
+    assert opts.interactive is False          # pytest's stdin is not a terminal
+
+
+def test_setup_exit_code_is_the_flows(monkeypatch):
+    monkeypatch.setattr(cli.setup_flow, "run_setup", lambda opts, deps: 1)
+    assert cli.main(["setup"]) == 1
+
+
+def test_the_hub_login_is_the_same_device_flow_as_nethackers_login(monkeypatch):
+    got = {}
+
+    def fake_run_setup(opts, deps):
+        got["login"] = deps.hub_login()
+        return 0
+
+    saved = []
+    monkeypatch.setattr(cli.setup_flow, "run_setup", fake_run_setup)
+    monkeypatch.setattr(cli, "device_login",
+                        lambda **kw: {"access_token": "t", "refresh_token": "r", "expires_in": 0})
+    monkeypatch.setattr(cli, "whoami_from_token", lambda tok, **_k: "castiel")
+    monkeypatch.setattr(cli._cred, "save", saved.append)       # never the real credentials file
+    assert cli.main(["setup"]) == 0
+    assert got["login"] == "castiel" and saved[0].login == "castiel"
+
+
+def test_setup_is_listed_in_help():
+    assert "setup" in cli._build_parser(cli.load_stage()).format_help()
+
+
+# --- end to end in a real terminal (the only test that reaches the real
+# isatty gate, Confirm.ask and the stdin/stderr wiring) -----------------------
+
+_DRIVER = '''
+import sys
+from types import SimpleNamespace
+
+from nethackers import cli
+from nethackers.containers import RuntimeCandidate, RuntimeReport
+from nethackers.diagnostics import CHECK_SPECS, CheckResult
+from nethackers.setup.host import HostFacts
+
+
+def checks(**status):
+    return [CheckResult(id=c, status=status.get(c, "ok"), severity=s, detail="d",
+                        fix=None, capabilities=caps) for c, (s, caps) in CHECK_SPECS.items()]
+
+
+results = iter([checks(mutator_image="warn"), checks()])
+cli.run_checks = lambda **kw: next(results)
+cli.detect_host = lambda: HostFacts("Darwin", "arm64", brew=True, host_rosetta=True)
+cli.probe_container_runtime = lambda: RuntimeReport(
+    "docker", (RuntimeCandidate("docker", "usable", ""),))
+cli.gh_state = lambda: ("you", "authed")
+cli._load_creds = lambda: SimpleNamespace(login="you")
+cli.preflight_operator = lambda op: None
+cli._setup_pull = lambda kinds, total: print("PULLED", ",".join(kinds)) or None
+cli._setup_pull_size = lambda kinds: 432_000_000
+# Pretend every tool is installed, and make sure nothing real can ever run.
+cli.setup_flow.resolve_exe = lambda name, **kw: f"/usr/local/bin/{name}"
+
+
+def _never(*args, **kwargs):
+    raise AssertionError("the end-to-end test must not run real commands")
+
+
+cli.setup_runner.run_captured = _never
+cli.setup_runner.run_terminal = _never
+sys.exit(cli.main(["setup"]))
+'''
+
+
+def _drive(script, answers, timeout=60.0) -> str:
+    """Run ``script`` with a pseudo-terminal as its whole terminal; whenever the
+    output contains the next ``(prompt, reply)`` prompt, type the reply.
+
+    A pty pair (not ``pty.fork()``, which forks THIS process -- already
+    multi-threaded under pytest -- and trips CPython's own "forkpty() in a
+    multi-threaded process may deadlock" warning) with the child on the slave
+    side, so it still sees a real terminal on stdin/stdout/stderr. Reads raw
+    bytes, not lines (``ptyrun.read_lines``): the "Continue?" prompt has no
+    trailing newline, so a line-buffered read would never surface it."""
+    import errno
+    import os
+    import pty
+    import select
+    import subprocess
+    import sys
+    import time
+
+    master, slave = pty.openpty()
+    proc = subprocess.Popen([sys.executable, str(script)], stdin=slave, stdout=slave,
+                            stderr=slave, start_new_session=True, close_fds=True)
+    os.close(slave)
+    out, pending, deadline = b"", list(answers), time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        ready, _, _ = select.select([master], [], [], 0.2)
+        if ready:
+            try:
+                chunk = os.read(master, 65536)
+            except OSError as exc:
+                if exc.errno != errno.EIO:  # Linux: every writer closed the pty
+                    raise
+                break
+            if not chunk:  # macOS: end of output
+                break
+            out += chunk
+        elif proc.poll() is not None:  # exited, and nothing left to read
+            break
+        if pending and pending[0][0] in out:
+            os.write(master, pending.pop(0)[1])
+    else:
+        proc.kill()
+    proc.wait()
+    os.close(master)
+    return out.decode("utf-8", "replace")
+
+
+def test_setup_end_to_end_in_a_real_terminal(tmp_path):
+    import os
+
+    if not hasattr(os, "fork"):
+        pytest.skip("needs a pty")
+    script = tmp_path / "drive.py"
+    script.write_text(_DRIVER)
+    out = _drive(script, [(b"Continue?", b"y\r")])
+    # Strip terminal escapes (colour, `rich`'s own number-highlighting) rather
+    # than asserting on raw bytes: `clean` drops them without splitting a
+    # line, so a highlighted "up to 432 MB" would still read as one run.
+    text = "\n".join(ptyrun.clean(out))
+    assert "Checking this machine" in text
+    assert "pull the mutator image" in text and "up to 432 MB" in text
+    assert "PULLED mutator" in text
+    assert "ready to eval" in text and "Next: nethackers evolve" in text
+
+
+def _bar_totals(monkeypatch: pytest.MonkeyPatch, total: int, events: list) -> list:
+    """Feed ``events`` to the terminal progress bar; the bar's length after each."""
+    from nethackers.harness.pull_events import PullEvent
+
+    lengths: list = []
+
+    class Recording(cli.Progress):
+        def update(self, task_id, **kwargs) -> None:
+            super().update(task_id, **kwargs)
+            lengths.append(self.tasks[0].total)
+
+    monkeypatch.setattr(cli, "Progress", Recording)
+    monkeypatch.setattr(cli, "err", Console(file=io.StringIO(), force_terminal=True, width=100))
+    with cli._pull_progress(total=total) as on_event:
+        for kind, phase, detail, done, known in events:
+            on_event(PullEvent(kind=kind, ref="img", phase=phase, layers_total=None,
+                               layers_complete=None, detail=detail, bytes_done=done,
+                               bytes_total=known))
+    return lengths
+
+
+MB = 1_000_000
+
+
+def test_after_an_upgrade_the_bar_follows_what_docker_is_downloading(monkeypatch):
+    # A re-pin: most layers are already here ("Already exists"), so the
+    # registry's 875 MB overclaims. From the first such layer, the bar's
+    # length is what docker reports it is downloading.
+    lengths = _bar_totals(monkeypatch, 875 * MB, [
+        ("arena", "start", "", None, None),
+        ("arena", "layer", "Already exists", None, None),
+        ("arena", "layer", "Downloading [=>   ]  10MB/40MB", 10 * MB, 40 * MB),
+        ("arena", "layer", "Downloading [===> ]  30MB/60MB", 30 * MB, 60 * MB),
+    ])
+    assert lengths[-2:] == [40 * MB, 60 * MB]
+
+
+def test_a_first_pull_keeps_the_registry_total_even_for_layers_the_images_share(monkeypatch):
+    # The mutator reuses layers the arena pull just fetched ("Already exists");
+    # the registry total counted those once, so it stays the bar's length.
+    lengths = _bar_totals(monkeypatch, 875 * MB, [
+        ("arena", "start", "", None, None),
+        ("arena", "layer", "Downloading [=>   ]  100MB/500MB", 100 * MB, 500 * MB),
+        ("arena", "done", "", 500 * MB, 500 * MB),
+        ("mutator", "start", "", None, None),
+        ("mutator", "layer", "Already exists", None, None),
+        ("mutator", "layer", "Downloading [=>   ]  5MB/300MB", 5 * MB, 300 * MB),
+    ])
+    assert lengths[1] == 875 * MB and lengths[-1] == 875 * MB
+
+
+def test_plain_pull_progress_prints_layer_changes_not_every_byte(monkeypatch):
+    import io
+
+    from rich.console import Console
+
+    from nethackers.harness.pull_events import PullEvent
+
+    buf = io.StringIO()
+    monkeypatch.setattr(cli, "err", Console(file=buf, force_terminal=False, width=100))
+
+    def ev(detail, done):
+        return PullEvent(kind="arena", ref="img", phase="layer", layers_total=2,
+                         layers_complete=0, detail=detail, bytes_done=done, bytes_total=4)
+
+    with cli._pull_progress(total=4) as on_event:
+        for i in range(50):
+            on_event(ev("Downloading [==>]  1MB/4MB", i))
+        on_event(ev("Pull complete", 4))
+    lines = [ln for ln in buf.getvalue().splitlines() if ln.strip()]
+    assert len(lines) == 1 and "pulling arena" in lines[0]
