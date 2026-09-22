@@ -20,7 +20,7 @@ import asyncio
 import subprocess
 import threading
 
-from textual.widgets import ContentSwitcher, Input, Tabs
+from textual.widgets import Button, ContentSwitcher, Input, Tabs
 
 from nethackers.hubclient.credentials import Credentials
 from nethackers.tui.app import _TOAST_DETAIL_MAXLEN, NetHackersApp, failure_detail
@@ -594,3 +594,33 @@ async def test_finish_run_reports_failure_as_plaintext():
     msg, kw = calls[0]
     assert kw.get("markup") is False
     assert msg.startswith("run r7 failed:") and "boom" in msg and len(msg) < 300
+
+
+async def test_in_app_login_and_logout_reach_the_evolve_form(monkeypatch):
+    import nethackers.tui.screens.evolve_form as ef
+    seen: list = []
+
+    def _prepare(params, **k):
+        seen.append((params.owner, params.token))
+        raise RuntimeError("stop here")   # the form shows it; no run starts
+
+    monkeypatch.setattr(ef, "prepare_evolve", _prepare)
+    monkeypatch.setattr(ef, "sandbox_preflight", lambda *a, **k: None)
+    monkeypatch.setattr(ef, "image_present", lambda *a, **k: True)
+    monkeypatch.setattr("nethackers.hubclient.credentials.clear", lambda: None)
+    app = NetHackersApp(hub="http://h", creds=None, start="evolve")
+    async with app.run_test(size=(120, 42)) as pilot:
+        await pilot.pause()
+        form = app.query_one(ef.EvolveForm)
+        form._objective = "wiz-elf-cha-mal"
+        app._after_login(Credentials("castiel", "tok"))
+        form.query_one("#f_start", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+        app.action_logout()
+        form.query_one("#f_start", Button).press()
+        await pilot.pause()
+        await app.workers.wait_for_complete()
+        await pilot.pause()
+    assert seen == [("castiel", "tok"), (ef.OFFLINE_OWNER, ef.OFFLINE_TOKEN)]

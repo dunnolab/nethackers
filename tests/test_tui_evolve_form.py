@@ -1096,3 +1096,10 @@ async def test_the_publish_check_runs_when_the_form_opens(monkeypatch):
         await pilot.pause()
         warn = str(app.query_one("#f_publish_warn", Static).render())
         assert "wins won't publish" in warn        # shown before any Start
+
+
+async def test_iterations_default_to_100():
+    app = _Host(None)
+    async with app.run_test(size=(100, 50)) as pilot:
+        await pilot.pause()
+        assert app.query_one("#f_iters", Input).value == "100"

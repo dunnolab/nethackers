@@ -298,6 +298,8 @@ class NetHackersApp(App):
         login = self._creds.login if self._creds else None
         with contextlib.suppress(Exception):
             self.query_one("#home", HomeView).set_login(login)
+        with contextlib.suppress(Exception):
+            self.query_one("#evolve", EvolveForm).set_creds(self._creds)
 
     # --- background runs ---------------------------------------------------
     #

@@ -242,7 +242,7 @@ class EvolveForm(Vertical):
                 yield Select([("Harness default", ""), *((e, e) for e in EFFORTS)],
                              value="", allow_blank=False, id="f_effort")
                 yield Label("Iterations")
-                yield Input(value="1", id="f_iters")
+                yield Input(value="100", id="f_iters")
                 yield Label("Network")
                 yield Select(
                     [("Fast — self-reported (default)", "self-reported"),
@@ -560,6 +560,13 @@ class EvolveForm(Vertical):
 
     def _owner(self) -> str:
         return self._creds.login if self._creds else OFFLINE_OWNER
+
+    def set_creds(self, creds: Credentials | None) -> None:
+        """Adopt an in-app login or logout (``NetHackersApp._refresh_identity``),
+        so the next Start runs as whoever is logged in now -- ``_params()`` reads
+        ``self._creds`` -- and re-check publishing for that identity."""
+        self._creds = creds
+        self._check_publish(self._owner())
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         if event.button.id != "f_start":
