@@ -21,7 +21,6 @@ for "am I logged in" / "is the hub reachable", without this module ever
 importing ``cli`` itself (which imports FROM here -- that would cycle)."""
 from __future__ import annotations
 
-import json
 import platform
 import re
 import subprocess
@@ -40,6 +39,9 @@ from nethackers.hubclient.client import HubClient, HubUnreachable
 from nethackers.hubclient.credentials import Credentials, load as _default_load_creds
 from nethackers.hubclient.publish import gh_state as _default_gh_state
 from nethackers.operators import OPERATORS
+from nethackers.setup import host as _host
+from nethackers.setup.host import HostFacts
+from nethackers.setup.support import SETUP_CMD, fix_text
 
 
 def version_info() -> dict:
@@ -82,9 +84,9 @@ CHECK_SPECS: dict[str, tuple[str, tuple[str, ...]]] = {
     # capability tuple; that made it un-gating but also unrenderable, since
     # render_human/render_plain group rows by `cap in r.capabilities` --
     # capability-less rows can never appear there). Spec I9 (never moves
-    # doctor's exit code) now rests on two things instead: rosetta_state/
+    # doctor's exit code) now rests on two things instead: setup.macos.emulation/
     # _check_rosetta never emit "fail" (only "ok"/"warn" -- see
-    # test_check_rosetta_never_emits_fail_for_any_rosetta_state), and
+    # tests/test_doctor_rosetta.py::test_check_rosetta_never_emits_fail), and
     # capability_ready's own fold -- eval/evolve both carry hard checks of
     # their own, so they're gated PURELY by those; a soft check tagged onto
     # a capability that has hard checks (this one, on both) never enters
@@ -175,17 +177,21 @@ def _default_opencode2_keyed() -> bool:
 
 _RUNTIME_ITEM_STATUS = {"usable": "ok", "absent": "warn", "broken": "fail"}
 
+# The real login command per coding agent, for the fallback fix text (where
+# setup doesn't cover the OS). OpenCode has none: it runs without a login.
+_AGENT_LOGIN = {"claude": "claude auth login", "codex": "codex login"}
+
 
 def _check_container_runtime(
     *, severity: str, caps: tuple[str, ...], runtime_report: Callable[[], RuntimeReport],
+    runtime_fix: Callable[[RuntimeReport], str | None],
 ) -> CheckResult:
     """OK as soon as ONE runtime (docker/podman) is usable; otherwise a per-CLI
     breakdown so the user sees WHY -- ``docker`` present but ``info`` failed
     (daemon down, socket permission denied, rootless unconfigured) vs. nothing
-    installed at all -- instead of a bare 'no working container runtime found'
-    that sends them to restart a daemon that's already up (issue #50). The
-    failing case attaches one ``CheckItem`` per candidate; a ``broken`` one
-    carries the actual ``info`` error as its detail."""
+    installed at all (issue #50). The fix comes from this OS's setup recipes
+    (``runtime_fix``): "run `nethackers setup`" where setup can bring a runtime
+    up itself, otherwise the exact commands to run."""
     report = runtime_report()
     if report.runtime is not None:
         return CheckResult(id="container_runtime", status="ok", severity=severity,
@@ -202,14 +208,10 @@ def _check_container_runtime(
         for c in report.candidates
     )
     broken = [c for c in report.candidates if c.state == "broken"]
-    if broken:
-        detail = "; ".join(f"{c.exe}: {c.detail}" for c in broken)  # flattened for -o json
-        fix = "make a container runtime usable (see the error above), or start Docker/Podman"
-    else:
-        detail = "no docker or podman found on PATH"
-        fix = sandbox_preflight.sandbox_hint()
+    detail = ("; ".join(f"{c.exe}: {c.detail}" for c in broken) if broken  # flattened for -o json
+              else "no docker or podman found on PATH")
     return CheckResult(id="container_runtime", status="fail", severity=severity,
-                       detail=detail, fix=fix, capabilities=caps, items=items)
+                       detail=detail, fix=runtime_fix(report), capabilities=caps, items=items)
 
 
 def _check_image(
@@ -221,6 +223,7 @@ def _check_image(
     image_present: Callable[[str], bool],
     manifest_reachable: Callable[[str], bool],
     repo_root: Callable[[], Path | None],
+    setup_hint: Callable[[], str | None],
 ) -> CheckResult:
     """``present`` (already local) / ``warn``-``pullable`` (not local, but
     the registry has it -- ``nethackers doctor --pull`` fetches it) /
@@ -245,18 +248,18 @@ def _check_image(
         if manifest_reachable(remote):
             return CheckResult(id=check_id, status="warn", severity=severity,
                                detail=f"not local yet, but pullable — {remote}",
-                               fix="run `nethackers doctor --pull` to fetch it now",
+                               fix=setup_hint() or "run `nethackers doctor --pull` to fetch it now",
                                capabilities=caps)
         return CheckResult(id=check_id, status="warn", severity=severity,
                            detail=(f"not built yet — {ref} (this checkout's mutator files "
                                    "differ from the pinned build)"),
-                           fix=("run `nethackers doctor --pull` to build it now, "
-                                "or just start evolve, which builds it"),
+                           fix=setup_hint() or ("run `nethackers doctor --pull` to build it now, "
+                                                "or just start evolve, which builds it"),
                            capabilities=caps)
     if manifest_reachable(ref):
         return CheckResult(id=check_id, status="warn", severity=severity,
                            detail=f"not local yet, but pullable — {ref}",
-                           fix="run `nethackers doctor --pull` to fetch it now",
+                           fix=setup_hint() or "run `nethackers doctor --pull` to fetch it now",
                            capabilities=caps)
     if repo_root() is not None and "@sha256:" not in ref:
         fix = f"run `make {kind}` (or just `nethackers eval`/`evolve`, which auto-builds it)"
@@ -284,17 +287,19 @@ def _check_hub(
 
 def _check_hub_login(
     *, severity: str, caps: tuple[str, ...], load_creds: Callable[[], Credentials | None],
+    setup_hint: Callable[[], str | None],
 ) -> CheckResult:
     creds = load_creds()
     if creds is not None:
         return CheckResult(id="hub_login", status="ok", severity=severity,
                            detail=f"logged in as @{creds.login}", fix=None, capabilities=caps)
     return CheckResult(id="hub_login", status="fail", severity=severity, detail="not logged in",
-                       fix="run `nethackers login`", capabilities=caps)
+                       fix=setup_hint() or "run `nethackers login`", capabilities=caps)
 
 
 def _check_gh(
     *, severity: str, caps: tuple[str, ...], gh_state: Callable[[], tuple[str | None, str]],
+    setup_hint: Callable[[], str | None], install_fix: Callable[[], str | None],
 ) -> CheckResult:
     login, state = gh_state()
     if state == "authed":
@@ -302,18 +307,20 @@ def _check_gh(
                            fix=None, capabilities=caps)
     if state == "unauthed":
         return CheckResult(id="gh", status="fail", severity=severity,
-                           detail="gh is installed but not authed",
-                           fix="run `gh auth login` (separate from `nethackers login`)",
+                           detail="gh is installed but not logged in",
+                           fix=(setup_hint()
+                               or "run `gh auth login` (separate from `nethackers login`)"),
                            capabilities=caps)
     return CheckResult(id="gh", status="fail", severity=severity, detail="gh is not installed",
-                       fix="install the GitHub CLI (`gh`), then run `gh auth login`",
+                       fix=(install_fix()
+                           or "install the GitHub CLI (`gh`), then run `gh auth login`"),
                        capabilities=caps)
 
 
 def _check_operator(
     operators: tuple[str, ...], *, severity: str, caps: tuple[str, ...],
     mutator_present: bool, preflight_operator: Callable[[str], str | None],
-    opencode2_keyed: Callable[[], bool],
+    opencode2_keyed: Callable[[], bool], setup_hint: Callable[[], str | None],
 ) -> CheckResult:
     """Host-login readiness across the registered coding agents. Probes EVERY
     agent the caller asked about (``run_checks(operator=None)`` -> all of
@@ -340,99 +347,38 @@ def _check_operator(
     if any(status[op] is None for op in operators):
         return CheckResult(id="operator", status="ok", severity=severity, detail=flat,
                            fix=None, capabilities=caps, items=items)
-    logins = " or ".join(f"`{op} login`" for op in operators)
-    fix = f"log in to a coding agent — {logins}"
-    if not mutator_present:
-        # The mutator image is what actually runs the operator, but doctor never
-        # force-pulls it just to double-check a host login (read-only outside
-        # `--pull`) -- name that option rather than trust an unverifiable
-        # host-only signal.
-        fix += " — or `nethackers doctor --pull` to pull the sandbox and verify inside it"
+    hint = setup_hint()
+    if hint is not None:
+        # setup installs the agent if needed and runs its own login.
+        fix = (f"run `{SETUP_CMD} --operator {operators[0]}`" if len(operators) == 1 else hint)
+    else:
+        logins = " or ".join(f"`{_AGENT_LOGIN[op]}`" for op in operators if op in _AGENT_LOGIN)
+        fix = f"log in to a coding agent — {logins}"
+        if not mutator_present:
+            # The mutator image is what actually runs the operator, but doctor never
+            # force-pulls it just to double-check a host login (read-only outside
+            # `--pull`) -- name that option rather than trust an unverifiable
+            # host-only signal.
+            fix += " — or `nethackers doctor --pull` to pull the sandbox and verify inside it"
     return CheckResult(id="operator", status="fail", severity=severity, detail=flat,
                        fix=fix, capabilities=caps, items=items)
-
-
-DOCKER_DESKTOP_SETTINGS = (
-    Path.home()
-    / "Library"
-    / "Group Containers"
-    / "group.com.docker"
-    / "settings-store.json"
-)
-
-# Measured on one machine, one 15-episode identity batch, same games both
-# sides: QEMU 823s vs Rosetta 224s (spec 2026-09-14 section 8).
-_ROSETTA_COST = "same batch: 823s under QEMU vs 224s with Rosetta"
-
-
-def rosetta_state(
-    system: str, machine: str, settings_path: Path
-) -> tuple[str, str]:
-    """``(status, detail)`` for the amd64-emulation advisory.
-
-    ``"unknown"`` whenever we cannot tell -- a non-macOS host, an Intel Mac
-    (which emulates nothing), a runtime that is not Docker Desktop, or an
-    unreadable OR malformed settings file (present, valid JSON, but not the
-    object shape Docker Desktop actually writes -- e.g. a list or ``null``).
-    NEVER report "disabled" on a guess: Colima and podman machine carry their
-    own Rosetta switches.
-
-    Detection is host-side on purpose. Probing inside the container does not
-    work: the Rosetta mount is absent there even when Rosetta is active, so an
-    in-container probe reports the wrong answer silently.
-    """
-    if system != "Darwin" or machine not in {"arm64", "aarch64"}:
-        return "unknown", "not an Apple Silicon Mac; amd64 emulation does not apply"
-    unreadable = (
-        "could not read Docker Desktop settings; if you use Colima, start it "
-        "with --vz --vz-rosetta"
-    )
-    try:
-        settings = json.loads(settings_path.read_text())
-    except (OSError, ValueError):
-        return "unknown", unreadable
-    # Present and valid JSON, but not an object (a list, a bare string/number,
-    # `null`...) -- `.get()` below would raise AttributeError, which `_safe`'s
-    # generic crash net would turn into status="fail". That's exactly the
-    # outcome an advisory must never produce, so this is checked explicitly
-    # rather than folded into the except clause above (which would silently
-    # also swallow bugs in this function itself, not just bad input).
-    if not isinstance(settings, dict):
-        return "unknown", unreadable
-    vz = bool(settings.get("UseVirtualizationFramework"))
-    rosetta = bool(settings.get("UseVirtualizationFrameworkRosetta"))
-    if vz and rosetta:
-        return "ok", "Rosetta is accelerating amd64 emulation"
-    return "warn", (
-        f"amd64 evaluation is running under QEMU, not Rosetta ({_ROSETTA_COST})"
-    )
 
 
 def _check_rosetta(
     *,
     severity: str,
     caps: tuple[str, ...],
-    rosetta: Callable[[], tuple[str, str]],
+    rosetta: Callable[[], tuple[str, str, str | None]],
 ) -> CheckResult:
-    state, detail = rosetta()
-    # CheckResult.status admits only ok/warn/fail. "unknown" means the advisory
-    # does not apply or could not be determined, which must not read as a
-    # problem -- so it surfaces as "ok" and the detail carries the nuance.
+    """The amd64-emulation advisory (``setup.macos.emulation`` per runtime).
+    ``rosetta`` returns ``(state, detail, fix)``; ``state`` is "ok", "warn" or
+    "unknown". ``CheckResult.status`` admits only ok/warn/fail, and "unknown"
+    must not read as a problem, so it surfaces as "ok" with the nuance in the
+    detail. Never "fail" (spec I9)."""
+    state, detail, fix = rosetta()
     status = "warn" if state == "warn" else "ok"
-    fix = None
-    if state == "warn":
-        fix = (
-            "Docker Desktop > Settings > General: choose Apple Virtualization "
-            "framework, then tick 'Use Rosetta for x86_64/amd64 emulation'"
-        )
-    return CheckResult(
-        id="rosetta",
-        status=status,
-        severity=severity,
-        detail=detail,
-        fix=fix,
-        capabilities=caps,
-    )
+    return CheckResult(id="rosetta", status=status, severity=severity, detail=detail,
+                       fix=fix if status == "warn" else None, capabilities=caps)
 
 
 def _safe(
@@ -465,9 +411,8 @@ def run_checks(
     hub_mode: Callable[[str], str | None] = _default_hub_mode,
     load_creds: Callable[[], Credentials | None] = _default_load_creds,
     gh_state: Callable[[], tuple[str | None, str]] = _default_gh_state,
-    rosetta: Callable[[], tuple[str, str]] = lambda: rosetta_state(
-        platform.system(), platform.machine(), DOCKER_DESKTOP_SETTINGS
-    ),
+    rosetta: Callable[[], tuple[str, str, str | None]] | None = None,
+    host_facts: Callable[[], HostFacts] | None = None,
     only: Collection[str] | None = None,
 ) -> list[CheckResult]:
     """The 8 checks behind ``nethackers doctor`` (spec S5.6). NEVER raises,
@@ -500,9 +445,44 @@ def run_checks(
     assumes all 8 checks ran, so an un-run capability's tagged checks would
     simply be absent from ``results`` and ``capability_ready`` would read it
     as vacuously ready (INV6's fold has nothing to gate on).
+
+    ``host_facts`` (default: ``setup.host.detect_host``) is what the fix hints
+    and the Rosetta check read. It is probed at most once, and only when a
+    check needs it -- a failing check's fix, or the default Rosetta probe -- so
+    a healthy run and the TUI's ``only=`` callers pay nothing for it.
     """
     effective_hub = hub if hub is not None else load_stage().hub_url
     results: list[CheckResult] = []
+
+    facts_seen: list[HostFacts] = []
+
+    def _facts() -> HostFacts:
+        if not facts_seen:
+            facts_seen.append((host_facts or _host.detect_host)())
+        return facts_seen[0]
+
+    def _setup_hint() -> str | None:
+        return f"run `{SETUP_CMD}`" if _host.setup_supported(_facts().system) else None
+
+    def _runtime_fix(report: RuntimeReport) -> str | None:
+        facts = _facts()
+        plat = _host.platform_for(facts)
+        return _host.NOT_COVERED if plat is None else fix_text(plat.runtime_recipes(facts, report))
+
+    def _gh_install_fix() -> str | None:
+        facts = _facts()
+        plat = _host.platform_for(facts)
+        return None if plat is None else fix_text((plat.gh_install_recipe(facts),))
+
+    def _default_rosetta() -> tuple[str, str, str | None]:
+        facts = _facts()
+        plat = _host.platform_for(facts)
+        if plat is None:
+            return "unknown", "amd64 emulation isn't checked on this platform", None
+        state, detail, recipe = plat.emulation(facts)
+        return state, detail, (recipe.say if recipe is not None else None)
+
+    rosetta_probe = rosetta or _default_rosetta
 
     # The two image probes need the SAME container runtime the rest of the
     # machine uses, so a podman-only host doesn't report a pullable image as
@@ -529,7 +509,8 @@ def run_checks(
         severity, caps = CHECK_SPECS["container_runtime"]
         results.append(_safe("container_runtime", severity, caps,
                              lambda: _check_container_runtime(severity=severity, caps=caps,
-                                                              runtime_report=runtime_report)))
+                                                              runtime_report=runtime_report,
+                                                              runtime_fix=_runtime_fix)))
 
     if _wanted("arena_image"):
         severity, caps = CHECK_SPECS["arena_image"]
@@ -538,7 +519,8 @@ def run_checks(
                                                   resolve_image=resolve_image,
                                                   image_present=image_present,
                                                   manifest_reachable=manifest_reachable,
-                                                  repo_root=repo_root)))
+                                                  repo_root=repo_root,
+                                                  setup_hint=_setup_hint)))
 
     # `mutator_present` feeds `operator`'s fix text below -- default to the
     # safe "absent" assumption when `mutator_image` itself was filtered out of
@@ -551,7 +533,8 @@ def run_checks(
                                                     resolve_image=resolve_image,
                                                     image_present=image_present,
                                                     manifest_reachable=manifest_reachable,
-                                                    repo_root=repo_root))
+                                                    repo_root=repo_root,
+                                                    setup_hint=_setup_hint))
         results.append(mutator_result)
         mutator_present = mutator_result.status == "ok"
 
@@ -565,12 +548,15 @@ def run_checks(
         severity, caps = CHECK_SPECS["hub_login"]
         results.append(_safe("hub_login", severity, caps,
                              lambda: _check_hub_login(severity=severity, caps=caps,
-                                                      load_creds=load_creds)))
+                                                      load_creds=load_creds,
+                                                      setup_hint=_setup_hint)))
 
     if _wanted("gh"):
         severity, caps = CHECK_SPECS["gh"]
         results.append(_safe("gh", severity, caps,
-                             lambda: _check_gh(severity=severity, caps=caps, gh_state=gh_state)))
+                             lambda: _check_gh(severity=severity, caps=caps, gh_state=gh_state,
+                                               setup_hint=_setup_hint,
+                                               install_fix=_gh_install_fix)))
 
     if _wanted("operator"):
         severity, caps = CHECK_SPECS["operator"]
@@ -581,13 +567,14 @@ def run_checks(
                              lambda: _check_operator(ops, severity=severity, caps=caps,
                                                      mutator_present=mutator_present,
                                                      preflight_operator=preflight_operator,
-                                                     opencode2_keyed=opencode2_keyed)))
+                                                     opencode2_keyed=opencode2_keyed,
+                                                     setup_hint=_setup_hint)))
 
     if _wanted("rosetta"):
         severity, caps = CHECK_SPECS["rosetta"]
         results.append(_safe("rosetta", severity, caps,
                              lambda: _check_rosetta(severity=severity, caps=caps,
-                                                    rosetta=rosetta)))
+                                                    rosetta=rosetta_probe)))
     return results
 
 

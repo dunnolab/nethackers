@@ -27,9 +27,9 @@ reachable from a checkout (the mutator's content-fingerprint tag) is built via
 ``make`` -- never the reverse (INV11: a digest ref can't be `-t`-tagged by a
 build, so it is only ever pulled).
 
-Kept a leaf module (stdlib + containers + auth_inject + pull_events only, all
-themselves leaves too) so both ``cli`` and the Textual form can import it
-without a cycle.
+Kept a leaf module (stdlib + containers + auth_inject + pull_events + setup.host
+only, all themselves leaves too) so both ``cli`` and the Textual form can import
+it without a cycle.
 """
 from __future__ import annotations
 
@@ -47,18 +47,7 @@ from nethackers import _image_pins, image_inputs
 from nethackers.containers import container_runtime
 from nethackers.harness.auth_inject import AuthUnavailable, auth_docker_args
 from nethackers.harness.pull_events import PullEvent, PullParseState, parse_pull_line
-
-
-def sandbox_hint() -> str:
-    """How to bring a container runtime up, per-OS. macOS has no native Docker
-    daemon (Docker Desktop is out per the mutator-sandbox spec) -- its fix is a
-    VM, not just "start Docker"."""
-    if platform.system() == "Darwin":
-        return (
-            "start one, e.g. `colima start --cpu 6 --memory 12 --vm-type vz "
-            "--mount-type virtiofs` (or Podman)"
-        )
-    return "start Docker or Podman"
+from nethackers.setup.host import setup_supported
 
 
 def docker_available(*, run=subprocess.run) -> bool:
@@ -502,19 +491,20 @@ def ensure_image(ref: str, kind: str, *, runtime: str = "docker", on_line=None,
             event.set()
 
 
-def preflight_runtime(*, run=subprocess.run) -> str | None:
+def preflight_runtime(*, run=subprocess.run, scope: str | None = None) -> str | None:
     """``None`` if a working container runtime is available; else the styled
-    "no container runtime" message. The half of the old combined ``preflight``
-    every sandboxed command needs -- ``eval``/``submit``/``evolve`` all score
-    or mutate inside a container -- so this alone is the correct (and only)
-    preflight for a plain ``eval``/``submit`` (spec S5.5: arena has no
-    operator)."""
-    if not docker_available(run=run):
-        return (
-            f"[red]sandbox unavailable[/]: no working container runtime found "
-            f"— {sandbox_hint()}, then retry"
-        )
-    return None
+    "no container runtime" message, ending in the one command that brings one
+    up (``nethackers setup``, narrowed with ``--for <scope>`` when the caller
+    knows what it needs). The half of the old combined ``preflight`` every
+    sandboxed command needs -- ``eval``/``submit``/``evolve`` all score or
+    mutate inside a container (spec S5.5: arena has no operator)."""
+    if docker_available(run=run):
+        return None
+    if setup_supported(platform.system()):
+        todo = f"run `nethackers setup{f' --for {scope}' if scope else ''}` to set one up"
+    else:
+        todo = "start Docker or Podman"
+    return f"[red]sandbox unavailable[/]: no working container runtime found — {todo}, then retry"
 
 
 def preflight_operator(operator: str, *, system: str | None = None,

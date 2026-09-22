@@ -669,7 +669,7 @@ def _arena_preflight(image: str, *, runtime: str | None) -> str | None:
     ``ensure_image`` so the pull uses the same binary the gate accepted.
     ``preflight_runtime`` stays the gate (and the source of the styled "no
     runtime" message), so a ``None`` runtime is caught there, not here."""
-    rt_err = preflight_runtime()
+    rt_err = preflight_runtime(scope="eval")
     if rt_err is not None:
         return rt_err
     return ensure_image(image, "arena", runtime=runtime or "docker",

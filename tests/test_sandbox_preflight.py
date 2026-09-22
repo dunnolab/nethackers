@@ -65,8 +65,8 @@ def test_preflight_message_when_docker_down(monkeypatch):
     assert msg is not None
     low = msg.lower()
     assert "sandbox unavailable" in low
-    # carries the bring-up hint (colima on mac / docker|podman elsewhere)
-    assert "colima" in low or "podman" in low or "docker" in low
+    # points at the one command that brings a runtime up
+    assert "nethackers setup" in low
 
 
 def test_preflight_message_when_auth_unavailable(monkeypatch):
