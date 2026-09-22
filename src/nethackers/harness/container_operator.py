@@ -446,6 +446,7 @@ class ContainerOperator:
         else:
             rewrite = self._broker_credential(
                 self.harness, system=self.system, home=self.home, run=self._run,
+                environ=os.environ,
             )
             proc = self._cred_broker_factory(
                 _broker_upstream_base(self.harness), rewrite,

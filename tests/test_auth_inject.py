@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 from pathlib import Path
 
@@ -251,8 +252,10 @@ def test_broker_credential_claude_linux_reads_credentials_json(tmp_path):
     (creds_dir / ".credentials.json").write_text(
         json.dumps({"claudeAiOauth": {"accessToken": "tok-linux"}})
     )
-    rw = broker_credential("claude", system="Linux", home=tmp_path)
+    rw = broker_credential("claude", system="Linux", home=tmp_path, environ={})
     assert rw.inject == (("Authorization", "Bearer tok-linux"),)
+    assert rw.strip == ("x-api-key",)
+    assert rw.merge_csv == (("anthropic-beta", ("oauth-2025-04-20",)),)
 
 
 def test_broker_credential_claude_macos_reads_keychain():
@@ -266,9 +269,11 @@ def test_broker_credential_claude_macos_reads_keychain():
         return R()
 
     rw = broker_credential(
-        "claude", system="Darwin", home=Path("/h"), run=fake_run,
+        "claude", system="Darwin", home=Path("/h"), run=fake_run, environ={},
     )
     assert rw.inject == (("Authorization", "Bearer tok-mac"),)
+    assert rw.strip == ("x-api-key",)
+    assert rw.merge_csv == (("anthropic-beta", ("oauth-2025-04-20",)),)
 
 
 def test_broker_credential_claude_linux_missing_creds_raises(tmp_path):
@@ -286,6 +291,45 @@ def test_broker_credential_claude_macos_keychain_miss_raises():
 
     with pytest.raises(AuthUnavailable):
         broker_credential("claude", system="Darwin", home=Path("/h"), run=fake_run)
+
+
+def test_broker_credential_claude_setup_token_env_wins(tmp_path):
+    # A durable setup-token via env short-circuits before any keychain/file
+    # read -- no .credentials.json exists under tmp_path, so a successful
+    # return here already proves the env path was taken.
+    rw = broker_credential(
+        "claude", system="Linux", home=tmp_path,
+        environ={"NETHACKERS_CLAUDE_SETUP_TOKEN": "ENVTOK"},
+    )
+    assert rw.inject == (("Authorization", "Bearer ENVTOK"),)
+    assert rw.strip == ("x-api-key",)
+    assert rw.merge_csv == (("anthropic-beta", ("oauth-2025-04-20",)),)
+
+
+def test_broker_credential_claude_setup_token_file_used_when_env_unset(tmp_path):
+    token_dir = tmp_path / ".nethackers" / "claude"
+    token_dir.mkdir(parents=True)
+    (token_dir / "setup-token").write_text("FILETOK\n")
+    rw = broker_credential("claude", system="Linux", home=tmp_path, environ={})
+    assert rw.inject == (("Authorization", "Bearer FILETOK"),)
+    assert rw.strip == ("x-api-key",)
+    assert rw.merge_csv == (("anthropic-beta", ("oauth-2025-04-20",)),)
+
+
+def test_broker_credential_claude_falls_back_to_login_token_and_warns(tmp_path, caplog):
+    # No setup-token anywhere (env unset, no ~/.nethackers/claude/setup-token)
+    # -- falls back to the ~8h login token and must warn, per INV B4 (the
+    # fallback is used as-is, never auto-refreshed).
+    creds_dir = tmp_path / ".claude"
+    creds_dir.mkdir()
+    (creds_dir / ".credentials.json").write_text(
+        json.dumps({"claudeAiOauth": {"accessToken": "tok-login-fallback"}})
+    )
+    with caplog.at_level(logging.WARNING, logger="nethackers.harness.auth_inject"):
+        rw = broker_credential("claude", system="Linux", home=tmp_path, environ={})
+    assert rw.inject == (("Authorization", "Bearer tok-login-fallback"),)
+    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("setup-token" in msg for msg in warnings)
 
 
 def test_broker_credential_codex_prefers_stable_api_key(tmp_path):

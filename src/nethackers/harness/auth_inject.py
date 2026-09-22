@@ -52,8 +52,17 @@ token as ``Authorization: Bearer`` (not ``x-api-key``), paired with an
 itself. So the broker path runs the caged CLI in OAuth mode
 (``CLAUDE_CODE_OAUTH_TOKEN`` placeholder, not ``ANTHROPIC_API_KEY``): it sends
 ``Bearer <placeholder>`` plus those beta headers, and ``CredBroker`` replaces
-only the ``Authorization`` value with the real Bearer, forwarding the beta and
-version headers unchanged. Confirmed end-to-end against api.anthropic.com.
+the ``Authorization`` value with the real Bearer, strips any inbound
+``x-api-key`` (so a smuggled key can't shadow the injected Bearer), and merges
+``oauth-2025-04-20`` into ``anthropic-beta`` rather than trusting the CLI to
+emit it (version-dependent) -- forwarding the rest of the beta and version
+headers unchanged. Confirmed end-to-end against api.anthropic.com. The real
+Bearer itself prefers a durable ``setup-token`` (§3.3: a 1-year subscription
+OAuth token, read from ``NETHACKERS_CLAUDE_SETUP_TOKEN`` or
+``~/.nethackers/claude/setup-token`` -- never ``~/.claude``, whose single-use
+refresh must not be touched), falling back to the ~8h keychain/
+``.credentials.json`` login token with a logged warning when no setup-token
+was provisioned.
 
 One live-verification concern remains (PARKED, not a correctness claim here):
 
@@ -94,6 +103,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import logging
 import os
 import re
 import subprocess
@@ -103,6 +113,8 @@ from pathlib import Path
 from urllib.parse import urlsplit
 
 from nethackers.harness.cred_broker import HeaderRewrite
+
+log = logging.getLogger(__name__)
 
 _CLAUDE_LOGIN_HINT = "run `claude` on this host to log in, then retry"
 
@@ -202,6 +214,7 @@ def auth_broker_args(harness: str, *, broker_base: str) -> list[str]:
 
 def broker_credential(
     harness: str, *, system: str, home: Path, run=subprocess.run,
+    environ: Mapping[str, str] | None = None,
 ) -> HeaderRewrite:
     """A ``HeaderRewrite`` for ``cred_broker.CredBroker`` to apply for
     ``harness`` -- the real credential ``auth_broker_args``'s placeholder
@@ -213,13 +226,32 @@ def broker_credential(
     replaces with the real value. See the module docstring's Broker section
     for the Codex token-staleness caveat. Raises ``AuthUnavailable`` on the
     exact same "no login here" conditions ``auth_docker_args`` does.
+
+    Claude additionally strips an inbound ``x-api-key`` and merges
+    ``oauth-2025-04-20`` into ``anthropic-beta`` (see the module docstring's
+    "Claude broker auth is verified live" section), and prefers a durable
+    ``setup-token`` over the ~8h login token when one is provisioned --
+    ``environ`` (default ``os.environ``) is where ``NETHACKERS_CLAUDE_SETUP_TOKEN``
+    is looked up.
     """
+    env = os.environ if environ is None else environ
     if harness == "claude":
         # Claude Code sends its OAuth token as a Bearer, not x-api-key, so the
         # broker replaces the Authorization header the caged CLI sends (a
         # placeholder Bearer) with the real one. Verified live.
-        token = _claude_macos_token(run) if system == "Darwin" else _claude_linux_token(home)
-        return HeaderRewrite(inject=(("Authorization", f"Bearer {token}"),))
+        token = _claude_setup_token(home, env)
+        if token is None:
+            token = _claude_macos_token(run) if system == "Darwin" else _claude_linux_token(home)
+            log.warning(
+                "claude broker: no setup-token (NETHACKERS_CLAUDE_SETUP_TOKEN or "
+                "~/.nethackers/claude/setup-token); using the ~8h login token, which may 401 "
+                "on long runs -- run `claude setup-token` for a durable credential"
+            )
+        return HeaderRewrite(
+            inject=(("Authorization", f"Bearer {token}"),),
+            strip=("x-api-key",),
+            merge_csv=(("anthropic-beta", ("oauth-2025-04-20",)),),
+        )
 
     if harness == "codex":
         return HeaderRewrite(inject=(("Authorization", f"Bearer {_codex_token(home)}"),))
@@ -584,6 +616,22 @@ def _strip_jsonc(text: str) -> str:
         out.append(ch)
         i += 1
     return "".join(out)
+
+
+def _claude_setup_token(home: Path, environ: Mapping[str, str]) -> str | None:
+    """A durable Claude Code `setup-token` (1-year OAuth), if the operator provisioned one:
+    the `NETHACKERS_CLAUDE_SETUP_TOKEN` env var wins, else `~/.nethackers/claude/setup-token`.
+    Never `~/.claude` (that is the interactive login, whose single-use refresh must not be
+    touched -- INV B4)."""
+    env_tok = environ.get("NETHACKERS_CLAUDE_SETUP_TOKEN")
+    if env_tok:
+        return env_tok
+    path = home / ".nethackers" / "claude" / "setup-token"
+    try:
+        tok = path.read_text().strip()
+    except OSError:
+        return None
+    return tok or None
 
 
 def _claude_macos_token(run) -> str:
