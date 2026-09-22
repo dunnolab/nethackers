@@ -789,3 +789,58 @@ def test_iter_label_no_gain_and_not_run_after_a_stop():
     run.finish()
     label, disabled = story.iter_label(run, 3)
     assert plain(label) == "·  iter 3   not run" and disabled is True
+
+
+# ---- fix round 3 (task-6-findings-r3.md) -----------------------------------------
+
+def test_an_error_after_partial_dev_games_never_reads_as_a_win():
+    """Ruling 13: round 2's iteration_evals fallback covers every
+    results-less k, not only an undecided one -- a decided "error:" that
+    streamed 12/45 dev games before the loop's outer except fired (e.g.
+    evaluate() raising mid-batch) must never show a clickable score or
+    "▲ new best" in this_cell (it was never registered/kept), and Logs must
+    show the real partial count honestly instead of dropping it."""
+    clock = Clock()
+    run = _through_setup(clock)
+    clock.t = 1600
+    run.apply_state(_state("gating", 1, cells=CELLS, cell=IDS[1]))
+    clock.t = 1650
+    run.apply_state(_state("evaluating-dev", 1, cells=CELLS, cell=IDS[1]))
+    for i in range(12):
+        _ep(run, "iter 1/5 · dev", i, 45, IDS[i % 3], 0.30)
+    clock.t = 1700
+    run.apply_state(_state("error", 1, cells=CELLS, detail="docker: daemon gone"))
+    run.apply_iteration(1, IterationResult(False, "error:docker: daemon gone"))
+    cell, clickable = story.this_cell(run, IDS[1], 1, 0.18)
+    assert plain(cell) == "— error" and clickable is False
+    assert plain(story.this_cell(run, None, 1, 0.3)[0]) == "— error"   # BEST OVERALL, too
+    view = story.section_view(run, 1, clock.t)
+    labels = [plain(r.label) for r in view.rows]
+    assert labels[2] == "playing the edited bot · 12/45 games · avg 0.30"
+    assert plain(view.rows[2].mark) == "✗"
+    assert labels[3] == "the iteration hit an error: docker: daemon gone"
+
+
+def test_an_error_after_a_completed_dev_batch_still_reads_as_an_error():
+    """Ruling 13's other half: an "error:" that fires only AFTER the dev
+    batch fully completed (e.g. tree_store.save or archive.insert raising)
+    shows the games as genuinely played in Logs -- a checkmark, since they
+    really are all there -- but the cell still says "— error", never a
+    score, since the program was still never registered."""
+    clock = Clock()
+    run = _through_setup(clock)
+    clock.t = 1600
+    run.apply_state(_state("gating", 1, cells=CELLS, cell=IDS[1]))
+    clock.t = 1650
+    run.apply_state(_state("evaluating-dev", 1, cells=CELLS, cell=IDS[1]))
+    for i in range(45):
+        _ep(run, "iter 1/5 · dev", i, 45, IDS[i % 3], 0.30)
+    clock.t = 1700
+    run.apply_state(_state("error", 1, cells=CELLS, detail="hub write failed"))
+    run.apply_iteration(1, IterationResult(False, "error:hub write failed"))
+    assert plain(story.this_cell(run, IDS[1], 1, 0.18)[0]) == "— error"
+    view = story.section_view(run, 1, clock.t)
+    labels = [plain(r.label) for r in view.rows]
+    assert labels[2] == "played the edited bot · 45 games · avg 0.30"
+    assert plain(view.rows[2].mark) == "✓"
+    assert labels[3] == "the iteration hit an error: hub write failed"

@@ -570,14 +570,21 @@ class Run:
                     src.setdefault(c, []).append(r)
             return {i: EvalView(i, total, [_seed_row(r) for r in src.get(i, [])])
                     for i in idents}
-        # No decided results to read (undecided, or decided without an eval --
-        # a gate/error reject never played, so its own dev batch is empty
-        # anyway): read iteration k's OWN dev batch directly, by its stream
-        # label -- never `current_batch()` (which is whatever batch is MOST
-        # RECENT, so it can be k's smoke batch before its first dev game, or
-        # the WRONG iteration's batch once a live run has moved past k) and
-        # never gated on `running` (a crashed-mid-eval iteration still has a
-        # real, already-streamed dev batch to show, not an empty table).
+        # No decided results to read (undecided, or decided without an eval).
+        # A gate reject genuinely never played (the smoke test itself is what
+        # failed) -- its own dev batch is empty. An "error:" reject is NOT
+        # the same: the loop's outer except also covers failures AFTER the
+        # dev eval (saving the tree, reading the manifest, archive.insert,
+        # _remember), so it can have played real games. Either way, read
+        # iteration k's OWN dev batch directly, by its stream label -- never
+        # `current_batch()` (which is whatever batch is MOST RECENT, so it
+        # can be k's smoke batch before its first dev game, or the WRONG
+        # iteration's batch once a live run has moved past k) -- and never
+        # gated on `running` (a crashed-mid-eval iteration still has a real,
+        # already-streamed dev batch), so a click-through (open_run) shows
+        # what actually happened. tui/story.py's this_cell still hides an
+        # "error:" iteration's score behind "— error" regardless of how many
+        # games this returns (Ruling 13): it was never registered/kept.
         dev = self.batch_for(self.dev_label(k))
         live2: dict[str, list[dict]] = {}
         if dev is not None:

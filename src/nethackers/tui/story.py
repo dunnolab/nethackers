@@ -399,16 +399,32 @@ def _smoke_rows(run: Run, k: int, now: float, rows: list[StepRow], reason: str) 
 
 def _play_row(run: Run, k: int, now: float, rows: list[StepRow]) -> None:
     if run.reopened:
-        return   # §6.8: no play row for a run rebuilt from disk
+        return   # §6.8: no play row for a run rebuilt from disk (no batches either)
     t = run.iter_times.get(k)
     smoke_end = t.smoke_end if t else None
     play_end = t.play_end if t else None
     res = run.iter_results.get(k)
-    if res is not None and (res.reason or "").startswith("error:") and res.results is None:
-        return   # the iteration broke before any games were played
     batch = run.batch_for(run.dev_label(k))
     total = batch.total if batch is not None and batch.total else run.games_total()
     played = len(batch.rows()) if batch is not None else 0
+    if res is not None and (res.reason or "").startswith("error:"):
+        # The loop's outer except can fire AFTER the dev eval too (saving the
+        # tree, reading the manifest, archive.insert, _remember) -- an
+        # "error:" iteration can have played real games. Show them honestly
+        # (Ruling 13) instead of dropping them: done if the batch actually
+        # completed, still a checkmark's opposite if it was cut short; if it
+        # never played at all, there is nothing to show.
+        if played == 0:
+            return
+        if played >= total:
+            rows.append(StepRow(
+                DONE_MARK, f"played the edited bot · {total} games{_avg_txt(_avg(batch))}",
+                _dur(smoke_end, play_end)))
+        else:
+            rows.append(StepRow(
+                FAIL_MARK,
+                f"playing the edited bot · [b]{played}/{total}[/] games{_avg_txt(_avg(batch))}"))
+        return
     if res is None and smoke_end is None:
         rows.append(StepRow(PEND_MARK, f"[{S._DIM}]play the edited bot · {total} games "
                                        f"({run.games_per_identity()} per identity)[/]"))
@@ -671,6 +687,14 @@ def this_cell(run: Run, ident: str | None, k: int, best: float | None) -> tuple[
         return f"[{S._HP}]—[/] [{dim}]failed smoke test[/]", False
     if reason.startswith("operator-error:"):
         return f"[{S._HP}]—[/] [{dim}]agent failed[/]", False
+    if reason.startswith("error:"):
+        # Ruling 13: checked BEFORE reading any games. Run.iteration_evals'
+        # dev-batch fallback covers every results-less k, not only an
+        # undecided one -- an "error:" iteration can have played real games
+        # (the loop's outer except also fires after the dev eval), but it
+        # was never registered/kept either way, so it never reads as a
+        # clickable score or a win here regardless of how many it played.
+        return f"[{S._HP}]—[/] [{dim}]error[/]", False
     if res is None:
         if t is None or t.edit_start is None:
             return f"[{dim}]—[/]", False
@@ -688,8 +712,6 @@ def this_cell(run: Run, ident: str | None, k: int, best: float | None) -> tuple[
     rows = [row for view in views for row in view.rows]
     total = sum(view.total for view in views)
     if not rows:
-        if reason.startswith("error:"):
-            return f"[{S._HP}]—[/] [{dim}]error[/]", False
         return f"[{dim}]0/{total} games[/]", False
     avg = mean(float(row["progress"]) for row in rows)
     win = best is not None and avg > best
