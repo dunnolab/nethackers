@@ -67,15 +67,20 @@ PODMAN_FIX = Recipe(
     say=("fix Podman (its error is shown above); rootless Podman needs subuid/subgid "
          f"ranges: {_PODMAN_ROOTLESS}"),
     support=Untested(_PODMAN_ROOTLESS))
+# A distro's package can lag behind or be missing (older Debian and Ubuntu);
+# gh's own page covers the rest, so every line carries it.
 GH_APT = Recipe(
     id="linux.gh.apt", does="install the GitHub CLI", who="you",
-    say="install the GitHub CLI: `sudo apt install gh`", support=Untested(_GH_LINUX))
+    say=f"install the GitHub CLI: `sudo apt install gh` (or see {_GH_LINUX})",
+    support=Untested(_GH_LINUX))
 GH_DNF = Recipe(
     id="linux.gh.dnf", does="install the GitHub CLI", who="you",
-    say="install the GitHub CLI: `sudo dnf install gh`", support=Untested(_GH_LINUX))
+    say=f"install the GitHub CLI: `sudo dnf install gh` (or see {_GH_LINUX})",
+    support=Untested(_GH_LINUX))
 GH_PACMAN = Recipe(
     id="linux.gh.pacman", does="install the GitHub CLI", who="you",
-    say="install the GitHub CLI: `sudo pacman -S github-cli`", support=Untested(_GH_LINUX))
+    say=f"install the GitHub CLI: `sudo pacman -S github-cli` (or see {_GH_LINUX})",
+    support=Untested(_GH_LINUX))
 GH_OTHER = Recipe(
     id="linux.gh.other", does="install the GitHub CLI", who="you",
     say=f"install the GitHub CLI: {_GH_LINUX}", support=NotCovered(_GH_LINUX))

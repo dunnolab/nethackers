@@ -23,8 +23,8 @@ It runs `nethackers doctor`'s checks, then shows a plan:
 
 Anything that needs `sudo`, a GUI click, or logging out and back in is printed
 for you — on Linux that's the container runtime and `gh`. nethackers never runs
-`sudo` (a test enforces it). Running `nethackers setup` again is always safe: it
-re-checks and plans only what's still missing.
+`sudo` (a test checks every command it runs). Running `nethackers setup` again
+is always safe: it re-checks and plans only what's still missing.
 
 ## Options
 
@@ -79,9 +79,9 @@ recipe becomes tested only in a PR that records where it ran.
 | `linux.docker.start` | start Docker | you | start Docker: `sudo systemctl enable --now docker` | untested ([built from](https://docs.docker.com/engine/install/linux-postinstall/)) |
 | `linux.docker.group` | let your user reach Docker | you | let your user reach Docker: `sudo usermod -aG docker $USER`, then log out and back in (or run `newgrp docker` in this shell) | untested ([built from](https://docs.docker.com/engine/install/linux-postinstall/)) |
 | `linux.podman.fix` | fix Podman | you | fix Podman (its error is shown above); rootless Podman needs subuid/subgid ranges: https://github.com/containers/podman/blob/main/docs/tutorials/rootless_tutorial.md | untested ([built from](https://github.com/containers/podman/blob/main/docs/tutorials/rootless_tutorial.md)) |
-| `linux.gh.apt` | install the GitHub CLI | you | install the GitHub CLI: `sudo apt install gh` | untested ([built from](https://github.com/cli/cli/blob/trunk/docs/install_linux.md)) |
-| `linux.gh.dnf` | install the GitHub CLI | you | install the GitHub CLI: `sudo dnf install gh` | untested ([built from](https://github.com/cli/cli/blob/trunk/docs/install_linux.md)) |
-| `linux.gh.pacman` | install the GitHub CLI | you | install the GitHub CLI: `sudo pacman -S github-cli` | untested ([built from](https://github.com/cli/cli/blob/trunk/docs/install_linux.md)) |
+| `linux.gh.apt` | install the GitHub CLI | you | install the GitHub CLI: `sudo apt install gh` (or see https://github.com/cli/cli/blob/trunk/docs/install_linux.md) | untested ([built from](https://github.com/cli/cli/blob/trunk/docs/install_linux.md)) |
+| `linux.gh.dnf` | install the GitHub CLI | you | install the GitHub CLI: `sudo dnf install gh` (or see https://github.com/cli/cli/blob/trunk/docs/install_linux.md) | untested ([built from](https://github.com/cli/cli/blob/trunk/docs/install_linux.md)) |
+| `linux.gh.pacman` | install the GitHub CLI | you | install the GitHub CLI: `sudo pacman -S github-cli` (or see https://github.com/cli/cli/blob/trunk/docs/install_linux.md) | untested ([built from](https://github.com/cli/cli/blob/trunk/docs/install_linux.md)) |
 | `linux.gh.other` | install the GitHub CLI | you | install the GitHub CLI: https://github.com/cli/cli/blob/trunk/docs/install_linux.md | not covered ([vendor page](https://github.com/cli/cli/blob/trunk/docs/install_linux.md)) |
 | `linux.claude.install` | install Claude Code | nethackers | `curl -fsSL https://claude.ai/install.sh \| bash` | untested ([built from](https://code.claude.com/docs/en/setup)) |
 | `linux.codex.install` | install Codex | nethackers | `curl -fsSL https://chatgpt.com/codex/install.sh \| sh` | untested ([built from](https://github.com/openai/codex)) |

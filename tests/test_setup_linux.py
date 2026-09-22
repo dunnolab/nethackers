@@ -65,7 +65,9 @@ def test_the_docker_script_line_also_says_to_join_the_docker_group():
     ("arch", "sudo pacman -S github-cli"),
 ])
 def test_gh_install_by_family(distro, command):
-    assert command in linux.gh_install_recipe(lin(distro=distro)).say
+    say = linux.gh_install_recipe(lin(distro=distro)).say
+    # Distro packages can lag or be missing; gh's own page has the rest.
+    assert command in say and "https://github.com/cli/cli/blob/trunk/docs/install_linux.md" in say
 
 
 def test_other_distros_are_not_covered():

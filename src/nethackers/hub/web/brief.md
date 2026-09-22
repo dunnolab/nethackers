@@ -59,8 +59,9 @@ the dashboard.
 **Coding agents:** run `nethackers setup` first. Without a terminal it changes
 nothing and prints its plan. Summarize the plan for the user and ask one
 yes/no question; don't ask them to install things themselves. On yes, run
-`nethackers setup --yes --operator <claude|codex|opencode2>`, then run each
-login it lists and pass the user the code or link it prints.
+`nethackers setup --yes --operator <claude|codex|opencode2>` with a long
+timeout (a first run downloads about 1 GB and can take several minutes), then
+run each login it lists and pass the user the code or link it prints.
 
 ```bash
 nethackers eval ./my-bot --objective val-dwa-law-fem

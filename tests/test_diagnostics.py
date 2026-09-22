@@ -512,7 +512,8 @@ def test_gh_missing_on_linux_prints_the_distro_install_line():
     results = run_checks(**_healthy_kwargs(gh_state=lambda: (None, "missing"),
                                            host_facts=lambda: _UBUNTU))
     gh = next(r for r in results if r.id == "gh")
-    assert gh.fix == "install the GitHub CLI: `sudo apt install gh`; then run `nethackers setup`"
+    assert gh.fix == ("install the GitHub CLI: `sudo apt install gh` (or see "
+                      "https://github.com/cli/cli/blob/trunk/docs/install_linux.md); then run `nethackers setup`")
 
 
 def test_without_setup_support_gh_fixes_keep_the_direct_commands():

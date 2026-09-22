@@ -74,7 +74,8 @@ def test_linux_gh_missing_is_printed_and_its_login_waits_for_the_next_run():
     plan = build_plan(sit(facts=UBUNTU, checks=checks(gh="fail"), gh_state="missing",
                           gh_login=None), linux)
     assert ids(plan) == []
-    assert plan.yours[0].say == "install the GitHub CLI: `sudo apt install gh`"
+    assert plan.yours[0].say == ("install the GitHub CLI: `sudo apt install gh` (or see "
+                                 "https://github.com/cli/cli/blob/trunk/docs/install_linux.md)")
 
 
 def test_gh_installed_but_logged_out_gets_only_the_login_and_the_account_check():
