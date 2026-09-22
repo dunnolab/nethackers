@@ -278,7 +278,7 @@ def test_broker_credential_claude_macos_reads_keychain():
 
 def test_broker_credential_claude_linux_missing_creds_raises(tmp_path):
     with pytest.raises(AuthUnavailable):
-        broker_credential("claude", system="Linux", home=tmp_path)
+        broker_credential("claude", system="Linux", home=tmp_path, environ={})
 
 
 def test_broker_credential_claude_macos_keychain_miss_raises():
@@ -290,7 +290,7 @@ def test_broker_credential_claude_macos_keychain_miss_raises():
         return R()
 
     with pytest.raises(AuthUnavailable):
-        broker_credential("claude", system="Darwin", home=Path("/h"), run=fake_run)
+        broker_credential("claude", system="Darwin", home=Path("/h"), run=fake_run, environ={})
 
 
 def test_broker_credential_claude_setup_token_env_wins(tmp_path):
