@@ -63,10 +63,13 @@ emit it (version-dependent) -- forwarding the rest of the beta and version
 headers unchanged. Confirmed end-to-end against api.anthropic.com. The real
 Bearer itself prefers a durable ``setup-token`` (§3.3: a 1-year subscription
 OAuth token, read from ``NETHACKERS_CLAUDE_SETUP_TOKEN`` or
-``~/.nethackers/claude/setup-token`` -- never ``~/.claude``, whose single-use
-refresh must not be touched), falling back to the ~8h keychain/
-``.credentials.json`` login token with a logged warning when no setup-token
-was provisioned.
+``~/.nethackers/claude/setup-token``); with no setup-token it uses the
+interactive ``~/.claude`` login and, like codex, REFRESHES that ~8h token
+host-side when it is near expiry -- writing the rotated single-use token back
+to the Keychain / ``.credentials.json`` (INV B4) -- so an end user logs into
+Claude once and the token is kept alive for them, no setup-token chore. The
+refresh endpoint (``platform.claude.com``) is Cloudflare-WAF'd, so a host it
+blocks (often headless Linux) still falls back to the setup-token.
 
 **Codex broker (chatgpt.com backend + `-c` unauthenticated provider).** A
 ChatGPT-subscription codex login (``~/.codex/auth.json`` is ``auth_mode:
@@ -170,6 +173,29 @@ _CODEX_TOKEN_ENDPOINT = "https://auth.openai.com/oauth/token"
 # it has less than this left before its JWT `exp`, rather than pinning one ~8h
 # snapshot for a container's whole (up to 8h) lifetime.
 _CODEX_REFRESH_MARGIN_S = 30 * 60
+
+# Claude Code's own public OAuth client id + Anthropic's refresh endpoint --
+# not a secret, pinned from Claude Code's subscription OAuth flow. The claude
+# twin of the codex pair above: the broker refreshes the interactive `claude`
+# login's ~8h subscription access token host-side (using the refresh token in
+# the login credential) and writes the rotated credential BACK, so an end user
+# logs into Claude once and never touches a token again -- no per-machine
+# `setup-token` chore (§3.3, INV B4). The setup-token stays the operator/fleet
+# path for headless boxes with no interactive login.
+# client_id: Claude Code's own public OAuth app id (unanimous across every
+# community reverse-engineering of the CLI; a refresh token is bound to the
+# client_id it was minted under, so this exact value is required). Endpoint:
+# Anthropic migrated its console from console.anthropic.com to
+# platform.claude.com (the old host 404s), and this endpoint is Cloudflare-
+# fronted + WAF'd -- like codex's chatgpt.com -- so a plain httpx POST can be
+# 403/429'd from some environments (notably headless Linux); the setup-token
+# stays the fallback there. Body is JSON; the response is OAuth snake_case
+# (access_token/refresh_token/expires_in seconds) which we map onto the local
+# camelCase storage (accessToken/refreshToken/expiresAt ms).
+CLAUDE_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+_CLAUDE_TOKEN_ENDPOINT = "https://platform.claude.com/v1/oauth/token"
+_CLAUDE_REFRESH_MARGIN_S = 30 * 60
+_CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials"
 
 
 class AuthUnavailable(Exception):
@@ -309,14 +335,20 @@ def broker_credential(
         # Claude Code sends its OAuth token as a Bearer, not x-api-key, so the
         # broker replaces the Authorization header the caged CLI sends (a
         # placeholder Bearer) with the real one. Verified live.
+        #
+        # A durable operator-provisioned setup-token wins when present (headless
+        # fleet boxes with no interactive login). Otherwise use the interactive
+        # `claude` login and, like codex, REFRESH it host-side when it is near
+        # its expiry -- writing the rotated credential back -- so an end user
+        # logs into Claude once and the ~8h token is kept alive for them, with
+        # no setup-token chore (§3.3, INV B4). See _claude_refresh.
         token = _claude_setup_token(home, env)
         if token is None:
-            token = _claude_macos_token(run) if system == "Darwin" else _claude_linux_token(home)
-            log.warning(
-                "claude broker: no setup-token (NETHACKERS_CLAUDE_SETUP_TOKEN or "
-                "~/.nethackers/claude/setup-token); using the ~8h login token, which may 401 "
-                "on long runs -- run `claude setup-token` for a durable credential"
-            )
+            oauth = _claude_login_doc(home, system=system, run=run)["claudeAiOauth"]
+            if _claude_token_needs_refresh(oauth):
+                token = _claude_refresh(home, system=system, run=run)
+            else:
+                token = oauth["accessToken"]
         return HeaderRewrite(
             inject=(("Authorization", f"Bearer {token}"),),
             strip=("x-api-key",),
@@ -707,8 +739,10 @@ def _strip_jsonc(text: str) -> str:
 def _claude_setup_token(home: Path, environ: Mapping[str, str]) -> str | None:
     """A durable Claude Code `setup-token` (1-year OAuth), if the operator provisioned one:
     the `NETHACKERS_CLAUDE_SETUP_TOKEN` env var wins, else `~/.nethackers/claude/setup-token`.
-    Never `~/.claude` (that is the interactive login, whose single-use refresh must not be
-    touched -- INV B4)."""
+    A distinct, out-of-band credential -- NOT `~/.claude`, which is the interactive login the
+    broker's fallback path reads and refreshes on its own (rotating single-use token written
+    back -- INV B4). The setup-token is the durable path for headless boxes with no
+    interactive login (or where the WAF blocks the refresh)."""
     env_tok = environ.get("NETHACKERS_CLAUDE_SETUP_TOKEN")
     if env_tok:
         return env_tok
@@ -747,18 +781,189 @@ def _claude_macos_env(run) -> list[str]:
     return ["-e", f"CLAUDE_CODE_OAUTH_TOKEN={_claude_macos_token(run)}"]
 
 
-def _claude_linux_token(home: Path) -> str:
-    """Read the OAuth access token out of the same ``.credentials.json``
-    ``auth_docker_args`` mounts whole on Linux -- the broker path needs the
-    value itself, not a mount of the file."""
-    creds = home / ".claude" / ".credentials.json"
+def _claude_login_doc(home: Path, *, system: str, run=subprocess.run) -> dict:
+    """The full parsed interactive-`claude`-login credential doc -- the object
+    that wraps ``claudeAiOauth`` -- read from the Keychain item on macOS or
+    ``~/.claude/.credentials.json`` on Linux. The broker's refresh path reads
+    this (for the refresh token) and writes the whole doc BACK, preserving any
+    sibling keys. Guarantees ``doc['claudeAiOauth']`` is a dict; raises
+    ``AuthUnavailable`` on a missing / unreadable / malformed login."""
+    if system == "Darwin":
+        result = run(
+            ["security", "find-generic-password", "-s", _CLAUDE_KEYCHAIN_SERVICE, "-w"],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            raise AuthUnavailable("claude", _CLAUDE_LOGIN_HINT)
+        raw = result.stdout
+    else:
+        try:
+            raw = (home / ".claude" / ".credentials.json").read_text()
+        except OSError as exc:
+            raise AuthUnavailable("claude", _CLAUDE_LOGIN_HINT) from exc
     try:
-        token = json.loads(creds.read_text())["claudeAiOauth"]["accessToken"]
-    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        doc = json.loads(raw)
+        oauth = doc["claudeAiOauth"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
         raise AuthUnavailable("claude", _CLAUDE_LOGIN_HINT) from exc
-    if not token:
+    if not isinstance(doc, dict) or not isinstance(oauth, dict):
         raise AuthUnavailable("claude", _CLAUDE_LOGIN_HINT)
-    return token
+    return doc
+
+
+def _claude_token_needs_refresh(oauth: Mapping) -> bool:
+    """Whether the interactive-login ``claudeAiOauth`` credential should be
+    refreshed before the broker injects it -- the claude twin of
+    ``_codex_token_needs_refresh``. True when its ``accessToken`` is absent, or
+    its ``expiresAt`` (epoch ms) is within ``_CLAUDE_REFRESH_MARGIN_S`` of now.
+    A credential whose ``expiresAt`` can't be read is used AS-IS (False): a real
+    Claude Code login always carries one, so a missing/odd value is a legacy or
+    test shape we don't force-rotate (which could fail if there's also no
+    refresh token) -- unlike codex's JWT, where an unreadable exp means refresh.
+    """
+    access = oauth.get("accessToken")
+    if not (isinstance(access, str) and access):
+        return True
+    exp = oauth.get("expiresAt")
+    if not isinstance(exp, (int, float)) or isinstance(exp, bool):
+        return False
+    exp_s = exp / 1000 if exp > 1e12 else exp
+    return exp_s - time.time() < _CLAUDE_REFRESH_MARGIN_S
+
+
+def _claude_keychain_account(run) -> str:
+    """The macOS Keychain ``account`` attribute the refresh write-back
+    (``security add-generic-password -U -a``) must target, read from the
+    existing item so the update lands on it instead of creating a duplicate."""
+    result = run(
+        ["security", "find-generic-password", "-s", _CLAUDE_KEYCHAIN_SERVICE],
+        capture_output=True, text=True,
+    )
+    match = re.search(r'"acct"<blob>="((?:[^"\\]|\\.)*)"', getattr(result, "stdout", "") or "")
+    if not match:
+        raise AuthUnavailable("claude", _CLAUDE_LOGIN_HINT)
+    return match.group(1)
+
+
+def _claude_write_login_doc(home: Path, *, system: str, run, doc: dict) -> None:
+    """Persist the refreshed login doc back where it lives -- the Keychain item
+    on macOS, ``~/.claude/.credentials.json`` on Linux -- so the rotated
+    (single-use) refresh token isn't lost and Claude Code's own next refresh
+    reads the same rotated pair (INV B4). Raises ``AuthUnavailable`` on failure.
+    """
+    blob = json.dumps(doc)
+    if system == "Darwin":
+        # -w passes the blob on argv (visible to a host `ps`) -- host-local and
+        # OUTSIDE the broker's threat boundary (the untrusted container never
+        # sees host process args; the token already lives in this Keychain).
+        account = _claude_keychain_account(run)
+        result = run(
+            ["security", "add-generic-password", "-U",
+             "-a", account, "-s", _CLAUDE_KEYCHAIN_SERVICE, "-w", blob],
+            capture_output=True, text=True,
+        )
+        if getattr(result, "returncode", 1) != 0:
+            raise AuthUnavailable(
+                "claude",
+                "could not save the refreshed claude token to the Keychain -- run "
+                "`claude` to log in again, then retry",
+            )
+        return
+    # Linux: atomic, owner-only write-back (mirrors _codex_refresh's auth.json).
+    target = home / ".claude" / ".credentials.json"
+    tmp: str | None = None
+    try:
+        fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=".credentials.json.")
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(blob)
+        os.replace(tmp, target)
+    except OSError as exc:
+        if tmp is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+        raise AuthUnavailable(
+            "claude",
+            "could not save the refreshed claude token -- run `claude` to log in again, "
+            "then retry",
+        ) from exc
+
+
+def _claude_refresh(home: Path, *, system: str, run=subprocess.run, post=httpx.post) -> str:
+    """Refresh the interactive `claude` login's ~8h subscription access token
+    via its refresh token and WRITE THE ROTATED CREDENTIAL BACK (Keychain on
+    macOS, ``~/.claude/.credentials.json`` on Linux). The claude twin of
+    ``_codex_refresh``: the refresh token is single-use, so the new pair must be
+    persisted before this returns or the next refresh -- ours OR Claude Code's
+    own -- is locked out (INV B4). Returns the new access token. ``run``/``post``
+    are injectable for tests; raises ``AuthUnavailable`` on any failure, leaving
+    the stored credential unchanged (nothing is written unless the refresh
+    actually succeeded).
+
+    ``_CLAUDE_TOKEN_ENDPOINT`` is Cloudflare-WAF'd: a non-200 here is often a
+    transient reachability / bot-classification block (notably on headless
+    Linux), NOT a dead login -- the message says so, and the setup-token stays
+    the durable fallback for a host the WAF won't let refresh.
+    """
+    doc = _claude_login_doc(home, system=system, run=run)
+    oauth = doc["claudeAiOauth"]
+    refresh_token = oauth.get("refreshToken")
+    if not isinstance(refresh_token, str) or not refresh_token:
+        raise AuthUnavailable("claude", _CLAUDE_LOGIN_HINT)
+    try:
+        resp = post(
+            _CLAUDE_TOKEN_ENDPOINT,
+            json={
+                "grant_type": "refresh_token",
+                "client_id": CLAUDE_OAUTH_CLIENT_ID,
+                "refresh_token": refresh_token,
+            },
+            headers={"Accept": "application/json"},
+        )
+    except httpx.HTTPError as exc:
+        raise AuthUnavailable(
+            "claude",
+            "claude token refresh could not reach the OAuth endpoint -- check the "
+            "network, then retry",
+        ) from exc
+    if resp.status_code != 200:
+        raise AuthUnavailable(
+            "claude",
+            "claude token refresh failed -- if this host is behind a strict egress / WAF "
+            "(often headless Linux) provision a setup-token; otherwise run `claude` to "
+            "log in again, then retry",
+        )
+    try:
+        payload = resp.json()
+    except (ValueError, TypeError) as exc:
+        raise AuthUnavailable(
+            "claude",
+            "claude token refresh returned an unreadable response -- run `claude` to log "
+            "in again, then retry",
+        ) from exc
+    if not isinstance(payload, dict):
+        raise AuthUnavailable(
+            "claude",
+            "claude token refresh returned an unexpected response -- run `claude` to log "
+            "in again, then retry",
+        )
+    new_access = payload.get("access_token")
+    if not isinstance(new_access, str) or not new_access:
+        raise AuthUnavailable(
+            "claude",
+            "claude token refresh returned no access_token -- run `claude` to log in "
+            "again, then retry",
+        )
+    new_oauth = dict(oauth)
+    new_oauth["accessToken"] = new_access
+    new_oauth["refreshToken"] = payload.get("refresh_token") or refresh_token  # keep old if omitted
+    expires_in = payload.get("expires_in")
+    if isinstance(expires_in, (int, float)) and not isinstance(expires_in, bool):
+        new_oauth["expiresAt"] = int((time.time() + expires_in) * 1000)
+    new_doc = dict(doc)
+    new_doc["claudeAiOauth"] = new_oauth
+    _claude_write_login_doc(home, system=system, run=run, doc=new_doc)
+    return new_access
 
 
 def _codex_creds(home: Path) -> dict:

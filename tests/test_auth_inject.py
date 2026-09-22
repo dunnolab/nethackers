@@ -406,10 +406,11 @@ def test_broker_credential_claude_setup_token_file_used_when_env_unset(tmp_path)
     assert rw.merge_csv == (("anthropic-beta", ("oauth-2025-04-20",)),)
 
 
-def test_broker_credential_claude_falls_back_to_login_token_and_warns(tmp_path, caplog):
-    # No setup-token anywhere (env unset, no ~/.nethackers/claude/setup-token)
-    # -- falls back to the ~8h login token and must warn, per INV B4 (the
-    # fallback is used as-is, never auto-refreshed).
+def test_broker_credential_claude_login_no_expiresAt_used_as_is_without_nag(tmp_path, caplog):
+    # No setup-token, and a login credential with no readable expiresAt (a
+    # legacy/odd shape) -- used AS-IS, NOT force-refreshed, and NO setup-token
+    # nag: the ~8h-expiry chore is gone. A real login carries expiresAt and is
+    # auto-refreshed instead (test_broker_credential_claude_refreshes_near_expiry).
     creds_dir = tmp_path / ".claude"
     creds_dir.mkdir()
     (creds_dir / ".credentials.json").write_text(
@@ -418,8 +419,7 @@ def test_broker_credential_claude_falls_back_to_login_token_and_warns(tmp_path, 
     with caplog.at_level(logging.WARNING, logger="nethackers.harness.auth_inject"):
         rw = broker_credential("claude", system="Linux", home=tmp_path, environ={})
     assert rw.inject == (("Authorization", "Bearer tok-login-fallback"),)
-    warnings = [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
-    assert any("setup-token" in msg for msg in warnings)
+    assert not any("setup-token" in r.getMessage() for r in caplog.records)
 
 
 def _write_codex_chatgpt_login(home: Path, *, access_token, account_id="acct-123") -> None:
@@ -1055,3 +1055,211 @@ def test_codex_refresh_preserves_the_openai_api_key_field(tmp_path):
     reloaded = json.loads(path.read_text())
     assert "OPENAI_API_KEY" in reloaded
     assert reloaded["OPENAI_API_KEY"] == ""
+
+
+# --- Claude OAuth refresh (§3.3): the claude twin of the codex refresh above.
+# `_claude_login_doc` is the parsed interactive `claude` login (Keychain on
+# macOS, ~/.claude/.credentials.json on Linux). `_claude_token_needs_refresh`
+# gates on the stored `expiresAt`. `_claude_refresh` POSTs grant_type=refresh_token
+# to platform.claude.com and WRITES BACK the rotated single-use credential, so an
+# end user logs into Claude once and the ~8h token is kept alive for them. -------
+
+from nethackers.harness.auth_inject import (  # noqa: E402
+    CLAUDE_OAUTH_CLIENT_ID,
+    _claude_login_doc,
+    _claude_refresh,
+    _claude_token_needs_refresh,
+)
+
+_CLAUDE_TOKEN_URL = "https://platform.claude.com/v1/oauth/token"
+
+
+def _claude_oauth_doc(**oauth_overrides) -> dict:
+    oauth = {
+        "accessToken": "old-access",
+        "refreshToken": "old-refresh",
+        "expiresAt": int((time.time() + 8 * 3600) * 1000),  # 8h out -> fresh
+        "scopes": ["user:inference", "user:profile"],
+        "subscriptionType": "max",
+    }
+    oauth.update(oauth_overrides)
+    return {"claudeAiOauth": oauth}
+
+
+def _write_claude_linux(home: Path, doc: dict) -> Path:
+    claude_dir = home / ".claude"
+    claude_dir.mkdir(parents=True, exist_ok=True)
+    path = claude_dir / ".credentials.json"
+    path.write_text(json.dumps(doc))
+    return path
+
+
+def _fake_claude_post(status_code, payload=None, *, calls=None):
+    """A ``post(url, *, json, headers)``-shaped fake for httpx.post -- claude's
+    refresh sends a JSON body (unlike codex's form `data`). Records calls when
+    given a list, never touches the network."""
+
+    def post(url, *, json, headers):
+        if calls is not None:
+            calls.append({"url": url, "json": json, "headers": headers})
+        return _FakeTokenResponse(status_code, payload)
+
+    return post
+
+
+class _FakeKeychain:
+    """Stands in for macOS `security`: serves the stored credential JSON on a
+    `-w` read, an `"acct"` attribute line on a plain read, and records the
+    `add-generic-password -U` write-back so a test can assert what was persisted."""
+
+    def __init__(self, doc: dict, account: str = "testuser"):
+        self._doc = doc
+        self._account = account
+        self.written: dict | None = None
+
+    def run(self, cmd, **kw):
+        class R:
+            returncode = 0
+            stdout = ""
+
+        r = R()
+        if "add-generic-password" in cmd:  # the write-back (check before -w: it also has -w)
+            self.written = json.loads(cmd[cmd.index("-w") + 1])
+        elif "-w" in cmd:  # find-generic-password -w -> the credential blob
+            r.stdout = json.dumps(self._doc)
+        else:  # find-generic-password (attrs) -> the account line
+            r.stdout = (
+                f'    "acct"<blob>="{self._account}"\n'
+                '    "svce"<blob>="Claude Code-credentials"\n'
+            )
+        return r
+
+
+def test_claude_token_needs_refresh_true_when_near_expiry():
+    oauth = _claude_oauth_doc(expiresAt=int((time.time() + 60) * 1000))["claudeAiOauth"]
+    assert _claude_token_needs_refresh(oauth) is True
+
+
+def test_claude_token_needs_refresh_false_when_fresh():
+    assert _claude_token_needs_refresh(_claude_oauth_doc()["claudeAiOauth"]) is False
+
+
+def test_claude_token_needs_refresh_false_when_no_expiresAt():
+    # A real login always carries expiresAt; a missing one is used as-is (never
+    # force-rotated -- that could fail if there is also no refresh token).
+    assert _claude_token_needs_refresh({"accessToken": "x"}) is False
+
+
+def test_claude_token_needs_refresh_true_when_no_access_token():
+    assert _claude_token_needs_refresh({"expiresAt": int((time.time() + 8 * 3600) * 1000)}) is True
+
+
+def test_claude_login_doc_linux_reads_credentials_json(tmp_path):
+    _write_claude_linux(tmp_path, _claude_oauth_doc())
+    doc = _claude_login_doc(tmp_path, system="Linux")
+    assert doc["claudeAiOauth"]["accessToken"] == "old-access"
+
+
+def test_claude_login_doc_missing_raises(tmp_path):
+    with pytest.raises(AuthUnavailable):
+        _claude_login_doc(tmp_path, system="Linux")
+
+
+def test_claude_login_doc_macos_reads_keychain():
+    kc = _FakeKeychain(_claude_oauth_doc())
+    doc = _claude_login_doc(Path("/h"), system="Darwin", run=kc.run)
+    assert doc["claudeAiOauth"]["refreshToken"] == "old-refresh"
+
+
+def test_claude_refresh_linux_writes_back_and_returns_access(tmp_path):
+    path = _write_claude_linux(tmp_path, _claude_oauth_doc(expiresAt=1))
+    post = _fake_claude_post(
+        200, {"access_token": "new-acc", "refresh_token": "new-ref", "expires_in": 28800}
+    )
+    result = _claude_refresh(tmp_path, system="Linux", post=post)
+    assert result == "new-acc"
+    doc = json.loads(path.read_text())
+    assert doc["claudeAiOauth"]["accessToken"] == "new-acc"
+    assert doc["claudeAiOauth"]["refreshToken"] == "new-ref"
+    assert doc["claudeAiOauth"]["scopes"] == ["user:inference", "user:profile"]  # sibling preserved
+    assert doc["claudeAiOauth"]["expiresAt"] > int((time.time() + 7 * 3600) * 1000)  # advanced ~8h
+    assert path.stat().st_mode & 0o777 == 0o600
+
+
+def test_claude_refresh_posts_the_correct_oauth_request(tmp_path):
+    _write_claude_linux(tmp_path, _claude_oauth_doc())
+    calls: list = []
+    post = _fake_claude_post(
+        200, {"access_token": "a", "refresh_token": "r", "expires_in": 28800}, calls=calls
+    )
+    _claude_refresh(tmp_path, system="Linux", post=post)
+    assert calls[0]["url"] == _CLAUDE_TOKEN_URL
+    assert calls[0]["json"] == {
+        "grant_type": "refresh_token",
+        "client_id": CLAUDE_OAUTH_CLIENT_ID,
+        "refresh_token": "old-refresh",
+    }
+
+
+def test_claude_refresh_keeps_old_refresh_token_when_response_omits_it(tmp_path):
+    path = _write_claude_linux(tmp_path, _claude_oauth_doc())
+    # response omits refresh_token -> keep the previously-stored one
+    post = _fake_claude_post(200, {"access_token": "new-acc", "expires_in": 28800})
+    _claude_refresh(tmp_path, system="Linux", post=post)
+    assert json.loads(path.read_text())["claudeAiOauth"]["refreshToken"] == "old-refresh"
+
+
+def test_claude_refresh_no_refresh_token_raises(tmp_path):
+    _write_claude_linux(tmp_path, _claude_oauth_doc(refreshToken=""))
+    with pytest.raises(AuthUnavailable):
+        _claude_refresh(
+            tmp_path, system="Linux", post=_fake_claude_post(200, {"access_token": "x"})
+        )
+
+
+def test_claude_refresh_non_200_raises_and_leaves_creds_unchanged(tmp_path):
+    path = _write_claude_linux(tmp_path, _claude_oauth_doc())
+    before = path.read_text()
+    with pytest.raises(AuthUnavailable):
+        _claude_refresh(
+            tmp_path, system="Linux", post=_fake_claude_post(403, {"error": {"type": "x"}})
+        )
+    assert path.read_text() == before  # single-use safety: nothing rotated/written on failure
+
+
+def test_claude_refresh_missing_access_token_raises(tmp_path):
+    _write_claude_linux(tmp_path, _claude_oauth_doc())
+    with pytest.raises(AuthUnavailable):
+        _claude_refresh(
+            tmp_path, system="Linux", post=_fake_claude_post(200, {"refresh_token": "r"})
+        )
+
+
+def test_claude_refresh_macos_writes_back_via_security(tmp_path):
+    kc = _FakeKeychain(_claude_oauth_doc(expiresAt=1))
+    post = _fake_claude_post(
+        200, {"access_token": "new-acc", "refresh_token": "new-ref", "expires_in": 28800}
+    )
+    result = _claude_refresh(Path("/h"), system="Darwin", run=kc.run, post=post)
+    assert result == "new-acc"
+    assert kc.written is not None
+    assert kc.written["claudeAiOauth"]["accessToken"] == "new-acc"
+    assert kc.written["claudeAiOauth"]["refreshToken"] == "new-ref"
+
+
+def test_broker_credential_claude_refreshes_near_expiry(tmp_path, monkeypatch):
+    _write_claude_linux(tmp_path, _claude_oauth_doc(expiresAt=int((time.time() + 60) * 1000)))
+    monkeypatch.setattr(auth_inject, "_claude_refresh", lambda home, *, system, run: "FRESH-ACCESS")
+    rw = broker_credential("claude", system="Linux", home=tmp_path, environ={})
+    assert rw.inject == (("Authorization", "Bearer FRESH-ACCESS"),)
+
+
+def test_broker_credential_claude_fresh_token_not_refreshed(tmp_path, monkeypatch):
+    _write_claude_linux(tmp_path, _claude_oauth_doc())  # 8h out
+
+    def _no_refresh(*a, **k):
+        raise AssertionError("a fresh token must not be refreshed")
+
+    monkeypatch.setattr(auth_inject, "_claude_refresh", _no_refresh)
+    rw = broker_credential("claude", system="Linux", home=tmp_path, environ={})
+    assert rw.inject == (("Authorization", "Bearer old-access"),)
