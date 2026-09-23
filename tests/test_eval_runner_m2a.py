@@ -621,3 +621,21 @@ def test_eval_batch_derives_seeds_with_the_default_public_secret(tmp_path):
     assert "NETHACK_ARENA_SECRET" not in " ".join(calls[0])
     payload = json.loads(inputs[0])
     assert payload[0]["spec"] == trajectory_spec("public", "local", _SPEC.batch[0][0]).to_dict()
+
+
+def test_eval_batch_makes_a_private_solution_dir_traversable(tmp_path):
+    # The arena runs the bot as uid 65534 and chdirs into /sol; a caller that
+    # builds the tree in a private 0700 dir (verify_program clones the candidate
+    # into a 0700 TemporaryDirectory) leaves it unreadable by that uid, so every
+    # episode PermissionErrors at turn 0. eval_batch must add o+rx to the mount
+    # root so the non-root arena can enter it.
+    sol = tmp_path / "sol"
+    sol.mkdir(mode=0o700)
+    (sol / "bot.py").write_text("x")
+    assert sol.stat().st_mode & 0o755 == 0o700  # starts unreadable by others
+
+    eval_batch(sol, _SPEC, "img:dev", now="2026-08-09T00:00:00Z",
+               runner=_make_fake_docker_run([]),
+               image_digest_resolver=lambda img: "img@sha256:deadbeef")
+
+    assert sol.stat().st_mode & 0o055 == 0o055, oct(sol.stat().st_mode)  # o+rx + g+rx added
