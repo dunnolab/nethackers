@@ -26,6 +26,7 @@ from nethackers.harness.brief import build_brief
 from nethackers.harness.evaluate import evaluate
 from nethackers.harness.gate import passes_gate
 from nethackers.harness.metering import TokenUsage
+from nethackers.harness.operator import OperatorRefused
 from nethackers.harness.refs import Attempt
 from nethackers.harness.register import register_win
 from nethackers.harness.seeds import dev_spec, validation_spec
@@ -438,15 +439,23 @@ def run_loop(
                 # failure -- trip a circuit-breaker with backoff rather than
                 # letting the generic outer `except` fast-`continue` and spin
                 # the whole `iterations` budget against a broken operator.
-                consecutive_errors += 1
+                # OperatorRefused is the exception: the backend rejected the
+                # request itself (a model id its CLI doesn't know), which no
+                # amount of retrying changes, so it counts as the last strike
+                # rather than the first.
+                consecutive_errors = (max_consecutive_errors
+                                      if isinstance(e, OperatorRefused)
+                                      else consecutive_errors + 1)
                 detail = str(e)
                 _emit("error", k + 1, detail=detail)
                 report(f"{tag} · ✗ operator error: {detail}")
                 _record(k + 1, IterationResult(False, f"operator-error:{detail}"))
                 if consecutive_errors >= max_consecutive_errors:
                     _emit("aborted", k + 1, detail=detail)
-                    report(f"{tag} · ✗✗ aborting after {consecutive_errors} "
-                           f"consecutive operator failures — last: {detail}")
+                    why = ("the operator refused the request"
+                           if isinstance(e, OperatorRefused)
+                           else f"{consecutive_errors} consecutive operator failures")
+                    report(f"{tag} · ✗✗ aborting — {why}: {detail}")
                     break
                 sleep(min(2 ** (consecutive_errors - 1), 30))   # 1s, 2s, 4s… capped
                 continue

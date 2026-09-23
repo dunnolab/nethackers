@@ -19,6 +19,7 @@ from nethackers.harness import loop as loop_mod
 from nethackers.harness.archive import UNION, CellArchive
 from nethackers.harness.loop import IterationResult, _pick_cell, run_loop
 from nethackers.harness.metering import TokenUsage
+from nethackers.harness.operator import OperatorRefused
 from nethackers.harness.refs import Attempt
 from nethackers.harness.store import LocalTreeStore
 
@@ -108,6 +109,15 @@ class _RaisingOperator:
     crashes) -- the loop must discard just this iteration, not abort."""
     def run(self, worktree, brief, *, refs=None, on_line=None, stop=None):
         raise RuntimeError("boom")
+
+
+class _RefusingOperator:
+    """The backend rejects the request itself -- a model id its CLI doesn't
+    know. Retrying cannot change the answer, so the loop must stop on the
+    first one instead of spending the breaker's three iterations."""
+    def run(self, worktree, brief, *, refs=None, on_line=None, stop=None):
+        raise OperatorRefused(
+            "claude operator exited with status 1: unrecognized model 'claude-opus-5-5'")
 
 
 class _KilledOperator:
@@ -1306,3 +1316,21 @@ def test_coldstart_emits_progressively_so_the_monitor_isnt_empty(tmp_path):
     assert cold[0]["identities"] == sorted([a, b])     # identities known from the first frame
     assert cold[0]["cells"] == []                      # ...but nothing scored yet
     assert {c["identity"] for c in cold[-1]["cells"]} == {a, b}   # both cells filled by the end
+
+
+def test_a_refused_request_stops_the_run_on_the_first_failure(tmp_path):
+    """Run 20260923-025511 spent three iterations on a model the sandbox's CLI
+    didn't recognize, nine seconds apart, each failing identically. A refusal is
+    the last strike, not the first."""
+    slept: list[float] = []
+    results = run_loop(
+        objective="val-dwa-law-fem", seed_tree=_seed_tree(tmp_path / "seed"),
+        tree_store=LocalTreeStore(tmp_path / "store"), operator=_RefusingOperator(),
+        hub=_FakeHub(), image="img:dev", token="t", owner="o", iterations=10,
+        now_fn=lambda: "2026-08-10T00:00:00Z",
+        runner=_fitness_runner(lambda v: 0.2 + 0.1 * v), workdir=tmp_path / "work",
+        max_consecutive_errors=3, sleep=slept.append)
+
+    assert len(results) == 1                       # not three
+    assert "unrecognized model" in results[0].reason
+    assert slept == []                             # and no backoff wait
