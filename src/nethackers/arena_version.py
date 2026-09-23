@@ -332,6 +332,20 @@ ARENA_MAJOR_BY_DIGEST: dict[str, int] = {
     # The digest moves only because uv.lock's self-version and the resolved
     # python:3.11-slim base layer differ.
     "sha256:0446ba18bd312fd589a53479092e5a76f45cf10e8795a6c21d3a7fcdb40c744c": 2,
+    # v0.37.2 (the broker forwards to its provider only), rebuilt because
+    # uv.lock is an arena input and the release moves the project's own
+    # version, 0.37.1 -> 0.37.2; not one package version moves, so the
+    # installed environment is identical. Every non-lock change since the
+    # digest above is host-side and never loaded by an episode: the
+    # origin-form guard in harness/cred_broker.py, a hub route and the hub's
+    # web files, and the documentation. arena/ and contracts/ are untouched
+    # (`git diff v0.37.1...HEAD -- src/nethackers/arena src/nethackers/contracts`
+    # is empty), and so are nle-base/Dockerfile and arena/Dockerfile. Also the
+    # linux/amd64 LEG, not an index (I7; scripts/check_one_manifest.sh). Read
+    # from the diff, NOT measured: no scoring-path code changed. The digest
+    # moves only because uv.lock's self-version and the resolved
+    # python:3.11-slim base layer differ.
+    "sha256:f1c7ea2426fa6fbba75eae60d2dd73be4d110c3192e499d3fd827f106204dd68": 2,
 }
 
 
