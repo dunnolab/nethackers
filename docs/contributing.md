@@ -97,16 +97,39 @@ pulls. How each one changes:
   Wait for that commit before merging. A fork PR's image is published by the run on
   `main` after merge. The release refuses to publish if the mutator pin doesn't
   match the tagged files.
-- **The arena and the shared base are manual.** CI fails if `arena/Dockerfile`,
-  `nle-base/Dockerfile`, `uv.lock`, `src/nethackers/arena/` or
-  `src/nethackers/contracts/` changed since the last release tag without
-  `ARENA_IMAGE` changing. Run `.github/workflows/sandbox-images.yml` on your branch,
-  then classify the new arena digest in `src/nethackers/arena_version.py`: a
-  rebuild that doesn't move scores keeps the verified corpus, and one that does
-  bumps `ARENA_MAJOR`, which retires that corpus from every board (nothing is
-  deleted). The diff base is **the last `v*` release tag, not your PR's base
-  branch**, so this can fire for someone else's unreleased merge. Touching
-  `uv.lock` trips it, so a routine dependency bump is not routine here.
+- **The arena and the shared base are manual, and you classify before you pin.**
+  CI fails if `arena/Dockerfile`, `nle-base/Dockerfile`, `uv.lock`,
+  `src/nethackers/arena/` or `src/nethackers/contracts/` changed since the last
+  release tag without `ARENA_IMAGE` changing. The diff base is **the last `v*`
+  release tag, not your PR's base branch**, so this can fire for someone else's
+  unreleased merge, and touching `uv.lock` trips it — a routine dependency bump is
+  not routine here.
+
+  Dispatch `.github/workflows/sandbox-images.yml` on your branch (~10 min). It
+  builds and pushes all three images, then tries to re-pin them — and **that last
+  step fails on purpose**: `scripts/repin_images.py` will not write a pin for an
+  arena digest that is missing from `ARENA_MAJOR_BY_DIGEST` (spec 2026-09-14 I7),
+  and a digest built minutes ago is missing by definition. A red run whose only
+  failed step is "Re-pin `_image_pins.py`" means the images are pushed and the rest
+  is yours. Do not re-run it expecting a different answer.
+
+  Take the four refs from the run's **job summary** (`ARENA_IMAGE` there is already
+  the linux/amd64 leg, not the index). Classify the arena digest in
+  `src/nethackers/arena_version.py` — a rebuild that doesn't move scores gets a new
+  line at the current major and keeps the verified corpus, one that does move them
+  bumps `ARENA_MAJOR` and retires that corpus from every board (nothing is
+  deleted) — and then write the pins yourself:
+
+  ```bash
+  PYTHONPATH=src python3 scripts/repin_images.py \
+    --arena "$ARENA_IMAGE" --mutator "$MUTATOR_IMAGE" \
+    --nle-base "$NLE_BASE_IMAGE" --mutator-inputs "$MUTATOR_INPUTS"
+  ```
+
+  Commit `arena_version.py` and `_image_pins.py` together. The classification is
+  what a reviewer actually checks, and the pin is what makes it load-bearing; the
+  entry's comment has to say what the rebuild changed and why scores did or did not
+  move, because there is no behavioral gate behind it.
 
 **Injectable seams bind at import.** Many functions take dependencies as keyword
 defaults (`run=subprocess.run`, `repo_root=...`). Those defaults are evaluated at
@@ -130,7 +153,11 @@ that catches people out.
 
 1. Bump the version in `pyproject.toml` and merge to `main` **first**. The PyPI
    workflow asserts the tag matches the version, and PyPI rejects a re-upload, so
-   a wrong version number burns one.
+   a wrong version number burns one. The bump rewrites `uv.lock`, which is an
+   arena image input, so the release PR also carries the rebuild and the
+   classification from "Sandbox image pins" above — budget the ~10 minutes and do
+   it before you tag, not after. (`MUTATOR_INPUTS` moves for the same reason; that
+   is the version line, not a mutator change.)
 2. `git tag vX.Y.Z && git push origin vX.Y.Z` → builds the hub image and flips
    production by digest, health-checked, with automatic rollback. Opt out with
    `[skip hub-deploy]` in the tagged commit message. See
