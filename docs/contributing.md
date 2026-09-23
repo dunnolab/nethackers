@@ -91,8 +91,7 @@ nethackers report                # the last crash, if there was one
 ```
 
 `report` is read-only and offline; nothing is ever sent anywhere, and there
-is no telemetry in this project. A security problem goes through
-[SECURITY.md](../SECURITY.md), not an issue.
+is no telemetry in this project.
 
 ## Releasing
 

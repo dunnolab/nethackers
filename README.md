@@ -66,13 +66,12 @@ read-only root, no capabilities, non-root, resource caps. Fetching accepts only
 `github.com/<owner>/<repo>@<commit>` over https. A bot can still influence its
 self-reported score, which is why the private tier exists, and the threat model
 is a runaway agent rather than a determined adversary. Per surface:
-[`docs/safety.md`](docs/safety.md).
+[`docs/harness.md`](docs/harness.md#safety).
 
 ## Docs
 
 - [`docs/setup.md`](docs/setup.md), what `setup` does on each OS and how tested it is
-- [`docs/harness.md`](docs/harness.md), the bot contract, our loop, building your own
-- [`docs/safety.md`](docs/safety.md), what the sandbox stops and what it doesn't
+- [`docs/harness.md`](docs/harness.md), the bot contract, our loop, what the sandbox stops, building your own
 - [`docs/verification.md`](docs/verification.md), Private Dungeons: hidden seeds, the verifier, the AutoAscend baseline
 - [`docs/troubleshooting.md`](docs/troubleshooting.md), what a command printed, what it means, what to do
 - [`docs/contributing.md`](docs/contributing.md), dev setup, tests, PRs for the CLI, hub, arena, and docs
