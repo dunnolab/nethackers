@@ -320,7 +320,7 @@ def test_codex_setup_preinstalls_curl_cffi_when_missing():
     deps, rec = make(checks(), impersonation_ready=lambda: False)
     flow.run_setup(opts(yes=True, operator="codex"), deps)
     captured = [argv for kind, argv in rec.calls if kind == "captured"]
-    assert any(a[0] == "uv" and a[-1] == "curl_cffi" for a in captured)
+    assert any("uv" in a[0] and a[-1] == "curl_cffi" for a in captured)
 
 
 def test_codex_setup_skips_curl_cffi_when_already_present():

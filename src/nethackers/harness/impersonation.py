@@ -24,6 +24,7 @@ from __future__ import annotations
 import importlib
 import importlib.util
 import logging
+import os
 import shutil
 import subprocess
 import sys
@@ -49,19 +50,46 @@ def impersonation_available() -> bool:
     return importlib.util.find_spec(IMPERSONATE_DEP) is not None
 
 
+# Where uv's own installer puts it. A non-login shell or a service context
+# often lacks ``~/.local/bin`` on PATH, yet that same uv created the pip-less
+# environment we're extending -- so look here before giving up on uv.
+_UV_FALLBACK_PATHS = ("~/.local/bin/uv", "~/.cargo/bin/uv", "/usr/local/bin/uv")
+
+
+def _resolve_uv(
+    which: Callable[[str], str | None], access: Callable[[str, int], bool],
+) -> str | None:
+    """``uv`` on PATH, else its standard install location. Returns an absolute
+    path (so the later exec doesn't depend on PATH), or ``None`` if uv is
+    nowhere to be found."""
+    found = which("uv")
+    if found is not None:
+        return found
+    for cand in _UV_FALLBACK_PATHS:
+        path = os.path.expanduser(cand)
+        if access(path, os.X_OK):
+            return path
+    return None
+
+
 def install_argv(
-    python: str | None = None, *, which: Callable[[str], str | None] = shutil.which,
+    python: str | None = None, *,
+    which: Callable[[str], str | None] = shutil.which,
+    access: Callable[[str, int], bool] = os.access,
 ) -> tuple[str, ...]:
     """The command that installs ``curl_cffi`` into ``python``'s environment
     (default: the interpreter nethackers runs in).
 
     Prefers ``uv``: ``uv pip install --python <interpreter>`` installs into any
     interpreter, INCLUDING a pip-less ``uv tool`` environment (the common way
-    nethackers is installed). Without ``uv`` on PATH, falls back to that
-    interpreter's own ``pip`` (present for pip/conda/pipx installs)."""
+    nethackers is installed) -- and it is found even off PATH at its standard
+    install location (``_resolve_uv``), because a pip-less venv has no other
+    way in. Only with no uv anywhere does it fall back to that interpreter's
+    own ``pip`` (present for pip/conda/pipx installs)."""
     python = python or sys.executable
-    if which("uv") is not None:
-        return ("uv", "pip", "install", "--python", python, IMPERSONATE_DEP)
+    uv = _resolve_uv(which, access)
+    if uv is not None:
+        return (uv, "pip", "install", "--python", python, IMPERSONATE_DEP)
     return (python, "-m", "pip", "install", IMPERSONATE_DEP)
 
 

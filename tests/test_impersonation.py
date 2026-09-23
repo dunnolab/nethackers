@@ -15,17 +15,28 @@ def _done(argv, code=0):
 
 def test_install_argv_prefers_uv_and_targets_the_given_interpreter():
     argv = imp.install_argv("/opt/py", which=lambda n: "/usr/bin/uv" if n == "uv" else None)
-    assert argv == ("uv", "pip", "install", "--python", "/opt/py", "curl_cffi")
+    assert argv == ("/usr/bin/uv", "pip", "install", "--python", "/opt/py", "curl_cffi")
 
 
 def test_install_argv_defaults_to_this_interpreter():
     assert imp.install_argv(which=lambda n: "/usr/bin/uv")[4] == sys.executable
 
 
-def test_install_argv_falls_back_to_that_interpreters_pip_without_uv():
-    # A pip-based install has pip; without uv this is how we reach it.
-    assert imp.install_argv("/opt/py", which=lambda n: None) == (
-        "/opt/py", "-m", "pip", "install", "curl_cffi")
+def test_install_argv_finds_uv_off_path_at_its_standard_location():
+    # uv installed but not on PATH (a non-login / service shell) + a pip-less
+    # venv: resolve uv at ~/.local/bin/uv rather than fall back to a missing pip.
+    def has_local_uv(path, mode):
+        return path.endswith("/.local/bin/uv")
+
+    argv = imp.install_argv("/opt/py", which=lambda n: None, access=has_local_uv)
+    assert argv[0].endswith("/.local/bin/uv")
+    assert argv[1:] == ("pip", "install", "--python", "/opt/py", "curl_cffi")
+
+
+def test_install_argv_falls_back_to_pip_when_uv_is_nowhere():
+    # No uv on PATH and none at its standard locations -> that interpreter's pip.
+    argv = imp.install_argv("/opt/py", which=lambda n: None, access=lambda p, m: False)
+    assert argv == ("/opt/py", "-m", "pip", "install", "curl_cffi")
 
 
 def test_ensure_short_circuits_when_already_importable(monkeypatch):
@@ -45,7 +56,7 @@ def test_ensure_installs_then_confirms_available(monkeypatch):
     ok = imp.ensure_impersonation_dep(
         run=lambda argv, **k: calls.append(argv) or _done(argv), which=lambda n: "/uv")
     assert ok is True
-    assert calls and calls[0][0] == "uv"  # it actually shelled out to install
+    assert calls and "uv" in calls[0][0]  # it actually shelled out to install
 
 
 def test_ensure_false_when_the_install_exits_nonzero(monkeypatch):
