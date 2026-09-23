@@ -149,8 +149,10 @@ prints `linux/amd64` for both images.
 Doctor shows the same as `[FAIL] claude: not logged in` under `operator`
 (`codex` and `opencode2` likewise).
 
-**Cause** `evolve` needs one coding agent logged in on this machine; the
-sandbox reuses that login.
+**Cause** `evolve` needs one coding agent logged in on this machine. The
+broker reads that login on the host and injects it into the sandbox's
+provider calls; the sandbox never holds it (`--no-broker` mounts it
+instead).
 **Fix** `claude auth login`, or `codex login`, or configure OpenCode's
 providers ([setup.md](setup.md#coding-agents)); `nethackers setup
 --operator <name>` walks through it.
@@ -167,10 +169,13 @@ iter 1/5 · ✗✗ aborting — the operator refused the request: claude operato
 **Cause** `--model` was checked against your account's model list, which
 the picker and the preflight read, but the Claude CLI pinned inside the
 sandbox resolves the id against its own list and does not know it. Since
-v0.36.2 one such refusal ends the run instead of costing three iterations.
-The monitor's now-line reads `Stopped after 1 failed agent runs in a row`.
-Codex and OpenCode rejections are ordinary failures and still take three
-tries: `✗✗ aborting — 3 consecutive operator failures: <detail>`.
+v0.36.2 one such refusal ends the run instead of costing three iterations,
+on macOS or with `--no-broker`; the monitor's now-line reads `Stopped after
+1 failed agent runs in a row`. On Linux with the broker on (the default)
+the refusal arrives wrapped in `the sandbox never reached the credential
+broker …`, the real message under its `Original error:` line, and takes
+three iterations. Codex and OpenCode rejections are ordinary failures and
+take three tries: `✗✗ aborting — 3 consecutive operator failures: <detail>`.
 **Fix** `nethackers models --operator claude` lists what the sandbox serves;
 pick one of those, or an alias like `opus`, which never goes stale. A newer
 model needs a newer mutator image, which arrives with a nethackers release.
@@ -184,28 +189,74 @@ the sandbox never reached the credential broker -- on Linux the docker bridge->h
 (or re-run with --no-broker to mount the credential into the sandbox, which exposes it to the untrusted code).
 ```
 
+Headless, the block prints after `✗ operator error:` on each of three
+iterations, then `✗✗ aborting — 3 consecutive operator failures: the
+sandbox never reached …`. In the monitor only the first 80 characters of
+it show; the full text is `reason` in the run's `metrics.jsonl`, or run
+headless. `<gateway>` is your bridge address, usually 172.17.0.1. On macOS
+this line never appears.
+
 **Cause** The credential broker, on by default, listens on the host at the
 Docker bridge gateway; on a Linux host with `ufw` the bridge-to-host path
-is blocked until that one port-scoped rule exists. The run stops rather
-than mounting the credential.
-**Fix** Run the rule as printed (`nethackers setup` prints it too). Never a
-blanket `allow in on docker0`, which would open every host service to the
-sandbox. Docker Desktop needs no rule.
+is blocked until that one port-scoped rule exists. The run never falls
+back to the mount. The line is a heuristic: it fires for any broker run
+whose CLI exits non-zero before its first provider call, a rejected model
+or a startup crash included, so with no `ufw` on the host read the
+`Original error:` line under it. The rule covers 50 ports; a 51st broker
+at once (OpenCode starts one per brokered provider) takes a port outside
+it and hits the same line.
+**Fix** Run the rule as printed. `nethackers setup` lists the same rule
+under "You'll need to" whenever `ufw` is installed, with the gateway looked
+up by `docker network inspect`. Never a blanket `allow in on docker0`,
+which would open every host service to the sandbox. Docker Desktop needs
+no rule. `--no-broker`, or Credential: Mount in the monitor's form, puts
+the real credential inside the sandbox instead; use it only if you accept
+that.
 **Verify** the next `evolve` passes its first iteration.
 
 ### the codex broker forwards to Cloudflare-fronted chatgpt.com, which needs TLS impersonation (curl_cffi)
 
 ```text
-the codex broker forwards to Cloudflare-fronted chatgpt.com, which needs TLS impersonation (curl_cffi); the automatic host-side install failed -- install it yourself with `uv pip install --python <python> curl_cffi`
+the codex broker forwards to Cloudflare-fronted chatgpt.com, which needs TLS impersonation (curl_cffi); the automatic host-side install failed -- install it yourself with `<uv> pip install --python <python> curl_cffi`
 ```
+
+`<uv>` and `<python>` are printed as full paths; on a host without `uv`
+the command is `<python> -m pip install curl_cffi`. Headless, the install
+attempt logs `codex broker needs curl_cffi for TLS impersonation;
+installing host-side: <command>` and its failure on stderr first; the
+monitor shows neither.
 
 **Cause** The Codex broker needs `curl_cffi` in nethackers' own interpreter.
 `nethackers setup` installs it for a `codex` operator and the broker installs
-it itself on first use; this is the message when both failed, usually
-offline or with neither `uv` nor `pip` reachable.
+it itself when it starts; this is the message when both failed, usually
+offline or with neither `uv` nor `pip` reachable. Each of the three
+retries runs the install again.
 **Fix** Run the command the message names, with a network.
 **Verify** `nethackers setup --operator codex` no longer plans the
 curl_cffi step.
+
+### no usable claude login on this host -- claude token refresh failed
+
+```text
+✗ operator error: no usable claude login on this host -- claude token refresh failed -- if this host is behind a strict egress / WAF (often headless Linux) provision a setup-token; otherwise run `claude` to log in again, then retry
+```
+
+The start-of-run check only looks for the login file, so this arrives
+inside the run, three times, then the loop aborts. The Codex form is
+`no usable codex login on this host -- codex token refresh failed -- run
+`codex login` on this host, then retry`; `… could not reach the OAuth
+endpoint …` means the network, and `could not save the refreshed …` means
+the Keychain or the credentials file refused the write.
+
+**Cause** The broker refreshes the roughly eight-hour Claude login on the
+host when under 30 minutes remain, against `platform.claude.com`, which
+can refuse a headless box; Codex's rotating token is refreshed the same
+way.
+**Fix** Log in again on the host (`claude`, or `codex login`). For a
+Claude host that is refused every time, put a setup-token in
+`~/.nethackers/claude/setup-token` or `NETHACKERS_CLAUDE_SETUP_TOKEN`; it
+wins over the login and is never refreshed.
+**Verify** the run passes iteration 1.
 
 ### the loop runs but nothing ever registers
 
