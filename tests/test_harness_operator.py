@@ -9,6 +9,7 @@ import pytest
 
 from nethackers.harness.metering import TokenUsage
 from nethackers.harness.operator import (
+    OperatorRefused,
     _claude_cmd,
     _codex_cmd,
     _opencode2_cmd,
@@ -268,3 +269,49 @@ def test_claude_operator_does_not_recall_memory_across_runs(tmp_path):
         assert codeword.lower() not in stdout
     finally:
         shutil.rmtree(project_dir, ignore_errors=True)
+
+
+# The three lines a claude CLI prints when it will not run the pinned model:
+# its own diagnostic first, then the session JSON, then the usage dump. Taken
+# verbatim (shortened) from run 20260923-025511, where a model newer than the
+# sandbox's CLI failed every iteration in under a second.
+_UNRECOGNIZED_MODEL = [
+    '[claude-code:unrecognized_model] {"model":"claude-opus-5-5","query_source":"sdk"}\n',
+    '{"type":"assistant","message":{"model":"<synthetic>","stop_reason":"stop_sequence"}}\n',
+    '{"duration_api_ms":0,"total_cost_usd":0,"terminal_reason":"api_error"}\n',
+]
+
+
+def test_a_rejected_model_names_itself_instead_of_dumping_the_usage_json(tmp_path):
+    """The old detail was "the last non-empty line" -- the usage dump, which says
+    nothing about what went wrong. The CLI's own diagnostic is the first line."""
+    def popen(cmd, **kwargs):
+        return _FakeProc(list(_UNRECOGNIZED_MODEL), returncode=1)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        run_operator(["fake"], tmp_path, backend="claude", popen=popen)
+
+    message = str(excinfo.value)
+    assert "unrecognized model 'claude-opus-5-5'" in message
+    assert "`opus`" in message and "mutator image" in message   # what to do about it
+    assert "total_cost_usd" not in message                      # not the usage dump
+
+
+def test_a_rejected_request_is_not_worth_retrying(tmp_path):
+    """OperatorRefused is the loop's signal to stop at once: nothing about a
+    model the CLI doesn't know changes between attempts."""
+    def popen(cmd, **kwargs):
+        return _FakeProc(list(_UNRECOGNIZED_MODEL), returncode=1)
+
+    with pytest.raises(OperatorRefused):
+        run_operator(["fake"], tmp_path, backend="claude", popen=popen)
+
+
+def test_an_ordinary_failure_stays_retryable(tmp_path):
+    def popen(cmd, **kwargs):
+        return _FakeProc(["error: connection reset\n"], returncode=1)
+
+    with pytest.raises(RuntimeError) as excinfo:
+        run_operator(["fake"], tmp_path, backend="codex", popen=popen)
+    assert not isinstance(excinfo.value, OperatorRefused)
+    assert "connection reset" in str(excinfo.value)

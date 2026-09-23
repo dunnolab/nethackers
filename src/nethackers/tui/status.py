@@ -17,6 +17,7 @@ class EvolveConfig:
     model: str | None = None
     effort: str | None = None
     operator_version: str | None = None
+    from_seed: bool = False   # --from-seed: no hub fetch before setup
 
 
 def _compact(n: int) -> str:
@@ -68,7 +69,7 @@ ROLE_FULL = {"arc": "Archeologist", "bar": "Barbarian", "cav": "Caveman",
              "val": "Valkyrie", "wiz": "Wizard"}
 _STATUS = {"ascended": ("★", _GOLD), "died": ("☠", _HP),
            "timed out": ("⧗", _DIM), "aborted": ("⊘", _DIM), "running": ("⊙", _DIM)}
-_BACKEND_NAME = {"claude": "Claude Code", "codex": "Codex"}
+_BACKEND_NAME = {"claude": "Claude Code", "codex": "Codex", "opencode2": "OpenCode"}
 
 
 def dur(seconds: float) -> str:
@@ -81,6 +82,17 @@ def ep_time(seconds: float) -> str:
     """Per-episode clock time: seconds under a minute, else Xm SSs."""
     s = int(round(seconds))
     return f"{s // 60}m {s % 60:02d}s" if s >= 60 else f"{s}s"
+
+
+def agent_name(cfg: EvolveConfig) -> str:
+    """The coding agent's display name (``Claude Code``, ``Codex``, ``OpenCode``)."""
+    return _BACKEND_NAME.get(cfg.backend, cfg.backend)
+
+
+def short_time(seconds: float) -> str:
+    """A section's or a run's duration: ``45s``, ``7m``, ``1h 04m``."""
+    seconds = max(0.0, seconds)
+    return ep_time(seconds) if seconds < 60 else dur(seconds)
 
 
 def role_full(role: str) -> str:
@@ -97,19 +109,6 @@ def best_cell(inc: tuple[float, str, str, int | None]) -> Text:
     return Text.from_markup(f"[{color}]{label:<15}[/] [b {color}]{score:>4.2f}[/]")
 
 
-def run_cell(avg: float | None, revealed: int, total: int, inc_score: float,
-             is_init: bool, done: bool) -> Text:
-    if is_init or avg is None or revealed == 0:
-        return Text.from_markup("[dim]— · no mutation[/]" if is_init
-                                else f"[dim]{'—':>4}  {revealed:>2}/{total} pending[/]")
-    win = avg > inc_score
-    color = _GREEN if win else _FOCUS
-    spin = "" if done else " [dim]⊙[/]"
-    tag = f"   [b {_GREEN}]▲ new best[/]" if win else ""
-    return Text.from_markup(
-        f"[b {color}]{avg:>4.2f}[/]  [dim]{revealed:>2}/{total}[/]{spin}{tag}")
-
-
 def best_overall_cell(bo: tuple[float, str, str, int | None]) -> Text:
     score, label, kind, _ = bo
     color = {"aa": _DIM, "run": _GREEN, "hub": _PARCHMENT}[kind]
@@ -118,16 +117,19 @@ def best_overall_cell(bo: tuple[float, str, str, int | None]) -> Text:
 
 
 def mutator_title(cfg: EvolveConfig) -> Text:
-    agent = _BACKEND_NAME.get(cfg.backend, cfg.backend)
+    agent = agent_name(cfg)
     ver = f" [{_AMBER}]{cfg.operator_version}[/]" if cfg.operator_version else ""
     model = f"  [dim]· model[/] [b]{cfg.model}[/]" if cfg.model else ""
     effort = f"  [dim]· effort[/] [b]{cfg.effort}[/]" if cfg.effort else ""
     return Text.from_markup(f"[dim]mutator[/] [b {_PARCHMENT}]{agent}[/]{ver}{model}{effort}")
 
 
-def token_subline(usage, seconds: float) -> Text:
-    return Text.from_markup(
-        f"[dim]tokens[/]  in [b]{_compact(usage.input)}[/] · out [b]{_compact(usage.output)}[/] "
-        f"· cached [dim]([/]write [b]{_compact(usage.cache_creation)}[/] · "
-        f"read [b]{_compact(usage.cache_read)}[/][dim])[/]      [dim]·[/]      "
-        f"[dim]time[/] [b]{dur(seconds)}[/]")
+def status_line(viewing: str, live: str | None, improved: int, total: int,
+                seconds: float, usage) -> str:
+    """The monitor's bottom bar: orientation first, tokens last -- a narrow
+    terminal truncates the least important part. ``usage`` is a TokenUsage of
+    FINISHED edits (Run.finished_usage)."""
+    where = f"viewing {viewing}" + (f" (live: {live})" if live else "")
+    return (f" {where} · {improved} of {total} improved · run time {short_time(seconds)} · "
+            f"tokens in {_compact(usage.input)} · out {_compact(usage.output)} · "
+            f"cache write {_compact(usage.cache_creation)} · read {_compact(usage.cache_read)} ")
