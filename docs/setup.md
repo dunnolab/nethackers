@@ -2,7 +2,7 @@
 
 `nethackers setup` gets a machine ready to evaluate, evolve and publish bots:
 the container runtime, the sandbox images, and three logins. macOS or Linux,
-Python 3.11+; on Windows, run it inside WSL2. Recipes as of v0.36.2
+Python 3.11+; on Windows, run it inside WSL2. Recipes as of v0.37.0
 (2026-09-23); what a bot is and how it is scored is in
 [harness.md](harness.md).
 
@@ -37,6 +37,7 @@ nethackers will:
   7 install Colima + Docker              brew install colima docker  (untested)
   8 start Colima with Rosetta            colima start --vm-type vz --vz-rosetta --cpu 6 --memory 12  (untested)
   9 pull the sandbox images
+ 10 install codex's TLS-impersonation helper (curl_cffi) uv pip install --python <this python> curl_cffi
 Steps 1, 3, 6 need you at the keyboard; the rest run on their own. Nothing nethackers
 runs needs sudo.
 Steps marked (untested) come from vendor docs and haven't been run on a real Mac yet.
@@ -50,12 +51,16 @@ and never more than half its memory, and a Mac without Rosetta 2 is told to
 install it first and gets the VM on the next run. The images are up to about
 1 GB to download the first time (the plan shows the exact figure) and a few
 GB on disk; later releases fetch only what changed, with a progress bar and
-the time left.
+the time left. Step 10 appears for the `codex` operator only: its credential
+broker forwards through `curl_cffi`, which is installed into nethackers' own
+interpreter, never into the sandbox, and the broker installs it itself on
+first use if setup was skipped.
 
 On Linux the runtime and `gh` need `sudo`, so they move to the list you run
 yourself, and setup ends with "Then run `nethackers setup` again. It picks
 up where it left off": the second run pulls the images and plans the `gh`
-login.
+login. On a host with `ufw`, the list also carries the one firewall rule the
+credential broker needs:
 
 ```text
 You'll need to (nethackers never runs sudo):
@@ -63,6 +68,10 @@ You'll need to (nethackers never runs sudo):
     https://github.com/cli/cli/blob/trunk/docs/install_linux.md)  (untested)
   • install Docker: `curl -fsSL https://get.docker.com | sudo sh`, then `sudo usermod
     -aG docker $USER` and log out and back in  (untested)
+  • if ufw is active, allow the sandboxed agent to reach the credential broker (on by
+    default) with a PORT-SCOPED rule (not a blanket `allow in on docker0`): `sudo ufw
+    allow in on docker0 to "$(docker network inspect bridge -f '{{(index .IPAM.Config
+    0).Gateway}}')" port 11700:11749 proto tcp`
 ```
 
 ## Check it worked
@@ -90,14 +99,17 @@ or an unattended run leaves the coding agent for later.
 
 ## Coding agents
 
-`evolve` needs one agent logged in on this machine; the sandbox reuses that
-login.
+`evolve` needs one agent logged in on this machine. The login stays on the
+host: by default a credential broker on the host injects it on the wire, and
+the sandbox only ever sees a placeholder and the broker's address
+([harness.md](harness.md#the-coding-agent)). `--no-broker`, or the form's
+Credential toggle, mounts the credential instead.
 
-| | log in with | what enters the sandbox |
-|---|---|---|
-| Claude Code | `claude auth login` | the credential: `~/.claude/.credentials.json` read-only on Linux, the Keychain OAuth token as `CLAUDE_CODE_OAUTH_TOKEN` on macOS |
-| Codex | `codex login` | your real `~/.codex`, read-write, because its tokens rotate |
-| OpenCode 2 | nothing; providers come from `~/.config/opencode/opencode.json` (or `.jsonc`) | a read-only copy of that file's `provider` section, plus the environment variables it names |
+| | log in with | what the sandbox sees by default | what `--no-broker` mounts |
+|---|---|---|---|
+| Claude Code | `claude auth login` | a placeholder token and a base URL to the broker | `~/.claude/.credentials.json` read-only on Linux; the Keychain OAuth token as `CLAUDE_CODE_OAUTH_TOKEN` on macOS |
+| Codex | `codex login` | a provider override in its command pointing at the broker | your real `~/.codex`, read-write, because its tokens rotate |
+| OpenCode 2 | nothing; providers come from `~/.config/opencode/opencode.json` (or `.jsonc`) | a copy of the `provider` section with each brokerable key replaced by a placeholder and the broker's URL | the copy with the keys, plus the environment variables it names |
 
 The operator id is `opencode2`; the CLI inside the image is `opencode`,
 with an `opencode2` symlink. OpenCode is provider-agnostic, so a few things
@@ -133,8 +145,9 @@ Every recipe below is one of:
 
 A recipe becomes tested only in a PR that records where it ran, at which
 nethackers version, and when; the tests reject a tested row missing any of
-the three, and fail while this table is stale. As of v0.36.2: macOS, 17
-recipes, 0 tested; Linux, 13 recipes, 0 tested, 2 not covered.
+the three, and fail while this table is stale. As of v0.37.0: macOS, 17
+recipes, 0 tested; Linux, 14 recipes, 1 tested (the broker's firewall rule,
+on Ubuntu), 2 not covered.
 
 <!-- setup-recipes:start (generated by `python -m nethackers.setup.docs`; do not edit by hand) -->
 

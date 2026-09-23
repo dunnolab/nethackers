@@ -37,7 +37,10 @@ make smoke    # the `docker` suite; needs nethackers/arena:dev, the pinned mutat
 ```
 
 `make test` skips the `nle`, `docker`, `codex_live` and `claude_live`
-markers. CI runs `uv lock --check` first (a `uv.lock` out of step with
+markers. `make broker-e2e` runs the real agent CLIs in the real mutator
+container through a real broker into a mock provider, and `make broker-live`
+does the same against the real providers with your own logins; both are
+gated behind an environment variable and never run in CI. CI runs `uv lock --check` first (a `uv.lock` out of step with
 `pyproject.toml` fails the job; run `uv lock` after touching
 `pyproject.toml`), then the same suite, mypy, ruff, a compose smoke job and
 an install smoke that installs the built wheel. Style is ruff

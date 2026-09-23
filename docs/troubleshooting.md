@@ -1,6 +1,6 @@
 # Troubleshooting
 
-What a command printed, what it means, what to do. Reviewed at v0.36.2.
+What a command printed, what it means, what to do. Reviewed at v0.37.0.
 
 ```bash
 nethackers setup      # fixes what it can, prints the rest
@@ -175,6 +175,37 @@ tries: `✗✗ aborting — 3 consecutive operator failures: <detail>`.
 pick one of those, or an alias like `opus`, which never goes stale. A newer
 model needs a newer mutator image, which arrives with a nethackers release.
 **Verify** the run passes iteration 1.
+
+### the sandbox never reached the credential broker
+
+```text
+the sandbox never reached the credential broker -- on Linux the docker bridge->host path is likely blocked by a firewall (ufw). Allow it with:
+    sudo ufw allow in on docker0 to <gateway> port 11700:11749 proto tcp
+(or re-run with --no-broker to mount the credential into the sandbox, which exposes it to the untrusted code).
+```
+
+**Cause** The credential broker, on by default, listens on the host at the
+Docker bridge gateway; on a Linux host with `ufw` the bridge-to-host path
+is blocked until that one port-scoped rule exists. The run stops rather
+than mounting the credential.
+**Fix** Run the rule as printed (`nethackers setup` prints it too). Never a
+blanket `allow in on docker0`, which would open every host service to the
+sandbox. Docker Desktop needs no rule.
+**Verify** the next `evolve` passes its first iteration.
+
+### the codex broker forwards to Cloudflare-fronted chatgpt.com, which needs TLS impersonation (curl_cffi)
+
+```text
+the codex broker forwards to Cloudflare-fronted chatgpt.com, which needs TLS impersonation (curl_cffi); the automatic host-side install failed -- install it yourself with `uv pip install --python <python> curl_cffi`
+```
+
+**Cause** The Codex broker needs `curl_cffi` in nethackers' own interpreter.
+`nethackers setup` installs it for a `codex` operator and the broker installs
+it itself on first use; this is the message when both failed, usually
+offline or with neither `uv` nor `pip` reachable.
+**Fix** Run the command the message names, with a network.
+**Verify** `nethackers setup --operator codex` no longer plans the
+curl_cffi step.
 
 ### the loop runs but nothing ever registers
 

@@ -160,8 +160,7 @@ for Claude Code; OpenCode has none and relies on the fresh container. An
 agent that remembers yesterday's run converges on the change it already
 made and keeps proposing variants of it. What it knows of the past is what
 `/refs/` shows it. This is not a hermetic boundary: `/workspace` is
-writable, the network is open, and Codex's `~/.codex` is mounted
-read-write.
+writable and the network is open.
 
 **The agent experiments on the games it is scored on.** The mutator image
 is built from the same NLE base image as the arena, for `linux/amd64` only,
@@ -254,7 +253,8 @@ runtime for the number of episodes the box runs at once:
 - No network. The strongest single control.
 - A read-only root. Two paths are writable: a `noexec,nosuid` tmpfs at
   `/tmp`, where nothing written can be executed, and the `/out` bind mount
-  that carries the result file back.
+  that carries the result file back, created world-writable on the host so
+  `nobody` can write it on native Linux.
 - No capabilities, no privilege escalation, user `nobody`.
 - One core and 32 processes per concurrent episode, three quarters of the
   runtime's memory for the whole box (one GiB per episode is the budget that
@@ -304,12 +304,14 @@ docker run --rm --platform linux/amd64 \
   --pids-limit 512 --memory 8g --memory-swap 8g --cpus 4 \
   --security-opt no-new-privileges \
   -v <worktree>:/workspace -v <refs>:/refs:ro \
-  <the credential -v and -e args from harness/auth_inject.py> \
+  <a placeholder credential and the broker's base URL, from harness/auth_inject.py> \
   <mutator-image> timeout 28800 <agent CLI …>
 ```
 
-Also `--name`, `--label` and `-w /workspace`; rootless Podman adds
-`--userns=keep-id --user 0`. These caps are fixed, unlike the arena's.
+Also `--name`, `--label` and `-w /workspace`; under Docker Desktop
+`--add-host host.docker.internal:host-gateway` so the sandbox can reach the
+broker; rootless Podman adds `--userns=keep-id --user 0`. These caps are
+fixed, unlike the arena's.
 
 - `--pids-limit` is the fork-bomb defence, and the reason this is a
   container rather than a process wrapper: process-level sandboxes cap
@@ -324,31 +326,48 @@ Also `--name`, `--label` and `-w /workspace`; rootless Podman adds
   the TUI is `docker kill`, which does not depend on it.
 - Instruction-bearing files are stripped, at every level, from both the
   worktree and `/refs`: `CLAUDE.md`, `AGENTS.md`, `.mcp.json`, `.envrc`,
-  `.cursorrules`, and the `.claude`, `.codex`, `.cursor` and `.vscode`
-  directories (`harness/refs.py`), so a pulled program's agent config files
-  are not loaded. It is a list of names: a README or a code comment still
-  reaches the agent, and a file not on the list passes through. Each CLI
-  also runs with its own project config off.
+  `.cursorrules`, `opencode.json`, `opencode.jsonc`, and the `.claude`,
+  `.codex`, `.cursor`, `.vscode` and `.opencode` directories
+  (`harness/refs.py`), so a pulled program's agent config files are not
+  loaded. It is a list of names: a README or a code comment still reaches
+  the agent, and a file not on the list passes through. Each CLI also runs
+  with its own project config off.
+- Your model credential never enters the container. A credential broker on
+  the host (`harness/cred_broker.py`) is on by default for every operator:
+  the container gets a placeholder and a base URL back to the broker, and
+  the broker injects the real credential on the wire, per request, to the
+  one real provider. For Claude that is the OAuth bearer, and the broker
+  refreshes the eight-hour subscription token on the host, so you log in
+  once. For Codex the CLI's provider is overridden in its command to point
+  at the broker, which adds the bearer and the account id and forwards
+  through `curl_cffi` with Chrome TLS impersonation, because that upstream
+  refuses a plain client; `curl_cffi` is installed into nethackers' own
+  interpreter on demand, never into the sandbox or `uv.lock`. OpenCode gets
+  one broker per provider that names a key. The broker listens on the
+  loopback under Docker Desktop and on the Docker bridge gateway on Linux,
+  on a port in 11700 to 11749; a `ufw` host needs the one rule `setup`
+  prints, and if the sandbox never reaches the broker the run fails loud
+  with that rule rather than falling back to a mount. Verified live for
+  Claude and Codex on macOS and native Linux; `make broker-live` repeats
+  that with your own logins. `--no-broker`, or the form's Credential toggle,
+  opts back into mounting the credential, which is the exposure described
+  next.
 
 Not contained by default:
 
 - Network egress. The CLIs need their model APIs, so nothing restricts it:
-  no `--network` flag in any mode, and no egress allow-list exists. This is
-  the largest hole in the default sandbox.
-- Your coding-agent credentials. Codex's real `~/.codex` is mounted
-  read-write, so code in the cage can influence your next host-side `codex`
-  run. Claude Code's credentials file is mounted read-only on Linux, and its
-  OAuth token is passed as an environment variable on macOS, visible in
-  `docker inspect` and in the host process list. OpenCode's provider keys
-  arrive as forwarded environment variables, or inside the read-only copy
-  of the provider section when `opencode.json` holds the key literally. An
-  agent that wanted to exfiltrate them could, and for Codex could modify
-  them. `ContainerOperator(broker=True)` swaps the mount for a host-side
-  broker (`harness/cred_broker.py`): the container gets a placeholder key
-  and a base URL back to the broker, and the real key is injected per
-  request on the host. It keeps the key on the host; it does not keep the
-  container off the network. It is off by default, not wired to a CLI or
-  TUI flag, and not verified against a live provider.
+  no `--network` flag in any mode, and no egress allow-list exists. The
+  broker keeps the credential on the host; it does not keep the container
+  off the network. This is the largest hole in the default sandbox.
+- Your coding-agent credentials, under `--no-broker`. Then Codex's real
+  `~/.codex` is mounted read-write, so code in the cage can influence your
+  next host-side `codex` run; Claude Code's credentials file is mounted
+  read-only on Linux, and its OAuth token is passed as an environment
+  variable on macOS, visible in `docker inspect` and in the host process
+  list; OpenCode's provider keys arrive as forwarded environment variables,
+  or inside the read-only copy of the provider section when `opencode.json`
+  holds the key literally. An agent that wanted to exfiltrate them could,
+  and for Codex could modify them.
 - Symlinks. The host-side copies after a run, into the tree store, the next
   `/refs` and the published repository, follow symlinks. Since every
   evaluated candidate is published unless the run is `--offline`, a symlink

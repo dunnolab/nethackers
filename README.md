@@ -63,7 +63,9 @@ a different game on another architecture.
 **`eval` runs a `bot.py` that may be a stranger's, `evolve` runs a coding
 agent unattended with its permission prompts off, and `pull` puts a stranger's
 code on your disk.** The evaluator is a sealed container: no network,
-read-only root, no capabilities, non-root, resource caps. Fetching accepts
+read-only root, no capabilities, non-root, resource caps. The agent runs in
+a capped container and never sees your model credential; a broker on the
+host injects it on the wire. Fetching accepts
 github.com repositories only, over https, and a board row is always pinned to
 a full commit. A bot can still influence its
 self-reported score, which is why the private tier exists, and the threat model
