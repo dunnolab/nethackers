@@ -273,6 +273,22 @@ ARENA_MAJOR_BY_DIGEST: dict[str, int] = {
     # `python:3.11-slim` resolves to today, which is why the digest moves at
     # all; the pinned dependency set on top of it does not.
     "sha256:273f9962cb31956c5632a6880fce1e47a2c828e56a39c261330132f7a8460c86": 2,
+    # v0.36.1 (the tie fixes), rebuilt for the same reason as the digests above:
+    # uv.lock is an arena input and the release moves the project's own version
+    # in it, 0.36.0 -> 0.36.1. That one line is the whole uv.lock change, so
+    # every dependency version is the one the previous arena installed. The
+    # release's code changes are five host-side modules -- harness/archive.py,
+    # harness/brief.py and three under tui/ -- and the arena's entrypoint loads
+    # none of them (importing `nethackers.arena.run` leaves sys.modules holding
+    # only nethackers.arena.* and nethackers.contracts.*). arena/ and contracts/
+    # are untouched (`git diff v0.36.0..HEAD -- src/nethackers/arena
+    # src/nethackers/contracts` is empty), and so are nle-base/Dockerfile and
+    # arena/Dockerfile. Also the linux/amd64 LEG, not an index. Read from the
+    # diff, NOT measured: no scoring-path code changed, so a re-run has nothing
+    # to disconfirm. As on every rebuild, the base layer is whatever
+    # `python:3.11-slim` resolves to today, which is why the digest moves at
+    # all; the pinned dependency set on top of it does not.
+    "sha256:5435f0a7f6211db59cb6c6ac65f5d0dcae687cd507ea8f596bd1c014ed72a5ec": 2,
 }
 
 

@@ -15,14 +15,13 @@ since the loop sends every scored bot to the hub.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from statistics import mean
 
 from rich.markup import escape
 
 from nethackers.harness.loop import IterationResult
 from nethackers.tui import status as S
 from nethackers.tui._util import failure_detail
-from nethackers.tui.run import Batch, Run, outcome_word
+from nethackers.tui.run import Batch, Run, outcome_word, progress_mean
 
 _WARN = "#d7a700"
 RUN_MARK = f"[{S._FOCUS}]▶[/]"
@@ -96,7 +95,7 @@ def _dur(start: float | None, end: float | None) -> str:
 
 def _avg(batch: Batch | None) -> float | None:
     rows = batch.rows() if batch is not None else []
-    return mean(float(r["progress"]) for r in rows) if rows else None
+    return progress_mean([float(r["progress"]) for r in rows]) if rows else None
 
 
 def _avg_txt(avg: float | None) -> str:
@@ -301,7 +300,7 @@ def _means(results: list[dict] | None) -> dict[str, float]:
         c = r.get("character")
         if c:
             by.setdefault(c, []).append(float(r.get("progress", 0.0)))
-    return {c: mean(v) for c, v in by.items()}
+    return {c: progress_mean(v) for c, v in by.items()}
 
 
 def _keep_rule(run: Run, k: int) -> str:
@@ -720,7 +719,7 @@ def this_cell(run: Run, ident: str | None, k: int, best: float | None) -> tuple[
     total = sum(view.total for view in views)
     if not rows:
         return f"[{dim}]0/{total} games[/]", False
-    avg = mean(float(row["progress"]) for row in rows)
+    avg = progress_mean([float(row["progress"]) for row in rows])
     win = best is not None and avg > best
     color = S._GREEN if win else S._FOCUS
     tag = f"  [b {S._GREEN}]▲ new best[/]" if win else ""

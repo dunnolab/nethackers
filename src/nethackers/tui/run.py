@@ -9,7 +9,7 @@ import threading
 import time
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from statistics import pstdev
+from statistics import mean, pstdev
 
 from nethackers.harness.aggregate import end_status_word
 from nethackers.harness.loop import IterationResult
@@ -46,6 +46,26 @@ class Batch:
         return [self.rows_by_index[k] for k in sorted(self.rows_by_index)]
 
 
+def progress_mean(values: list[float]) -> float:
+    """The mean of progress scores, computed the way the HARNESS computes it.
+
+    `statistics.mean` accumulates exactly; `sum(values) / len(values)`
+    accumulates in binary float, and the two disagree by an ULP on ordinary
+    inputs. That sounds like pedantry and is not: `harness/aggregate.py` scores
+    every candidate with `statistics.mean`, and `CellArchive.insert` keeps a
+    bot only when it STRICTLY beats the cell, so a rejected iteration ties its
+    incumbent EXACTLY -- and an iteration whose edit didn't take re-scores the
+    parent, tying on every identity. Average one side of that comparison the
+    other way and the tie becomes a win by one ULP, which the monitor renders
+    as "▲ new best" on an iteration the loop threw away. Seen in the wild:
+    run 20260922-224201, iterations 3-5.
+
+    So every score the monitor compares -- or shows next to one it compares --
+    goes through here.
+    """
+    return mean(values) if values else 0.0
+
+
 @dataclass
 class EvalView:
     ident: str
@@ -67,7 +87,7 @@ class EvalView:
     @property
     def avg(self) -> float | None:
         s = self.scores
-        return sum(s) / len(s) if s else None
+        return progress_mean(s) if s else None
 
     @property
     def std(self) -> float:
@@ -286,7 +306,7 @@ class Run:
         batch.rows_by_index[int(ep["index"])] = ep
         self.counts[ep["status"]] = self.counts.get(ep["status"], 0) + 1
         rows = batch.rows()
-        mean = sum(float(r["progress"]) for r in rows) / len(rows)
+        batch_mean = progress_mean([float(r["progress"]) for r in rows])
         total = int(ep["total"])
         batch.total = total
         # Each callback represents a finished episode. Seal the batch as soon
@@ -297,7 +317,7 @@ class Run:
             self._seal(batch, now)
         # done/total = how many of this batch's episodes have finished (a true
         # completed-count), not the arriving episode's own (out-of-order) index.
-        self.eval_step = (len(rows), total, mean)
+        self.eval_step = (len(rows), total, batch_mean)
 
     def _seal(self, batch: Batch, now: float) -> None:
         """Mark a batch finished, once: when -- and, for an iteration's dev
@@ -450,7 +470,7 @@ class Run:
             c = row.get("character")
             if c:
                 buckets.setdefault(c, []).append(float(row["progress"]))
-        return {c: sum(v) / len(v) for c, v in buckets.items()}
+        return {c: progress_mean(v) for c, v in buckets.items()}
 
     def role_of(self, ident: str) -> str:
         return ident.split("-", 1)[0]
@@ -520,7 +540,7 @@ class Run:
             vals = [float(r["progress"]) for r in (res.results or [])
                     if r.get("character") == ident]
             if vals:
-                avg = sum(vals) / len(vals)
+                avg = progress_mean(vals)
                 if avg > score:
                     score, label, kind, j = avg, f"run · iter {k}", "run", k
         return score, label, kind, j
@@ -532,7 +552,7 @@ class Run:
             score, j = float(union["score"]), None
         else:   # AutoAscend fallback: macro-average of the baselines (spec §5.6)
             floors = [self.aa_baseline().get(i, 0.0) for i in self.identities()]
-            score = sum(floors) / len(floors) if floors else 0.0
+            score = progress_mean(floors)
             label, kind, j = "AutoAscend", "aa", None
         for k, res in self._completed_iters(upto_k):
             if (res.improved and "union" in res.improved and res.dev_fitness is not None
