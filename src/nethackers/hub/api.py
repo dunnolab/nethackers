@@ -389,7 +389,10 @@ def create_app(
 
     @app.get("/stats")
     def stats() -> dict[str, Any]:
-        return read_stats(store)
+        # ``_epoch()`` is None on a hub with no verifier -- ``read_stats`` then
+        # omits ``verified_programs`` entirely rather than reporting a 0 it
+        # cannot stand behind.
+        return read_stats(store, epoch=_epoch())
 
     @app.get("/baseline")
     def baseline(tier: str = "self-reported") -> dict[str, Any]:

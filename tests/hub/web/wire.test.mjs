@@ -147,7 +147,7 @@ function ownerPrograms(owner, limit, total) {
 function router(path) {
   const [route, query] = path.split("?");
   const params = new URLSearchParams(query || "");
-  if (route === "/stats") return { programs: 2, hackers: 2, ascensions: 0, last_registered_at: "2026-08-27T09:30:00+00:00" };
+  if (route === "/stats") return { programs: 2, hackers: 2, ascensions: 0, verified_programs: 1, last_registered_at: "2026-08-27T09:30:00+00:00" };
   if (route === "/baseline") return BASELINE;
   if (route === "/objectives") return IDENTITIES.map((n) => ({ name: n, episodes: 15 }));
   if (route === "/recognition") return RECOGNITION;
@@ -223,6 +223,10 @@ async function pass1() {
   ok(/2 programs registered/.test(mq), "marquee shows the live program count (2)");
   ok(/none has ascended/.test(mq), "marquee: 'none has ascended' when ascensions=0");
   ok(/27 Aug 2026/.test(q("#updated").textContent), "last-updated shows the formatted registered_at (UTC)");
+
+  // sidebar "programs verified" row: painted from /stats' verified_programs
+  ok(!q("#regVerif").hidden, "the verified row is shown when /stats reports a count");
+  ok(q("#odoVerif").textContent === "00001", "the verified odometer shows the live count (1)");
 
   // Recognition tables start compact and expand independently in five-row pages.
   ok(qa("#recordholders tbody tr").length === 5, "frontier keepers initially shows the top 5");
@@ -462,6 +466,7 @@ async function pass3() {
   // honesty: /stats failed -> the marquee omits the count line and the freshness stamp stays a neutral dash
   ok(!/programs registered/.test(q("#mq").textContent), "marquee omits the stats line when /stats fails");
   ok(q("#updated") && q("#updated").textContent.trim() === "—", "last-updated is a neutral dash offline");
+  ok(q("#regVerif").hidden, "the verified row stays hidden when /stats fails");
   ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
   dom.window.close();
 }
@@ -758,6 +763,25 @@ async function pass7() {
   dom.window.close();
 }
 
+async function pass8() {
+  console.log("\n== pass 8: hub with no verifier configured ==");
+  const errors = [];
+  const noVerifier = (p) => {
+    const body = router(p);
+    if (p.split("?")[0] === "/stats") { const { verified_programs, ...rest } = body; return rest; }
+    return body;
+  };
+  const dom = makeDom((p) => Promise.resolve({ ok: true, status: 200, json: async () => noVerifier(p) }), errors);
+  const { document } = dom.window;
+  await sleep(200);
+  const q = (s) => document.querySelector(s);
+  // honesty: "no verifier to read the tier through" is not "zero verified".
+  ok(q("#regVerif").hidden, "no verified_programs key -> the row is hidden, not a 00000");
+  ok(/2 programs registered/.test(q("#mq").textContent), "the rest of the sidebar still reads live");
+  ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
+  dom.window.close();
+}
+
 await pass1();
 await pass2();
 await pass3();
@@ -765,6 +789,7 @@ await pass4();
 await pass5();
 await pass6();
 await pass7();
+await pass8();
 checkDictvizRandomWiring();
 console.log("\n" + (failures === 0 ? "ALL PASSED" : failures + " CHECK(S) FAILED"));
 process.exit(failures === 0 ? 0 : 1);

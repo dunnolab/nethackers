@@ -171,3 +171,26 @@ def test_candidates_excludes_fully_covered_and_failed(tmp_path):
     assert r.status_code == 200
     ids = [row["reference"]["repo"] for row in r.json()["rows"]]
     assert "github.com/a/x" in ids and "github.com/b/x" not in ids
+
+
+def test_stats_counts_a_program_only_once_every_identity_is_verified(tmp_path):
+    # Driven through the real POST /verify ingestion, one identity at a time:
+    # the sidebar counter must stay at 0 for every partial grid and tick to 1
+    # on the submission that completes it.
+    client, store = _app(tmp_path)
+    _seed_solution(store)
+    headers = {"Authorization": f"Bearer {VTOKEN}"}
+    assert client.get("/stats").json()["verified_programs"] == 0
+    for n, identity in enumerate(IDENTITIES, start=1):
+        body = {"reference": {"repo": REPO, "commit": SHA},
+                "evidence": _evidence_dict(identity),
+                "secret_fingerprint": secret_fingerprint(CFG.secret)}
+        assert client.post("/verify", json=body, headers=headers).status_code == 200
+        expected = 1 if n == len(IDENTITIES) else 0
+        assert client.get("/stats").json()["verified_programs"] == expected
+
+
+def test_stats_omits_verified_programs_when_no_verifier_is_configured(tmp_path):
+    # Nothing to read the verified tier through -> no count at all, never a 0.
+    client, _ = _app(tmp_path, verifier=None)
+    assert "verified_programs" not in client.get("/stats").json()
