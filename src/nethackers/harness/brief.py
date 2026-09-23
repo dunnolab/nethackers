@@ -5,6 +5,8 @@ loop, iterations, or acceptance internals.
 """
 from __future__ import annotations
 
+from math import ceil
+
 INTRO = (
     "# You're improving a NetHack bot\n\n"
     "You are improving a Python program that plays **NetHack** through the "
@@ -60,6 +62,29 @@ MEASURE = (
 )
 
 
+# What a change has to move to be worth an iteration. The loop banks anything
+# that strictly beats the cell, and historically that has meant a median gain of
+# +0.003 -- 77 registered wins across this machine's runs, 91% of them under a
+# point. Each one costs a full iteration (10-45 minutes here) and becomes the
+# next parent, so a run can spend its whole budget tuning margins. The bar the
+# brief ASKS for is therefore a point, even though the bar the archive ENFORCES
+# stays "strictly better": aim high, bank what is real.
+WORTH_IT = 0.01
+
+
+def _bar(target: float) -> str:
+    """A threshold, printed so it can never read as easier than it is.
+
+    Rounding a bar DOWN invites exactly the failure it is meant to prevent: the
+    union champion of run 20260922-224201 scored 0.0672706, printed as "0.067",
+    and an agent that reproduced that champion exactly reported "0.0672706
+    overall, beating 0.067" -- true of the number it was shown, false of the
+    rule. Round up instead, so clearing what is printed always clears what is
+    enforced.
+    """
+    return f"{ceil(target * 10_000) / 10_000:.4f}"
+
+
 def _scores(identities: list[str], per_identity: dict[str, float] | None,
             overall: float | None, target: float | None) -> str:
     pid = per_identity or {}
@@ -75,9 +100,11 @@ def _scores(identities: list[str], per_identity: dict[str, float] | None,
     lines.append("")
     if full and overall is not None and target is not None:
         lines.append(f"**Overall average now: {overall:.3f} · "
-                     f"target to beat: {target:.3f}**")
+                     f"best so far: {_bar(target)} · "
+                     f"aim for: {_bar(target + WORTH_IT)}**")
     elif target is not None:
-        lines.append(f"**Target to beat: {target:.3f}**")
+        lines.append(f"**Best so far: {_bar(target)} · "
+                     f"aim for: {_bar(target + WORTH_IT)}**")
     return "\n".join(lines)
 
 
@@ -92,12 +119,16 @@ def _goal(n: int) -> str:
 
 
 def _whats_kept(target: float | None) -> str:
-    bar = f"beats {target:.3f}" if target is not None else "goes up"
+    kept = f"beats {_bar(target)}" if target is not None else "goes up"
+    aim = f" Aim past **{_bar(target + WORTH_IT)}**:" if target is not None else " Aim high:"
     return (
         "## What's kept\n"
         "Your edited bot is re-scored on the same fixed seeds. It's **kept** if "
-        f"its **overall average {bar}**; a change that doesn't raise the average "
-        "is discarded. So aim for changes that help across characters, not tricks "
+        f"its **overall average {kept}** — strictly; matching it is discarded, and "
+        "so is a change that only reproduces something already tried."
+        f"{aim} a change that moves the average by less than "
+        f"{WORTH_IT:.2f} is not worth making, so reach for something structural "
+        "rather than tuning a margin. And help across characters, not tricks "
         "that boost one and hurt the rest."
     )
 

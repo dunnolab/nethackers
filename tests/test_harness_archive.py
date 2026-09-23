@@ -77,3 +77,39 @@ def test_size1_set_has_no_union_cell(tmp_path):
     assert improved == [IDS[0]]
     assert UNION not in improved
     assert arc.union is None
+
+
+def test_a_program_that_ties_a_cell_and_wins_elsewhere_takes_the_tied_cell(tmp_path):
+    """The dominating bot holds the cell, even where it only tied.
+
+    Run 20260922-224201: a change helped the orc rogues and left the human ones
+    untouched, so the human cells kept the older, strictly worse bot. The loop
+    hands out cell elites as parents, so three iterations in a row drew a human
+    cell, got that stale tree, re-derived the orc change -- the one visible way
+    to reach the stated target -- reproduced the champion exactly, and were
+    rejected for improving nothing.
+    """
+    arc = CellArchive(IDS)
+    arc.insert("first", tmp_path / "first", _ev({IDS[0]: 0.2, IDS[1]: 0.2}))
+
+    # ties IDS[0] exactly, strictly better on IDS[1]
+    improved = arc.insert("second", tmp_path / "second", _ev({IDS[0]: 0.2, IDS[1]: 0.5}))
+
+    assert improved == [IDS[1], UNION]                 # the tie is NOT claimed as a win
+    assert arc.cell(IDS[1]).digest == "second"
+    assert arc.cell(IDS[0]).digest == "second"         # ... but it holds the tied cell
+    assert arc.cell(IDS[0]).score == 0.2               # at the score it actually got
+
+
+def test_a_program_that_only_ties_takes_nothing(tmp_path):
+    """Dominance, not churn: tying everywhere wins nothing, so an iteration that
+    reproduces an existing elite leaves the archive exactly as it was."""
+    arc = CellArchive(IDS)
+    arc.insert("first", tmp_path / "first", _ev({IDS[0]: 0.2, IDS[1]: 0.4}))
+
+    improved = arc.insert("same", tmp_path / "same", _ev({IDS[0]: 0.2, IDS[1]: 0.4}))
+
+    assert improved == []
+    assert arc.cell(IDS[0]).digest == "first"
+    assert arc.cell(IDS[1]).digest == "first"
+    assert arc.union is not None and arc.union.digest == "first"
