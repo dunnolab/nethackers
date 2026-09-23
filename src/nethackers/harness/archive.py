@@ -42,9 +42,24 @@ class CellArchive:
         into the union cell if it strictly improves the best full-coverage
         union mean. Returns the improved keys (identities, plus ``"union"``
         when the union cell moved). An empty/absent cell (score ``-inf``) is
-        always improved, so the first insert seeds every cell."""
+        always improved, so the first insert seeds every cell.
+
+        A program that TIES a cell and strictly improves somewhere else takes
+        that cell too, without being reported as an improvement there. It
+        dominates the incumbent -- equal here, better elsewhere -- and the cell
+        exists to hand out parents, so holding the dominated bot hands the
+        mutator a tree that is behind the archive on every other identity. That
+        is not hypothetical: in run 20260922-224201 a change helped only the orc
+        rogues and tied the human ones, so the human cells kept the older bot;
+        three iterations in a row then drew a human cell, re-derived the orc
+        change (the one visible way to reach the stated target), reproduced the
+        champion exactly, and were rejected for improving nothing. The score
+        did not move in those cells, so ``improved`` must not claim it did --
+        only the occupant changes.
+        """
         means = aggregate.per_identity_means(dev_evidence.results)
         improved: list[str] = []
+        tied: list[str] = []
         for ident in self.identities:
             score = means.get(ident)
             if score is None:
@@ -53,6 +68,8 @@ class CellArchive:
             if current is None or score > current.score:
                 self.cells[ident] = Cell(digest, tree, score, dev_evidence)
                 improved.append(ident)
+            elif score == current.score and current.digest != digest:
+                tied.append(ident)
 
         # Union cell (multi-identity sets only): the best program by the mean
         # over the WHOLE union batch. Only full-coverage evidence qualifies --
@@ -64,6 +81,10 @@ class CellArchive:
             if self.union is None or u > self.union.score:
                 self.union = Cell(digest, tree, u, dev_evidence)
                 improved.append(UNION)
+
+        if improved:   # it won somewhere, so it dominates every cell it tied
+            for ident in tied:
+                self.cells[ident] = Cell(digest, tree, means[ident], dev_evidence)
         return improved
 
     def coverage(self) -> tuple[int, int]:

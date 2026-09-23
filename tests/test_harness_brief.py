@@ -48,7 +48,9 @@ def test_scores_table_exact_rows_weakest_first():
     i_neu = b.index("`val-hum-neu-fem` | 0.173")
     i_dwa = b.index("`val-dwa-law-fem` | 0.185")
     assert i_law < i_neu < i_dwa                       # ascending score order
-    assert "Overall average now: 0.168 · target to beat: 0.174" in b
+    # the bar is printed rounded UP (never easier than it is), and the ask is
+    # a point above it -- see brief._bar / brief.WORTH_IT.
+    assert "Overall average now: 0.168 · best so far: 0.1740 · aim for: 0.1840" in b
 
 
 def test_scores_table_sorts_even_when_declared_order_is_not_ascending():
@@ -116,7 +118,7 @@ def test_partial_coverage_no_misleading_overall():
                     target=0.174, seeds_per_identity=15, training_seeds=list(range(15)))
     assert "| `val-hum-neu-fem` | — |" in b             # unmeasured -> em-dash row
     assert "Overall average now" not in b               # not shown on partial coverage
-    assert "Target to beat: 0.174" in b
+    assert "Best so far: 0.1740 · aim for: 0.1840" in b
 
 
 def test_single_identity_variant_de_jargoned():
@@ -142,3 +144,28 @@ def test_single_identity_variant_keeps_safety_and_refs_lines():
     assert "foreground" in lo                             # synchronous-eval steer
     assert "/refs/CONTEXT.md" in b                        # references pointer
     assert "hypothesis" in lo                              # focused-change comment
+
+
+def test_a_printed_bar_is_never_easier_than_the_rule():
+    """The number shown must not be clearable by something the loop rejects.
+
+    Run 20260922-224201's best program scored 0.0672706 and the brief printed
+    "0.067". An agent that reproduced that exact program reported "0.0672706
+    overall, beating 0.067" -- true of the number it was given, false of the
+    rule, and the loop threw the work away. Bars round UP.
+    """
+    best = 0.0672706278786472
+    b = build_brief("rog", IDS[0], identities=IDS, per_identity=PID, overall=0.0639,
+                    target=best, seeds_per_identity=15, training_seeds=list(range(15)))
+    assert "0.0673" in b                  # the printed bar
+    assert "0.067 " not in b and "0.067*" not in b   # never the rounded-down one
+    # and reproducing that exact score does not clear what was printed
+    assert best < 0.0673
+
+
+def test_the_ask_is_a_point_above_the_bar():
+    b = build_brief("rog", IDS[0], identities=IDS, per_identity=PID, overall=0.0639,
+                    target=0.0672706278786472, seeds_per_identity=15,
+                    training_seeds=list(range(15)))
+    assert "aim for: 0.0773" in b         # 0.0673 + WORTH_IT
+    assert "less than 0.01 is not worth making" in b
