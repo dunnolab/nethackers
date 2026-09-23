@@ -2,7 +2,7 @@
 
 `nethackers setup` gets a machine ready to evaluate, evolve and publish bots:
 the container runtime, the sandbox images, and three logins. macOS or Linux,
-Python 3.11+; on Windows, run it inside WSL2. Recipes as of v0.35.0
+Python 3.11+; on Windows, run it inside WSL2. Recipes as of v0.36.2
 (2026-09-23); what a bot is and how it is scored is in
 [harness.md](harness.md).
 
@@ -16,9 +16,10 @@ nethackers setup --yes              # run the plan without asking
 ```
 
 It runs the same checks as `nethackers doctor`, prints what it is about to
-do, and waits for one yes. Nothing it runs uses `sudo`; a test checks every
-command. Anything that needs `sudo`, a GUI click, or logging out and back in
-is printed for you to run.
+do, and waits for one yes; with no coding agent logged in and no
+`--operator`, it first asks which one to set up. Nothing it runs uses
+`sudo`; a test checks every recipe and login. Anything that needs `sudo`, a
+GUI click, or logging out and back in is printed for you to run.
 
 ## The plan
 
@@ -38,19 +39,23 @@ nethackers will:
   9 pull the sandbox images
 Steps 1, 3, 6 need you at the keyboard; the rest run on their own. Nothing nethackers
 runs needs sudo.
-Steps marked (untested) come from vendor docs and haven't been run on a real macOS arm64
-(Apple Silicon) yet.
+Steps marked (untested) come from vendor docs and haven't been run on a real Mac yet.
 ```
 
 Logins come first so you can walk away afterwards. Installs happen only
 where one documented command does them without `sudo`. A runtime is started
 with its own command: `colima start`, `docker desktop start`, `orb start`,
-`podman machine start`. The images are about 1 GB to download the first
-time and 4 GB on disk; later releases fetch only what changed, with a
-progress bar and the time left.
+`podman machine start`; step 8 is sized to the Mac, at most 6 CPUs and 12 GB
+and never more than half its memory, and a Mac without Rosetta 2 is told to
+install it first and gets the VM on the next run. The images are up to about
+1 GB to download the first time (the plan shows the exact figure) and a few
+GB on disk; later releases fetch only what changed, with a progress bar and
+the time left.
 
 On Linux the runtime and `gh` need `sudo`, so they move to the list you run
-yourself:
+yourself, and setup ends with "Then run `nethackers setup` again. It picks
+up where it left off": the second run pulls the images and plans the `gh`
+login.
 
 ```text
 You'll need to (nethackers never runs sudo):
@@ -66,10 +71,13 @@ You'll need to (nethackers never runs sudo):
 nethackers doctor
 ```
 
-Each section ends in `ready to eval: yes`, `ready to evolve: yes`,
-`ready to publish: yes`. On Linux the new `docker` group applies only after
-you log out and back in; until then doctor reports the runtime as installed
-but broken.
+Each section ends in a verdict, `ready to eval ✓` (`ready to eval: yes` with
+`-o plain`), and the same for evolve, publish and browse. A finished setup
+says so itself: `✓ ready to eval · evolve · publish · browse. Nothing to
+do.`, then a `Next:` line with the command to try. On Linux the new `docker`
+group applies only after you log out and back in, or `newgrp docker` in that
+shell; until then doctor's `container_runtime` check fails with docker's
+permission-denied line.
 
 ## Running it again
 
@@ -77,7 +85,8 @@ Run it whenever you like: it re-checks and plans only what is still missing,
 which is also how a new release's images arrive. With no terminal attached
 (a coding agent's shell, a pipe) it prints the plan and changes nothing;
 with `--yes` it runs every unattended step and lists the logins for you to
-run, each of which prints a code or a link.
+run, each of which prints a code or a link. Pass `--operator` with `--yes`,
+or an unattended run leaves the coding agent for later.
 
 ## Coding agents
 
@@ -86,16 +95,17 @@ login.
 
 | | log in with | what enters the sandbox |
 |---|---|---|
-| Claude Code | run `claude` once | the credential: `~/.claude/.credentials.json` read-only on Linux, the Keychain OAuth token as an environment variable on macOS |
+| Claude Code | `claude auth login` | the credential: `~/.claude/.credentials.json` read-only on Linux, the Keychain OAuth token as `CLAUDE_CODE_OAUTH_TOKEN` on macOS |
 | Codex | `codex login` | your real `~/.codex`, read-write, because its tokens rotate |
-| OpenCode 2 | nothing; providers come from `~/.config/opencode/opencode.json` | a read-only copy of that file's `provider` section, plus the environment variables it names |
+| OpenCode 2 | nothing; providers come from `~/.config/opencode/opencode.json` (or `.jsonc`) | a read-only copy of that file's `provider` section, plus the environment variables it names |
 
-OpenCode 2 is provider-agnostic, so a few things differ:
+The operator id is `opencode2`; the CLI inside the image is `opencode`,
+with an `opencode2` symlink. OpenCode is provider-agnostic, so a few things
+differ:
 
-- Logins made with `opencode2 auth login`, a ChatGPT subscription included,
-  stay on the host: the sandbox never sees OpenCode's own database, and a
-  subscription login renews itself, so a copy would invalidate yours. For
-  GPT on a ChatGPT subscription, use the `codex` operator.
+- Logins made with `opencode auth login`, a ChatGPT subscription included,
+  stay on the host: the sandbox never sees OpenCode's own database. For GPT
+  on a ChatGPT subscription, use the `codex` operator.
 - A `{file:...}` key is not in the container. Use `{env:NAME}` or a literal
   `apiKey`, and export the variable in the shell that launches nethackers.
 - Project config (`opencode.json`, `.opencode/`) is switched off in the
@@ -104,9 +114,11 @@ OpenCode 2 is provider-agnostic, so a few things differ:
 - Without a key, OpenCode serves a handful of free `opencode/*` models, and
   doctor says "free models only". Their availability is OpenCode's to
   decide; a model that never replies waits out the 8-hour sandbox timeout.
-- Custom providers appear in the model picker as `provider/model`. A model
-  server on your own machine is `http://host.docker.internal:PORT/v1` under
-  Docker Desktop, since `localhost` inside the sandbox is the container.
+- Custom providers appear in the model picker as `provider/model`. Under
+  Docker Desktop a model server on your own machine is
+  `http://host.docker.internal:PORT/v1`, since `localhost` inside the
+  sandbox is the container; on Linux Docker the sandbox has no name for the
+  host at all.
 - Reasoning effort is a variant of a pinned model, so `--effort` needs
   `--model`.
 
@@ -119,9 +131,10 @@ Every recipe below is one of:
 - **untested**: written from the linked vendor document, never run by us.
 - **not covered**: setup points you at the vendor's page.
 
-A recipe becomes tested only in a PR that records where it ran. As of
-v0.35.0: macOS, 17 recipes, 0 tested; Linux, 13 recipes, 0 tested, 2 not
-covered.
+A recipe becomes tested only in a PR that records where it ran, at which
+nethackers version, and when; the tests reject a tested row missing any of
+the three, and fail while this table is stale. As of v0.36.2: macOS, 17
+recipes, 0 tested; Linux, 13 recipes, 0 tested, 2 not covered.
 
 <!-- setup-recipes:start (generated by `python -m nethackers.setup.docs`; do not edit by hand) -->
 
@@ -167,5 +180,9 @@ covered.
 
 <!-- setup-recipes:end -->
 
-Native Windows is not covered: run nethackers inside WSL2. Other Linux
-distributions: Docker's own install page, linked in the table.
+Native Windows is not covered: setup says so, points at Microsoft's WSL2
+page, and exits. Inside WSL2 it treats the machine as Linux and offers the
+`linux.docker.wsl` row. Other Linux distributions, meaning any whose
+`/etc/os-release` names none of Debian, Ubuntu, Fedora, RHEL, CentOS or
+Arch: setup prints Docker's and gh's own install pages, the two rows marked
+not covered. The Claude Code and Codex installers run on any distribution.

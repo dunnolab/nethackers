@@ -34,13 +34,17 @@ def make_agent() -> Bot:
 
 Each episode runs in its own process: `make_agent()`, then `reset()` with
 the first observation, then `act()` until the game ends. No instance sees
-two episodes, so nothing carries over. Observations map public NLE keys to
-read-only arrays. Actions are integer indices into `nle.nethack.ACTIONS`.
-The protocol is `nethackers.contracts.bot.ArenaBot`, a `typing.Protocol`;
-there is nothing to import or subclass.
+two episodes; only `/tmp`, a scratch tmpfs the batch's episodes share,
+outlives one. Observations map public NLE keys to read-only arrays. Actions
+are integer indices into `nle.nethack.ACTIONS`. The protocol is
+`nethackers.contracts.bot.ArenaBot`, a `typing.Protocol`; there is nothing
+to import or subclass.
 
-Next to `bot.py`, a manifest. The hub reads `root`, `entrypoint`, `parents`
-and `influences`; `schema` and `name` are convention:
+Next to `bot.py`, `nethackers.solution.json`. `eval` never reads it;
+`submit` and `evolve` refuse a tree without one. The hub checks that
+`parents` and `influences` are lists of strings and stores them as lineage.
+It stores `root` and `entrypoint` and acts on neither: the arena always
+loads `bot.py` at the tree root. `schema` and `name` are convention:
 
 ```json
 {
@@ -57,11 +61,13 @@ What is fixed:
 
 | | |
 |---|---|
-| the arena | the pinned `linux/amd64` image; `nethackers --version` prints its digest |
+| the arena | the pinned `linux/amd64` image; `nethackers --version -o json` prints its digest |
 | the games | 15 published seeds per identity for Public Dungeons; secret seeds for Private |
 | the actions | `nle.nethack.ACTIONS` |
-| randomness | `random` and `numpy.random` are seeded per episode; a bot that reads the clock or the network is not replayable |
-| time | a per-action timeout inside the arena and a wall-clock ceiling on the box |
+| randomness | `random` and `numpy.random` are seeded per episode and `PYTHONHASHSEED` is 0; there is no network; a bot that reads the clock or `os.urandom` is not replayable |
+| time | 120 s of wall clock per `act()`, per `reset()` and for startup; a ceiling on the whole box of 3600 s times its number of waves, which loses the batch when hit |
+| the end | a game ends at 1,000,000 steps, or after 10,000 steps with the turn counter unchanged |
+| a failure | a bad action, a timeout, or an exception in the bot zeroes that episode; no retry |
 
 Score it:
 
@@ -82,7 +88,8 @@ contract.
 `src/nethackers/harness/` is a MAP-Elites loop: an archive with one cell
 per identity, each holding the best program on that identity, plus a union
 cell for the best program across all of them. A program that is mediocre
-overall but the best Monk earns and holds the Monk cell.
+overall but the best Monk earns the Monk cell, and holds it until another
+program beats it there, or ties it there while winning some other cell.
 
 ```
 cold-start each cell from the hub's elite, else from --seed
@@ -103,8 +110,14 @@ cold-start each cell from the hub's elite, else from --seed
   │   register ────────── publish + register every evaluated candidate
   │        │
   │        ▼
-  └─── insert into every cell it improves
+  └─── insert into every cell it improves (and ties, if it improved one)
 ```
+
+Each hub elite is re-scored here on the public seeds before it fills a
+cell; the union cell starts from the board's first row. `--from-seed` skips
+the hub; `--verified` reads the verified tier instead. A run stops after
+three consecutive operator failures, and on the first when the operator
+refuses the request, for example a model the sandbox's CLI does not know.
 
 | Stage | Where | What it does |
 |---|---|---|
@@ -122,39 +135,47 @@ nethackers evolve val-dwa-law-fem --seed autoascend --operator codex --iteration
 ```
 
 Every candidate that passes the smoke gate and gets evaluated is pushed to
-your public `github.com/<you>/nethacker` and registered with the hub,
-whether or not it won a cell. The archive records what was tried; a long
-run puts many commits under your account. `--offline` skips both.
+your public `github.com/<you>/nethacker`, on a branch per run, and
+registered with the hub, whether or not it won a cell. The hub records what
+was tried; a long run puts many commits under your account. `--offline`
+skips both, and still reads the hub to seed cells; `--from-seed` keeps the
+hub out.
 
 ## Three decisions
 
 **The agent gets code, not commentary.** `/refs/` is real trees: the parent
-bot, and each recent attempt as a checked-out tree with its own
-`eval.json`, plus a per-identity scores table. The brief states the current
-scores, a target to beat, and that a change is kept only if it improves a
-cell. One mismatch to know about: the brief says "beat the overall average",
-while the loop accepts any candidate that improves a single identity's cell.
+bot, and each of the run's last three evaluated attempts as a copied tree
+with its own `eval.json`, plus a per-identity scores table. The brief states
+the current per-identity scores, the best overall so far, an aim one point
+above it, and that a change is kept only if its overall average strictly
+beats the best so far; a single-identity objective gets no target and no
+keep rule. One mismatch to know about: the brief's rule is the overall
+average, while the loop accepts any candidate that improves a single
+identity's cell.
 
 **The agent is sealed from its own past.** A fresh container per iteration,
-plus each CLI's statelessness flags: `--ephemeral --ignore-user-config` for
-Codex, `--no-session-persistence` and no auto-memory for Claude Code;
-OpenCode has none and relies on the fresh container. An agent that
-remembers yesterday's run converges on the change it already made and
-proposes variants of it forever. What it knows of the past is what `/refs/`
-shows it. This is not a hermetic boundary: `/workspace` is writable, the
-network is open, and Codex's `~/.codex` is mounted read-write.
+plus each CLI's statelessness flags: `--ephemeral --ignore-user-config
+--ignore-rules` for Codex, `--no-session-persistence` and no auto-memory
+for Claude Code; OpenCode has none and relies on the fresh container. An
+agent that remembers yesterday's run converges on the change it already
+made and keeps proposing variants of it. What it knows of the past is what
+`/refs/` shows it. This is not a hermetic boundary: `/workspace` is
+writable, the network is open, and Codex's `~/.codex` is mounted
+read-write.
 
 **The agent experiments on the games it is scored on.** The mutator image
-is built from the arena's NLE base for `linux/amd64`, like the arena.
-NetHack plays a different game from the same seed on another CPU
-architecture; when the mutator ran natively on Apple Silicon, the agent
-tuned games the arena never plays. `evolve` refuses to start if the two
-images are built for different platforms. The `nethackers` package is not
-in the image, only `nethackers.arena` and `nethackers.contracts`: enough to
-score a candidate, nothing about how the loop scores it. That is a diet,
-not a boundary: the container has network access and the package is on
-PyPI. The secret behind the private seeds is in no image at all; its
-absence is what protects them.
+is built from the same NLE base image as the arena, for `linux/amd64` only,
+like the arena. NetHack plays a different game from the same seed on
+another CPU architecture; when the mutator ran natively on Apple Silicon,
+the agent tuned games the arena never plays. `evolve` refuses to start if
+the two images are built for different platforms. The `nethackers` package
+is not installed in the image; only `nethackers.arena` and
+`nethackers.contracts` are copied onto `PYTHONPATH`, enough to score a
+candidate the way the arena does. The loop, its gate, its seed module and
+the hub client are not there. That is a diet, not a boundary: the container
+has network access and the package is on PyPI, harness included. The secret
+behind the private seeds is in no image at all; its absence is what protects
+them.
 
 ## Operators
 
@@ -168,7 +189,18 @@ prompts off. Logins and OpenCode's provider rules are in
 | approvals off | `--dangerously-skip-permissions` | `--dangerously-bypass-approvals-and-sandbox` | `--auto` |
 | kept from its past | `--no-session-persistence`, `--strict-mcp-config`, auto-memory off, `--setting-sources project,local` | `--ephemeral`, `--ignore-user-config`, `--ignore-rules` | the fresh container; project config switched off |
 | models | your account's, from Anthropic's API; aliases like `opus` pass | `codex debug models`, run inside the sandbox | `opencode2 models`, run inside the sandbox |
-| effort | `--effort` | `-c model_reasoning_effort=` | a variant of the pinned model, so `--effort` needs `--model` |
+| effort | `--effort` | `-c model_reasoning_effort=` | `--variant` of the pinned model, so `--effort` needs `--model` |
+
+`nethackers models --operator <name>` lists what each sandbox serves. For
+Claude the picker's list is your account's, and the CLI pinned inside the
+image resolves `--model` again against its own: an id newer than that CLI
+passes the picker and fails at the first iteration with `unrecognized model
+'<id>' — the sandbox's CLI doesn't know that id; use an alias like opus, or
+update the CLI in the mutator image`, and the run stops there. Aliases never
+go stale. For Codex and OpenCode a rejected model is an ordinary failure and
+takes three tries. The CLI versions are pinned in `Dockerfile.mutator`; a
+bump re-pins the image. The operator id stays `opencode2` while the binary
+inside the image is `opencode`, with an `opencode2` symlink.
 
 ## Not in this loop
 
@@ -176,9 +208,12 @@ prompts off. Logins and OpenCode's provider rules are in
   is the identity's 15 public seeds. Whether a gain transfers is measured
   separately, by the private tier ([verification.md](verification.md)). If
   you copy this loop, that is a knob you can add.
-- Any record of the search. The hub stores programs at `repo@commit` and
-  their evidence. How long you searched, on what, is never metered.
-- Pruning. Every evaluated candidate is registered, not only the winners.
+- A record of the search on the hub. The hub stores each program at
+  `repo@commit`, its evidence and its parent. Iterations, tokens, model and
+  operator stay in the local run folder (`runs/<id>/run.json`,
+  `metrics.jsonl`, `logs/`) and never reach the hub.
+- Pruning. Every evaluated candidate is registered, not only the winners;
+  smoke-gate rejects are never scored and never registered.
 
 ## Safety
 
@@ -206,26 +241,39 @@ runtime for the number of episodes the box runs at once:
   --memory <three quarters of the runtime's memory> --memory-swap <the same> \
   --cpu-period 100000 --cpu-quota <100000 per episode> \
   --user 65534:65534 \
+  -e HOME=/tmp -e PYTHONWARNINGS=ignore::RuntimeWarning \
   -v <solution>:/sol:ro -v <tmpdir>:/out \
   --entrypoint timeout ghcr.io/dunnolab/nethackers-arena@sha256:… \
-  3600 python -m nethackers.arena.run --solution /sol --out /out/results.json …
+  <3600 × waves> python -m nethackers.arena.run --solution /sol \
+    --max-steps … --no-progress-timeout … --action-timeout … \
+    --max-parallel-evals <episodes> --out /out/results.json
 ```
 
+`--platform` is passed only for the pin; an override image runs without it.
+
 - No network. The strongest single control.
-- A read-only root and a `noexec,nosuid` tmpfs at `/tmp`: the only writable
-  path, and nothing written there can be executed.
+- A read-only root. Two paths are writable: a `noexec,nosuid` tmpfs at
+  `/tmp`, where nothing written can be executed, and the `/out` bind mount
+  that carries the result file back.
 - No capabilities, no privilege escalation, user `nobody`.
-- One core, one GiB and 32 processes per concurrent episode, swap capped to
-  memory, so a fork bomb or a memory runaway stays bounded. `timeout` runs
-  inside the box and sends SIGKILL after 3600 s per wave of episodes, so
+- One core and 32 processes per concurrent episode, three quarters of the
+  runtime's memory for the whole box (one GiB per episode is the budget that
+  decides how many run at once; 8 when the runtime cannot be asked), swap
+  capped to memory, so a fork bomb or a memory runaway stays bounded.
+  `timeout` runs as PID 1 inside the box and sends SIGTERM to the whole
+  process group after 3600 s times the number of waves, with no
+  `--kill-after`; workers and bots are armed with `PR_SET_PDEATHSIG`
+  (`arena/lifetime.py`), and whatever survives dies with PID 1, so
   grandchildren die too.
-- The private seeds never enter the box. The secret is expanded to concrete
-  per-trajectory seeds on the host and piped in on stdin; argv and the
-  environment carry only step and timeout parameters, so there is nothing to
-  read out of `/proc`.
+- The secret behind the private seeds never enters the box. It is expanded
+  to concrete per-trajectory seeds on the host and piped in on stdin; argv
+  carries only the step, timeout and parallelism parameters and the two
+  mount paths, the environment adds `HOME=/tmp` and a warnings filter, so
+  nothing in `/proc` names a seed or the secret.
 - Only `/out/results.json` comes back, through `arena/result_io.py`, which
-  refuses a symlink, an oversize file, or anything that is not a JSON list,
-  and never executes what the box wrote.
+  refuses a symlink, a file over 8 MB, or anything that is not a JSON list,
+  and never executes what the box wrote. A bot's traceback text, up to
+  8,000 characters, lands in the result's `error` field, as data.
 
 Inside the box, `arena/sandbox.py` runs the bot in its own subprocess,
 clears the write flag on observation arrays, and enforces a per-action
@@ -252,52 +300,60 @@ because it runs unattended and cannot stop to ask. That is defensible only
 because the CLI runs inside a container (`harness/container_operator.py`):
 
 ```
-docker run --rm \
+docker run --rm --platform linux/amd64 \
   --pids-limit 512 --memory 8g --memory-swap 8g --cpus 4 \
   --security-opt no-new-privileges \
   -v <worktree>:/workspace -v <refs>:/refs:ro \
+  <the credential -v and -e args from harness/auth_inject.py> \
   <mutator-image> timeout 28800 <agent CLI …>
 ```
 
+Also `--name`, `--label` and `-w /workspace`; rootless Podman adds
+`--userns=keep-id --user 0`. These caps are fixed, unlike the arena's.
+
 - `--pids-limit` is the fork-bomb defence, and the reason this is a
-  container rather than a process wrapper: no process-level sandbox
-  (Seatbelt, bubblewrap, Landlock, the CLIs' own) caps CPU, memory or
-  process count.
+  container rather than a process wrapper: process-level sandboxes cap
+  neither CPU, nor memory, nor process count.
 - Swap is pinned to memory; otherwise a runaway reaches twice the cap.
 - The entrypoint starts as root to remap uids, then drops to a non-root
-  `agent` user with `gosu`. It does not `--cap-drop ALL`: the remap needs
-  `CAP_SETUID` and `CAP_SETGID` at startup, so this container's posture is
-  weaker than the arena's.
+  `agent` user with `gosu`. It does not `--cap-drop ALL`: the remap and the
+  drop need `CAP_CHOWN`, `CAP_SETUID` and `CAP_SETGID` at startup, so this
+  container's posture is weaker than the arena's.
 - `timeout 28800` (8 hours) sends SIGTERM with no `--kill-after`; it is a
-  ceiling only insofar as the CLI honours SIGTERM.
-- Instruction-bearing files are stripped from what the agent is handed:
-  `CLAUDE.md`, `AGENTS.md`, `.mcp.json`, `.envrc`, and the `.claude`,
-  `.codex` and `.cursor` directories (`harness/refs.py`), so a pulled
-  program cannot bring its own agent instructions or MCP servers into your
-  run.
+  ceiling only insofar as the CLI honours SIGTERM. A stop from the CLI or
+  the TUI is `docker kill`, which does not depend on it.
+- Instruction-bearing files are stripped, at every level, from both the
+  worktree and `/refs`: `CLAUDE.md`, `AGENTS.md`, `.mcp.json`, `.envrc`,
+  `.cursorrules`, and the `.claude`, `.codex`, `.cursor` and `.vscode`
+  directories (`harness/refs.py`), so a pulled program's agent config files
+  are not loaded. It is a list of names: a README or a code comment still
+  reaches the agent, and a file not on the list passes through. Each CLI
+  also runs with its own project config off.
 
 Not contained by default:
 
-- Network egress. The CLIs need their model APIs, so nothing restricts it.
-  An egress allow-list is designed and off; the credential broker below is
-  the one mode that constrains egress. This is the largest hole in the
-  default sandbox.
+- Network egress. The CLIs need their model APIs, so nothing restricts it:
+  no `--network` flag in any mode, and no egress allow-list exists. This is
+  the largest hole in the default sandbox.
 - Your coding-agent credentials. Codex's real `~/.codex` is mounted
   read-write, so code in the cage can influence your next host-side `codex`
   run. Claude Code's credentials file is mounted read-only on Linux, and its
   OAuth token is passed as an environment variable on macOS, visible in
-  `docker inspect`. OpenCode's provider keys arrive as environment
-  variables. An agent that wanted to exfiltrate them could, and for Codex
-  could modify them. `ContainerOperator(broker=True)` swaps the mount for a
-  host-side broker (`harness/cred_broker.py`): the container gets a
-  placeholder key and a base URL back to the broker, egress is limited to
-  it, and the real key is injected per request on the host. It is off by
-  default and not wired to a CLI or TUI flag.
+  `docker inspect` and in the host process list. OpenCode's provider keys
+  arrive as forwarded environment variables, or inside the read-only copy
+  of the provider section when `opencode.json` holds the key literally. An
+  agent that wanted to exfiltrate them could, and for Codex could modify
+  them. `ContainerOperator(broker=True)` swaps the mount for a host-side
+  broker (`harness/cred_broker.py`): the container gets a placeholder key
+  and a base URL back to the broker, and the real key is injected per
+  request on the host. It keeps the key on the host; it does not keep the
+  container off the network. It is off by default, not wired to a CLI or
+  TUI flag, and not verified against a live provider.
 - Symlinks. The host-side copies after a run, into the tree store, the next
   `/refs` and the published repository, follow symlinks. Since every
-  evaluated candidate is published, a symlink planted in the worktree at a
-  host-readable file can end up in a public commit. Not seen in practice; it
-  follows from the code.
+  evaluated candidate is published unless the run is `--offline`, a symlink
+  planted in the worktree at a host-readable file can end up in a public
+  commit. Not seen in practice; it follows from the code.
 
 ### Programs you pull
 
@@ -307,22 +363,26 @@ runs the tree in the box above. The fetch itself (`hubclient/pull.py`,
 
 - github.com only, with the host parsed and compared rather than
   substring-matched: `github.com.evil.com`, `github.com@evil`,
-  `evil/github.com` and scp forms are refused. The hub refuses a non-GitHub
-  reference at registration the same way.
-- A locked-down clone, following git's advisory on untrusted repositories
-  (GHSA-vm9j-46j9-qvq4): https only (`protocol.allow=never`,
+  `https://evil/github.com/…` and scp forms are refused. The hub refuses a
+  non-GitHub reference at registration the same way.
+- A locked-down clone. Git's advisory on untrusted repositories
+  (GHSA-vm9j-46j9-qvq4, CVE-2024-32465) is why the tree is treated as
+  hostile; the flags are ours: https only (`protocol.allow=never`,
   `protocol.https.allow=always`), `core.symlinks=false`,
   `fetch.recurseSubmodules=false`, `--no-tags`.
 - No pin is enforced on the CLI side: `pull owner/name@main` resolves a
-  branch. The hub validates registered references as existing 40-hex
-  commits, so anything you fetch by way of a board row is pinned; a
-  hand-typed ref is whatever you typed.
+  branch, and a short sha resolves too; a tag does not, since tags are not
+  fetched. The hub validates registered references as existing full 40-hex
+  commits, checked against GitHub with your own token, so anything you
+  fetch by way of a board row is pinned; a hand-typed ref is whatever you
+  typed.
 
 `linux/amd64` is the reference architecture throughout. Other hosts emulate
-it, and a native arm64 score is a different game, which the hub refuses. On
-Apple Silicon, Rosetta makes emulation fast: the same 15-episode batch took
-823 s under QEMU and 224 s with Rosetta. `nethackers doctor` says whether it
-is on.
+it, and a native arm64 score is a different game, which the hub refuses:
+only the amd64 image digests it has classified are admitted. On Apple
+Silicon, Rosetta makes emulation fast: on one machine, the same 15-episode
+batch took 823 s under QEMU and 224 s with Rosetta. `nethackers doctor`
+says whether it is on.
 
 ## Your own harness
 

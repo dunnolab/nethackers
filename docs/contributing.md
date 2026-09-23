@@ -33,12 +33,15 @@ install` clears the cache first.
 ```bash
 make test     # the fast suite: no NLE, no Docker, no live agent CLIs
 make check    # mypy + ruff
-make smoke    # the `docker` suite; needs the arena and mutator images
+make smoke    # the `docker` suite; needs nethackers/arena:dev, the pinned mutator (nethackers doctor --pull) and the nle extra
 ```
 
 `make test` skips the `nle`, `docker`, `codex_live` and `claude_live`
-markers; CI runs the same suite plus mypy, ruff and a compose smoke job.
-Style is ruff (`E,F,I,UP,B,SIM`, line length 100) and mypy over `src` and
+markers. CI runs `uv lock --check` first (a `uv.lock` out of step with
+`pyproject.toml` fails the job; run `uv lock` after touching
+`pyproject.toml`), then the same suite, mypy, ruff, a compose smoke job and
+an install smoke that installs the built wheel. Style is ruff
+(`E,F,I,UP,B,SIM`, line length 100) and mypy over `src/nethackers` and
 `tests`.
 
 One trap: many functions take dependencies as keyword defaults
@@ -78,7 +81,9 @@ worktree: `nethackers --prod`.
   your branch point, so it can fire for someone else's unreleased merge. And
   a PR that touches `Dockerfile.mutator`, its entrypoint or the code the
   mutator copies gets its image rebuilt and re-pinned by a bot commit on the
-  branch; wait for that commit before merging.
+  branch; wait for that commit before merging. From a fork there is no bot
+  commit: the image is built but not published, and the run on `main` after
+  the merge publishes and pins it.
 
 ## Reporting a problem
 

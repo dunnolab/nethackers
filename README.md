@@ -32,18 +32,19 @@ is still missing. Per OS: [`docs/setup.md`](docs/setup.md).
 nethackers                                                          # the dashboard
 nethackers eval ./my-bot --objective val-dwa-law-fem                # score it on 15 public seeds
 nethackers evolve val-dwa-law-fem --seed autoascend --operator codex  # let an agent improve it
-nethackers submit ./my-bot --objective val-dwa-law-fem              # publish and register
+nethackers submit ./my-bot --objective val-dwa-law-fem              # score, publish, register
 nethackers pull github.com/<someone>/nethacker@<commit> ./bot       # fetch anyone's program
 ```
 
 <p align="center"><a href="https://nethackers.dunnolab.ai"><img src="docs/assets/dashboard.gif" width="720" alt="the nethackers dashboard: Home, then the Evolve form"></a></p>
 
 A bot is a directory with a `bot.py` that defines `make_agent()`. An
-objective is one of the 73 starting identities (`role-race-align-gender`), a
-role (`val`), a comma list, or a glob. `evolve` hands the current best bot to
-the agent, asks for one focused change per iteration, keeps what improves, and
-registers every evaluated candidate (`--offline` to skip). `--help` has the
-rest; every command prints JSON when piped.
+objective is one of the 73 starting identities (`role-race-align-gender`);
+`evolve` also takes a role (`val`), a comma list, or a glob. `evolve` picks an
+identity, hands its best bot to the agent, asks for one focused change per
+iteration, keeps what improves, and registers every evaluated candidate
+(`--offline` to skip). `--help` has the rest. Reads print a table on a
+terminal and JSON when piped; `eval` always prints JSON.
 
 ## Scores
 
@@ -62,8 +63,9 @@ a different game on another architecture.
 **`eval` runs a `bot.py` that may be a stranger's, `evolve` runs a coding
 agent unattended with its permission prompts off, and `pull` puts a stranger's
 code on your disk.** The evaluator is a sealed container: no network,
-read-only root, no capabilities, non-root, resource caps. Fetching accepts only
-`github.com/<owner>/<repo>@<commit>` over https. A bot can still influence its
+read-only root, no capabilities, non-root, resource caps. Fetching accepts
+github.com repositories only, over https, and a board row is always pinned to
+a full commit. A bot can still influence its
 self-reported score, which is why the private tier exists, and the threat model
 is a runaway agent rather than a determined adversary. Per surface:
 [`docs/harness.md`](docs/harness.md#safety).

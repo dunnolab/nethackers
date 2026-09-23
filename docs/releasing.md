@@ -1,17 +1,23 @@
 # Releasing
 
-Maintainers with push to `main`. A release is `vX.Y.Z`, and one tag drives
-two workflows: the hub deploy ([../deploy/README.md](../deploy/README.md))
-and the PyPI publish. The order below is the order that works.
+Maintainers with push to `main`. A release is `vX.Y.Z`. Pushing the tag runs
+the hub deploy ([../deploy/README.md](../deploy/README.md)); publishing the
+GitHub release on that tag runs the PyPI publish. The order below is the
+order that works.
 
 ## Before you start
 
 - [ ] `main` is green.
-- [ ] If `arena/`, `nle-base/`, `uv.lock`, `src/nethackers/arena/` or
-      `src/nethackers/contracts/` changed since the last `v*` tag, the arena
-      needs a re-pin, and you classify before you pin. A version bump
-      rewrites `uv.lock`, so every release PR carries this step; budget ten
-      minutes before you tag.
+- [ ] Bump the version in `pyproject.toml`, run `uv lock`, commit. The bump
+      rewrites `uv.lock`, which is an arena image input, so every release
+      carries a re-pin, and the images have to be built from the bumped
+      tree: an arena built before the bump carries the old lock. Budget
+      about ten minutes.
+- [ ] Re-pin, and classify before you pin. This is also what to do when
+      `arena/Dockerfile`, `nle-base/Dockerfile`, `uv.lock`,
+      `src/nethackers/arena/` or `src/nethackers/contracts/` changed since
+      the last `v*` tag; CI says "arena inputs changed since `<tag>` without
+      re-pinning `ARENA_IMAGE`" on the PR.
       1. Dispatch `.github/workflows/sandbox-images.yml` on the branch. It
          builds and pushes the three images, then its own re-pin step stops
          on purpose: `scripts/repin_images.py` refuses a digest that is not
@@ -33,16 +39,19 @@ and the PyPI publish. The order below is the order that works.
            --arena "$ARENA_IMAGE" --mutator "$MUTATOR_IMAGE" \
            --nle-base "$NLE_BASE_IMAGE" --mutator-inputs "$MUTATOR_INPUTS"
          ```
+
 - [ ] The mutator re-pin, if CI made one, has landed on the branch as a bot
-      commit.
+      commit (a PR from a fork gets none: its image is published and pinned
+      by the run on `main` after the merge). The publish job recomputes the
+      mutator fingerprint and refuses a pin that does not match the tree
+      before anything is uploaded.
 - [ ] Both pinned image digests exist in GHCR; the publish job waits up to
       20 minutes for them and then fails.
 
 ## Release
 
-- [ ] Bump the version in `pyproject.toml` and merge to `main` FIRST. The
-      PyPI job asserts tag == version, and PyPI never accepts a version
-      twice, so a wrong number burns one.
+- [ ] Merge to `main` FIRST. The PyPI job asserts tag == version, and PyPI
+      never accepts a version twice, so a wrong number burns one.
 - [ ] Tag and push:
 
       ```bash
@@ -57,7 +66,7 @@ and the PyPI publish. The order below is the order that works.
 - [ ] Publish:
 
       ```bash
-      gh release create vX.Y.Z
+      gh release create vX.Y.Z --title "vX.Y.Z" --generate-notes
       ```
 
       Publishing is release-triggered, not tag-triggered. If the tag does
@@ -67,14 +76,20 @@ and the PyPI publish. The order below is the order that works.
 ## Verify
 
 - [ ] `curl --fail https://nethackers.dunnolab.ai/healthz` returns
-      `{"status":"ok", …}` and the masthead shows the new version.
+      `{"status":"ok","auth":"github"}` and the masthead shows the new
+      version.
 - [ ] `uv tool install nethackers==X.Y.Z` in a clean environment, then
-      `nethackers --version`.
+      `nethackers --version`. The publish job runs the same canary and waits
+      up to five minutes for PyPI to serve the version.
 
 ## If it goes wrong
 
 - A bad hub deploy: `deploy-hub.sh rollback` over the tailnet
   ([../deploy/README.md](../deploy/README.md#roll-back)); the deploy job
   rolls back on its own when the health check fails.
+- The publish job timed out waiting for GHCR: re-run it with
+  `workflow_dispatch` and `release_ref` set to the tag; the release already
+  exists.
 - A bad PyPI upload cannot be replaced. Bump the patch and release again.
-- A wrong tag can be deleted only before anything consumed it.
+- A wrong tag can be deleted only before anything consumed it, and the tag
+  push itself starts the deploy, so that window is minutes.
