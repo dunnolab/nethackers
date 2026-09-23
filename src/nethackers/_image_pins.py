@@ -6,14 +6,14 @@ from __future__ import annotations
 
 ARENA_IMAGE = (
     "ghcr.io/dunnolab/nethackers-arena@sha256:"
-    "5ca707150654465d1795cb0cf0876f4255148b105907c27c82ae0e6bea6d7a3f"
+    "0446ba18bd312fd589a53479092e5a76f45cf10e8795a6c21d3a7fcdb40c744c"
 )
 MUTATOR_IMAGE = (
     "ghcr.io/dunnolab/nethackers-mutator@sha256:"
-    "f9ece3c0d7cfae4249b3db571b0198c290e12b7af61f432317e27f0a444bc62f"
+    "ed9f6999acda1f46990f0585654d0a2a3e12032ad61f605b1080caac6a1a73db"
 )
 NLE_BASE_IMAGE = (
     "ghcr.io/dunnolab/nethackers-nle-base@sha256:"
-    "ca6e40086cb68ccccbcd8b14ad72785dd6ffc9c3d3bb3169034fa325fcbf149d"
+    "8ff198a7478a0bbd7c9de80c93ebd2002912e1c28fc8240a35e6629d95d6ab0f"
 )
-MUTATOR_INPUTS = "sha256:5f08eabc6317c7a6487843d53e6ff08db310fbe5ba593ecf320ed40bc7c694a0"
+MUTATOR_INPUTS = "sha256:99d7a3c6b11e915a6d3986c011a912616d42f9e5d646c9d640ecb47ae6c04c8b"
