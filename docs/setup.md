@@ -114,7 +114,9 @@ host: by default a credential broker on the host injects it on the wire, and
 the sandbox sees a placeholder (Claude, OpenCode) or no credential at all
 (Codex), plus the broker's address
 ([harness.md](harness.md#the-credential-broker)). `--no-broker`, or the form's
-Credential toggle, mounts the credential instead.
+Credential toggle, mounts the credential instead. The model list is read by
+a probe container that mounts the login itself, broker or not; it runs only
+the CLI's catalog command.
 
 | | log in with | what the sandbox sees by default | what `--no-broker` mounts |
 |---|---|---|---|
@@ -140,7 +142,7 @@ differ:
 - Project config (`opencode.json`, `.opencode/`) is switched off in the
   sandbox: the worktree is a copy of someone else's program, and OpenCode
   trusts project config completely.
-- Without a key, OpenCode serves a handful of free `opencode/*` models, and
+- Without a key, OpenCode serves a handful of its own free models, and
   doctor says "free models only". Their availability is OpenCode's to
   decide; a model that never replies waits out the 8-hour sandbox timeout.
 - Custom providers appear in the model picker as `provider/model`. With

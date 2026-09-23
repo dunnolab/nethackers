@@ -113,7 +113,8 @@ records it flips the row.
 **Cause** `evolve` prints this, and `eval` shows a `pulling arena` bar with
 the size, speed and time left, while the arena image downloads: about half
 a gigabyte, pinned by digest. `evolve` also pulls the mutator, about
-900 MB. Under Podman the bar shows layers, not bytes.
+900 MB, 456 MB of it new once the arena is there. Under Podman the bar
+shows layers, not bytes.
 **Fix** Wait, or pull ahead of time with `nethackers setup`, whose plan
 shows the download as `up to N MB`.
 **Verify** `nethackers doctor -o plain` shows

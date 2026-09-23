@@ -354,9 +354,8 @@ passed only for the pin, as for the arena. Rootless Podman adds
   on the host (`harness/cred_broker.py`) is on by default for every
   operator: the container gets a placeholder, or for Codex no credential at
   all, plus a route back to the broker, and the broker injects the real
-  credential on the wire, per request, to the one real provider. The
-  per-operator detail is under [The credential broker](#the-credential-broker)
-  below. `--no-broker`, or the form's Credential toggle, opts back into
+  credential on the wire, per request. The per-operator detail, and the
+  limit, are under [The credential broker](#the-credential-broker) below. `--no-broker`, or the form's Credential toggle, opts back into
   mounting the credential, which is the exposure described next.
 
 Not contained by default:
@@ -365,10 +364,10 @@ Not contained by default:
   no `--network` flag in any mode, and no egress allow-list exists. The
   broker keeps the credential on the host; it does not keep the container
   off the network. This is the largest hole in the default sandbox.
-- The broker itself. It is an unauthenticated relay to one upstream whose
-  only check is the Host header, so while a run is live any process on the
-  host, and on Linux any container on the bridge the `ufw` rule opens, can
-  spend through it.
+- The broker itself. It is an unauthenticated relay whose only check is
+  the Host header, so while a run is live any process on the host, and on
+  Linux any container on the bridge the `ufw` rule opens, can spend through
+  it; and a crafted request can point it at another host, below.
 - Codex's cage. On the broker path Codex gets `~/.nethackers/codex-cage`,
   world-writable and mounted read-write at `~/.codex`; only its `auth.json`
   and `config.toml` are cleared, so it persists across iterations and runs,
@@ -428,6 +427,17 @@ request reaches the broker makes the run print that, with the rule and
 and stops after three. Nothing falls back to a mount. On macOS the hint is
 not printed, and an agent that exits 0 without ever calling the broker is
 not flagged.
+
+A limit. The broker appends the request path to its one upstream and does
+not reject a path that re-homes the destination (`@host/…` turns the
+upstream into a username). Code in the sandbox that reaches the broker can,
+with such a request, make it send the Codex bearer or an OpenCode key to a
+host of its choosing; the Host check does not stop this, and Claude's
+bearer is spared today by the forwarding library, not by design. The
+broker keeps the credential out of the container's files and environment;
+it is not proof the credential cannot leave the host. This was reproduced
+against the broker with fake secrets on 2026-09-23; the guard is one line
+and is not in this release.
 
 Claude and Codex ran through the broker live on macOS and on an Ubuntu box
 before release; OpenCode did not. `make broker-e2e` runs the real CLIs in
