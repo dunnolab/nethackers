@@ -432,8 +432,9 @@ A limit. The broker appends the request path to its one upstream and does
 not reject a path that re-homes the destination (`@host/…` turns the
 upstream into a username). Code in the sandbox that reaches the broker can,
 with such a request, make it send the Codex bearer or an OpenCode key to a
-host of its choosing; the Host check does not stop this, and Claude's
-bearer is spared today by the forwarding library, not by design. The
+host of its choosing, over TLS any host it holds a certificate for; the
+Host check does not stop this, and Claude's bearer is spared today by the
+forwarding library, not by design. The
 broker keeps the credential out of the container's files and environment;
 it is not proof the credential cannot leave the host. This was reproduced
 against the broker with fake secrets on 2026-09-23; the guard is one line
