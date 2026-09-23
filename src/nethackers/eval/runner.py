@@ -23,6 +23,7 @@ calls this function directly.
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import math
@@ -363,6 +364,17 @@ def eval_batch(
     # repo-relative tree. .absolute() only prefixes the cwd -- it never resolves
     # symlinks, so the content digest below (relative-path based) is unchanged.
     solution_path = solution_path.absolute()
+    # The arena runs the submission as a non-root uid (offline_flags' --user
+    # 65534) and chdirs into the /sol mount, so /sol's own directory must be
+    # world-traversable. A caller that builds the tree in a private dir --
+    # verify_program clones the candidate into a 0700 tempfile.TemporaryDirectory
+    # -- leaves it unreadable by that uid, and EVERY episode then PermissionErrors
+    # at turn 0 (bot_error, score 0). Add o+rx to the mount root (git/most trees
+    # already leave the contents 0644/0755); non-destructive, best-effort. Docker
+    # Desktop's uid remap hides this on macOS; a native-Linux bind mount keeps
+    # the host mode -- the same class as the /out chmod in _eval_temp_dir.
+    with contextlib.suppress(OSError):
+        solution_path.chmod(solution_path.stat().st_mode | 0o055)
     # Bind the default digest resolver to the SAME resolved runtime the run
     # uses (docker/podman -- issue #50); an injected resolver (tests) wins.
     resolve_digest = image_digest_resolver or (
