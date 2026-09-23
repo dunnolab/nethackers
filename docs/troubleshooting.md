@@ -1,313 +1,221 @@
 # Troubleshooting
 
-```
-  _____                _    _         _           _   _
- |_   _| _ ___ _  _ __| |__| |___ ___| |_  ___  _| |_(_)_ _  __ _
-   | || '_/ _ \ || / _` / _` / -_|_-<| ' \/ _ \/ _  _| | ' \/ _` |
-   |_||_| \___/\_,_\__,_\__,_\___/__/|_||_\___/\__|\__|_|_||_\__, |
-                                                             |___/
-```
-
-**Start here:**
+What a command printed, what it means, what to do. Reviewed at v0.35.0.
 
 ```bash
 nethackers setup      # fixes what it can, prints the rest
-nethackers doctor     # read-only: what this machine can do, and why not
+nethackers doctor     # changes nothing: what this machine can do, and why not
 ```
 
-`setup` checks the machine, shows a plan, asks once, and fixes what it can;
-anything that needs `sudo` or a GUI click is printed for you, and running it
-again picks up where it left off. `doctor` changes nothing: eight checks,
-folded into four capabilities — `browse`, `eval`, `evolve`, `publish` — with a
-concrete fix for each failure (`nethackers setup` wherever setup can do it).
-`-o json` if you want to gate a script on it. doctor is **not** offline: it
-makes a hub round-trip, runs `gh auth status`, and probes the registry for any
-sandbox image you don't already have. `nethackers report` and `nethackers
---version` are the genuinely offline commands.
+For a full traceback instead of the one-line error, `NETHACKERS_DEBUG=1`.
+For a crash, `nethackers report` prints the most recent local crash report;
+nothing is ever sent anywhere. Every heading below is the text the terminal
+printed, or the symptom when nothing was printed.
 
-For a crash: `nethackers report` prints the most recent local crash report.
-Nothing is ever sent anywhere — there is no telemetry in this project. Paste it
-into an issue yourself if you want help.
+## setup and doctor
 
-For a full traceback instead of the one-line error: `NETHACKERS_DEBUG=1`. It
-only affects *unexpected* errors — the recognized one-liners below (auth, GitHub
-unreachable, hub unreachable, bad hub URL) are returned deliberately and ignore
-it.
+### no docker or podman found on PATH
 
----
+**Cause** No container runtime, or Podman aliased as `docker` in your
+shell: an alias never reaches a subprocess.
+**Fix** `nethackers setup`. On a Mac with Homebrew it installs Colima and
+starts it with Rosetta; on Linux it prints the install commands, which need
+`sudo`. If you use Podman, install it as `podman` and drop the alias.
+**Verify** `nethackers doctor` shows `[OK] container_runtime`.
 
-## Install and environment
+### docker is installed but the runtime check fails
 
-### `nethackers` runs but ignores my source changes
+**Cause** Doctor tells "not installed" from "installed but broken" and
+prints the runtime's own error. It is usually a daemon that is not running,
+or a user without permission on the socket.
+**Fix** Start the runtime (`colima start`, Docker Desktop, `orb start`), or
+on Linux add yourself to the `docker` group and log out and back in.
+Restarting a daemon that is already up does nothing; read the error.
+**Verify** `nethackers doctor` shows `[OK] container_runtime`.
 
-Mostly fixed: `[tool.uv] cache-keys` in `pyproject.toml` keys the install cache on
-`pyproject.toml` and `src/**/*.py`, so a path install picks up Python edits. It
-does **not** key on non-`.py` assets — notably
-`src/nethackers/hub/web/index.html` — so an edit to the web page can still be
-served stale.
+### Rosetta is not accelerating amd64 emulation
 
-```bash
-uv cache clean nethackers        # then reinstall
-# or, for development, don't install at all:
-uv run nethackers ...            # always live source
+**Cause** On Apple Silicon the `linux/amd64` images run under QEMU unless
+the runtime uses Rosetta. The same batch took 823 s under QEMU and 224 s
+with Rosetta.
+**Fix** Docker Desktop: Settings → General → "Use Rosetta for x86_64/amd64
+emulation" (it restarts). Colima: a VM created without Rosetta has to be
+recreated, `colima delete` (this deletes its images and containers), then
+`nethackers setup`. OrbStack always uses Rosetta. Podman stays on QEMU.
+**Verify** the `rosetta` row of `nethackers doctor` says
+`Rosetta is accelerating amd64 emulation`.
+
+### unreachable — ghcr.io/dunnolab/nethackers-arena@sha256:…
+
+**Cause** The image is neither on this machine nor pullable: no network, or
+no route to the registry.
+**Fix** Fix network or registry access, then `nethackers setup` pulls it.
+`NETHACKERS_ARENA_IMAGE` can point at another ref, but a score from an
+unpinned image can be computed and never registered.
+**Verify** `nethackers doctor` shows `[OK] arena_image: present`.
+
+### a step is marked (untested)
+
+**Cause** That recipe was written from the vendor's documentation and
+nobody has run `nethackers setup` through it on a real machine yet
+([setup.md](setup.md#what-has-been-run-on-real-machines)).
+**Fix** Setup shows the exact command before running it; run it. If it
+works, or doesn't, an issue saying so on which machine flips the row.
+
+## eval
+
+### the first eval sits for minutes before a game starts
+
+**Cause** It is pulling the arena image, about 1 GB, pinned by digest.
+**Fix** Wait, or pull ahead of time with `nethackers setup`, which shows a
+progress bar and the time left.
+**Verify** `nethackers doctor` shows `[OK] arena_image: present`.
+
+### sandbox platform mismatch
+
+```text
+sandbox platform mismatch — the mutator image runs linux/arm64 but the arena image runs
+linux/amd64, so the coding agent would test its changes on different NetHack games than
+the ones they are scored on. Rebuild the mutator image for linux/amd64 with `make mutator
+MUTATOR_IMAGE=<ref>`, or drop its image override
 ```
 
-`make install` does the cache-clean for you.
+**Cause** One image on this machine was built for the host's own
+architecture: an older `make mutator` on Apple Silicon, or an `--image` /
+`--mutator-image` override. The same seed plays a different game on another
+architecture, and only `linux/amd64` games are scored.
+**Fix** Run the rebuild the message names, or drop the override
+(`--image`, `--mutator-image`, `NETHACKERS_ARENA_IMAGE`,
+`NETHACKERS_MUTATOR_IMAGE`).
+**Verify** `docker image inspect <ref> --format '{{.Os}}/{{.Architecture}}'`
+prints `linux/amd64` for both images.
 
-### `command not found: nethackers`
+## evolve
 
-`pip install nethackers` put the console script somewhere off your `PATH`. There
-is no `python -m nethackers` fallback — the package has no `__main__` module, so
-the `[project.scripts]` shims are the only entry points. Either add that
-environment's `bin`/`Scripts` directory to your `PATH`, or install isolated with
-`uv tool install nethackers`, which manages the shim for you.
+### operator: not logged in
 
----
+**Cause** `evolve` needs one coding agent logged in on this machine; the
+sandbox reuses that login. Doctor lists each agent's state under
+`operator`.
+**Fix** Run `claude` once, or `codex login`, or configure OpenCode's
+providers ([setup.md](setup.md#coding-agents)); `nethackers setup
+--operator <name>` walks through it.
+**Verify** the `operator` row of `nethackers doctor` shows `logged in`.
 
-## Containers
+### the loop runs but nothing ever registers
 
-### "no docker or podman found on PATH"
+**Cause** Three possibilities, in order of frequency. The login expired and
+its refresh failed, which degrades registration to `local-only` instead of
+failing the run. Something on your network re-signs HTTPS (next entry). Or
+the loop is working and the mutations are not wins: the frontier is hard to
+move ([harness.md](harness.md#not-in-this-loop)).
+**Fix** Read `hub_reason` in `~/.nethackers/evolve/runs/<id>/metrics.jsonl`.
+`local-only`: `nethackers login` again. `CERTIFICATE_VERIFY_FAILED`: the
+next entry. Otherwise nothing is wrong.
+**Verify** the run log says `registered`.
 
-Run `nethackers setup`: on a Mac with Homebrew it installs Colima and starts it
-with Rosetta; on Linux it prints the install commands for your distribution
-(they need `sudo`, which nethackers never runs).
+### fewer episodes run in parallel than the machine has cores
 
-Both are supported and either is fine — `docker` wins if you have both.
+**Cause** The default is one episode per CPU the container runtime has,
+within three quarters of its memory at about 1 GiB per episode, and never
+more than the batch. On a Mac those are the CPUs and memory given to the
+runtime (Docker Desktop: Settings → Resources), not the Mac's own.
+**Fix** `--max-parallel-evals N`, or give the runtime more resources.
+More than the machine has is not faster: the arena's per-action timeout is
+wall-clock, so contention lowers scores, and an episode that runs out of
+memory scores 0 (asking for that prints a warning).
 
-If you have podman aliased as docker in your shell, that **will not work**:
-aliases are a shell construct and never appear on `PATH`, so a subprocess cannot
-see them. Install podman properly (it is detected directly, by name) and drop the
-alias.
+## login and submit
 
-### `docker` is installed but the check still fails
+### can't reach GitHub to sign in
 
-`doctor` distinguishes *not installed* from *installed but broken* and shows you
-which. "Broken" carries the actual `info` error — usually the daemon is not
-running, or your user lacks socket permission. Restarting a daemon that is
-already up will not help; read the per-CLI breakdown.
-
-### Rootless podman
-
-Supported since v0.32.2: under rootless Podman the mutator runs with
-`--userns=keep-id --user 0` (never the arena, where it would change the scoring
-environment). This hasn't been run on a real rootless host yet — if it fails,
-open an issue with `nethackers doctor -o json`.
-
-### On Apple Silicon, amd64 runs under QEMU
-
-`nethackers doctor`'s Rosetta row says why and what to do. Docker Desktop:
-Settings → General → "Use Rosetta for x86_64/amd64 emulation" (it restarts).
-Colima: a VM created without Rosetta can only gain it by being recreated —
-`colima delete` (this deletes its images and containers), then `nethackers
-setup`. Podman turned Rosetta off by default in 5.6, so it stays on QEMU;
-OrbStack always uses Rosetta.
-
-### Setup marks a step "(untested)"
-
-That recipe was written from the vendor's documentation but nobody has run
-`nethackers setup` through it on a real machine yet. Setup still shows the exact
-command before running it. [`setup.md`](setup.md) lists every recipe and its
-status; if one works (or doesn't) for you, an issue saying so helps.
-
-### The first `eval` takes forever
-
-It is pulling the arena image, pinned by digest (both sandbox images together are
-about 1 GB to download and 4 GB on disk). `nethackers setup` fetches them ahead of
-time, with a progress bar and the time left.
-
-### "unreachable — ghcr.io/dunnolab/nethackers-arena@sha256:…"
-
-Neither local nor pullable. The **arena** always resolves to the pinned
-digest, even inside a repo checkout, so `eval`/`evolve` never fall back to
-building it locally here — fix your network/registry access, or point
-`NETHACKERS_ARENA_IMAGE` at a reachable ref. The **mutator** is different: in
-a checkout, `make mutator` (which `evolve` also runs automatically) still
-builds it locally; outside one, `NETHACKERS_MUTATOR_IMAGE` is the escape
-hatch.
-
-### "not built yet — nethackers/mutator:h-…"
-
-You are running from a checkout whose mutator files (its Dockerfile, entrypoint,
-or the arena code it copies) differ from the pinned build, and CI hasn't published
-an image for them. `nethackers setup` (or `nethackers doctor --pull`) builds it
-now; `evolve` builds it on its own. Nothing to run by hand. It is built for
-`linux/amd64`, so on Apple Silicon the build runs under emulation and takes
-several minutes. Older fingerprint images stay on disk until you remove them;
-`docker image ls nethackers/mutator` lists them.
-
-### "sandbox platform mismatch"
-
-`evolve` found its arena and mutator images built for different platforms, and
-refused to start. The coding agent scores its own candidates inside the mutator,
-and the same seed makes a different dungeon on another CPU architecture, so the
-agent would tune games the arena never plays. The two must match, and with the
-pinned arena, the only one the hub accepts scores from, that means
-`linux/amd64`. The usual cause is a local image built natively on Apple Silicon:
-run the rebuild the message names (`make arena` and `make mutator` now build for
-`linux/amd64`), or drop the image override (`--image`, `--mutator-image`, or
-their `NETHACKERS_*_IMAGE` variables).
-
----
-
-## Login and publishing
-
-### "can't reach GitHub to sign in"
-
-`nethackers login` talks to **github.com**, not to the hub. This error is a
-network or DNS problem on your side — it is deliberately worded to keep you from
-chasing a local hub that was never involved.
-
-### "cannot reach the hub … is it running?"
-
-The CLI is pointed at a hub it cannot reach. Check which one:
-
-```bash
-nethackers whoami        # reports the active stage and hub URL
+```text
+can't reach GitHub to sign in (<error>) — check your network connection or DNS
 ```
 
-Inside a worktree, an `.env.stack` file points you at that worktree's local hub.
-That is announced, not silent — any non-prod stage prints `stage: <name> · hub
-<url>` to stderr on every invocation, so check that line. `nethackers --prod`
-forces production; `--hub URL` or `$NETHACKERS_HUB` overrides explicitly.
+**Cause** `nethackers login` talks to github.com, not to the hub.
+**Fix** Network or DNS, on your side.
+**Verify** `nethackers login` completes; `nethackers whoami` shows you.
 
-If the URL is right, suspect a network that inspects HTTPS: a corporate
-firewall or an antivirus that re-signs every certificate with its own CA.
-nethackers accepts those certificates when that CA is in your OS trust store
-(on Linux, the system bundle that `update-ca-certificates` builds). If it isn't
-there, ask IT to install it or to exempt `nethackers.dunnolab.ai`.
+### cannot reach the hub
 
-### "invalid hub URL"
-
-Include the scheme: `--hub http://localhost:8000`, not `--hub localhost:8000`.
-
-### `submit` fails on the GitHub push
-
-`nethackers login` and `gh auth login` are **separate logins**, and `submit`
-needs both — as the *same account*. `gh` creates and pushes the repo; the hub
-attributes the registration to your `nethackers` identity. If they differ, the
-push lands somewhere the registration doesn't point.
-
-```bash
-gh auth status           # who gh thinks you are
-nethackers whoami        # who the hub thinks you are
+```text
+cannot reach the hub (<url>) — is it running? (docker compose up -d)
 ```
 
-### A registration is rejected
+**Cause** The CLI is pointed at a hub it cannot reach. Inside a worktree,
+`.env.stack` points at that worktree's local hub, announced on stderr as
+`stage: <name> · hub <url>` on every invocation; `--hub` and
+`$NETHACKERS_HUB` override explicitly.
+**Fix** `nethackers whoami` shows the active stage and URL. For production,
+`nethackers --prod`; for the local hub, `make hub`
+([local-stack.md](local-stack.md)). If the URL is right, see the next entry.
+**Verify** `nethackers whoami` answers.
 
-The hub verifies the commit exists on GitHub before accepting it. A commit that
-is unpushed, force-pushed away, or in a private repo will be rejected. Push
-first, then register the pushed sha.
+### CERTIFICATE_VERIFY_FAILED
 
----
+**Cause** A firewall or antivirus re-signs every HTTPS certificate with its
+own CA. It shows up as `hub_reason` in a run's `metrics.jsonl`, or in the
+traceback under `NETHACKERS_DEBUG=1`. nethackers trusts the OS certificate
+store, so the fix is getting that CA into it.
+**Fix** On Linux, the system bundle that `update-ca-certificates` builds;
+on macOS, the Keychain. Or ask IT to exempt `nethackers.dunnolab.ai`.
+**Verify** `nethackers whoami` reaches the hub.
 
-## Evolve
+### invalid hub URL
 
-### The coding agent isn't logged in
-
-`evolve` needs `claude` or `codex` authenticated **on the host** — the
-credentials are mounted into the sandbox from your host CLI's own login. `doctor`
-lists each registered agent's status; at least one must be logged in.
-
-### `codex` inside the sandbox can't import `nle`
-
-Codex runs commands through `bash -lc` (a login shell), and `/etc/profile` resets
-`PATH`, dropping the venv's bin directory — so `python` in there is the system
-one, without NLE. The image ships an `/etc/profile.d` drop-in that re-prepends
-the venv. Arena evaluation is unaffected: it invokes `python -m` directly and
-never goes through a login shell.
-
-### The loop runs but nothing ever registers
-
-Most likely it is working correctly and the mutations aren't wins. Before
-debugging the machinery, check:
-
-- **Is your login still good?** An expired access token is refreshed
-  automatically; only a missing or failed refresh degrades the run to a
-  `local-only` registration reason rather than a hard failure.
-- **Does the hub reason say `CERTIFICATE_VERIFY_FAILED`?** Check `hub_reason`
-  in the run's `~/.nethackers/evolve/runs/<id>/metrics.jsonl`. That error means
-  something on your network re-signs HTTPS; see
-  ["cannot reach the hub"](#cannot-reach-the-hub--is-it-running) above.
-- **Are the "wins" real?** Improvements on the 15 fixed public seeds per identity
-  can sit inside the noise floor. A stalled loop is often correct behavior — the
-  frontier is genuinely hard to move — rather than a bug.
-- **Is the parent frozen?** If every iteration mutates the same elite with an
-  agent that remembers its last attempt, you get redundant mutations forever.
-  See [`harness.md`](harness.md#two-design-choices-worth-stealing).
-
-### Runs are slower than they should be
-
-By default the arena runs one episode per CPU your container runtime has, as
-many as three quarters of its memory holds at about 1 GB each, and never more
-than the batch. On a Mac those are the CPUs and memory given to Docker Desktop
-(Settings → Resources), not the Mac's own. `--max-parallel-evals` overrides the
-default. Raising it past the machine is not automatically faster:
-oversubscription contends for CPU, and the arena's per-action timeout is
-wall-clock, so heavy contention can cut normal actions and depress the score
-itself. Asking for more episodes than the memory holds prints a warning, since
-an episode killed for memory scores 0.
-
----
-
-## Local development
-
-### `make up` built the wrong arena image on the first run
-
-`make up` parses `-include .env.stack`, which the very first run hasn't created
-yet, so it builds the shared `nethackers/arena:dev` fallback instead of this
-worktree's tag. Run `make stack` by itself first. It self-heals on the second
-run.
-
-### The local hub misbehaves after a catalog or schema change
-
-Wipe the database and start clean:
-
-```bash
-make hub-reset
+```text
+invalid hub URL: <error> — include a scheme, e.g. --hub http://localhost:8000
 ```
 
-Use the make target, not a bare `docker compose down -v`. Each worktree's stack
-runs under its own `COMPOSE_PROJECT_NAME` (sourced from `.env.stack` inside the
-make recipes), so a plain `docker compose` in your shell resolves to a
-directory-named project and leaves the real `hubdata` volume untouched.
+**Fix** Include the scheme: `--hub http://localhost:8000`, not
+`--hub localhost:8000`.
 
-(The old startup crash from a mismatched objective catalog — a `UNIQUE(name)`
-violation — is gone: the `objectives` table was dropped and the catalog now lives
-only in memory.)
+### gh is authed as one account but you're logged in as another
 
-### CI fails: "arena inputs changed since &lt;tag&gt; without re-pinning ARENA_IMAGE"
+```text
+gh is authed as @<a> but you're logged in as @<b> — sign in to the same account
+(`nethackers setup --for publish` checks this)
+```
 
-Something that changes the arena image's contents was modified —
-`arena/Dockerfile`, `nle-base/Dockerfile`, `uv.lock`, `src/nethackers/arena/`,
-or `src/nethackers/contracts/` — while `ARENA_IMAGE` in `_image_pins.py` stayed
-the same. The mutator never trips this: its pin is re-pinned automatically.
+**Cause** `nethackers login` and `gh auth login` are separate logins, and
+`submit` needs both as the same account: `gh` creates and pushes the
+repository, the hub attributes the registration to your login.
+**Fix** `gh auth status` and `nethackers whoami` say who each thinks you
+are; sign one of them in to the other's account.
+**Verify** `nethackers setup --for publish` passes the same-account check.
 
-Check the diff it prints before assuming it was you: the base is the **last `v*`
-release tag**, not your PR's base branch, so drift from an earlier
-merged-but-unreleased PR fails your PR as well. The fix is in
-[`contributing.md`](contributing.md#two-traps-that-cost-real-time): run
-`.github/workflows/sandbox-images.yml` on your branch, then classify the new
-arena digest in `src/nethackers/arena_version.py`. A rebuild that doesn't move
-scores keeps the verified corpus; one that bumps `ARENA_MAJOR` retires it from
-every board (nothing is deleted).
+### gh not authed
 
-### A test passes but clearly isn't testing anything
+**Fix** `gh auth login`, separate from `nethackers login`; or
+`nethackers setup --for publish`.
 
-Check whether you patched an injectable seam. Keyword-default dependencies
-(`run=subprocess.run`, `repo_root=...`) bind at **import** time, so
-`monkeypatch.setattr` on the module attribute is a silent no-op. Inject
-explicitly instead.
+### a registration is refused because the commit is not on GitHub
 
----
+**Cause** The hub checks that the commit exists in a public repository
+before accepting it. Unpushed, force-pushed away, or private, and it is
+refused.
+**Fix** Push first, then register the pushed sha.
+**Verify** `nethackers show <program-id>` finds it.
+
+## install
+
+### command not found: nethackers
+
+**Cause** `pip install` put the console script somewhere off your `PATH`.
+There is no `python -m nethackers`; the script is the only entry point.
+**Fix** Add that environment's `bin` (or `Scripts`) directory to `PATH`, or
+`uv tool install nethackers`, which manages the shim.
+**Verify** `nethackers --version`.
 
 ## Still stuck
 
 Open an issue at
 [github.com/dunnolab/nethackers/issues](https://github.com/dunnolab/nethackers/issues)
-with:
+with the heading you tried, the complete output, and:
 
 ```bash
-nethackers --version -o json     # version, run-schema, pinned image digests
-nethackers doctor -o json        # environment
+nethackers --version -o json     # version, run schema, pinned image digests
+nethackers doctor -o json        # the environment
 nethackers report                # the last crash, if there was one
 ```

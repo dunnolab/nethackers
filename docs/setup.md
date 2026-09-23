@@ -1,48 +1,127 @@
 # Setting up a machine
 
-`nethackers setup` gets a machine ready to evaluate, evolve and publish bots.
-This page says what it does on each OS, and how sure we are that it works.
+`nethackers setup` gets a machine ready to evaluate, evolve and publish bots:
+the container runtime, the sandbox images, and three logins. macOS or Linux,
+Python 3.11+; on Windows, run it inside WSL2. Recipes as of v0.35.0
+(2026-09-23); what a bot is and how it is scored is in
+[harness.md](harness.md).
 
-## What it does
+## Run it
 
-It runs `nethackers doctor`'s checks, then shows a plan:
+```bash
+nethackers setup                    # checks the machine, shows a plan, asks once
+nethackers setup --for eval         # only what evaluating needs (also: evolve, publish, browse)
+nethackers setup --operator codex   # the coding agent evolve should use
+nethackers setup --yes              # run the plan without asking
+```
 
-1. **Logins first**, so you can walk away afterwards: `nethackers login`
-   (GitHub device code), `gh auth login` (then a check that `gh` and the hub
-   are the same GitHub account), and your coding agent's own login
-   (`claude auth login` or `codex login`).
-2. **Installs**, only when one documented command does it without `sudo`:
-   `gh`, Colima and Docker's CLI through Homebrew on a Mac; Claude Code or Codex
-   with the vendor's own installer.
-3. **The container runtime**, started with the runtime's own command:
-   `colima start` (a new VM gets Rosetta), `docker desktop start`, `orb start`,
-   `podman machine start`.
-4. **The sandbox images**, with a progress bar and the time left (about 1 GB
-   to download the first time, 4 GB on disk; later updates download only what
-   changed).
+It runs the same checks as `nethackers doctor`, prints what it is about to
+do, and waits for one yes. Nothing it runs uses `sudo`; a test checks every
+command. Anything that needs `sudo`, a GUI click, or logging out and back in
+is printed for you to run.
 
-Anything that needs `sudo`, a GUI click, or logging out and back in is printed
-for you — on Linux that's the container runtime and `gh`. nethackers never runs
-`sudo` (a test checks every command it runs). Running `nethackers setup` again
-is always safe: it re-checks and plans only what's still missing.
+## The plan
 
-## Options
+On a Mac with Homebrew and nothing else installed, `--operator codex` plans
+this:
 
-- `--for eval|evolve|publish|browse` — set up only what that needs.
-- `--operator claude|codex|opencode2` — the coding agent evolve should use.
-- `--yes` — run the plan without asking.
-- With no terminal attached (a coding agent's shell, a pipe), setup prints the
-  plan and changes nothing; with `--yes` it runs every unattended step and lists
-  the logins for you to run, each printing a code or a link.
-- Native Windows isn't covered; run nethackers inside WSL2.
+```text
+nethackers will:
+  1 log you in to the hub                nethackers login (a GitHub code, in your browser)
+  2 install the GitHub CLI               brew install gh  (untested)
+  3 log you in to gh                     gh auth login --hostname github.com --git-protocol https --web
+  4 check gh and the hub are one account compares the two GitHub logins
+  5 install Codex                        curl -fsSL https://chatgpt.com/codex/install.sh | sh  (untested)
+  6 log you in to Codex                  codex login
+  7 install Colima + Docker              brew install colima docker  (untested)
+  8 start Colima with Rosetta            colima start --vm-type vz --vz-rosetta --cpu 6 --memory 12  (untested)
+  9 pull the sandbox images
+Steps 1, 3, 6 need you at the keyboard; the rest run on their own. Nothing nethackers
+runs needs sudo.
+Steps marked (untested) come from vendor docs and haven't been run on a real macOS arm64
+(Apple Silicon) yet.
+```
+
+Logins come first so you can walk away afterwards. Installs happen only
+where one documented command does them without `sudo`. A runtime is started
+with its own command: `colima start`, `docker desktop start`, `orb start`,
+`podman machine start`. The images are about 1 GB to download the first
+time and 4 GB on disk; later releases fetch only what changed, with a
+progress bar and the time left.
+
+On Linux the runtime and `gh` need `sudo`, so they move to the list you run
+yourself:
+
+```text
+You'll need to (nethackers never runs sudo):
+  • install the GitHub CLI: `sudo apt install gh` (or see
+    https://github.com/cli/cli/blob/trunk/docs/install_linux.md)  (untested)
+  • install Docker: `curl -fsSL https://get.docker.com | sudo sh`, then `sudo usermod
+    -aG docker $USER` and log out and back in  (untested)
+```
+
+## Check it worked
+
+```bash
+nethackers doctor
+```
+
+Each section ends in `ready to eval: yes`, `ready to evolve: yes`,
+`ready to publish: yes`. On Linux the new `docker` group applies only after
+you log out and back in; until then doctor reports the runtime as installed
+but broken.
+
+## Running it again
+
+Run it whenever you like: it re-checks and plans only what is still missing,
+which is also how a new release's images arrive. With no terminal attached
+(a coding agent's shell, a pipe) it prints the plan and changes nothing;
+with `--yes` it runs every unattended step and lists the logins for you to
+run, each of which prints a code or a link.
+
+## Coding agents
+
+`evolve` needs one agent logged in on this machine; the sandbox reuses that
+login.
+
+| | log in with | what enters the sandbox |
+|---|---|---|
+| Claude Code | run `claude` once | the credential: `~/.claude/.credentials.json` read-only on Linux, the Keychain OAuth token as an environment variable on macOS |
+| Codex | `codex login` | your real `~/.codex`, read-write, because its tokens rotate |
+| OpenCode 2 | nothing; providers come from `~/.config/opencode/opencode.json` | a read-only copy of that file's `provider` section, plus the environment variables it names |
+
+OpenCode 2 is provider-agnostic, so a few things differ:
+
+- Logins made with `opencode2 auth login`, a ChatGPT subscription included,
+  stay on the host: the sandbox never sees OpenCode's own database, and a
+  subscription login renews itself, so a copy would invalidate yours. For
+  GPT on a ChatGPT subscription, use the `codex` operator.
+- A `{file:...}` key is not in the container. Use `{env:NAME}` or a literal
+  `apiKey`, and export the variable in the shell that launches nethackers.
+- Project config (`opencode.json`, `.opencode/`) is switched off in the
+  sandbox: the worktree is a copy of someone else's program, and OpenCode
+  trusts project config completely.
+- Without a key, OpenCode serves a handful of free `opencode/*` models, and
+  doctor says "free models only". Their availability is OpenCode's to
+  decide; a model that never replies waits out the 8-hour sandbox timeout.
+- Custom providers appear in the model picker as `provider/model`. A model
+  server on your own machine is `http://host.docker.internal:PORT/v1` under
+  Docker Desktop, since `localhost` inside the sandbox is the container.
+- Reasoning effort is a variant of a pinned model, so `--effort` needs
+  `--model`.
 
 ## What has been run on real machines
 
-Every recipe below is **tested** (someone ran `nethackers setup` end to end on a
-real machine; the row says where, at which nethackers version, and when),
-**untested** (written from the linked vendor document, never run on real
-hardware), or **not covered** (setup points you at the vendor's own page). A
-recipe becomes tested only in a PR that records where it ran.
+Every recipe below is one of:
+
+- **tested**: someone ran `nethackers setup` through it on a real machine;
+  the row says where, at which version, and when.
+- **untested**: written from the linked vendor document, never run by us.
+- **not covered**: setup points you at the vendor's page.
+
+A recipe becomes tested only in a PR that records where it ran. As of
+v0.35.0: macOS, 17 recipes, 0 tested; Linux, 13 recipes, 0 tested, 2 not
+covered.
 
 <!-- setup-recipes:start (generated by `python -m nethackers.setup.docs`; do not edit by hand) -->
 
@@ -87,3 +166,6 @@ recipe becomes tested only in a PR that records where it ran.
 | `linux.codex.install` | install Codex | nethackers | `curl -fsSL https://chatgpt.com/codex/install.sh \| sh` | untested ([built from](https://github.com/openai/codex)) |
 
 <!-- setup-recipes:end -->
+
+Native Windows is not covered: run nethackers inside WSL2. Other Linux
+distributions: Docker's own install page, linked in the table.

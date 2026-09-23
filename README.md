@@ -66,14 +66,15 @@ read-only root, no capabilities, non-root, resource caps. Fetching accepts only
 `github.com/<owner>/<repo>@<commit>` over https. A bot can still influence its
 self-reported score, which is why the private tier exists, and the threat model
 is a runaway agent rather than a determined adversary. Per surface:
-[`docs/harness.md`](docs/harness.md#3-safety-and-sandboxing).
+[`docs/safety.md`](docs/safety.md).
 
 ## Docs
 
 - [`docs/setup.md`](docs/setup.md), what `setup` does on each OS and how tested it is
-- [`docs/harness.md`](docs/harness.md), the bot contract, our harness, safety, building your own
-- [`docs/verification.md`](docs/verification.md), the private tier: hidden seeds, the verifier, the AutoAscend floor
-- [`docs/troubleshooting.md`](docs/troubleshooting.md), symptom, cause, fix
+- [`docs/harness.md`](docs/harness.md), the bot contract, our loop, building your own
+- [`docs/safety.md`](docs/safety.md), what the sandbox stops and what it doesn't
+- [`docs/verification.md`](docs/verification.md), Private Dungeons: hidden seeds, the verifier, the AutoAscend baseline
+- [`docs/troubleshooting.md`](docs/troubleshooting.md), what a command printed, what it means, what to do
 - [`docs/contributing.md`](docs/contributing.md), dev setup, tests, PRs for the CLI, hub, arena, and docs
 - [`docs/local-stack.md`](docs/local-stack.md), a full local hub, arena, and mutator
 

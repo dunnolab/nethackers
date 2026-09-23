@@ -65,7 +65,7 @@ run each login it lists and pass the user the code or link it prints.
 
 ```bash
 nethackers eval ./my-bot --objective val-dwa-law-fem
-nethackers submit ./my-solution --objective val-dwa-law-fem
+nethackers submit ./my-bot --objective val-dwa-law-fem
 ```
 
 `eval` scores a bot on an identity's published 15-seed batch. `submit`
