@@ -1,6 +1,6 @@
 """Pure-formatter tests for tui.status: the shared _bar helper plus the
 monitor rework's own formatters (dur, best_cell, mutator_title,
-token_subline) -- what tui.screens.monitor.RunMonitor renders through.
+status_line) -- what tui.screens.monitor.RunMonitor renders through.
 """
 from nethackers.harness.metering import TokenUsage
 from nethackers.tui import status as S
@@ -52,6 +52,22 @@ def test_mutator_title_includes_agent_version_model_effort():
     assert "Claude Code" in txt and "1.2.7" in txt and "opus" in txt and "high" in txt
 
 
-def test_token_subline_shows_four_kinds():
-    txt = str(S.token_subline(TokenUsage(12000, 3000, 6000, 500000), 3660))
-    assert "12.0k" in txt and "500.0k" in txt and "1h 01m" in txt
+def test_status_line_leads_with_orientation_and_ends_with_tokens():
+    usage = TokenUsage(3_600_000, 132_000, 410_000, 12_300_000)
+    txt = S.status_line("iter 1", "iter 4", 1, 5, 2160, usage)
+    assert txt.strip().startswith("viewing iter 1 (live: iter 4)")
+    assert "1 of 5 improved" in txt and "run time 36m" in txt
+    assert "tokens in 3.6M" in txt and txt.rstrip().endswith("read 12.3M")
+    assert "(live:" not in S.status_line("iter 4", None, 1, 5, 2160, usage)
+
+
+def test_short_time_is_seconds_then_minutes_then_hours():
+    assert S.short_time(45) == "45s"
+    assert S.short_time(420) == "7m"
+    assert S.short_time(3840) == "1h 04m"
+
+
+def test_agent_name_covers_every_operator():
+    assert S.agent_name(EvolveConfig("x", "opencode2", 1)) == "OpenCode"
+    assert S.agent_name(EvolveConfig("x", "codex", 1)) == "Codex"
+    assert S.agent_name(EvolveConfig("x", "claude", 1)) == "Claude Code"

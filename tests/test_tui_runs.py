@@ -277,8 +277,8 @@ def test_reconstruct_run_rebuilds_from_disk_and_flags_no_seed_detail(tmp_path):
     assert run.cfg.model == "sonnet" and run.cfg.effort == "high"
     assert run.identities() == ["sam-hum-law-fem", "val-dwa-law-fem"]   # from the objective
     # baseline (iter 0) skipped; iters 1 (rejected) + 2 (registered) rebuilt
-    assert run.iteration_status(1) == "rejected"
-    assert run.iteration_status(2) == "registered"
+    assert run.iter_results[1].registered is False
+    assert run.iter_results[2].registered is True
     assert run.iter_results[2].dev_fitness == 0.12
     assert run.iter_results[2].improved == ["sam-hum-law-fem", "union"]
     assert run.iter_results[2].results is None                 # per-seed detail not on disk

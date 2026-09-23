@@ -1,18 +1,33 @@
-"""Screen-level tests for the reworked RunMonitor: iteration list + Progress/
-Mutator Logs/Logs tabs + a clickable Progress table, rendered from a ``Run``.
-(The worker->Run reductions themselves are covered by test_tui_run.py.)"""
+"""Screen-level tests for the reworked RunMonitor: iteration list + Logs ·
+Progress · Mutator Logs tabs + a clickable Progress table, rendered from a
+``Run``. (The worker->Run reductions themselves are covered by
+test_tui_run.py.)"""
 from __future__ import annotations
 
+import asyncio
+
+from rich.text import Text
 from textual.app import App
-from textual.widgets import DataTable
+from textual.coordinate import Coordinate
+from textual.widgets import DataTable, OptionList, Static, TabbedContent, TabPane
 
 from nethackers.harness.loop import IterationResult
+from nethackers.tui import theme
 from nethackers.tui.run import Run
+from nethackers.tui.screens._clicktable import ClickTable
 from nethackers.tui.screens.monitor import RunMonitor
 from nethackers.tui.status import EvolveConfig
 
 CFG = EvolveConfig("wiz-elf-cha-mal,wiz-orc-cha-mal,val-dwa-law-fem", "claude", 3,
                    model="opus", effort="high", operator_version="1.2.7")
+
+# Important 1: a hub's `reference.commit` is a FULL `git rev-parse HEAD` (40
+# hex chars), never a toy value like the old "11"/"33" fixtures -- those never
+# exercised _origin_label's 7-char shortening, so every render pass missed the
+# score getting pushed out of the Progress table. Real sha1 hexdigests here so
+# the per-cell width guard (_assert_cells_fit_their_columns) actually binds.
+SHA_CHAMPION = "751c36deb6c2b3554db43f5dc56664e56eef7c56"
+SHA_UNION = "2167738659b0ae057f0eb52c56e6d9595b11bb2b"
 
 
 def _run() -> Run:
@@ -22,10 +37,10 @@ def _run() -> Run:
     # elites (its own handle/sha/repo) -- matches real cold-start, where the
     # union cell is seeded from the board's overall champion, not necessarily
     # any one identity's own champion (harness/loop.py select.overall_champion).
-    origins = {f"d:{i}": {"kind": "hub", "handle": "clyde", "sha": "11",
+    origins = {f"d:{i}": {"kind": "hub", "handle": "clyde", "sha": SHA_CHAMPION,
                           "repo": "github.com/t/a", "iteration": None}
                for i in ids}
-    origins["u1"] = {"kind": "hub", "handle": "clyde", "sha": "33",
+    origins["u1"] = {"kind": "hub", "handle": "clyde", "sha": SHA_UNION,
                       "repo": "github.com/t/u", "iteration": None}
     r.apply_state({"phase": "cold-start", "iteration": 0, "identities": ids,
                    "cells": [{"identity": i, "score": 0.4, "digest": f"d:{i}"} for i in ids],
@@ -51,6 +66,13 @@ def _run() -> Run:
 
 
 class _Host(App):
+    # The real app is NetHackersApp, whose CSS (.panel's border,
+    # #progress_pane's padding) eats 4 columns the Progress table doesn't
+    # have without it -- a bare, unstyled host lays out wider than any real
+    # user ever sees (Ruling 19/task-9-findings-r2.md). Applying it here
+    # makes every monitor pilot test see the app's real layout.
+    CSS = theme.CSS
+
     def __init__(self, run):
         super().__init__()
         self._run = run
@@ -83,26 +105,63 @@ def _headers(dt: DataTable) -> str:
     return " | ".join(str(c.label) for c in dt.ordered_columns)
 
 
+def _assert_cells_fit_their_columns(dt: DataTable) -> None:
+    """Ruling 20: the guard that would have caught all three rounds of
+    column-width defects -- every rendered cell's width must not exceed its
+    own column's configured ``width``. A ``Text`` value is measured with
+    ``.cell_len`` (what Textual itself lays out by, so it matches markup
+    stripped to display cells); a plain ``str`` with ``len``."""
+    widths = [c.width for c in dt.ordered_columns]
+    for r in range(dt.row_count):
+        for width, value in zip(widths, dt.get_row_at(r), strict=True):
+            shown = value.cell_len if isinstance(value, Text) else len(str(value))
+            assert shown <= width, f"row {r}: {value!r} is {shown} wide, column is {width}"
+
+
+class _CellSel:
+    """A minimal stand-in for ``DataTable.CellSelected``: the handler is a
+    pure function of ``.coordinate`` (see its own docstring), so a fake
+    event with just that attribute exercises its routing without going
+    through the real DataTable message pump."""
+
+    def __init__(self, row: int, col: int) -> None:
+        self.coordinate = Coordinate(row, col)
+
+
+def test_origin_label_shortens_a_full_hub_sha():
+    """Important 1: run.py's `_origin_label` shortens a hub sha to 7 chars
+    (git's own abbreviation length) -- the ONE place this fix needs to land,
+    since the Progress table, setup/iteration prose and DetailView titles all
+    read the label through it."""
+    r = _run()
+    label = r.origin_label("d:wiz-elf-cha-mal")
+    assert label == f"clyde @{SHA_CHAMPION[:7]}"
+    assert SHA_CHAMPION not in label
+    assert len(label) <= 15   # fits status.best_cell's `{label:<15}` padding
+
+
 async def test_progress_table_has_best_overall_and_role_groups():
     host = _Host(_run())
     async with host.run_test(size=(140, 42)) as pilot:
         await pilot.pause()
         mon = host.screen
         assert isinstance(mon, RunMonitor)
-        table_text = _dump(mon.query_one("#idents", DataTable))
+        dt = mon.query_one("#idents", DataTable)
+        table_text = _dump(dt)
         assert "BEST OVERALL" in table_text
         assert "Wizard" in table_text and "Valkyrie" in table_text   # role groups present
         assert "Claude Code" in str(mon.query_one("#title_mutator").render())
+        _assert_cells_fit_their_columns(dt)   # Ruling 20: during setup, fully populated
 
 
-async def test_init_row_shows_no_mutation():
+async def test_the_setup_row_says_setup_does_not_edit():
     host = _Host(_run())
     async with host.run_test(size=(140, 42)) as pilot:
         await pilot.pause()
         mon = host.screen
         mon._select(0)
         await pilot.pause()
-        assert "no mutation" in _dump(mon.query_one("#idents", DataTable))
+        assert "setup doesn't edit" in _dump(mon.query_one("#idents", DataTable))
 
 
 async def test_open_best_so_far_shows_per_seed_table_with_cause():
@@ -258,6 +317,78 @@ async def test_best_overall_detail_shows_the_union_champions_own_rows():
         assert "killed by a newt" not in text           # NOT the per-identity cells' champion
 
 
+async def test_best_overall_shows_a_seed_unions_own_games_not_the_autoascend_note():
+    """Coordinator follow-up to Minor 4: for a --from-seed run with no hub
+    champion at all, the cold-start union cell's origin is kind "seed", so
+    Run.best_overall now labels it "the starting bot" (kind "aa"). But
+    show_program used to route EVERY kind=="aa" straight into show_baseline,
+    whose text hardcodes "AutoAscend baseline · no per-seed breakdown" -- false
+    here, since a seed union has its own real cold-start evaluation
+    (init_union["results"]), same as a hub union. Must render it like the hub
+    branch, with open_best's own seed source line, never the AutoAscend
+    words."""
+    ids = ["v1", "v2"]
+    cfg = EvolveConfig(",".join(ids), "claude", 3, from_seed=True)
+    r = Run("r1", cfg)
+    seed_origin = {"kind": "seed", "handle": None, "sha": None, "repo": None, "iteration": None}
+    r.apply_state({
+        "phase": "cold-start", "iteration": 0, "identities": ids,
+        "cells": [{"identity": i, "score": 0.09, "digest": f"seed_{i}"} for i in ids],
+        "origins": {f"seed_{i}": seed_origin for i in ids} | {"useed": seed_origin},
+        "aa_baseline": {}, "elite_of": {},
+        "union": {"score": 0.08, "digest": "useed", "results": [
+            {"character": "v1", "trajectory_id": 100, "progress": 0.09, "status": "completed",
+             "end_status": "died", "ascended": False, "cause_of_death": "starvation",
+             "max_depth": 2, "turns": 150, "wall_seconds": 5.0},
+            {"character": "v2", "trajectory_id": 101, "progress": 0.07, "status": "completed",
+             "end_status": "died", "ascended": False, "cause_of_death": "poisoning",
+             "max_depth": 1, "turns": 90, "wall_seconds": 3.0},
+        ]},
+        "cell_results": {i: [] for i in ids},
+        "coverage": (2, 2), "cell": None, "generation": 0,
+        "baseline_dev": 0.0, "best_dev": 0.0, "wins": 0, "tokens": 0, "detail": "",
+        "parent_digest": "", "parent_dev": 0.0})
+    assert r.best_overall(0)[1:3] == ("the starting bot", "aa")   # sanity: Minor 4's label
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        mon.open_program()
+        await pilot.pause()
+        assert mon.detail_open is True
+        head = str(mon.query_one("#d_head", Static).render())
+        src = str(mon.query_one("#d_src", Static).render())
+        text = _dump(mon.query_one("#d_table", DataTable))
+        assert "starvation" in text and "poisoning" in text   # the seed union's own games
+        assert "AutoAscend" not in head and "AutoAscend" not in src
+        assert "played on your machine during setup" in src
+
+
+async def test_best_overall_with_no_union_still_shows_the_autoascend_floor():
+    """The genuine no-union AutoAscend floor (best_overall's own `else`, no
+    board at all) must keep show_baseline's note -- only a REAL union (seed
+    or hub) gets the per-seed table."""
+    ids = ["v1", "v2"]
+    cfg = EvolveConfig(",".join(ids), "claude", 3)
+    r = Run("r1", cfg)
+    r.apply_state({
+        "phase": "cold-start", "iteration": 0, "identities": ids,
+        "cells": [], "origins": {}, "aa_baseline": {"v1": 0.2, "v2": 0.3},
+        "elite_of": {}, "union": None, "cell_results": {},
+        "coverage": (0, 2), "cell": None, "generation": 0,
+        "baseline_dev": 0.0, "best_dev": 0.0, "wins": 0, "tokens": 0, "detail": "",
+        "parent_digest": "", "parent_dev": 0.0})
+    assert r.best_overall(0)[1:3] == ("AutoAscend", "aa")   # sanity: the true floor
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        mon.open_program()
+        await pilot.pause()
+        head = str(mon.query_one("#d_head", Static).render())
+        assert "AutoAscend baseline" in head and "no per-seed breakdown" in head
+
+
 async def test_open_run_and_open_best_open_different_programs():
     """``open_run`` (this iteration's own candidate) and ``open_best`` (the
     incumbent) must open DIFFERENT programs once the incumbent has propagated
@@ -374,19 +505,16 @@ async def test_n1_run_has_no_best_overall_row():
         assert "Wizard" in table_text   # the identity's own row still renders
 
 
-async def test_cold_start_frame_populates_the_progress_table_live():
-    # The monitor mounts on the initial (identity-less) state -> empty table.
-    # When the FIRST cold-start frame arrives (identities known, no cells scored
-    # yet -- loop.py's early emit), render_state must rebuild the Progress table
-    # so the identities appear immediately, instead of the table staying empty
-    # until the whole cold-start eval finishes.
-    r = Run("r1", CFG)   # _INITIAL_STATE carries no "identities"
+async def test_rows_appear_before_the_first_state_then_fill_in():
+    r = Run("r1", CFG)          # the objective names 3 identities; no state yet
     host = _Host(r)
     async with host.run_test(size=(140, 42)) as pilot:
         await pilot.pause()
         mon = host.screen
         dt = mon.query_one("#idents", DataTable)
-        assert dt.row_count == 0                       # empty before any cold-start frame
+        text = _dump(dt)
+        assert "wiz-elf-cha-mal" in text and "fetching…" in text   # rows from the first frame
+        _assert_cells_fit_their_columns(dt)   # Ruling 20: before the first state
         ids = ["wiz-elf-cha-mal", "wiz-orc-cha-mal", "val-dwa-law-fem"]
         r.apply_state({"phase": "cold-start", "iteration": 0, "identities": ids,
                        "cells": [], "origins": {}, "aa_baseline": {i: 0.3 for i in ids},
@@ -396,9 +524,31 @@ async def test_cold_start_frame_populates_the_progress_table_live():
                        "parent_digest": "", "parent_dev": 0.0})
         mon.render_state()
         await pilot.pause()
-        assert dt.row_count > 0                         # populated by the first cold-start frame
         text = _dump(dt)
-        assert "wiz-elf-cha-mal" in text and "val-dwa-law-fem" in text
+        assert "fetching…" not in text and "AutoAscend" in text
+        assert "scored when setup ends" in text   # BEST OVERALL waits for setup
+        _assert_cells_fit_their_columns(dt)   # Ruling 20: during setup
+
+
+async def test_a_reopened_runs_progress_tab_shows_the_not_recorded_row():
+    """Ruling 20: a reopened run's Progress tab had never been rendered in a
+    test before -- its own "norec" placeholder row (the reason this whole
+    round exists: "per-identity scores weren't saved" was 33 characters in
+    a 24-wide column) needs the same cell-width guard as every other state."""
+    r = Run("r1", CFG)
+    r.reopened = True
+    r.status = "done"
+    host = _Host(r)
+    async with host.run_test(size=(120, 34)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        mon.query_one("#tabs", TabbedContent).active = "tab_score"
+        await pilot.pause()
+        dt = mon.query_one("#idents", DataTable)
+        text = _dump(dt)
+        assert "not recorded" in text and "scores weren't saved" in text
+        assert "see Mutator Logs" in text
+        _assert_cells_fit_their_columns(dt)   # Ruling 20: a reopened run
 
 
 async def test_empty_detail_table_survives_a_click_without_crashing():
@@ -425,3 +575,453 @@ async def test_empty_detail_table_survives_a_click_without_crashing():
         await pilot.click("#d_table", offset=(3, 0))    # header click -> used to IndexError
         await pilot.pause()
         assert mon.detail_open is True                  # survived, no crash
+
+
+async def test_the_monitor_opens_on_logs_with_the_now_line():
+    host = _Host(_run())
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        tabs = mon.query_one("#tabs", TabbedContent)
+        assert tabs.active == "tab_logs"
+        assert [p.id for p in tabs.query(TabPane)] == ["tab_logs", "tab_score", "tab_mutator"]
+        assert mon.steps_view is not None and "Setup" in mon.steps_view.header
+        assert "Setup" in str(mon.query_one("#now", Static).render())
+
+
+async def test_the_status_line_and_footer_say_where_you_are_and_how_to_leave():
+    host = _Host(_run())
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        text = str(mon.query_one("#statusline", Static).render())
+        assert text.strip().startswith("viewing setup") and "tokens in" in text
+    descriptions = {key: desc for key, _action, desc in RunMonitor.BINDINGS}
+    assert descriptions == {"escape": "Dashboard (run keeps going)", "s": "Stop run",
+                            "q": "Quit (stops the run)"}
+
+
+async def test_stop_records_the_request_and_the_now_line_says_so():
+    r = _run()
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        mon.action_stop()
+        await pilot.pause()
+        assert r.stop.is_set() and r.stop_requested_at is not None
+        assert "Stopping" in str(mon.query_one("#now", Static).render())
+
+
+async def test_logs_follow_the_selected_iteration():
+    r = _run()
+    ids = ["wiz-elf-cha-mal", "wiz-orc-cha-mal", "val-dwa-law-fem"]
+    r.apply_state({**r.state, "phase": "mutating", "iteration": 1, "cell": ids[0]})
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        mon._select(1)
+        await pilot.pause()
+        assert mon.steps_view is not None
+        assert "Iteration 1 of 3" in mon.steps_view.header
+
+
+IDS3 = ["wiz-elf-cha-mal", "wiz-orc-cha-mal", "val-dwa-law-fem"]
+
+
+def _phase(r: Run, phase: str, k: int, **kw) -> None:
+    r.apply_state({**r.state, "phase": phase, "iteration": k,
+                   "cell": kw.pop("cell", IDS3[0]), **kw})
+
+
+async def test_the_iteration_list_names_outcomes_and_marks_the_live_row():
+    r = _run()
+    _phase(r, "mutating", 1)
+    r.apply_iteration(1, IterationResult(True, "registered", improved=[IDS3[0]],
+                                         dev_fitness=0.5))
+    _phase(r, "registered", 1)
+    _phase(r, "mutating", 2, cell=IDS3[1])
+    r.apply_iteration(2, IterationResult(False, "gate:smoke episode crashed"))
+    _phase(r, "rejected", 2, cell=IDS3[1], detail="gate: smoke episode crashed")
+    _phase(r, "mutating", 3, cell=IDS3[2])
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        ol = mon.query_one("#iters", OptionList)
+        labels = [str(ol.get_option_at_index(i).prompt) for i in range(ol.option_count)]
+        assert labels[0].startswith("✓ setup")
+        assert "improved" in labels[1] and "failed test" in labels[2]
+        assert mon.sel_iter == 3 and labels[3].startswith("▶ iter 3")   # opened on the live one
+        # str(prompt) is style-blind -- check the actual Text spans too: the
+        # highlighted (live) row is flattened to plain bold (no coloured
+        # spans, so the OptionList's dark-on-gold highlight isn't fighting
+        # them), while an unhighlighted decided row keeps its colour.
+        live_prompt = ol.get_option_at_index(3).prompt
+        assert live_prompt.style == "bold" and not live_prompt.spans
+        improved_prompt = ol.get_option_at_index(1).prompt
+        assert any(sp.style != "bold" for sp in improved_prompt.spans)
+
+
+async def test_the_view_follows_the_live_run_until_you_pick_another_iteration():
+    r = _run()
+    _phase(r, "mutating", 1)
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        assert mon.sel_iter == 1 and mon.following
+        r.apply_iteration(1, IterationResult(False, "no-cell-improved", dev_fitness=0.1))
+        _phase(r, "rejected", 1)
+        _phase(r, "mutating", 2, cell=IDS3[1])
+        mon.render_state()
+        await pilot.pause()
+        assert mon.sel_iter == 2                       # followed the run
+        mon._pick("it::1")
+        await pilot.pause()
+        assert mon.sel_iter == 1 and not mon.following
+        r.apply_iteration(2, IterationResult(False, "no-cell-improved", dev_fitness=0.1))
+        _phase(r, "rejected", 2, cell=IDS3[1])
+        _phase(r, "mutating", 3, cell=IDS3[2])
+        mon.render_state()
+        await pilot.pause()
+        assert mon.sel_iter == 1                       # stayed where you put it
+        assert "(live: iter 3)" in str(mon.query_one("#statusline", Static).render())
+        mon._pick("it::3")
+        await pilot.pause()
+        assert mon.following
+
+
+async def test_long_runs_keep_the_live_row_in_view():
+    r = Run("r1", EvolveConfig(",".join(IDS3), "claude", 100))
+    r.apply_state({**_run().state, "phase": "mutating", "iteration": 60, "cell": IDS3[0]})
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        await pilot.pause()
+        mon = host.screen
+        ol = mon.query_one("#iters", OptionList)
+        assert mon.sel_iter == 60 and ol.highlighted == 60
+        assert ol.scroll_offset.y > 0                  # scrolled down to it
+
+
+async def test_follow_live_does_not_thrash_on_back_to_back_state_events():
+    """Regression (task review, fix round 1): _render_iters() sets
+    ol.highlighted, which POSTS an OptionHighlighted message asynchronously
+    (Textual's watch_highlighted) -- if a second _follow_live()-triggered
+    _select() moves sel_iter on again before that message is dispatched,
+    the stale message used to read as a user pick of the OLD iteration,
+    flip ``following`` off and ``_select`` back to it, which posted another
+    stale message, repeating forever (reviewer's repro: ~660 cycles). Two
+    render_state() calls with NO pause between them reproduces the race;
+    Ruling 15 fixes it in the OptionList handlers."""
+    r = _run()
+    _phase(r, "mutating", 1)
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        assert mon.sel_iter == 1 and mon.following
+
+        calls = 0
+        orig_select = mon._select
+
+        def counting_select(index: int) -> None:
+            nonlocal calls
+            calls += 1
+            orig_select(index)
+        mon._select = counting_select
+
+        # Two live events back to back, each moving the follow-live target
+        # to a DIFFERENT iteration, with nothing draining the OptionList's
+        # message queue in between.
+        r.apply_iteration(1, IterationResult(False, "no-cell-improved", dev_fitness=0.1))
+        _phase(r, "rejected", 1)
+        _phase(r, "mutating", 2, cell=IDS3[1])
+        mon.render_state()   # live section -> 2
+
+        r.apply_iteration(2, IterationResult(False, "no-cell-improved", dev_fitness=0.1))
+        _phase(r, "rejected", 2, cell=IDS3[1])
+        _phase(r, "mutating", 3, cell=IDS3[2])
+        mon.render_state()   # live section -> 3, still no pause since fn1
+
+        # Bounded wait: a real livelock must surface as a clean failure
+        # instead of hanging the whole test run.
+        await asyncio.wait_for(pilot.pause(), timeout=5)
+        assert mon.sel_iter == 3
+        assert mon.following
+        assert calls <= 4   # a small, bounded number -- the thrash made it hundreds
+
+
+async def test_the_view_settles_on_the_last_iteration_once_the_run_ends():
+    """The untested branch of _follow_live: once the run stops running while
+    still following, it lands on (and stays on) the last iteration that
+    ran, and the now-line reports the run as done -- not stuck mid-render on
+    a section the run will never finish."""
+    r = _run()
+    _phase(r, "mutating", 1)
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        r.apply_iteration(1, IterationResult(False, "no-cell-improved", dev_fitness=0.1))
+        _phase(r, "rejected", 1)
+        _phase(r, "mutating", 2, cell=IDS3[1])
+        mon.render_state()
+        await pilot.pause()
+        assert mon.sel_iter == 2 and mon.following
+
+        r.finish()   # ends abruptly mid-iteration-2 (e.g. a crash) -- iter 2 never decided
+        mon.render_state()
+        await pilot.pause()
+        assert mon.sel_iter == 2               # the last iteration that ran
+        assert mon.following
+        assert "Done" in str(mon.query_one("#now", Static).render())
+
+
+async def test_this_iteration_says_what_the_run_waits_on():
+    r = _run()
+    _phase(r, "mutating", 1)
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        dt = mon.query_one("#idents", DataTable)
+        assert "waiting for the agent…" in _dump(dt)
+        _phase(r, "gating", 1)
+        mon.render_state()
+        await pilot.pause()
+        assert "smoke test…" in _dump(dt)
+        _phase(r, "evaluating-dev", 1)
+        ep = {"index": 0, "total": 45, "seed": 0, "character": IDS3[0],
+              "progress": 0.5, "status": "died"}
+        r.apply_episode("iter 1/3 · dev", ep)
+        mon.render_episode("iter 1/3 · dev", ep)
+        await pilot.pause()
+        text = _dump(dt)
+        assert "0.50  1/15 games" in text and "▲ new best" in text
+        assert "1/45 games" in text          # BEST OVERALL: the candidate's average
+        _assert_cells_fit_their_columns(dt)   # Ruling 20: a live iteration
+
+
+async def test_the_legend_explains_the_marks():
+    host = _Host(_run())
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        legend = str(host.screen.query_one("#legend", Static).render())
+        assert "score = average progression" in legend and "BEST OVERALL" in legend
+
+
+async def test_the_legend_renders_as_exactly_three_rows():
+    """Important 2: story.LEGEND's three lines must each fit #legend's
+    content width at 120 columns (78) so the legend never wraps into five
+    ragged lines -- costing two extra rows of a 34-row terminal."""
+    host = _Host(_run())
+    async with host.run_test(size=(120, 34)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        mon.query_one("#tabs", TabbedContent).active = "tab_score"
+        await pilot.pause()
+        legend_widget = mon.query_one("#legend", Static)
+        assert legend_widget.size.height == 3
+
+
+async def test_the_detail_view_says_avg_and_games():
+    host = _Host(_run())
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        mon.open_best("wiz-elf-cha-mal")
+        await pilot.pause()
+        head = str(mon.query_one("#d_head", Static).render())
+        assert head.startswith("avg 0.40") and "games" in head and "x̄" not in head
+
+
+async def test_the_cursor_never_rests_on_an_unclickable_cell():
+    r = _run()
+    _phase(r, "mutating", 1)           # "this iteration" cells aren't clickable yet
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        t = mon.query_one("#idents", ClickTable)
+        t.move_cursor(row=2, column=2)
+        await pilot.pause()
+        c = t.cursor_coordinate
+        assert mon._valid_cell(c.row, c.column)
+
+
+async def test_open_best_on_a_seed_cell_shows_its_real_games():
+    """Ruling 11: a seed cell (--from-seed/--seed, no hub champion) was
+    measured on THIS machine during setup -- open_best must show its real
+    games, not the hub-reference AutoAscend note."""
+    ident = "wiz-elf-cha-mal"
+    cfg = EvolveConfig(ident, "claude", 3)
+    r = Run("r1", cfg)
+    r.apply_state({"phase": "cold-start", "iteration": 0, "identities": [ident],
+                   "cells": [{"identity": ident, "score": 0.09, "digest": "seed1"}],
+                   "origins": {"seed1": {"kind": "seed", "handle": None, "sha": None,
+                                         "repo": None, "iteration": None}},
+                   "aa_baseline": {ident: 0.05}, "union": None,
+                   "cell_results": {ident: [{"character": ident, "trajectory_id": 0,
+                       "progress": 0.09, "status": "completed", "end_status": "died",
+                       "cause_of_death": "starvation", "max_depth": 3, "turns": 500,
+                       "wall_seconds": 10.0}]},
+                   "coverage": (1, 1), "cell": None, "generation": 0,
+                   "baseline_dev": 0.0, "best_dev": 0.0, "wins": 0, "tokens": 0, "detail": "",
+                   "parent_digest": "", "parent_dev": 0.0})
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        assert mon.run.incumbent(ident, 0)[2] == "aa"   # sanity: a seed cell labels "aa"
+        mon.open_best(ident)
+        await pilot.pause()
+        assert mon.detail_open is True
+        head = str(mon.query_one("#d_head", Static).render())
+        assert head.startswith("avg 0.09")
+        assert "starvation" in _dump(mon.query_one("#d_table", DataTable))
+        src = str(mon.query_one("#d_src", Static).render())
+        assert "played on your machine" in src
+
+
+async def test_open_best_with_no_cell_keeps_the_autoascend_baseline_note():
+    """Ruling 11: show_baseline (the hub-reference note, no per-seed table)
+    is used ONLY when the identity has no cell at all."""
+    ident = "wiz-elf-cha-mal"
+    cfg = EvolveConfig(ident, "claude", 3)
+    r = Run("r1", cfg)
+    r.apply_state({"phase": "cold-start", "iteration": 0, "identities": [ident],
+                   "cells": [], "origins": {}, "aa_baseline": {ident: 0.12}, "union": None,
+                   "cell_results": {}, "coverage": (0, 1), "cell": None, "generation": 0,
+                   "baseline_dev": 0.0, "best_dev": 0.0, "wins": 0, "tokens": 0, "detail": "",
+                   "parent_digest": "", "parent_dev": 0.0})
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        assert mon.run.incumbent(ident, 0)[2] == "aa"
+        assert ident not in mon.run.init_cells   # sanity: no cell at all
+        mon.open_best(ident)
+        await pilot.pause()
+        head = str(mon.query_one("#d_head", Static).render())
+        assert head.startswith("avg 0.12") and "no per-seed breakdown" in head
+
+
+async def test_a_finished_run_never_says_still_playing_on_a_cut_short_batch():
+    """Ruling 16(a): "still playing…" also requires run.running -- a run
+    that crashed or was stopped mid-iteration leaves a cut-short dev batch
+    that must never read as still in progress."""
+    r = _run()
+    r.apply_state({"phase": "evaluating-dev", "iteration": 1, "identities": IDS3,
+                   "cells": [{"identity": i, "score": 0.4, "digest": f"d:{i}"} for i in IDS3],
+                   "origins": {}, "aa_baseline": {i: 0.3 for i in IDS3}, "union": None,
+                   "cell_results": {i: [] for i in IDS3}, "coverage": (3, 3),
+                   "cell": IDS3[0], "generation": 1,
+                   "baseline_dev": 0.0, "best_dev": 0.0, "wins": 0, "tokens": 0, "detail": "",
+                   "parent_digest": "", "parent_dev": 0.0})
+    ep = {"index": 0, "total": 45, "seed": 5, "character": IDS3[0],
+          "progress": 0.3, "status": "died", "turns": 200, "depth": 2}
+    r.apply_episode("iter 1/3 · dev", ep)
+    r.finish()   # crashed/stopped mid-iteration -- the batch never completed
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        mon._select(1)
+        mon.open_run(IDS3[0])
+        await pilot.pause()
+        head = str(mon.query_one("#d_head", Static).render())
+        assert "1/15 games" in head
+        assert "still playing" not in head
+
+
+async def test_open_candidate_updates_live_as_more_games_land():
+    """Ruling 16(b): open_candidate's table refreshes live, the same way
+    open_run's own-candidate table does."""
+    r = _run()
+    _phase(r, "evaluating-dev", 1)
+    ep1 = {"index": 0, "total": 45, "seed": 0, "character": IDS3[0],
+           "progress": 0.5, "status": "died"}
+    r.apply_episode("iter 1/3 · dev", ep1)
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        mon._select(1)
+        mon.open_candidate()
+        await pilot.pause()
+        head = str(mon.query_one("#d_head", Static).render())
+        assert "1/45 games" in head
+
+        ep2 = {"index": 1, "total": 45, "seed": 1, "character": IDS3[1],
+               "progress": 0.3, "status": "died"}
+        r.apply_episode("iter 1/3 · dev", ep2)
+        mon.render_episode("iter 1/3 · dev", ep2)
+        await pilot.pause()
+        head = str(mon.query_one("#d_head", Static).render())
+        assert "2/45 games" in head
+
+
+async def test_a_finished_run_never_says_still_playing_via_open_candidate():
+    """Ruling 16(a)/18: open_run already had this coverage
+    (test_a_finished_run_never_says_still_playing_on_a_cut_short_batch) --
+    open_candidate needs the same. A crashed/stopped run's cut-short
+    candidate batch must never read as still in progress."""
+    r = _run()
+    r.apply_state({"phase": "evaluating-dev", "iteration": 1, "identities": IDS3,
+                   "cells": [{"identity": i, "score": 0.4, "digest": f"d:{i}"} for i in IDS3],
+                   "origins": {}, "aa_baseline": {i: 0.3 for i in IDS3}, "union": None,
+                   "cell_results": {i: [] for i in IDS3}, "coverage": (3, 3),
+                   "cell": IDS3[0], "generation": 1,
+                   "baseline_dev": 0.0, "best_dev": 0.0, "wins": 0, "tokens": 0, "detail": "",
+                   "parent_digest": "", "parent_dev": 0.0})
+    ep = {"index": 0, "total": 45, "seed": 5, "character": IDS3[0],
+          "progress": 0.3, "status": "died", "turns": 200, "depth": 2}
+    r.apply_episode("iter 1/3 · dev", ep)
+    r.finish()   # crashed/stopped mid-iteration -- the batch never completed
+    host = _Host(r)
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        mon._select(1)
+        mon.open_candidate()
+        await pilot.pause()
+        head = str(mon.query_one("#d_head", Static).render())
+        assert "1/45 games" in head
+        assert "still playing" not in head
+
+
+async def test_setup_best_overall_open_cell_opens_the_same_program_as_best_so_far():
+    """Ruling 16(c): at setup, once the union has scored, the BEST OVERALL
+    row's "this iteration" cell (col 2) is clickable and opens the SAME
+    program as "best so far" -- there's no candidate before iteration 1."""
+    host = _Host(_run())
+    async with host.run_test(size=(140, 42)) as pilot:
+        await pilot.pause()
+        mon = host.screen
+        assert mon.sel_iter == 0
+        assert (0, 2) in mon._clickable
+        mon.on_data_table_cell_selected(_CellSel(0, 2))
+        await pilot.pause()
+        assert mon.detail_open is True
+        dv = mon.query_one("#detailview")
+        assert dv.kind == "program"   # open_program's kind, not open_candidate's
+
+
+async def test_the_progress_table_never_scrolls_horizontally():
+    """Ruling 19: 17/24/29 (+ 2 cells of padding per column = 76) must fit
+    the Progress tab's real, themed viewport with no horizontal scroll, both
+    at a 120- and at a 140-column terminal -- the identity column and the
+    role headers must never sit off-screen at first paint."""
+    for size in ((120, 34), (140, 42)):
+        host = _Host(_run())
+        async with host.run_test(size=size) as pilot:
+            await pilot.pause()
+            mon = host.screen
+            mon.query_one("#tabs", TabbedContent).active = "tab_score"
+            await pilot.pause()
+            dt = mon.query_one("#idents", DataTable)
+            assert dt.virtual_size.width <= dt.container_size.width, size
+            assert dt.show_horizontal_scrollbar is False, size
