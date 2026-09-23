@@ -27,6 +27,7 @@ import contextlib
 import hashlib
 import json
 import math
+import os
 import re
 import subprocess
 import sys
@@ -365,16 +366,28 @@ def eval_batch(
     # symlinks, so the content digest below (relative-path based) is unchanged.
     solution_path = solution_path.absolute()
     # The arena runs the submission as a non-root uid (offline_flags' --user
-    # 65534) and chdirs into the /sol mount, so /sol's own directory must be
-    # world-traversable. A caller that builds the tree in a private dir --
-    # verify_program clones the candidate into a 0700 tempfile.TemporaryDirectory
-    # -- leaves it unreadable by that uid, and EVERY episode then PermissionErrors
-    # at turn 0 (bot_error, score 0). Add o+rx to the mount root (git/most trees
-    # already leave the contents 0644/0755); non-destructive, best-effort. Docker
-    # Desktop's uid remap hides this on macOS; a native-Linux bind mount keeps
-    # the host mode -- the same class as the /out chmod in _eval_temp_dir.
+    # 65534), chdirs into the /sol mount and imports the submission, so EVERY
+    # directory in the tree must be o+rx (traverse) and every file o+r (read).
+    # A caller that builds the tree under a restrictive umask leaves it
+    # unreadable by that uid: verify_program clones the candidate into a 0700
+    # TemporaryDirectory, and a umask-077 host (a domain-joined verifier) makes
+    # git's own files 0600 -- so the bot PermissionErrors reading /sol/bot.py and
+    # EVERY episode fails at turn 0 (bot_error, score 0). The mount root alone is
+    # not enough; walk the whole tree. Non-destructive (bits only added),
+    # best-effort per entry, and symlinks are skipped -- the tree is untrusted,
+    # so a link must never redirect a chmod outside it. Docker Desktop's uid
+    # remap hides all of this on macOS; a native-Linux bind mount keeps the host
+    # mode -- the same class as the /out chmod in _eval_temp_dir.
     with contextlib.suppress(OSError):
         solution_path.chmod(solution_path.stat().st_mode | 0o055)
+    for root, dirs, files in os.walk(solution_path):  # followlinks=False (default)
+        for name in dirs + files:
+            path = os.path.join(root, name)
+            with contextlib.suppress(OSError):
+                if os.path.islink(path):
+                    continue
+                mode = os.stat(path).st_mode
+                os.chmod(path, mode | (0o055 if os.path.isdir(path) else 0o044))
     # Bind the default digest resolver to the SAME resolved runtime the run
     # uses (docker/podman -- issue #50); an injected resolver (tests) wins.
     resolve_digest = image_digest_resolver or (

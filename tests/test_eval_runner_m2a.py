@@ -629,13 +629,26 @@ def test_eval_batch_makes_a_private_solution_dir_traversable(tmp_path):
     # into a 0700 TemporaryDirectory) leaves it unreadable by that uid, so every
     # episode PermissionErrors at turn 0. eval_batch must add o+rx to the mount
     # root so the non-root arena can enter it.
+    # A restrictive umask (a domain-joined verifier runs 077) makes the clone's
+    # own files 0600 -- unreadable by 65534 -- so the whole tree, not just the
+    # mount root, must be opened up: dirs o+rx, files o+r, recursively.
     sol = tmp_path / "sol"
     sol.mkdir(mode=0o700)
-    (sol / "bot.py").write_text("x")
-    assert sol.stat().st_mode & 0o755 == 0o700  # starts unreadable by others
+    (sol / "bot.py").touch()
+    (sol / "bot.py").chmod(0o600)              # top-level file, owner-only
+    sub = sol / "autoascend"
+    sub.mkdir(mode=0o700)                       # nested dir
+    (sub / "agent.py").touch()
+    (sub / "agent.py").chmod(0o600)            # nested file, owner-only
+    assert sol.stat().st_mode & 0o755 == 0o700
 
     eval_batch(sol, _SPEC, "img:dev", now="2026-08-09T00:00:00Z",
                runner=_make_fake_docker_run([]),
                image_digest_resolver=lambda img: "img@sha256:deadbeef")
 
-    assert sol.stat().st_mode & 0o055 == 0o055, oct(sol.stat().st_mode)  # o+rx + g+rx added
+    def mode(p):
+        return p.stat().st_mode
+    assert mode(sol) & 0o055 == 0o055, ("root", oct(mode(sol)))
+    assert mode(sol / "bot.py") & 0o044 == 0o044, ("file", oct(mode(sol / "bot.py")))
+    assert mode(sub) & 0o055 == 0o055, ("subdir", oct(mode(sub)))
+    assert mode(sub / "agent.py") & 0o044 == 0o044, ("nested", oct(mode(sub / "agent.py")))
