@@ -108,9 +108,10 @@ The real ``chatgpt.com`` sits behind Cloudflare JA3/TLS fingerprinting that
 403s a plain httpx forward, so ``ContainerOperator`` constructs the codex
 ``CredBroker`` (only) with ``impersonate=True``: a Chrome-TLS-impersonating
 forward via ``curl_cffi`` (``cred_broker.CredBroker``) instead of httpx.
-``curl_cffi`` is a lazy, host-side-only import -- **running the codex broker
-requires ``pip install curl_cffi`` on the host**; it is never a packaged
-dependency, so the mutator image/fingerprint stays untouched. Fallback, if a
+``curl_cffi`` is never a packaged dependency (the mutator image/fingerprint
+stays untouched); it is installed host-side on demand instead
+(``harness.impersonation``): setup pre-installs it for codex and the broker
+self-heals on first use, so the operator needs no manual step. Fallback, if a
 live smoke shows codex refuses to start against a fully empty ``~/.codex``: a
 minimal VALID ``auth.json`` (a 3-part ``id_token`` with a non-empty 3rd
 segment) -- not the placeholder-JWT + ``config.toml`` cage this replaced.

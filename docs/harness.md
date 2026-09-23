@@ -537,10 +537,14 @@ docker run --rm \
   and Codex (ChatGPT subscription → chatgpt.com) on both macOS and native Linux.
   Codex's broker forwards to `chatgpt.com` over a Chrome-TLS-impersonating
   `curl_cffi` client instead of plain `httpx` (that upstream is Cloudflare-fronted
-  and JA3/TLS-fingerprinted) — `pip install curl_cffi` on the host to run the Codex
-  broker; it is a lazy, host-side-only import, never a packaged dependency. (The
-  low-level `ContainerOperator(broker=…)` API param still defaults False;
-  `evolve`/launch pass `broker=True`.)
+  and JA3/TLS-fingerprinted). `curl_cffi` is never a packaged dependency (keeping
+  it out of `uv.lock`, which feeds the arena/mutator image); it is installed
+  host-side on demand instead — `nethackers setup` pre-installs it for a codex
+  operator, and the broker self-heals on first use if setup was skipped (it
+  runs `uv pip install --python <this-interpreter> curl_cffi`, or that
+  interpreter's `pip` without uv). Nothing manual. (The low-level
+  `ContainerOperator(broker=…)` API param still defaults False; `evolve`/launch
+  pass `broker=True`.)
 
   **Linux firewall (ufw) — one-time setup.** The broker listens on the host's
   docker-bridge gateway on a port in `11700–11749`. On native Linux the sandbox

@@ -541,8 +541,9 @@ class ContainerOperator:
         its upstream, ``chatgpt.com``, sits behind Cloudflare JA3/TLS
         fingerprinting that 403s a plain forward, so that one broker forwards
         via ``curl_cffi`` Chrome impersonation instead of ``httpx`` (see
-        ``cred_broker.CredBroker``'s docstring) -- this needs ``pip install
-        curl_cffi`` on the host. claude and every opencode2 broker stay
+        ``cred_broker.CredBroker``'s docstring) -- ``curl_cffi`` is installed
+        host-side on demand (setup pre-installs it; the broker self-heals), so
+        it never enters ``uv.lock``. claude and every opencode2 broker stay
         ``impersonate=False`` (the default) -- their upstreams aren't behind
         the same fingerprinting.
         """

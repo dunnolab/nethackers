@@ -90,10 +90,11 @@ class CredBroker:
     with Chrome TLS impersonation instead: codex's upstream, ``chatgpt.com``,
     sits behind Cloudflare JA3/TLS fingerprinting that 403s a plain ``httpx``
     request, so this hop needs a client that impersonates a real browser's TLS
-    handshake, not just its headers. ``curl_cffi`` is a LAZY, host-side-only
-    import (see ``start``) -- it is never a packaged dependency, so the
-    mutator image/fingerprint is untouched; running the codex broker requires
-    ``pip install curl_cffi`` on the host.
+    handshake, not just its headers. ``curl_cffi`` is never a packaged
+    dependency (the mutator image/fingerprint and ``uv.lock`` stay untouched);
+    it is installed host-side on demand instead (``harness.impersonation``):
+    ``nethackers setup`` pre-installs it for codex, and ``start`` self-heals on
+    first use if setup was skipped.
     """
 
     def __init__(
@@ -143,24 +144,18 @@ class CredBroker:
         self._client = client
         cffi_session: Any = None
         if self._impersonate:
-            # Lazy, host-side-only import (spec: mutator image/fingerprint
-            # must stay untouched -- curl_cffi is never a packaged
-            # dependency). Only the codex broker ever sets `impersonate`, so
-            # only a codex run ever reaches this branch.
-            try:
-                from curl_cffi import requests as _cffi
-            except ImportError as exc:
-                raise RuntimeError(
-                    "the codex broker forwards to Cloudflare-fronted chatgpt.com, which "
-                    "needs TLS impersonation: install it on the host with "
-                    "`pip install curl_cffi`"
-                ) from exc
-            # Chrome impersonation: matches the JA3/TLS fingerprint Cloudflare
-            # allow-lists (a real codex CLI negotiates as some browser-shaped
-            # TLS client, not as bare httpx/urllib3 -- "chrome" is curl_cffi's
-            # default/best-supported target, not a claim about codex's own
-            # literal User-Agent, which is forwarded unchanged regardless).
-            cffi_session = _cffi.Session(impersonate="chrome")
+            # Host-side-only, installed on demand: curl_cffi is never a packaged
+            # dependency (the mutator image/fingerprint and uv.lock stay
+            # untouched), so `load_impersonate_session` self-installs it into
+            # THIS interpreter on first codex use when `nethackers setup` didn't
+            # already. Only the codex broker sets `impersonate`, so only a codex
+            # run reaches this branch. Chrome impersonation matches the JA3/TLS
+            # fingerprint Cloudflare allow-lists (a real codex CLI negotiates as
+            # some browser-shaped TLS client, not bare httpx/urllib3 -- "chrome"
+            # is curl_cffi's best-supported target, not a claim about codex's own
+            # User-Agent, which is forwarded unchanged regardless).
+            from nethackers.harness.impersonation import load_impersonate_session
+            cffi_session = load_impersonate_session("chrome")
             self._cffi_session = cffi_session
 
         class Handler(BaseHTTPRequestHandler):

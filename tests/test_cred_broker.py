@@ -340,19 +340,20 @@ def test_broker_impersonate_decodes_gzip_response(fake_upstream):
     assert json.loads(r.content) == _GZIP_PAYLOAD
 
 
-def test_broker_impersonate_without_curl_cffi_raises_a_friendly_runtimeerror(monkeypatch):
-    # Runs regardless of whether curl_cffi is actually installed on this
-    # host: `None` in `sys.modules` is the documented way to make CPython's
-    # import system raise ImportError for a name unconditionally (see the
-    # import system reference: "if the named module is not found in
-    # `sys.modules`... [if it] is `None`, an `ImportError` is raised"), so
-    # this forces `CredBroker.start`'s lazy `from curl_cffi import requests`
-    # to fail the same way it would on a host that never `pip install
-    # curl_cffi`-ed at all. `monkeypatch.setitem` restores whatever was at
-    # `sys.modules["curl_cffi"]` (present or absent) once the test ends.
+def test_broker_impersonate_self_heals_and_fails_loud_only_if_install_fails(monkeypatch):
+    # curl_cffi is installed host-side on demand, so a missing curl_cffi no
+    # longer fails outright: `start` self-heals via `impersonation.
+    # ensure_impersonation_dep`, and only fails loud if THAT can't make it
+    # available (offline, no uv/pip). `None` in `sys.modules` is CPython's
+    # documented way to force the lazy `from curl_cffi import requests` to raise
+    # ImportError, like a host that never installed it; stubbing
+    # `ensure_impersonation_dep` to report failure keeps any real subprocess
+    # from running. The broker fails loud rather than silently exposing the key.
     monkeypatch.setitem(sys.modules, "curl_cffi", None)
+    monkeypatch.setattr("nethackers.harness.impersonation.ensure_impersonation_dep",
+                        lambda **kw: False)
     broker = CredBroker("http://127.0.0.1:1", HeaderRewrite(), impersonate=True)
-    with pytest.raises(RuntimeError, match=r"pip install curl_cffi"):
+    with pytest.raises(RuntimeError, match="TLS impersonation"):
         broker.start()
 
 
