@@ -285,11 +285,14 @@ the same. The mutator never trips this: its pin is re-pinned automatically.
 Check the diff it prints before assuming it was you: the base is the **last `v*`
 release tag**, not your PR's base branch, so drift from an earlier
 merged-but-unreleased PR fails your PR as well. The fix is in
-[`contributing.md`](contributing.md#two-traps-that-cost-real-time): run
-`.github/workflows/sandbox-images.yml` on your branch, then classify the new
-arena digest in `src/nethackers/arena_version.py`. A rebuild that doesn't move
-scores keeps the verified corpus; one that bumps `ARENA_MAJOR` retires it from
-every board (nothing is deleted).
+[`contributing.md`](contributing.md#two-traps-that-cost-real-time): dispatch
+`.github/workflows/sandbox-images.yml` on your branch, then classify the new arena
+digest in `src/nethackers/arena_version.py` and run `scripts/repin_images.py`
+yourself. The workflow's own re-pin step stops on an unclassified digest by
+design, so a run that fails only there did its job — it pushed the images, and the
+classification is the part no workflow can make for you. A rebuild that doesn't
+move scores keeps the verified corpus; one that bumps `ARENA_MAJOR` retires it
+from every board (nothing is deleted).
 
 ### A test passes but clearly isn't testing anything
 
