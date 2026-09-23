@@ -5,12 +5,16 @@ never sees the real credential and can reach only the provider through this
 hop.
 
 This is a reverse proxy to exactly ONE upstream, fixed at construction time
--- it never proxies to a host of the request's choosing. The ``Host`` check
-in ``_proxy`` doesn't select where a request goes (that's always
-``upstream_base``); it's a defense-in-depth refusal of anything that doesn't
-even look like it's addressed to this broker or its one upstream, so a
-future change to this file (or a bug in it) has one fewer way to turn this
-into an open relay.
+-- it never proxies to a host of the request's choosing. Two checks keep
+that true. The forward URL is ``upstream_base`` + the request-target, so
+``_proxy`` accepts only an origin-form target (one starting with ``/``): a
+target such as ``@evil.example/v1/messages`` would otherwise re-home the
+URL (the upstream host becomes userinfo) and carry the injected credential
+to a host the client picked. The ``Host`` check doesn't select where a
+request goes either; it's a defense-in-depth refusal of anything that
+doesn't even look like it's addressed to this broker or its one upstream,
+so a future change to this file (or a bug in it) has one fewer way to turn
+this into an open relay.
 """
 from __future__ import annotations
 
@@ -162,6 +166,17 @@ class CredBroker:
             def _proxy(self) -> None:
                 broker.requests_seen += 1
                 if not broker._host_allowed(self.headers.get("Host")):
+                    self.send_response(403)
+                    self.end_headers()
+                    return
+                # Origin-form only. `url` below is `_upstream + self.path`,
+                # and a target that does not start with "/" (e.g.
+                # "@evil.example/v1/messages") lands in the URL's authority:
+                # the upstream host turns into userinfo and the request, with
+                # the real credential injected, goes to the client's host.
+                # A real CLI only ever sends origin-form, so this refuses
+                # nothing legitimate.
+                if not self.path.startswith("/"):
                     self.send_response(403)
                     self.end_headers()
                     return
