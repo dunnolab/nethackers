@@ -84,3 +84,20 @@ def test_agent_installers_match_macos():
 def test_emulation_is_unknown_and_never_fails():
     assert linux.emulation(lin())[0] == "unknown"
     assert linux.emulation(lin(machine="aarch64"))[2] is None
+
+
+def test_firewall_recipe_with_ufw_is_a_port_scoped_ufw_rule():
+    r = linux.firewall_recipe(lin(), UP, which=lambda n: "/usr/sbin/ufw")
+    assert r is not None and r.who == "you" and r.id == "linux.broker.ufw"
+    assert "ufw allow in on docker0" in r.say
+    assert "11700:11749" in r.say          # scoped to the broker's port range
+    assert "not a blanket" in r.say         # explicitly not the broad rule
+
+
+def test_firewall_recipe_none_without_ufw():
+    assert linux.firewall_recipe(lin(), UP, which=lambda n: None) is None
+
+
+def test_firewall_recipe_none_under_podman():
+    podman = RuntimeReport("podman", (RuntimeCandidate("podman", "usable", ""),))
+    assert linux.firewall_recipe(lin(), podman, which=lambda n: "/usr/sbin/ufw") is None

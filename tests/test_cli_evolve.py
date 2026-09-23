@@ -255,3 +255,18 @@ def test_verified_flag_sets_tier(run_cli_capturing_params):
         ["evolve", "val-dwa-law-fem", "--seed", "roots/autoascend", "--verified"])
     assert p_default.tier == "self-reported"
     assert p_verified.tier == "verified"
+
+
+def test_broker_flag_defaults_true_and_respects_explicit_no_broker(run_cli_capturing_params):
+    # §3.4: unspecified --broker/--no-broker must fall through to EvolveParams'
+    # own default (True) -- not get pinned to False by the CLI construction --
+    # while an explicit flag either way overrides it.
+    p_default = run_cli_capturing_params(
+        ["evolve", "val-dwa-law-fem", "--seed", "roots/autoascend"])
+    p_no_broker = run_cli_capturing_params(
+        ["evolve", "val-dwa-law-fem", "--seed", "roots/autoascend", "--no-broker"])
+    p_broker = run_cli_capturing_params(
+        ["evolve", "val-dwa-law-fem", "--seed", "roots/autoascend", "--broker"])
+    assert p_default.broker is True
+    assert p_no_broker.broker is False
+    assert p_broker.broker is True

@@ -36,36 +36,85 @@ sandbox.
 
 **Broker path (opt-in, §3d/INV2).** ``auth_broker_args`` is a SELECTABLE
 alternative to the mount functions above: instead of handing the container a
-real credential, it hands it a placeholder key plus the harness's own
-base-URL override, pointing it at ``cred_broker.CredBroker`` -- which holds
-the real credential host-side and injects it only into requests it forwards
-to the one provider host. ``broker_credential`` is the host-side read that
-gets the broker its real ``header_value``, reusing this module's exact
-login paths (macOS Keychain / ``.credentials.json`` for Claude, ``~/.codex``
-for Codex) rather than duplicating them. ``ContainerOperator``'s ``broker``
-flag chooses between the two; the mount stays the default -- see its
-docstring for why.
+real credential, it hands it a placeholder plus a way to reach
+``cred_broker.CredBroker`` -- which holds the real credential host-side and
+injects it only into requests it forwards to the one provider host. For
+Claude that's a placeholder token + a base-URL env override; for Codex it's a
+``-c model_providers.…`` invocation override (in the ``codex exec`` command,
+not this module) pointing codex at a CUSTOM UNAUTHENTICATED provider, so codex
+sends NO credential and the broker injects it all -- this module's codex
+branch supplies only an EMPTY, writable cage ``~/.codex`` + ``CODEX_HOME``.
+``broker_credential`` is the host-side read that gets the broker
+its real ``HeaderRewrite``, reusing this module's exact login paths (macOS
+Keychain / ``.credentials.json`` for Claude, ``~/.codex`` for Codex) rather
+than duplicating them. ``ContainerOperator``'s ``broker`` flag chooses
+between the two; the mount stays the default -- see its docstring for why.
 
-Two things this pairing does NOT resolve, both live-verification concerns
-(PARKED, not a correctness claim of this module):
+**Claude broker auth is verified live.** Claude Code authenticates its OAuth
+token as ``Authorization: Bearer`` (not ``x-api-key``), paired with an
+``anthropic-beta`` list -- including an ``oauth-*`` flag -- that the CLI emits
+itself. So the broker path runs the caged CLI in OAuth mode
+(``CLAUDE_CODE_OAUTH_TOKEN`` placeholder, not ``ANTHROPIC_API_KEY``): it sends
+``Bearer <placeholder>`` plus those beta headers, and ``CredBroker`` replaces
+the ``Authorization`` value with the real Bearer, strips any inbound
+``x-api-key`` (so a smuggled key can't shadow the injected Bearer), and merges
+``oauth-2025-04-20`` into ``anthropic-beta`` rather than trusting the CLI to
+emit it (version-dependent) -- forwarding the rest of the beta and version
+headers unchanged. Confirmed end-to-end against api.anthropic.com. The real
+Bearer itself prefers a durable ``setup-token`` (§3.3: a 1-year subscription
+OAuth token, read from ``NETHACKERS_CLAUDE_SETUP_TOKEN`` or
+``~/.nethackers/claude/setup-token``); with no setup-token it uses the
+interactive ``~/.claude`` login and, like codex, REFRESHES that ~8h token
+host-side when it is near expiry -- writing the rotated single-use token back
+to the Keychain / ``.credentials.json`` (INV B4) -- so an end user logs into
+Claude once and the token is kept alive for them, no setup-token chore. The
+refresh endpoint (``platform.claude.com``) is Cloudflare-WAF'd, so a host it
+blocks (often headless Linux) still falls back to the setup-token.
 
-- **Scheme mismatch for Claude.** The broker path's placeholder is
-  API-key-shaped (``ANTHROPIC_API_KEY`` / ``x-api-key`` header, Anthropic's
-  API-key convention -- see ``harness/discovery.py``'s own
-  ``_claude_auth_headers``), but the credential ``broker_credential`` reads
-  host-side is the Claude Code OAuth access token -- Bearer-shaped, and
-  normally paired with an ``anthropic-beta`` header ``CredBroker`` has no way
-  to also inject (it forwards exactly one header). Forwarding that token
-  under ``x-api-key`` may not authenticate; a host with a real
-  ``ANTHROPIC_API_KEY`` of its own would match cleanly and is the easy fix,
-  but reading that env var host-side wasn't part of this task's ask, so this
-  module doesn't guess at it.
-- **Codex token staleness.** ``~/.codex/auth.json``'s OAuth ``access_token``
-  (the fallback when there's no stable ``OPENAI_API_KEY`` login) rotates;
-  ``broker_credential`` reads it once, at container start, and the broker
-  keeps injecting that same snapshot for the container's whole (up to 8h)
-  lifetime. The mount path sidesteps this entirely by sharing the live,
-  self-refreshing file instead of a value copied out of it once.
+**Codex broker (chatgpt.com backend + `-c` unauthenticated provider).** A
+ChatGPT-subscription codex login (``~/.codex/auth.json`` is ``auth_mode:
+chatgpt`` with an empty ``OPENAI_API_KEY`` and a rotating
+``tokens.access_token``) POSTs to ``chatgpt.com/backend-api/codex/responses``
+and IGNORES ``OPENAI_BASE_URL`` for its model endpoint. Worse, the mutator
+runs ``codex exec --ignore-user-config``, which DISCARDS
+``~/.codex/config.toml`` -- so an earlier cage that routed via a ``config.toml``
+``openai_base_url`` was silently ignored, codex fell back to ``api.openai.com``,
+and the call 401'd (NOT an auth/placeholder problem: a routing one). The
+CONFIRMED fix (proven in our own E2E, and OpenAI's own ``responses-api-proxy``
+recipe) is to route codex by a ``-c`` INVOCATION override -- which applies even
+under ``--ignore-user-config`` -- pointing it at a CUSTOM provider named
+``nethackers-broker`` with ``base_url`` ending in ``/backend-api/codex`` and no
+``requires_openai_auth``/``env_key``. With no auth configured codex uses its
+``unauthenticated_auth_provider()`` and sends the POST with NO ``Authorization``
+header, so the BROKER injects 100% of the auth and codex needs no credential in
+the box. That ``-c`` override lives in the ``codex exec`` command
+(``operator._codex_cmd``, threaded via ``container_operator.build_docker_argv``'s
+``broker_base``), NOT this module; ``auth_broker_args`` here supplies only the
+cage ``~/.codex`` -- now an EMPTY, world-writable directory (container agent
+must write it) + ``CODEX_HOME``
+(codex needs a writable ``$CODEX_HOME`` for its app-server socket/state; no
+token, no config, B1). ``broker_credential`` then injects the real
+``Authorization: Bearer`` and, authoritatively, the ``ChatGPT-Account-Id``
+header (exact case), preserving codex's own ``originator: codex_cli_rs`` +
+``User-Agent`` (a real server-side first-party allowlist -- the broker forwards
+every non-injected header unchanged), and refreshes the rotating token
+PROACTIVELY by its ``exp`` (``_codex_token_needs_refresh`` / ``_codex_refresh``,
+at ``auth.openai.com/oauth/token``) rather than pinning one ~8h snapshot --
+writing the rotated single-use token back to the canonical file (the broker is
+the sole writer during a broker run; the container has no ``~/.codex`` mount).
+
+Validated on a MOCK provider (``test_broker_e2e`` / ``test_broker_transform``).
+The real ``chatgpt.com`` sits behind Cloudflare JA3/TLS fingerprinting that
+403s a plain httpx forward, so ``ContainerOperator`` constructs the codex
+``CredBroker`` (only) with ``impersonate=True``: a Chrome-TLS-impersonating
+forward via ``curl_cffi`` (``cred_broker.CredBroker``) instead of httpx.
+``curl_cffi`` is never a packaged dependency (the mutator image/fingerprint
+stays untouched); it is installed host-side on demand instead
+(``harness.impersonation``): setup pre-installs it for codex and the broker
+self-heals on first use, so the operator needs no manual step. Fallback, if a
+live smoke shows codex refuses to start against a fully empty ``~/.codex``: a
+minimal VALID ``auth.json`` (a 3-part ``id_token`` with a non-empty 3rd
+segment) -- not the placeholder-JWT + ``config.toml`` cage this replaced.
 
 **OpenCode 2's broker path is per-provider.** OpenCode's base-URL override is
 a per-provider JSON config field (``options.baseURL``), not a single env var
@@ -74,12 +123,13 @@ a per-provider JSON config field (``options.baseURL``), not a single env var
 claude/codex-only and still raises for ``harness="opencode2"``. OpenCode 2
 gets its own pair of functions instead: ``opencode2_broker_targets``
 resolves, for every provider across the global configs, whether it's
-brokerable and the ``(upstream, header_name, header_value)`` to broker it
-with -- a literal or env-sourced ``apiKey`` (a ``{file:...}`` key, or no key
-at all, is left alone); an explicit ``options.baseURL``, or absent one,
+brokerable and the ``(upstream, rewrite)`` to broker it with -- a literal
+or env-sourced ``apiKey`` (a ``{file:...}`` key, or no key at all, is left
+alone); an explicit ``options.baseURL``, or absent one,
 Anthropic's/OpenAI's own default host for those two provider names
 specifically (Anthropic gets ``x-api-key``, everything else
-``Authorization: Bearer``, per the Claude scheme-mismatch caveat above).
+``Authorization: Bearer`` -- these are provider API keys from the config,
+not Claude Code's OAuth token).
 ``opencode2_broker_docker_args`` then writes the cage config with each
 brokered provider's ``baseURL``/``apiKey`` replaced by the broker's own base
 URL and the ``"proxy-managed"`` placeholder -- forwarding by name only the
@@ -94,17 +144,62 @@ mount wholesale rather than start zero brokers around an empty config.
 
 from __future__ import annotations
 
+import base64
 import contextlib
 import json
+import logging
 import os
 import re
 import subprocess
 import tempfile
+import time
 from collections.abc import Mapping
 from pathlib import Path
 from urllib.parse import urlsplit
 
+import httpx
+
+from nethackers.harness.cred_broker import HeaderRewrite
+
+log = logging.getLogger(__name__)
+
+# `claude auth login` (main's setup recipes point at it) rather than a bare
+# `claude` -- the wording ebebdda standardized so doctor/setup hints agree.
 _CLAUDE_LOGIN_HINT = "run `claude auth login` on this host, then retry"
+
+# The codex CLI's own public OAuth app id (the id_token `aud` claim) -- not a
+# secret, pinned from the codex-rs source. `_CODEX_TOKEN_ENDPOINT` is OpenAI's
+# refresh endpoint for that app (§3.3).
+CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+_CODEX_TOKEN_ENDPOINT = "https://auth.openai.com/oauth/token"
+
+# Proactive-refresh margin (§3.3): refresh the rotating codex access token once
+# it has less than this left before its JWT `exp`, rather than pinning one ~8h
+# snapshot for a container's whole (up to 8h) lifetime.
+_CODEX_REFRESH_MARGIN_S = 30 * 60
+
+# Claude Code's own public OAuth client id + Anthropic's refresh endpoint --
+# not a secret, pinned from Claude Code's subscription OAuth flow. The claude
+# twin of the codex pair above: the broker refreshes the interactive `claude`
+# login's ~8h subscription access token host-side (using the refresh token in
+# the login credential) and writes the rotated credential BACK, so an end user
+# logs into Claude once and never touches a token again -- no per-machine
+# `setup-token` chore (§3.3, INV B4). The setup-token stays the operator/fleet
+# path for headless boxes with no interactive login.
+# client_id: Claude Code's own public OAuth app id (unanimous across every
+# community reverse-engineering of the CLI; a refresh token is bound to the
+# client_id it was minted under, so this exact value is required). Endpoint:
+# Anthropic migrated its console from console.anthropic.com to
+# platform.claude.com (the old host 404s), and this endpoint is Cloudflare-
+# fronted + WAF'd -- like codex's chatgpt.com -- so a plain httpx POST can be
+# 403/429'd from some environments (notably headless Linux); the setup-token
+# stays the fallback there. Body is JSON; the response is OAuth snake_case
+# (access_token/refresh_token/expires_in seconds) which we map onto the local
+# camelCase storage (accessToken/refreshToken/expiresAt ms).
+CLAUDE_OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+_CLAUDE_TOKEN_ENDPOINT = "https://platform.claude.com/v1/oauth/token"
+_CLAUDE_REFRESH_MARGIN_S = 30 * 60
+_CLAUDE_KEYCHAIN_SERVICE = "Claude Code-credentials"
 
 
 class AuthUnavailable(Exception):
@@ -162,20 +257,41 @@ def auth_docker_args(
     raise ValueError(f"unknown harness: {harness!r}")
 
 
-def auth_broker_args(harness: str, *, broker_base: str) -> list[str]:
-    """The ``-e`` args that point ``harness`` at the credential broker
-    (``cred_broker.CredBroker``, started at ``broker_base``) instead of
-    mounting its host login: a PLACEHOLDER key plus the harness's own
-    base-URL override. No ``-v`` mount, no real key -- see this module's
-    docstring for the broker path's known live-verification concerns, and
-    ``ContainerOperator``'s ``broker`` flag for how a caller opts into this
-    instead of ``auth_docker_args``'s mount (the default).
+def auth_broker_args(
+    harness: str, *, broker_base: str, home: Path | None = None,
+) -> list[str]:
+    """Point ``harness`` at the credential broker (``cred_broker.CredBroker``,
+    started at ``broker_base``) instead of mounting its host login.
+
+    Claude gets a PLACEHOLDER token plus its ``ANTHROPIC_BASE_URL`` env
+    override, no ``-v`` mount. Codex is routed at the broker NOT here but by a
+    ``-c model_providers.…`` invocation override in its ``codex exec`` command
+    (``container_operator``/``operator._codex_cmd``) -- a ChatGPT-subscription
+    login ignores ``OPENAI_BASE_URL`` for its model endpoint, and ``codex exec
+    --ignore-user-config`` discards a cage ``config.toml``, so only a ``-c``
+    override reaches it. That override is UNAUTHENTICATED, so codex sends no
+    credential and the broker injects it all host-side (``broker_credential``).
+    All this codex branch supplies is the cage ``~/.codex`` itself: an EMPTY,
+    world-writable dir mounted at ``~/.codex`` plus ``CODEX_HOME`` (codex
+    needs a writable ``$CODEX_HOME`` for its app-server socket/state) -- so
+    ``home`` is REQUIRED for codex, but no token and no config cross the
+    boundary. See ``ContainerOperator``'s ``broker`` flag for how a caller opts
+    into this instead of ``auth_docker_args``'s mount (the default).
     """
     if harness == "claude":
-        return ["-e", f"ANTHROPIC_BASE_URL={broker_base}", "-e", "ANTHROPIC_API_KEY=proxy-managed"]
+        # OAuth mode via CLAUDE_CODE_OAUTH_TOKEN (not ANTHROPIC_API_KEY): Claude
+        # Code then sends `Authorization: Bearer <placeholder>` plus the oauth-*
+        # anthropic-beta headers its token requires, and the broker replaces only
+        # the Authorization value with the real Bearer (broker_credential). The
+        # beta/version headers come from Claude and forward through the broker
+        # unchanged -- verified with a live round-trip to api.anthropic.com.
+        return ["-e", f"ANTHROPIC_BASE_URL={broker_base}",
+                "-e", "CLAUDE_CODE_OAUTH_TOKEN=proxy-managed"]
 
     if harness == "codex":
-        return ["-e", f"OPENAI_BASE_URL={broker_base}", "-e", "OPENAI_API_KEY=proxy-managed"]
+        if home is None:
+            raise ValueError("auth_broker_args('codex') requires home= for the cage dir")
+        return _codex_cage_args(home)
 
     if harness == "opencode2":
         # OpenCode's base-URL override is a per-provider JSON config field
@@ -195,27 +311,72 @@ def auth_broker_args(harness: str, *, broker_base: str) -> list[str]:
 
 def broker_credential(
     harness: str, *, system: str, home: Path, run=subprocess.run,
-) -> tuple[str, str]:
-    """``(header_name, header_value)`` for ``cred_broker.CredBroker`` to
-    inject for ``harness`` -- the real credential ``auth_broker_args``'s
-    placeholder stands in for, read host-side via the exact same login
+    environ: Mapping[str, str] | None = None,
+) -> HeaderRewrite:
+    """A ``HeaderRewrite`` for ``cred_broker.CredBroker`` to apply for
+    ``harness`` -- the real credential ``auth_broker_args``'s placeholder
+    stands in for, read host-side via the exact same login
     ``auth_docker_args`` mounts (never a duplicate/second read of it).
 
-    ``header_name`` matches what the broker path's OWN placeholder env
-    actually sends upstream (``x-api-key`` for Claude's
-    ``ANTHROPIC_API_KEY``, ``Authorization`` for Codex's ``OPENAI_API_KEY``)
-    -- not necessarily the scheme the real credential was issued under. See
-    the module docstring's Broker section for the mismatch this creates for
-    a Claude Code OAuth login, and the staleness caveat for a Codex OAuth
-    session. Raises ``AuthUnavailable`` on the exact same "no login here"
-    conditions ``auth_docker_args`` does.
+    Both claude and codex inject ``Authorization`` (a Bearer), the header
+    the caged CLI's placeholder makes it send, which ``CredBroker`` then
+    replaces with the real value. Codex additionally injects the host's
+    (non-secret) ``account_id`` as ``ChatGPT-Account-Id`` authoritatively and
+    refreshes its rotating access token PROACTIVELY by the token's ``exp``
+    (see the module docstring's "Codex broker" section). Raises
+    ``AuthUnavailable`` on the exact same "no login here" conditions
+    ``auth_docker_args`` does.
+
+    Claude additionally strips an inbound ``x-api-key`` and merges
+    ``oauth-2025-04-20`` into ``anthropic-beta`` (see the module docstring's
+    "Claude broker auth is verified live" section), and prefers a durable
+    ``setup-token`` over the ~8h login token when one is provisioned --
+    ``environ`` (default ``os.environ``) is where ``NETHACKERS_CLAUDE_SETUP_TOKEN``
+    is looked up.
     """
+    env = os.environ if environ is None else environ
     if harness == "claude":
-        token = _claude_macos_token(run) if system == "Darwin" else _claude_linux_token(home)
-        return "x-api-key", token
+        # Claude Code sends its OAuth token as a Bearer, not x-api-key, so the
+        # broker replaces the Authorization header the caged CLI sends (a
+        # placeholder Bearer) with the real one. Verified live.
+        #
+        # A durable operator-provisioned setup-token wins when present (headless
+        # fleet boxes with no interactive login). Otherwise use the interactive
+        # `claude` login and, like codex, REFRESH it host-side when it is near
+        # its expiry -- writing the rotated credential back -- so an end user
+        # logs into Claude once and the ~8h token is kept alive for them, with
+        # no setup-token chore (§3.3, INV B4). See _claude_refresh.
+        token = _claude_setup_token(home, env)
+        if token is None:
+            oauth = _claude_login_doc(home, system=system, run=run)["claudeAiOauth"]
+            if _claude_token_needs_refresh(oauth):
+                token = _claude_refresh(home, system=system, run=run)
+            else:
+                token = oauth["accessToken"]
+        return HeaderRewrite(
+            inject=(("Authorization", f"Bearer {token}"),),
+            strip=("x-api-key",),
+            merge_csv=(("anthropic-beta", ("oauth-2025-04-20",)),),
+        )
 
     if harness == "codex":
-        return "Authorization", f"Bearer {_codex_token(home)}"
+        # ChatGPT-subscription login: read the rotating OAuth access_token from
+        # ~/.codex/auth.json, refresh it PROACTIVELY when it's near its exp (or
+        # not a decodable JWT), inject the real Bearer, and inject the host's
+        # (non-secret) account_id as ChatGPT-Account-Id AUTHORITATIVELY -- the
+        # broker's value wins regardless of how codex derives it (account_id is
+        # not a secret; B1). See the module docstring's "Codex broker" section.
+        creds = _codex_creds(home)
+        raw_tokens = creds.get("tokens")
+        tokens = raw_tokens if isinstance(raw_tokens, dict) else {}
+        account_id = tokens.get("account_id")
+        access = tokens.get("access_token")
+        if not (isinstance(access, str) and access) or _codex_token_needs_refresh(access):
+            access = _codex_refresh(home)   # writes the rotated token back; returns fresh access
+        inject: tuple[tuple[str, str], ...] = (("Authorization", f"Bearer {access}"),)
+        if isinstance(account_id, str) and account_id:
+            inject = inject + (("ChatGPT-Account-Id", account_id),)
+        return HeaderRewrite(inject=inject)
 
     raise ValueError(f"no broker credential reader for harness: {harness!r}")
 
@@ -358,11 +519,11 @@ def opencode2_broker_targets(
 ) -> list[dict]:
     """One entry per BROKERABLE provider across the global OpenCode configs
     (``opencode2_global_providers``): ``{"file", "name", "upstream",
-    "header_name", "header_value"}``, ready to hand straight to
-    ``cred_broker.CredBroker(upstream, header_name, header_value)``.
+    "rewrite"}``, ready to hand straight to
+    ``cred_broker.CredBroker(upstream, rewrite)``.
 
     A provider is brokerable only when BOTH halves resolve --
-    ``_opencode2_provider_key`` (the real value ``header_value`` needs) and
+    ``_opencode2_provider_key`` (the real value ``rewrite`` injects) and
     ``_opencode2_provider_upstream`` (where to send it and under what header
     name). A provider with a ``{file:...}``/absent key, an unset
     ``{env:NAME}``, or an unrecognized name with no ``baseURL`` is simply
@@ -383,12 +544,12 @@ def opencode2_broker_targets(
             if resolved is None:
                 continue
             upstream, header_name, is_bearer = resolved
+            header_value = f"Bearer {key}" if is_bearer else key
             targets.append({
                 "file": file_name,
                 "name": provider_name,
                 "upstream": upstream,
-                "header_name": header_name,
-                "header_value": f"Bearer {key}" if is_bearer else key,
+                "rewrite": HeaderRewrite(inject=((header_name, header_value),)),
             })
     return targets
 
@@ -579,11 +740,29 @@ def _strip_jsonc(text: str) -> str:
     return "".join(out)
 
 
+def _claude_setup_token(home: Path, environ: Mapping[str, str]) -> str | None:
+    """A durable Claude Code `setup-token` (1-year OAuth), if the operator provisioned one:
+    the `NETHACKERS_CLAUDE_SETUP_TOKEN` env var wins, else `~/.nethackers/claude/setup-token`.
+    A distinct, out-of-band credential -- NOT `~/.claude`, which is the interactive login the
+    broker's fallback path reads and refreshes on its own (rotating single-use token written
+    back -- INV B4). The setup-token is the durable path for headless boxes with no
+    interactive login (or where the WAF blocks the refresh)."""
+    env_tok = environ.get("NETHACKERS_CLAUDE_SETUP_TOKEN")
+    if env_tok:
+        return env_tok
+    path = home / ".nethackers" / "claude" / "setup-token"
+    try:
+        tok = path.read_text().strip()
+    except OSError:
+        return None
+    return tok or None
+
+
 def _claude_macos_token(run) -> str:
     """Read the Claude Code Keychain item host-side and return the raw OAuth
     access token. The one place that shells out to ``security`` -- both
     ``_claude_macos_env`` (the mount path's env arg) and ``broker_credential``
-    (the broker path's ``header_value``) call this instead of each carrying
+    (the broker path's ``rewrite``) call this instead of each carrying
     their own copy of the subprocess call.
     """
     result = run(
@@ -606,35 +785,375 @@ def _claude_macos_env(run) -> list[str]:
     return ["-e", f"CLAUDE_CODE_OAUTH_TOKEN={_claude_macos_token(run)}"]
 
 
-def _claude_linux_token(home: Path) -> str:
-    """Read the OAuth access token out of the same ``.credentials.json``
-    ``auth_docker_args`` mounts whole on Linux -- the broker path needs the
-    value itself, not a mount of the file."""
-    creds = home / ".claude" / ".credentials.json"
+def _claude_login_doc(home: Path, *, system: str, run=subprocess.run) -> dict:
+    """The full parsed interactive-`claude`-login credential doc -- the object
+    that wraps ``claudeAiOauth`` -- read from the Keychain item on macOS or
+    ``~/.claude/.credentials.json`` on Linux. The broker's refresh path reads
+    this (for the refresh token) and writes the whole doc BACK, preserving any
+    sibling keys. Guarantees ``doc['claudeAiOauth']`` is a dict; raises
+    ``AuthUnavailable`` on a missing / unreadable / malformed login."""
+    if system == "Darwin":
+        result = run(
+            ["security", "find-generic-password", "-s", _CLAUDE_KEYCHAIN_SERVICE, "-w"],
+            capture_output=True, text=True,
+        )
+        if result.returncode != 0:
+            raise AuthUnavailable("claude", _CLAUDE_LOGIN_HINT)
+        raw = result.stdout
+    else:
+        try:
+            raw = (home / ".claude" / ".credentials.json").read_text()
+        except OSError as exc:
+            raise AuthUnavailable("claude", _CLAUDE_LOGIN_HINT) from exc
     try:
-        token = json.loads(creds.read_text())["claudeAiOauth"]["accessToken"]
-    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        doc = json.loads(raw)
+        oauth = doc["claudeAiOauth"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
         raise AuthUnavailable("claude", _CLAUDE_LOGIN_HINT) from exc
-    if not token:
+    if not isinstance(doc, dict) or not isinstance(oauth, dict):
         raise AuthUnavailable("claude", _CLAUDE_LOGIN_HINT)
-    return token
+    return doc
 
 
-def _codex_token(home: Path) -> str:
-    """Read a usable OpenAI credential out of the host's canonical
-    ``~/.codex`` -- the same directory ``auth_docker_args`` mounts whole.
-    Prefers a stable ``OPENAI_API_KEY`` login; falls back to the OAuth
-    session's rotating ``access_token`` (see the module docstring's Broker
-    section for the staleness this creates on a long mutator run)."""
+def _claude_token_needs_refresh(oauth: Mapping) -> bool:
+    """Whether the interactive-login ``claudeAiOauth`` credential should be
+    refreshed before the broker injects it -- the claude twin of
+    ``_codex_token_needs_refresh``. True when its ``accessToken`` is absent, or
+    its ``expiresAt`` (epoch ms) is within ``_CLAUDE_REFRESH_MARGIN_S`` of now.
+    A credential whose ``expiresAt`` can't be read is used AS-IS (False): a real
+    Claude Code login always carries one, so a missing/odd value is a legacy or
+    test shape we don't force-rotate (which could fail if there's also no
+    refresh token) -- unlike codex's JWT, where an unreadable exp means refresh.
+    """
+    access = oauth.get("accessToken")
+    if not (isinstance(access, str) and access):
+        return True
+    exp = oauth.get("expiresAt")
+    if not isinstance(exp, (int, float)) or isinstance(exp, bool):
+        return False
+    exp_s = exp / 1000 if exp > 1e12 else exp
+    return exp_s - time.time() < _CLAUDE_REFRESH_MARGIN_S
+
+
+def _claude_keychain_account(run) -> str:
+    """The macOS Keychain ``account`` attribute the refresh write-back
+    (``security add-generic-password -U -a``) must target, read from the
+    existing item so the update lands on it instead of creating a duplicate."""
+    result = run(
+        ["security", "find-generic-password", "-s", _CLAUDE_KEYCHAIN_SERVICE],
+        capture_output=True, text=True,
+    )
+    match = re.search(r'"acct"<blob>="((?:[^"\\]|\\.)*)"', getattr(result, "stdout", "") or "")
+    if not match:
+        raise AuthUnavailable("claude", _CLAUDE_LOGIN_HINT)
+    return match.group(1)
+
+
+def _claude_write_login_doc(home: Path, *, system: str, run, doc: dict) -> None:
+    """Persist the refreshed login doc back where it lives -- the Keychain item
+    on macOS, ``~/.claude/.credentials.json`` on Linux -- so the rotated
+    (single-use) refresh token isn't lost and Claude Code's own next refresh
+    reads the same rotated pair (INV B4). Raises ``AuthUnavailable`` on failure.
+    """
+    blob = json.dumps(doc)
+    if system == "Darwin":
+        # -w passes the blob on argv (visible to a host `ps`) -- host-local and
+        # OUTSIDE the broker's threat boundary (the untrusted container never
+        # sees host process args; the token already lives in this Keychain).
+        account = _claude_keychain_account(run)
+        result = run(
+            ["security", "add-generic-password", "-U",
+             "-a", account, "-s", _CLAUDE_KEYCHAIN_SERVICE, "-w", blob],
+            capture_output=True, text=True,
+        )
+        if getattr(result, "returncode", 1) != 0:
+            raise AuthUnavailable(
+                "claude",
+                "could not save the refreshed claude token to the Keychain -- run "
+                "`claude` to log in again, then retry",
+            )
+        return
+    # Linux: atomic, owner-only write-back (mirrors _codex_refresh's auth.json).
+    target = home / ".claude" / ".credentials.json"
+    tmp: str | None = None
+    try:
+        fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=".credentials.json.")
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as f:
+            f.write(blob)
+        os.replace(tmp, target)
+    except OSError as exc:
+        if tmp is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+        raise AuthUnavailable(
+            "claude",
+            "could not save the refreshed claude token -- run `claude` to log in again, "
+            "then retry",
+        ) from exc
+
+
+def _claude_refresh(home: Path, *, system: str, run=subprocess.run, post=httpx.post) -> str:
+    """Refresh the interactive `claude` login's ~8h subscription access token
+    via its refresh token and WRITE THE ROTATED CREDENTIAL BACK (Keychain on
+    macOS, ``~/.claude/.credentials.json`` on Linux). The claude twin of
+    ``_codex_refresh``: the refresh token is single-use, so the new pair must be
+    persisted before this returns or the next refresh -- ours OR Claude Code's
+    own -- is locked out (INV B4). Returns the new access token. ``run``/``post``
+    are injectable for tests; raises ``AuthUnavailable`` on any failure, leaving
+    the stored credential unchanged (nothing is written unless the refresh
+    actually succeeded).
+
+    ``_CLAUDE_TOKEN_ENDPOINT`` is Cloudflare-WAF'd: a non-200 here is often a
+    transient reachability / bot-classification block (notably on headless
+    Linux), NOT a dead login -- the message says so, and the setup-token stays
+    the durable fallback for a host the WAF won't let refresh.
+    """
+    doc = _claude_login_doc(home, system=system, run=run)
+    oauth = doc["claudeAiOauth"]
+    refresh_token = oauth.get("refreshToken")
+    if not isinstance(refresh_token, str) or not refresh_token:
+        raise AuthUnavailable("claude", _CLAUDE_LOGIN_HINT)
+    try:
+        resp = post(
+            _CLAUDE_TOKEN_ENDPOINT,
+            json={
+                "grant_type": "refresh_token",
+                "client_id": CLAUDE_OAUTH_CLIENT_ID,
+                "refresh_token": refresh_token,
+            },
+            headers={"Accept": "application/json"},
+        )
+    except httpx.HTTPError as exc:
+        raise AuthUnavailable(
+            "claude",
+            "claude token refresh could not reach the OAuth endpoint -- check the "
+            "network, then retry",
+        ) from exc
+    if resp.status_code != 200:
+        raise AuthUnavailable(
+            "claude",
+            "claude token refresh failed -- if this host is behind a strict egress / WAF "
+            "(often headless Linux) provision a setup-token; otherwise run `claude` to "
+            "log in again, then retry",
+        )
+    try:
+        payload = resp.json()
+    except (ValueError, TypeError) as exc:
+        raise AuthUnavailable(
+            "claude",
+            "claude token refresh returned an unreadable response -- run `claude` to log "
+            "in again, then retry",
+        ) from exc
+    if not isinstance(payload, dict):
+        raise AuthUnavailable(
+            "claude",
+            "claude token refresh returned an unexpected response -- run `claude` to log "
+            "in again, then retry",
+        )
+    new_access = payload.get("access_token")
+    if not isinstance(new_access, str) or not new_access:
+        raise AuthUnavailable(
+            "claude",
+            "claude token refresh returned no access_token -- run `claude` to log in "
+            "again, then retry",
+        )
+    new_oauth = dict(oauth)
+    new_oauth["accessToken"] = new_access
+    new_oauth["refreshToken"] = payload.get("refresh_token") or refresh_token  # keep old if omitted
+    expires_in = payload.get("expires_in")
+    if isinstance(expires_in, (int, float)) and not isinstance(expires_in, bool):
+        new_oauth["expiresAt"] = int((time.time() + expires_in) * 1000)
+    new_doc = dict(doc)
+    new_doc["claudeAiOauth"] = new_oauth
+    _claude_write_login_doc(home, system=system, run=run, doc=new_doc)
+    return new_access
+
+
+def _codex_creds(home: Path) -> dict:
+    """Parsed ``~/.codex/auth.json`` -- the same file ``auth_docker_args``
+    mounts whole and ``_codex_refresh`` / the codex broker path read. Raises
+    ``AuthUnavailable`` on a missing, unreadable, or malformed (unparsable,
+    or not a JSON object) file."""
     try:
         doc = json.loads((home / ".codex" / "auth.json").read_text())
     except (OSError, json.JSONDecodeError) as exc:
         raise AuthUnavailable("codex", "run `codex login` on this host, then retry") from exc
-    api_key = doc.get("OPENAI_API_KEY") if isinstance(doc, dict) else None
-    if isinstance(api_key, str) and api_key:
-        return api_key
-    tokens = doc.get("tokens") if isinstance(doc, dict) else None
-    access_token = tokens.get("access_token") if isinstance(tokens, dict) else None
-    if isinstance(access_token, str) and access_token:
-        return access_token
-    raise AuthUnavailable("codex", "run `codex login` on this host, then retry")
+    if not isinstance(doc, dict):
+        raise AuthUnavailable("codex", "run `codex login` on this host, then retry")
+    return doc
+
+
+def _codex_refresh(home: Path, *, post=httpx.post) -> str:
+    """Refresh the rotating ChatGPT-subscription OAuth access token (§3.3)
+    and WRITE IT BACK to ``~/.codex/auth.json``: the refresh token is
+    single-use, so unless the new one is persisted, the *next* refresh --
+    including the host's own interactive ``codex`` login -- fails and the
+    login bricks. Returns the new ``access_token``.
+
+    ``post`` is an injectable ``httpx.post``-shaped callable (positional
+    ``url``, keyword ``data``), faked in tests so this never touches the
+    network. Raises ``AuthUnavailable`` on any failure -- no refresh token to
+    send, a non-200 response, or a 200 response missing ``access_token`` --
+    leaving the file byte-for-byte unchanged (INV B4: nothing here writes
+    unless the refresh actually succeeded).
+    """
+    doc = _codex_creds(home)
+    tokens = doc.get("tokens")
+    if not isinstance(tokens, dict):
+        raise AuthUnavailable("codex", "run `codex login` on this host, then retry")
+    refresh_token = tokens.get("refresh_token")
+    if not isinstance(refresh_token, str) or not refresh_token:
+        # Guard against a malformed (non-string) or absent refresh_token, which
+        # would otherwise be handed to httpx as-is and surface as a raw error
+        # (same shape as the access_token isinstance guards elsewhere).
+        raise AuthUnavailable("codex", "run `codex login` on this host, then retry")
+
+    try:
+        resp = post(_CODEX_TOKEN_ENDPOINT, data={
+            "grant_type": "refresh_token",
+            "client_id": CODEX_OAUTH_CLIENT_ID,
+            "refresh_token": refresh_token,
+        })
+    except httpx.HTTPError as exc:
+        # A connect/timeout/transport failure -- a live broker run calls this,
+        # so surface the friendly AuthUnavailable, not a raw httpx exception.
+        raise AuthUnavailable(
+            "codex",
+            "codex token refresh could not reach the OAuth endpoint -- check the "
+            "network, then retry",
+        ) from exc
+    if resp.status_code != 200:
+        raise AuthUnavailable(
+            "codex", "codex token refresh failed -- run `codex login` on this host, then retry"
+        )
+    try:
+        payload = resp.json()
+    except (ValueError, TypeError) as exc:
+        raise AuthUnavailable(
+            "codex",
+            "codex token refresh returned an unreadable response -- run `codex login`, "
+            "then retry",
+        ) from exc
+    if not isinstance(payload, dict):
+        raise AuthUnavailable(
+            "codex",
+            "codex token refresh returned an unexpected response -- run `codex login`, "
+            "then retry",
+        )
+    new_access = payload.get("access_token")
+    new_refresh = payload.get("refresh_token") or refresh_token  # some providers omit a new one
+    if not new_access:
+        raise AuthUnavailable(
+            "codex",
+            "codex token refresh returned no access_token -- run `codex login`, then retry",
+        )
+
+    tokens = dict(tokens)
+    tokens["access_token"] = new_access
+    tokens["refresh_token"] = new_refresh
+    if "id_token" in payload:
+        tokens["id_token"] = payload["id_token"]
+    new_doc = dict(doc)
+    new_doc["tokens"] = tokens
+
+    # Atomic, owner-only write-back (mirrors _write_cage_config's mkstemp +
+    # os.replace): the refresh token is single-use, so a torn/partial write
+    # here is as bad as not writing at all -- either way the next refresh
+    # (ours or the host's own `codex` login) is locked out until the user
+    # re-runs `codex login`.
+    target = home / ".codex" / "auth.json"
+    tmp: str | None = None
+    try:
+        fd, tmp = tempfile.mkstemp(dir=target.parent, prefix=".auth.json.")
+        with os.fdopen(fd, "w") as f:
+            json.dump(new_doc, f)
+        os.replace(tmp, target)
+    except OSError as exc:
+        if tmp is not None:
+            with contextlib.suppress(OSError):
+                os.unlink(tmp)
+        raise AuthUnavailable(
+            "codex",
+            "could not save the refreshed codex token -- run `codex login` on this host, "
+            "then retry",
+        ) from exc
+    return new_access
+
+
+def _codex_token_needs_refresh(token: str) -> bool:
+    """Whether ``token`` -- a codex OAuth access token, expected to be a JWT --
+    is close enough to expiry to refresh proactively (§3.3). True when its
+    ``exp`` is within ``_CODEX_REFRESH_MARGIN_S`` of now, OR the token can't be
+    decoded as a JWT carrying a numeric ``exp``. "Refresh when uncertain" is
+    the safe default: a token we can't reason about is treated as one that may
+    already be stale, so the broker refreshes rather than inject a dead token.
+    """
+    try:
+        payload_b64 = token.split(".")[1]
+        payload = json.loads(
+            base64.urlsafe_b64decode(payload_b64 + "=" * (-len(payload_b64) % 4))
+        )
+        exp = payload["exp"]
+    except (AttributeError, IndexError, KeyError, TypeError, ValueError):
+        return True
+    if not isinstance(exp, (int, float)) or isinstance(exp, bool):
+        return True
+    return exp - time.time() < _CODEX_REFRESH_MARGIN_S
+
+
+def _codex_cage_args(home: Path) -> list[str]:
+    """Build the codex broker cage and return its ``-v`` mount + ``CODEX_HOME``
+    env. Routing and auth no longer live in the cage: codex is pointed at the
+    broker by a ``-c model_providers.…`` INVOCATION override
+    (``container_operator``/``operator._codex_cmd``), which applies even under
+    ``codex exec --ignore-user-config`` (that flag discards
+    ``~/.codex/config.toml`` -- the reason the earlier cage ``config.toml``
+    ``openai_base_url`` was silently ignored, codex fell back to
+    ``api.openai.com``, and the call 401'd). The override carries no
+    ``requires_openai_auth``/``env_key``, so codex uses its unauthenticated
+    auth provider and sends the POST with NO ``Authorization``; the real
+    ``Authorization: Bearer`` + ``ChatGPT-Account-Id`` are injected on the wire
+    by the broker (``broker_credential``). So NO token and NO config ever enter
+    the cage (B1).
+
+    The cage is therefore an EMPTY, world-writable directory mounted read-WRITE at
+    ``~/.codex`` with ``CODEX_HOME`` pointed at it: docker creates a bind-mount's
+    parent dir root-owned, but the mutator entrypoint drops to the ``agent``
+    user, so codex needs a dir it can actually write its app-server
+    socket/session state into ("Permission denied", os error 13 otherwise --
+    confirmed by the real E2E). Any stale ``auth.json``/``config.toml`` left by
+    an older code version is removed so the cage genuinely carries neither.
+
+    (Fallback, if a live smoke shows codex refuses to start against a fully
+    empty ``~/.codex``: a minimal VALID ``auth.json`` -- a 3-part ``id_token``
+    with a non-empty 3rd segment -- rather than the placeholder-JWT +
+    ``config.toml`` cage this replaced.)
+    """
+    cage_dir = home / ".nethackers" / "codex-cage"
+    try:
+        cage_dir.mkdir(parents=True, exist_ok=True)
+        # World-writable ON PURPOSE: on native Linux docker the bind-mount is
+        # root-owned but the mutator entrypoint drops to the `agent` user (uid
+        # 1000), which MUST write codex's app-server socket/session state here
+        # -- "Permission denied" (os error 13) otherwise, confirmed on a real
+        # Linux box (Docker Desktop UID-maps the volume, so macOS never hit
+        # it). Safe: the cage is EMPTY and non-secret -- no token, no config
+        # (B1) -- so nothing sensitive is ever written into it. chmod (not
+        # mkdir mode=) so it holds regardless of the process umask.
+        os.chmod(cage_dir, 0o777)
+        # Defensive: drop the two files an older (placeholder-JWT + config.toml)
+        # cage wrote, so an upgraded host's cage is empty as promised. Codex's
+        # own runtime state (sockets, etc.) is left untouched.
+        for stale in ("auth.json", "config.toml"):
+            with contextlib.suppress(OSError):
+                (cage_dir / stale).unlink()
+    except OSError as exc:
+        raise AuthUnavailable(
+            "codex",
+            "could not create the codex broker cage dir -- check ~/.nethackers "
+            "permissions, then retry",
+        ) from exc
+    # A single writable dir mount (NOT two :ro files) + CODEX_HOME; the real
+    # Bearer is swapped on the wire by broker_credential, never mounted here.
+    return ["-v", f"{cage_dir}:/home/agent/.codex", "-e", "CODEX_HOME=/home/agent/.codex"]

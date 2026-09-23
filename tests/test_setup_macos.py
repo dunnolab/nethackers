@@ -212,3 +212,8 @@ def test_intel_macs_and_other_systems_are_unknown():
 ])
 def test_emulation_is_advice_and_never_fails(facts):
     assert macos.emulation(facts, read_text=lambda p: None)[0] in {"ok", "warn", "unknown"}
+
+
+def test_firewall_recipe_is_none_on_macos():
+    # Docker Desktop reaches the broker without a ufw rule.
+    assert macos.firewall_recipe(mac(), UP) is None

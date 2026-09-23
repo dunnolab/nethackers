@@ -314,3 +314,22 @@ def test_resolve_exe_finds_the_vendor_install_location(tmp_path):
     assert flow.resolve_exe("claude", which=lambda n: None, home=tmp_path) == str(local / "claude")
     assert flow.resolve_exe("codex", which=lambda n: None, home=tmp_path) is None
     assert flow.resolve_exe("gh", which=lambda n: "/bin/gh", home=Path("/x")) == "/bin/gh"
+
+
+def test_codex_setup_preinstalls_curl_cffi_when_missing():
+    deps, rec = make(checks(), impersonation_ready=lambda: False)
+    flow.run_setup(opts(yes=True, operator="codex"), deps)
+    captured = [argv for kind, argv in rec.calls if kind == "captured"]
+    assert any("uv" in a[0] and a[-1] == "curl_cffi" for a in captured)
+
+
+def test_codex_setup_skips_curl_cffi_when_already_present():
+    deps, rec = make(checks(), impersonation_ready=lambda: True)
+    flow.run_setup(opts(yes=True, operator="codex"), deps)
+    assert not any("curl_cffi" in argv for kind, argv in rec.calls if kind == "captured")
+
+
+def test_non_codex_setup_never_installs_curl_cffi():
+    deps, rec = make(checks(), impersonation_ready=lambda: False)
+    flow.run_setup(opts(yes=True, operator="claude"), deps)
+    assert not any("curl_cffi" in argv for kind, argv in rec.calls if kind == "captured")
