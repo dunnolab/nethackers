@@ -51,11 +51,11 @@ where one documented command does them without `sudo`. A runtime is started
 with its own command: `colima start`, `docker desktop start`, `orb start`,
 `podman machine start`; step 8 is sized to the Mac, at most 6 CPUs and 12 GB
 and never more than half its memory, and a Mac without Rosetta 2 is told to
-install it first and gets the VM on the next run. The two images are about
-1.3 GB to download the first time (the plan shows the exact figure; v0.37.0
-is 443 MB for the arena and 897 MB for the mutator, compressed) and more on
-disk; later releases fetch only what changed, with a progress bar and the
-time left. Step 10 appears for the `codex` operator only, and only until
+install it first and gets the VM on the next run. The two images share
+most of their layers: about 0.9 GB to download the first time (the plan
+shows the exact figure; for v0.37.0 the arena is 443 MB compressed and the
+mutator adds 456 MB on top of it) and more on disk; later releases fetch
+only what changed, with a progress bar and the time left. Step 10 appears for the `codex` operator only, and only until
 `curl_cffi` is importable by nethackers' own interpreter: the credential
 broker forwards through it. It is installed there, never into the sandbox
 and never into `uv.lock`; if setup was skipped the broker installs it when

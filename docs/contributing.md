@@ -37,11 +37,15 @@ make smoke    # the `docker` suite; needs nethackers/arena:dev, the pinned mutat
 ```
 
 `make test` skips the `nle`, `docker`, `codex_live` and `claude_live`
-markers. `make broker-e2e` runs the real agent CLIs in the real mutator
-container through a real broker into a mock provider, and `make broker-live`
-does the same against the real providers with your own logins; both are
-gated behind an environment variable and never run in CI. CI runs `uv lock --check` first (a `uv.lock` out of step with
-`pyproject.toml` fails the job; run `uv lock` after touching
+markers; the `opencode_live` and `broker_e2e` tests are collected and skip
+themselves without their environment variable. `make broker-e2e` runs the
+real agent CLIs in the real mutator container through a real broker into a
+mock provider, and `make broker-live` does the same against the real
+providers with your own logins and spends real tokens (`-m codex_live`
+narrows it to one operator). Both need Docker and the pinned amd64 mutator
+image on this machine, both are gated behind an environment variable, and
+neither runs in CI. CI runs `uv lock --check` first (a `uv.lock` out of
+step with `pyproject.toml` fails the job; run `uv lock` after touching
 `pyproject.toml`), then the same suite, mypy, ruff, a compose smoke job and
 an install smoke that installs the built wheel. Style is ruff
 (`E,F,I,UP,B,SIM`, line length 100) and mypy over `src/nethackers` and
@@ -77,9 +81,9 @@ worktree: `nethackers --prod`.
   considered, what you chose, why.
 - Docs change in the same PR as the behaviour.
 - Two things CI may say. "arena inputs changed since `<tag>` without
-  re-pinning `ARENA_IMAGE`" means something under `arena/`, `nle-base/`,
-  `uv.lock`, `src/nethackers/arena/` or `src/nethackers/contracts/` moved
-  since the last release tag; the fix is the re-pin step in
+  re-pinning `ARENA_IMAGE`" means `arena/Dockerfile`, `nle-base/Dockerfile`,
+  `uv.lock`, or something under `src/nethackers/arena/` or
+  `src/nethackers/contracts/` moved since the last release tag; the fix is the re-pin step in
   [releasing.md](releasing.md), and the diff base is the last `v*` tag, not
   your branch point, so it can fire for someone else's unreleased merge. And
   a PR that touches `Dockerfile.mutator`, its entrypoint or the code the

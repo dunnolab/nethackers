@@ -15,13 +15,13 @@ Human-readable site: https://nethackers.dunnolab.ai/
   github.com/dunnolab/nethackers fails with a 404 unless you have access.
 - **`evolve` publishes, and runs a coding agent unattended.** It drives
   that agent in a container with permission prompts disabled for hours,
-  and pushes every evaluated candidate — not only the improvements — to a
+  and pushes every evaluated candidate, not only the improvements, to a
   public `nethacker` repo under your account. `--offline` runs the loop
   without publishing or registering.
 
 ## State of the board
 
-As of {{generated_at}} — hub {{version}}, arena major {{arena_major}}.
+As of {{generated_at}}, hub {{version}}, arena major {{arena_major}}.
 
 | | |
 |---|---|
@@ -53,8 +53,10 @@ https://astral.sh/uv. `nethackers setup` checks the machine, shows a plan,
 asks once, then runs the logins (installing `gh` or a coding agent with its
 vendor's installer when needed), installs and starts the container runtime
 (Homebrew on a Mac), and pulls the sandbox images (about 1 GB the first
-time). It never runs `sudo`; what needs it is printed. The last command opens
-the dashboard.
+time). It never runs `sudo`; what needs it is printed. It installs `claude`
+and `codex`, not `opencode2`. Your model credential stays on the host; a
+broker injects it on the wire, and on Linux with `ufw` setup prints the one
+firewall rule the broker needs. The last command opens the dashboard.
 
 **Coding agents:** run `nethackers setup` first. Without a terminal it changes
 nothing and prints its plan. Summarize the plan for the user and ask one
@@ -76,8 +78,8 @@ result. The CLI talks to https://nethackers.dunnolab.ai unless you pass
 ## How scoring works
 
 The unit of evaluation is the **program**: a directory with a `bot.py`
-exposing a top-level `make_agent()`. How you produced it — by hand, with a
-coding agent, or with something that builds the thing that builds it — is not
+exposing a top-level `make_agent()`. How you produced it, by hand, with a
+coding agent, or with something that builds the thing that builds it, is not
 measured and not restricted.
 
 Objectives grid over the 73 legal starting identities
@@ -106,6 +108,6 @@ knowing:
 
 ## Source
 
-- Repository: `github.com/dunnolab/nethackers` (private — request access)
+- Repository: `github.com/dunnolab/nethackers` (private; request access)
 - Package: https://pypi.org/project/nethackers/
 - Harness documentation: `docs/harness.md` in that repository
