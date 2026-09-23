@@ -1,6 +1,6 @@
 # Troubleshooting
 
-What a command printed, what it means, what to do. Reviewed at v0.37.0.
+What a command printed, what it means, what to do. Reviewed at v0.37.2.
 
 ```bash
 nethackers setup      # fixes what it can, prints the rest
@@ -119,6 +119,23 @@ shows layers, not bytes.
 shows the download as `up to N MB`.
 **Verify** `nethackers doctor -o plain` shows
 `[OK] arena_image: present — …`.
+
+### PermissionError: [Errno 13] Permission denied: '/sol'
+
+Every episode in the result ends at turn 0 with `status` `bot_error` and
+this text in `error`; the score is 0.
+
+**Cause** The arena runs the bot as uid 65534 and enters the solution
+directory, mounted at `/sol`, so that directory must be world-traversable.
+On native Linux a bind mount keeps the host mode, and a `0700` directory
+(the verifier's clone, or a private umask) locks the bot out; Docker
+Desktop's uid remap hides it on macOS. 0.37.0 had this on every hidden-seed
+verification.
+**Fix** Upgrade to 0.37.1 or later, where `eval` adds world read and
+traverse bits to that one directory before the run. On 0.37.0, `chmod o+rx`
+the solution directory yourself.
+**Verify** the episodes run past turn 0; a verifier program scored 0 on
+0.37.0 needs a re-run by hand ([verifier.md](verifier.md)).
 
 ### sandbox platform mismatch
 

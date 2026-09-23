@@ -264,6 +264,10 @@ Also `--name` and `--label`, as for the coding agent.
   still read it), and the `/out` bind mount that carries the result file
   back, a directory under `~/.nethackers/tmp` created world-writable so
   `nobody` can write it on native Linux and removed when the eval ends.
+  The solution directory is mounted read-only at `/sol`, and since v0.37.1
+  `eval` adds world read and traverse bits to that one directory first,
+  best-effort, because `nobody` has to `chdir` into it: a `0700` tree on
+  native Linux made every episode fail at turn 0 before that.
 - No capabilities, no privilege escalation, user `nobody`.
 - One core and 32 processes per concurrent episode, three quarters of the
   runtime's memory for the whole box (one GiB per episode is the budget that
@@ -354,8 +358,9 @@ passed only for the pin, as for the arena. Rootless Podman adds
   on the host (`harness/cred_broker.py`) is on by default for every
   operator: the container gets a placeholder, or for Codex no credential at
   all, plus a route back to the broker, and the broker injects the real
-  credential on the wire, per request. The per-operator detail, and the
-  limit, are under [The credential broker](#the-credential-broker) below. `--no-broker`, or the form's Credential toggle, opts back into
+  credential on the wire, per request, to its one upstream. The
+  per-operator detail is under [The credential broker](#the-credential-broker)
+  below. `--no-broker`, or the form's Credential toggle, opts back into
   mounting the credential, which is the exposure described next.
 
 Not contained by default:
@@ -367,7 +372,7 @@ Not contained by default:
 - The broker itself. It is an unauthenticated relay whose only check is
   the Host header, so while a run is live any process on the host, and on
   Linux any container on the bridge the `ufw` rule opens, can spend through
-  it; and a crafted request can point it at another host, below.
+  it.
 - Codex's cage. On the broker path Codex gets `~/.nethackers/codex-cage`,
   world-writable and mounted read-write at `~/.codex`; only its `auth.json`
   and `config.toml` are cleared, so it persists across iterations and runs,
@@ -428,17 +433,14 @@ and stops after three. Nothing falls back to a mount. On macOS the hint is
 not printed, and an agent that exits 0 without ever calling the broker is
 not flagged.
 
-A limit. The broker appends the request path to its one upstream and does
-not reject a path that re-homes the destination (`@host/…` turns the
-upstream into a username). Code in the sandbox that reaches the broker can,
-with such a request, make it send the Codex bearer or an OpenCode key to a
-host of its choosing, over TLS any host it holds a certificate for; the
-Host check does not stop this, and Claude's bearer is spared today by the
-forwarding library, not by design. The
-broker keeps the credential out of the container's files and environment;
-it is not proof the credential cannot leave the host. This was reproduced
-against the broker with fake secrets on 2026-09-23; the guard is one line
-and is not in this release.
+Where it sends. The broker appends the request path to its one upstream
+and forwards only an origin-form path, one that starts with `/`. A path
+such as `@host/…` would re-home the destination (the upstream becomes a
+username) and carry the credential to a host the sandbox picked; since
+v0.37.2 such a request is refused with a 403, and before it the Codex
+bearer and an OpenCode key did leave that way in a loopback reproduction
+with fake secrets. The Host header is a second check, not the one that
+decides where a request goes.
 
 Claude and Codex ran through the broker live on macOS and on an Ubuntu box
 before release; OpenCode did not. `make broker-e2e` runs the real CLIs in
@@ -506,8 +508,9 @@ If it runs code you didn't write, the parts of ours to copy:
    disable submodule and symlink checkout.
 7. Keep the model credential out of the agent's container: a host-side
    proxy that injects it on the wire, a placeholder or nothing inside, and a
-   fixed port range you can firewall to. Ours checks only the Host header;
-   add a per-run secret if the host has other tenants.
+   fixed port range you can firewall to. Ours forwards origin-form paths
+   only and checks the Host header; add a per-run secret if the host has
+   other tenants.
 
 Skip the rest: three agent backends, model discovery, the TUI,
 provisioning. Those exist because this harness has to work for strangers.

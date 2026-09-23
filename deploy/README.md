@@ -6,7 +6,7 @@ internal only, behind Caddy, which terminates TLS and keeps its own Let's
 Encrypt certificate. Prod always runs a named release pinned to an image
 digest, and every change goes through `deploy/deploy-hub.sh`: CI runs it on a
 tag push, a human or an agent runs it over the tailnet. Nothing is built on
-the VM. We host it; nobody else does. Last reviewed 2026-09-23, at v0.37.0.
+the VM. We host it; nobody else does. Last reviewed 2026-09-23, at v0.37.2.
 
 ## Deploy
 

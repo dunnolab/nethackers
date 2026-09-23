@@ -20,12 +20,14 @@ nethackers-worker --hub https://nethackers.dunnolab.ai --baseline     # the Auto
 `--hub` defaults to `http://localhost:8000`. Spell a program the way the hub
 stores it, `github.com/<owner>/<name>@<sha>`; a bare `owner/name` clones
 and then 404s at submission. `--baseline` takes the packaged AutoAscend tree
-by default (`--tree` for another). Run 0.37.0 or later on the node: on
+by default (`--tree` for another). Run 0.37.1 or later on the node. On
 native Linux, 0.34.0 to 0.36.2 created the arena's `/out` directory
 unwritable by the container's uid 65534, so every program failed at its
-first identity and was recorded `crashed`, and a crashed program stays out
-of the queue until re-run by hand. That follows from the code; whether a
-node ran those versions is not recorded here.
+first identity and was recorded `crashed`; 0.37.0 fixed that and left the
+`/sol` clone in a `0700` temporary directory the same uid cannot enter, so
+every hidden-seed episode scored 0 as a `bot_error` at turn 0. A crashed
+program stays out of the queue until re-run by hand; a program verified
+at 0 on 0.37.0 needs the same re-run.
 
 `--max-parallel-evals` caps the episodes one eval runs at once. Unset, it is
 one per CPU the container runtime has, bounded by its memory (about 1 GiB

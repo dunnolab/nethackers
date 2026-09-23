@@ -2,7 +2,7 @@
 
 `nethackers setup` gets a machine ready to evaluate, evolve and publish bots:
 the container runtime, the sandbox images, and three logins. macOS or Linux,
-Python 3.11+; on Windows, run it inside WSL2. Recipes as of v0.37.0
+Python 3.11+; on Windows, run it inside WSL2. Recipes as of v0.37.2
 (2026-09-23); what a bot is and how it is scored is in
 [harness.md](harness.md).
 
@@ -165,7 +165,7 @@ Every recipe below is one of:
 
 A recipe becomes tested only in a PR that records where it ran, at which
 nethackers version, and when; the tests reject a tested row missing any of
-the three, and fail while this table is stale. As of v0.37.0: macOS, 17
+the three, and fail while this table is stale. As of v0.37.2: macOS, 17
 recipes, 0 tested; Linux, 14 recipes, 1 tested (the broker's firewall rule,
 on Ubuntu), 2 not covered.
 
