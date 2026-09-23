@@ -249,13 +249,24 @@ def _eval_temp_dir() -> tempfile.TemporaryDirectory:
     home, so the fallback covers the complete allocation rather than only the
     root ``mkdir``. The fallback is the system temp dir, which is what every
     eval used before this preference existed.
+
+    The dir is made world-writable: the arena container writes ``results.json``
+    here as uid 65534 (nobody -- the arena never runs untrusted solution code
+    as the host user), but ``tempfile`` creates the dir 0700 owned by whoever
+    launched the eval, which uid 65534 cannot write on native Linux. (Docker
+    Desktop's uid remapping hides this on macOS; a bind mount on native Linux
+    keeps the host's ownership.) The dir is ephemeral, per-run, and holds only
+    disposable arena output -- never a credential -- so 0777 is the same
+    reasoning as the codex cage.
     """
     preferred = Path.home() / ".nethackers" / "tmp"
     try:
         preferred.mkdir(parents=True, exist_ok=True)
-        return tempfile.TemporaryDirectory(prefix="arena-", dir=preferred)
+        td = tempfile.TemporaryDirectory(prefix="arena-", dir=preferred)
     except OSError:
-        return tempfile.TemporaryDirectory(prefix="arena-")
+        td = tempfile.TemporaryDirectory(prefix="arena-")
+    Path(td.name).chmod(0o777)
+    return td
 
 
 def eval_batch(
