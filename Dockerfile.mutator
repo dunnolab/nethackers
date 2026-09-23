@@ -46,13 +46,21 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # fingerprint (src/nethackers/image_inputs.py) so CI rebuilds and re-pins it.
 # Pi remains deferred to Plan B.
 #
+# Keep these current. A CLI resolves `--model` against ITS OWN allowlist, not
+# the account's: claude 2.1.270 rejected `claude-opus-5-5` with
+# `[claude-code:unrecognized_model]` while 2.1.280 runs it, so a pinned model
+# newer than the pinned CLI fails every iteration in seconds, having spent
+# nothing. There is no `claude models` command to ask the sandbox with, so the
+# only defence is keeping the image's CLIs up to date (and the fast, named
+# failure in harness/operator.py when one still says no).
+#
 # OpenCode: the "OpenCode 2" rewrite that shipped as the `@opencode-ai/cli`
 # beta (binary `opencode2`) has stabilized as `opencode-ai@1.x`, which renames
 # the binary back to `opencode`. The nethackers operator id stays `opencode2`
 # (harness routing, config paths, `--operator opencode2`), so a symlink beside
 # the real binary bridges the name -- every in-cage/probe call site keeps
 # invoking `opencode2` unchanged (see harness/operator.py, harness/discovery.py).
-RUN npm install -g @anthropic-ai/claude-code@2.1.270 @openai/codex@0.154.0 \
+RUN npm install -g @anthropic-ai/claude-code@2.1.280 @openai/codex@0.156.1 \
         opencode-ai@1.18.31 \
     && npm cache clean --force \
     && ln -s "$(command -v opencode)" "$(dirname "$(command -v opencode)")/opencode2"

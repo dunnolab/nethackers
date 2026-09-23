@@ -10,12 +10,14 @@ worktree.
 from __future__ import annotations
 
 import contextlib
+import json
 import os
+import re
 import signal
 import subprocess
 import threading
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -35,6 +37,54 @@ class OperatorResult:
     @property
     def spend(self) -> int:
         return self.usage.spend
+
+
+class OperatorRefused(RuntimeError):
+    """The backend rejected the request itself, so retrying cannot help.
+
+    A wrong `--model` is the case that motivated this: the CLI resolves the id
+    against its OWN allowlist, so claude 2.1.270 answered `--model
+    claude-opus-5-5` with `[claude-code:unrecognized_model]` and exited 1 in
+    under a second, having spent nothing. The loop's circuit breaker treated
+    that like a flaky operator and burned three iterations on it. Nothing about
+    a rejected model changes between attempts, so the loop stops on the first
+    one.
+    """
+
+
+# The claude CLI's own machine-readable complaint, e.g.
+# `[claude-code:unrecognized_model] {"model":"claude-opus-5-5",...}` -- emitted
+# as the FIRST line and followed by the usual result JSON, so the old
+# "last non-empty line" fallback surfaced a 900-character usage blob instead.
+_CLAUDE_DIAG = re.compile(r"\[claude-code:([a-z_]+)\]\s*(\{.*\})?")
+
+
+def _error_detail(output_tail: Sequence[str]) -> tuple[str, bool]:
+    """(what to report, whether retrying is pointless) for a failed operator."""
+    for line in output_tail:
+        m = _CLAUDE_DIAG.search(line)
+        if m is None:
+            continue
+        code = m.group(1)
+        if code == "unrecognized_model":
+            model = ""
+            with contextlib.suppress(Exception):
+                model = json.loads(m.group(2) or "{}").get("model", "")
+            named = f" '{model}'" if model else ""
+            return (f"unrecognized model{named} — the sandbox's CLI doesn't know that "
+                    f"id; use an alias like `opus`, or update the CLI in the mutator "
+                    f"image", True)
+        return (f"{code.replace('_', ' ')} (the backend refused the request)", True)
+    for line in output_tail:
+        if line.lstrip().lower().startswith("error:"):
+            return line.strip(), False
+    for line in reversed(output_tail):
+        # the trailing result JSON is a usage dump, not a diagnosis -- skip it
+        # when anything more specific is left.
+        if line.strip() and not line.lstrip().startswith('{"'):
+            return line.strip(), False
+    tail = next((line for line in reversed(output_tail) if line.strip()), "no output")
+    return tail, False
 
 
 def run_operator(
@@ -114,11 +164,9 @@ def run_operator(
         except Exception:
             returncode = None
     if returncode not in (None, 0) and not killed.is_set():
-        detail = next(
-            (line for line in output_tail if line.lstrip().lower().startswith("error:")),
-            next((line for line in reversed(output_tail) if line.strip()), "no output"),
-        )
-        raise RuntimeError(f"{backend} operator exited with status {returncode}: {detail}")
+        detail, refused = _error_detail(output_tail)
+        message = f"{backend} operator exited with status {returncode}: {detail}"
+        raise OperatorRefused(message) if refused else RuntimeError(message)
     return OperatorResult(backend=backend, usage=meter.usage,
                           stopped_reason="killed" if killed.is_set() else "completed")
 
