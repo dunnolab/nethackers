@@ -377,11 +377,14 @@ def create_app(
             raise HTTPException(status_code=404, detail="no background track")
         return FileResponse(path, media_type="audio/mpeg")
 
-    @app.get("/social-preview.png")
+    @app.api_route("/social-preview.png", methods=["GET", "HEAD"], include_in_schema=False)
     def social_preview() -> FileResponse:
         """The og:image / twitter:image card. Package data, so unlike the
         background track it is never absent; a day of caching keeps the
-        crawlers that unfurl a shared link from re-fetching it per share."""
+        crawlers that unfurl a shared link from re-fetching it per share.
+        HEAD is explicit because X's crawler probes the image with HEAD
+        before fetching it, and a 405 there renders the card without the
+        image; FileResponse answers HEAD with the headers and no body."""
         return FileResponse(
             _SOCIAL_PREVIEW, media_type="image/png",
             headers={"Cache-Control": "public, max-age=86400"},

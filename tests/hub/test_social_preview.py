@@ -28,6 +28,17 @@ def test_social_preview_is_served_as_png(tmp_path: Any) -> None:
     assert "max-age" in r.headers["cache-control"]
 
 
+def test_social_preview_answers_head_like_get_without_a_body(tmp_path: Any) -> None:
+    # X's crawler probes og:image with HEAD before fetching it; a 405 there
+    # (the old GET-only route) rendered the card without the image.
+    c = _app(tmp_path)
+    head, get = c.head("/social-preview.png"), c.get("/social-preview.png")
+    assert head.status_code == 200
+    assert head.headers["content-type"] == "image/png"
+    assert head.headers["content-length"] == get.headers["content-length"]
+    assert head.content == b""
+
+
 def test_page_head_points_the_card_at_the_served_image(tmp_path: Any) -> None:
     head = _app(tmp_path).get("/").text.split("<style>")[0]
     assert f'<meta property="og:image" content="{_CARD}">' in head
