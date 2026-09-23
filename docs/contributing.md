@@ -1,181 +1,110 @@
 # Contributing
 
-```
-   ___         _       _ _         _   _
-  / __|___ _ _| |_ _ _(_) |__ _  _| |_(_)_ _  __ _
- | (__/ _ \ ' \  _| '_| | '_ \ || |  _| | ' \/ _` |
-  \___\___/_||_\__|_| |_|_.__/\_,_|\__|_|_||_\__, |
-                                             |___/
-```
+This repository is the CLI, the hub, the arena and these docs. Bots and
+harnesses are the point of the project, and they arrive as `repo@commit`
+registrations, never as pull requests: improve a bot with
+[`nethackers submit`](../README.md#use), build your own search with
+[harness.md](harness.md). The rest of this page is for changes to the code.
 
-There are three quite different ways to contribute, and only one of them
-involves this repository.
+## Please do, please don't
 
-| You want to | Do this |
-|---|---|
-| Improve a bot / climb the board | [`../README.md#quickstart`](../README.md#quickstart) — no repo changes needed |
-| Build your own harness | [`harness.md`](harness.md) — again, no repo changes needed |
-| Change the CLI, hub, arena, or docs | Read on |
+- Fixes, docs, doctor and setup recipes, TUI polish: open the PR.
+- New commands, hub API changes, anything that touches scoring, the arena or
+  the sandbox images: open an issue first; these have a design behind them.
+- Coding agents are welcome. You must understand and be able to defend every
+  line, and the PR description is in your own words.
+- Don't send a bot as a PR. Register it.
 
-Bots and harnesses are the point of the project; they arrive as `repo@commit`
-registrations, not pull requests. Nothing below applies to them.
-
----
-
-## Development setup
+## Setup
 
 ```bash
 git clone https://github.com/dunnolab/nethackers
 cd nethackers
-uv run nethackers --help          # resolves the env on first run
+uv run nethackers --help          # resolves the environment on first run
 ```
 
-Python 3.11+. [`uv`](https://docs.astral.sh/uv/) manages the environment; there
-is no separate install step.
-
-`uv run nethackers ...` always uses live source, and is what you want for
-iteration. Path installs (`uv tool install --from .`) used to serve a stale wheel
-that ignored your edits; `[tool.uv] cache-keys` in `pyproject.toml` now keys the
-cache on `pyproject.toml` and `src/**/*.py`, so Python changes are picked up. Note
-what those keys do *not* cover: non-`.py` assets such as
-`src/nethackers/hub/web/index.html`. `make install` still runs `uv cache clean`
-first, which is the blunt fix if an install ever looks stale.
+Python 3.11+ and [uv](https://docs.astral.sh/uv/); there is no install step.
+`uv run nethackers` always runs live source. `uv tool install --from .` can
+serve a stale wheel for non-Python assets such as the web page; `make
+install` clears the cache first.
 
 ## Tests
 
 ```bash
-make test     # fast suite: no NLE, no Docker, no live agent CLIs
+make test     # the fast suite: no NLE, no Docker, no live agent CLIs
 make check    # mypy + ruff
-make smoke    # the full `-m docker` suite (needs built arena+mutator images)
+make smoke    # the `docker` suite; needs nethackers/arena:dev, the pinned mutator (nethackers doctor --pull) and the nle extra
 ```
 
-The suite is marker-partitioned so the fast path stays fast:
+`make test` skips the `nle`, `docker`, `codex_live` and `claude_live`
+markers; the `opencode_live` and `broker_e2e` tests are collected and skip
+themselves without their environment variable. `make broker-e2e` runs the
+real agent CLIs in the real mutator container through a real broker into a
+mock provider, and `make broker-live` does the same against the real
+providers with your own logins and spends real tokens (`-m codex_live`
+narrows it to one operator). Both need Docker and the pinned amd64 mutator
+image on this machine, both are gated behind an environment variable, and
+neither runs in CI. CI runs `uv lock --check` first (a `uv.lock` out of
+step with `pyproject.toml` fails the job; run `uv lock` after touching
+`pyproject.toml`), then the same suite, mypy, ruff, a compose smoke job and
+an install smoke that installs the built wheel. Style is ruff
+(`E,F,I,UP,B,SIM`, line length 100) and mypy over `src/nethackers` and
+`tests`.
 
-| Marker | Needs |
-|---|---|
-| `nle` | the optional NLE dependency and a real NetHack environment |
-| `docker` | Docker and the built arena image |
-| `codex_live` | the real `codex` CLI plus a login |
-| `claude_live` | the real `claude` CLI plus network |
-| `github_live` | the real GitHub App plus network |
+One trap: many functions take dependencies as keyword defaults
+(`run=subprocess.run`, `repo_root=...`). Those bind at import time, so
+`monkeypatch.setattr` on the module attribute is a silent no-op and the test
+passes while testing nothing. Inject explicitly.
 
-`make test` excludes all of them except `github_live`; CI excludes that one too,
-and adds mypy, ruff, and a compose smoke job. (No test carries `github_live`
-today — it is reserved.)
+## Against a real hub
 
-Style: ruff with `E,F,I,UP,B,SIM` at line length 100; mypy over `src/nethackers`
-and `tests`. Both are enforced in CI, so run `make check` before pushing.
-
-## Running against a real hub
-
-Unit tests are not enough for anything touching boards, registration, or the
-web page. Bring up an isolated local stack:
+Unit tests are not enough for anything touching boards, registration or the
+web page.
 
 ```bash
+make stack                  # allocate this worktree's port and compose project, once
 make hub                    # stub auth + fixtures, offline, seconds to start
 make hub HUB_AUTH=github    # real GitHub auth against an empty DB
-make up                     # hub + the arena eval image (needed for `evolve`)
+make up                     # hub + the arena image, for `evolve`
 make hub-reset              # wipe the DB and start over
 ```
 
-Each worktree gets its own port, compose project, and arena image tag, so
-parallel checkouts don't collide. The mutator image is deliberately shared. Full
-details, including the ordering gotcha on the very first `make up`:
-[`local-stack.md`](local-stack.md).
-
-To point the CLI at production from inside a worktree, use `nethackers --prod`.
-
-## Two traps that cost real time
-
-**Sandbox image pins.** `src/nethackers/_image_pins.py` pins the images a release
-pulls. How each one changes:
-
-- **The mutator is automatic.** A PR that touches `Dockerfile.mutator`, the
-  entrypoint, or the package code the mutator copies (`src/nethackers/__init__.py`,
-  `arena/`, `contracts/`) gets its image built, pushed and re-pinned by
-  `.github/workflows/mutator-image.yml`, which commits the new pin to your branch.
-  Wait for that commit before merging. A fork PR's image is published by the run on
-  `main` after merge. The release refuses to publish if the mutator pin doesn't
-  match the tagged files.
-- **The arena and the shared base are manual, and you classify before you pin.**
-  CI fails if `arena/Dockerfile`, `nle-base/Dockerfile`, `uv.lock`,
-  `src/nethackers/arena/` or `src/nethackers/contracts/` changed since the last
-  release tag without `ARENA_IMAGE` changing. The diff base is **the last `v*`
-  release tag, not your PR's base branch**, so this can fire for someone else's
-  unreleased merge, and touching `uv.lock` trips it — a routine dependency bump is
-  not routine here.
-
-  Dispatch `.github/workflows/sandbox-images.yml` on your branch (~10 min). It
-  builds and pushes all three images, then tries to re-pin them — and **that last
-  step fails on purpose**: `scripts/repin_images.py` will not write a pin for an
-  arena digest that is missing from `ARENA_MAJOR_BY_DIGEST` (spec 2026-09-14 I7),
-  and a digest built minutes ago is missing by definition. A red run whose only
-  failed step is "Re-pin `_image_pins.py`" means the images are pushed and the rest
-  is yours. Do not re-run it expecting a different answer.
-
-  Take the four refs from the run's **job summary** (`ARENA_IMAGE` there is already
-  the linux/amd64 leg, not the index). Classify the arena digest in
-  `src/nethackers/arena_version.py` — a rebuild that doesn't move scores gets a new
-  line at the current major and keeps the verified corpus, one that does move them
-  bumps `ARENA_MAJOR` and retires that corpus from every board (nothing is
-  deleted) — and then write the pins yourself:
-
-  ```bash
-  PYTHONPATH=src python3 scripts/repin_images.py \
-    --arena "$ARENA_IMAGE" --mutator "$MUTATOR_IMAGE" \
-    --nle-base "$NLE_BASE_IMAGE" --mutator-inputs "$MUTATOR_INPUTS"
-  ```
-
-  Commit `arena_version.py` and `_image_pins.py` together. The classification is
-  what a reviewer actually checks, and the pin is what makes it load-bearing; the
-  entry's comment has to say what the rebuild changed and why scores did or did not
-  move, because there is no behavioral gate behind it.
-
-**Injectable seams bind at import.** Many functions take dependencies as keyword
-defaults (`run=subprocess.run`, `repo_root=...`). Those defaults are evaluated at
-import time, so `monkeypatch.setattr` on the module attribute is a **silent
-no-op** — your test passes while testing nothing. Inject explicitly, or patch the
-name that is actually dereferenced at call time.
+Each worktree gets its own port, compose project and arena tag, so parallel
+checkouts don't collide. The whole loop, and how to register against a local
+hub: [local-stack.md](local-stack.md). To reach production from inside a
+worktree: `nethackers --prod`.
 
 ## Pull requests
 
-- Branch off `main`; PRs target `main`.
-- Keep the diff scoped to one change. CI must be green.
-- Changes with a design behind them say so in the PR description: what you
-  considered, what you chose, and why. Reference material is the top-level
-  docs in this directory — keep it current in the same PR.
-- If you change user-facing behavior, update the docs in the same PR.
-
-## Releasing
-
-Two workflows, **one shared tag** — they are not independent, which is the part
-that catches people out.
-
-1. Bump the version in `pyproject.toml` and merge to `main` **first**. The PyPI
-   workflow asserts the tag matches the version, and PyPI rejects a re-upload, so
-   a wrong version number burns one. The bump rewrites `uv.lock`, which is an
-   arena image input, so the release PR also carries the rebuild and the
-   classification from "Sandbox image pins" above — budget the ~10 minutes and do
-   it before you tag, not after. (`MUTATOR_INPUTS` moves for the same reason; that
-   is the version line, not a mutator change.)
-2. `git tag vX.Y.Z && git push origin vX.Y.Z` → builds the hub image and flips
-   production by digest, health-checked, with automatic rollback. Opt out with
-   `[skip hub-deploy]` in the tagged commit message. See
-   [`../deploy/README.md`](../deploy/README.md).
-3. `gh release create vX.Y.Z` → publishes to PyPI. Publishing is *release*-
-   triggered, not tag-triggered. It also blocks until both pinned sandbox image
-   digests exist in GHCR (up to 20 min), so re-pin before releasing.
-
-The trap: if the tag does not exist yet, `gh release create` **creates and pushes
-it**, which fires the hub deploy too. If you meant to publish only to PyPI, tag
-deliberately in step 2 with `[skip hub-deploy]` rather than letting step 3 do it
-for you.
+- Branch off `main`; PRs target `main`. One change per PR, CI green.
+- A change with a design behind it says so in the description: what you
+  considered, what you chose, why.
+- Docs change in the same PR as the behaviour.
+- Two things CI may say. "arena inputs changed since `<tag>` without
+  re-pinning `ARENA_IMAGE`" means `arena/Dockerfile`, `nle-base/Dockerfile`,
+  `uv.lock`, or something under `src/nethackers/arena/` or
+  `src/nethackers/contracts/` moved since the last release tag; the fix is the re-pin step in
+  [releasing.md](releasing.md), and the diff base is the last `v*` tag, not
+  your branch point, so it can fire for someone else's unreleased merge. And
+  a PR that touches `Dockerfile.mutator`, its entrypoint or the code the
+  mutator copies gets its image rebuilt and re-pinned by a bot commit on the
+  branch; wait for that commit before merging. From a fork there is no bot
+  commit: the image is built but not published, and the run on `main` after
+  the merge publishes and pins it.
 
 ## Reporting a problem
 
-`nethackers report` prints the most recent local crash report. It is read-only
-and offline — it sends nothing anywhere, and the project ships no telemetry or
-analytics. Paste it into an issue yourself if you'd like us to look.
+[troubleshooting.md](troubleshooting.md) first. For an issue, include:
 
-Include `nethackers doctor -o json` for anything environment-shaped; see
-[`troubleshooting.md`](troubleshooting.md) first, which covers the common cases.
+```bash
+nethackers --version -o json     # version, run schema, pinned image digests
+nethackers doctor -o json        # the environment
+nethackers report                # the last crash, if there was one
+```
+
+`report` is read-only and offline; nothing is ever sent anywhere, and there
+is no telemetry in this project.
+
+## Releasing
+
+Maintainers only: [releasing.md](releasing.md).

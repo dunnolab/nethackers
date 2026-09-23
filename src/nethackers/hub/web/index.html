@@ -9,18 +9,24 @@
      This is for the ones that do not: OpenAI's fetcher sends a browser Accept
      and is reported to follow this hint to the .md sibling instead. -->
 <link rel="alternate" type="text/markdown" href="/index.md">
-<!-- Link preview (Twitter/X, Telegram, Slack, Discord). Text only, on purpose:
-     no og:image, because a card image would be the one asset on this page that
-     isn't drawn by the page itself. -->
+<!-- Link preview (Twitter/X, Telegram, Slack, Discord). The card image is the
+     one asset the page does not draw itself: the tombstone and the wordmark,
+     1280x640, shipped in the package and served by the hub at
+     /social-preview.png (an absolute URL, as the crawlers require). -->
 <meta name="description" content="NetHack is hard to hack. But is it really? Let's find out together.">
 <meta property="og:type" content="website">
 <meta property="og:site_name" content="NetHackers">
 <meta property="og:title" content="NetHackers">
 <meta property="og:description" content="NetHack is hard to hack. But is it really? Let's find out together.">
 <meta property="og:url" content="https://nethackers.dunnolab.ai/">
-<meta name="twitter:card" content="summary">
+<meta property="og:image" content="https://nethackers.dunnolab.ai/social-preview.png">
+<meta property="og:image:width" content="1280">
+<meta property="og:image:height" content="640">
+<meta property="og:image:alt" content="A NetHack tombstone: no program has ascended NetHack 3.6.6 yet. Will yours be the first?">
+<meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="NetHackers">
 <meta name="twitter:description" content="NetHack is hard to hack. But is it really? Let's find out together.">
+<meta name="twitter:image" content="https://nethackers.dunnolab.ai/social-preview.png">
 <!-- Web 1.0 typography: system Times New Roman + Courier New only, no web-font
      downloads (Liberation / Nimbus are metric-compatible fallbacks for Linux). -->
 <style>
