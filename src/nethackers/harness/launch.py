@@ -268,7 +268,8 @@ def prepare_evolve(
         userns_args=nonroot_userns_args(params.runtime))
     cfg = EvolveConfig(objective=params.objective, backend=params.operator,
                        iterations=params.iterations, model=params.model,
-                       effort=params.effort, operator_version=operator_version)
+                       effort=params.effort, operator_version=operator_version,
+                       from_seed=params.from_seed)
 
     def run(callbacks: dict, report: Callable[[str], None] = lambda _m: None) -> list:
         def _on_log(tag: str, line: str) -> None:

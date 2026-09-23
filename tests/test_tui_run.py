@@ -1,7 +1,10 @@
 """Unit tests for the app-owned run state (tui.run.Run)."""
 from __future__ import annotations
 
-from nethackers.tui.run import Run
+import json
+
+from nethackers.harness.loop import IterationResult
+from nethackers.tui.run import Run, outcome_word
 from nethackers.tui.status import EvolveConfig
 
 CFG = EvolveConfig("val-dwa-law-fem", "claude", 3)
@@ -172,10 +175,10 @@ def test_identities_and_parent_means_read_from_state():
     assert r.parent_means() == {"a": 0.1, "b": 0.2}
 
 
-def test_identities_and_parent_means_default_empty_when_absent():
-    r = Run("r1", CFG)
-    r.apply_state(_state("mutating"))  # single/random objectives never set these keys
-    assert r.identities() == []
+def test_identities_fall_back_to_the_objective_before_the_loop_names_them():
+    r = Run("r1", CFG)                      # objective "val-dwa-law-fem"
+    r.apply_state(_state("mutating"))       # a state without "identities"
+    assert r.identities() == ["val-dwa-law-fem"]
     assert r.parent_means() == {}
 
 
@@ -216,16 +219,12 @@ def test_apply_state_captures_origins_and_baseline():
     assert r.aa_baseline()["val-dwa-law-fem"] == 0.28
 
 
-def test_roles_and_token_usage():
+def test_roles_present_and_role_of():
     r = Run("r1", EvolveConfig("wiz-elf-cha-mal,val-dwa-law-fem,wiz-orc-cha-mal", "claude", 3))
     r.apply_state(_state("cold-start",
                          identities=["wiz-elf-cha-mal", "val-dwa-law-fem", "wiz-orc-cha-mal"]))
     assert r.roles_present() == ["wiz", "val"]       # first-seen order, deduped
     assert r.role_of("val-dwa-law-fem") == "val"
-    r.apply_log("iter 1/3", '{"type":"result","usage":{"input_tokens":10,"output_tokens":5,'
-                            '"cache_creation_input_tokens":3,"cache_read_input_tokens":100}}')
-    u = r.token_usage()
-    assert (u.input, u.output, u.cache_creation, u.cache_read) == (10, 5, 3, 100)
 
 
 def _cold(**kw):
@@ -501,6 +500,31 @@ def test_incumbent_shows_pulled_champion_during_cold_start_not_autoascend():
     assert kind3 == "aa" and label3 == "AutoAscend"
 
 
+def test_incumbent_trusts_a_seed_cells_measured_score_not_the_aa_floor():
+    """Ruling 7 (finding 4): a --from-seed cell has no hub champion, so
+    harness/loop.py records its origin as kind "seed" (`_origin("seed")`),
+    not "hub" -- incumbent() must still use ITS MEASURED score (what
+    CellArchive.insert actually compares new children against), not the
+    AutoAscend floor (which --from-seed leaves empty: 0.0). Round-2 minor 4:
+    the LABEL must read "the starting bot", never "AutoAscend" -- that string
+    is reserved for the true no-cell floor (the else branch below, untouched
+    here) and would otherwise contradict the setup step's own "the starting
+    bot" group name and open_best's source line for this very cell."""
+    ident = "val-dwa-law-fem"
+    r = Run("r1", EvolveConfig(ident, "claude", 3, from_seed=True))
+    r.apply_state({
+        "phase": "cold-start", "iteration": 0, "identities": [ident],
+        "cells": [{"identity": ident, "score": 0.09, "digest": "5eed5eed"}],
+        "origins": {"5eed5eed": {"kind": "seed", "handle": None, "sha": None,
+                                  "repo": None, "iteration": None}},
+        "aa_baseline": {}, "elite_of": {}, "union": None, "cell_results": {},
+        "coverage": (1, 1), "cell": None, "generation": 0,
+        "baseline_dev": 0.0, "best_dev": 0.0, "wins": 0, "tokens": 0, "detail": "",
+        "parent_digest": "", "parent_dev": 0.0})
+    score, label, kind, j = r.incumbent(ident, 1)
+    assert (score, label, kind, j) == (0.09, "the starting bot", "aa", None)
+
+
 def test_seed_row_translates_raw_nle_end_status_codes_to_words():
     """A completed TrajectoryResult carries the raw NLE end_status code as a
     string ("1"/"-1"); the detail row must show a word, not the number -- the
@@ -518,3 +542,231 @@ def test_seed_row_translates_raw_nle_end_status_codes_to_words():
     assert _seed_row({"status": "completed"})["status"] == "died"
     # a word-valued end_status (fixtures / future arena) passes straight through.
     assert _seed_row({"status": "completed", "end_status": "died"})["status"] == "died"
+
+
+IDS3 = ["val-dwa-law-fem", "val-hum-neu-fem", "wiz-elf-cha-mal"]
+
+
+class _Clock:
+    def __init__(self, t: float = 100.0) -> None:
+        self.t = t
+
+    def __call__(self) -> float:
+        return self.t
+
+
+def test_identities_fallback_is_empty_for_an_unresolvable_objective():
+    assert Run("r", EvolveConfig("v1,v2", "claude", 3)).identities() == []
+
+
+def test_games_come_from_the_objectives_dev_spec():
+    r = Run("r", EvolveConfig(",".join(IDS3), "claude", 3))
+    assert r.games_total() == 45 and r.games_per_identity() == 15
+    assert Run("r", EvolveConfig("v1,v2", "claude", 3)).games_total() == 0
+
+
+def test_iteration_steps_are_stamped_from_the_loop_phases():
+    clock = _Clock()
+    r = Run("r1", CFG, clock=clock)
+    clock.t = 110
+    r.apply_state(_state("mutating", iteration=1))
+    clock.t = 200
+    r.apply_state(_state("gating", iteration=1))
+    clock.t = 220
+    r.apply_state(_state("evaluating-dev", iteration=1))
+    clock.t = 400
+    r.apply_state(_state("registered", iteration=1))
+    t = r.iter_times[1]
+    assert (t.edit_start, t.edit_end, t.smoke_end, t.decided) == (110, 200, 220, 400)
+    assert r.iteration_duration(1) == 290
+
+
+def test_a_gate_rejection_and_an_agent_error_close_their_steps():
+    clock = _Clock()
+    r = Run("r1", CFG, clock=clock)
+    r.apply_state(_state("mutating", iteration=1))
+    clock.t = 150
+    r.apply_state(_state("gating", iteration=1))
+    clock.t = 160
+    r.apply_state(_state("rejected", iteration=1, detail="gate: crashed"))
+    assert r.iter_times[1].smoke_end == 160 and r.iter_times[1].decided == 160
+    clock.t = 170
+    r.apply_state(_state("mutating", iteration=2))
+    clock.t = 190
+    # Ruling 6: "error"/"aborted" stamp ONLY `decided` -- the loop's outer
+    # except can land here from anywhere between copytree and the dev eval,
+    # so it must never claim edit_end/smoke_end happened when they didn't.
+    # edit_start survives from the earlier "mutating" (the agent really was
+    # invoked); edit_end stays None (this run never reached "gating" again).
+    r.apply_state(_state("error", iteration=2, detail="boom"))
+    assert r.iter_times[2].edit_start == 170 and r.iter_times[2].edit_end is None
+    assert r.iter_times[2].decided == 190
+
+
+def test_an_error_before_mutating_ever_ran_stamps_only_decided():
+    """Ruling 6: a copytree/refs failure before `_emit("mutating", ...)` never
+    even started the agent -- edit_start must stay None, not be backfilled to
+    the error's own timestamp (the old bug this guards against)."""
+    clock = _Clock()
+    r = Run("r1", CFG, clock=clock)
+    clock.t = 200
+    r.apply_state(_state("error", iteration=1, detail="copytree failed"))
+    t = r.iter_times[1]
+    assert (t.edit_start, t.edit_end, t.smoke_end) == (None, None, None)
+    assert t.decided == 200
+
+
+def test_an_aborted_phase_after_error_stamps_decided_once():
+    """The loop can emit "error" then "aborted" for the SAME iteration (the
+    circuit-breaker trip after max_consecutive_errors) -- both stamp only
+    `decided`, and the first one wins (matching every other decided stamp)."""
+    clock = _Clock()
+    r = Run("r1", CFG, clock=clock)
+    r.apply_state(_state("mutating", iteration=1))
+    clock.t = 140
+    r.apply_state(_state("error", iteration=1, detail="boom"))
+    clock.t = 150
+    r.apply_state(_state("aborted", iteration=1, detail="boom"))
+    t = r.iter_times[1]
+    assert (t.edit_end, t.smoke_end, t.decided) == (None, None, 140)
+
+
+def test_the_dev_batch_completing_stamps_play_end():
+    clock = _Clock()
+    r = Run("r1", CFG, clock=clock)
+    r.apply_state(_state("mutating", iteration=1))
+    for i, at in ((0, 300.0), (1, 330.0)):
+        clock.t = at
+        r.apply_episode("iter 1/3 · dev", {"index": i, "total": 2, "progress": 0.1,
+                                          "status": "completed"})
+    assert r.iter_times[1].play_end == 330
+    batch = r.batch_for("iter 1/3 · dev")
+    assert batch is not None and batch.done and batch.ended == 330 and batch.total == 2
+
+
+def test_first_state_and_setup_end_are_stamped():
+    clock = _Clock()
+    r = Run("r1", CFG, clock=clock)
+    assert r.first_state_at is None
+    clock.t = 106
+    r.apply_state(_state("cold-start", iteration=0))
+    clock.t = 500
+    r.apply_state(_state("mutating", iteration=1))
+    assert r.first_state_at == 106 and r.setup_ended_at == 500
+    assert r.setup_duration() == 400
+
+
+def test_actions_are_the_agents_tool_lines_for_every_operator():
+    lines = {
+        "claude": json.dumps({"type": "assistant", "message": {"content": [
+            {"type": "tool_use", "name": "Edit", "input": {"file_path": "bot.py"}}]}}),
+        "codex": json.dumps({"type": "item.started", "item": {
+            "type": "file_change", "changes": [{"path": "/w/bot.py"}]}}),
+        "opencode2": json.dumps({"type": "tool_use", "part": {"tool": "shell", "state": {
+            "status": "completed", "input": {"command": "pytest -q"}}}}),
+    }
+    expected = {"claude": ["edit bot.py"], "codex": ["edit bot.py"],
+                "opencode2": ["shell pytest -q"]}
+    for backend, line in lines.items():
+        r = Run("r", EvolveConfig("val-dwa-law-fem", backend, 3))
+        r.apply_log(r.tag(1), line)
+        assert r.actions(1) == expected[backend], backend
+
+
+def test_finished_usage_counts_only_edits_that_have_ended():
+    clock = _Clock()
+    r = Run("r1", CFG, clock=clock)
+    r.apply_state(_state("mutating", iteration=1))
+    r.apply_log(r.tag(1), json.dumps({"type": "assistant", "message": {
+        "usage": {"input_tokens": 100, "output_tokens": 10}, "content": []}}))
+    assert r.edit_usage(1).spend == 110
+    assert r.finished_usage().spend == 0         # the edit is still running
+    r.apply_state(_state("gating", iteration=1))
+    assert r.finished_usage().spend == 110
+
+
+def test_outcome_words_follow_the_loops_reasons():
+    assert outcome_word(IterationResult(True, "registered")) == "improved"
+    assert outcome_word(IterationResult(False, "no-cell-improved")) == "no gain"
+    assert outcome_word(IterationResult(False, "gate:crashed")) == "failed test"
+    assert outcome_word(IterationResult(False, "operator-error:exit 1")) == "agent failed"
+    assert outcome_word(IterationResult(False, "error:boom")) == "error"
+
+
+def _five_iteration_run(clock: _Clock) -> Run:
+    r = Run("r1", EvolveConfig("val-dwa-law-fem", "claude", 5), clock=clock)
+    clock.t = 100
+    r.apply_state(_state("mutating", iteration=1))
+    clock.t = 400
+    r.apply_iteration(1, IterationResult(False, "no-cell-improved"))
+    r.apply_state(_state("rejected", iteration=1))
+    clock.t = 400
+    r.apply_state(_state("mutating", iteration=2))
+    return r
+
+
+def test_pace_left_between_iterations_has_no_current_iteration_term():
+    """Minor 8: the docstring's "with no iteration in progress (between
+    iterations), it is simply mean x iterations left" branch (current is
+    None) had no direct test -- every existing pace_left test drives straight
+    into the next iteration's "mutating" state, so `running_iteration()` was
+    never actually None while durations existed."""
+    clock = _Clock()
+    r = Run("r1", EvolveConfig("val-dwa-law-fem", "claude", 5), clock=clock)
+    clock.t = 100
+    r.apply_state(_state("mutating", iteration=1))
+    clock.t = 400   # a 300 s iteration
+    r.apply_iteration(1, IterationResult(False, "no-cell-improved"))
+    r.apply_state(_state("rejected", iteration=1))
+    assert r.running_iteration() is None       # genuinely between iterations
+    clock.t = 450
+    # mean(300) x (5 iterations - 1 decided) = 1200, no overrun/current term
+    assert r.pace_left() == 1200
+
+
+def test_pace_left_is_none_until_an_iteration_finishes_then_projects_this_runs_pace():
+    clock = _Clock()
+    r = Run("r1", EvolveConfig("val-dwa-law-fem", "claude", 5), clock=clock)
+    r.apply_state(_state("mutating", iteration=1))
+    assert r.pace_left() is None                  # nothing measured yet
+    r = _five_iteration_run(clock)
+    clock.t = 500                                 # 100 s into iteration 2
+    # 300 s per iteration x 3 after the current one + (300 - 100) left of it
+    assert r.pace_left() == 1100
+
+
+def test_pace_left_never_lets_an_overrun_eat_later_iterations():
+    clock = _Clock()
+    r = _five_iteration_run(clock)
+    clock.t = 850                                 # 450 s into iteration 2 (> 300)
+    assert r.pace_left() == 900
+
+
+def test_request_stop_records_when_and_ends_the_projection():
+    clock = _Clock()
+    r = _five_iteration_run(clock)
+    clock.t = 450
+    r.request_stop()
+    assert r.stop.is_set() and r.stop_requested_at == 450
+    assert r.pace_left() is None
+
+
+def test_pace_left_counts_a_pre_mutating_error_as_done_even_without_a_measured_duration():
+    """Ruling 12: an "error:" before "mutating" ever ran (Ruling 6) leaves
+    edit_start None, so it has no measurable duration -- but it IS decided.
+    The old code counted iterations-left as `iterations - len(durations)`,
+    so this decided-but-unmeasured iteration was wrongly counted as still to
+    come. Probe's own numbers: one measured 300 s iteration + one
+    pre-mutating error, no iteration currently running, 5 total -> 3 really
+    left (correct: 900 s), not 4 (the old bug: 1200 s)."""
+    clock = _Clock()
+    r = Run("r1", EvolveConfig("val-dwa-law-fem", "claude", 5), clock=clock)
+    clock.t = 100
+    r.apply_state(_state("mutating", iteration=1))
+    clock.t = 400
+    r.apply_iteration(1, IterationResult(False, "no-cell-improved"))
+    r.apply_state(_state("rejected", iteration=1))          # measured: 300 s
+    clock.t = 410
+    r.apply_state(_state("error", iteration=2, detail="copytree failed"))   # decided, unmeasured
+    r.apply_iteration(2, IterationResult(False, "error:copytree failed"))
+    assert r.pace_left(410) == 900

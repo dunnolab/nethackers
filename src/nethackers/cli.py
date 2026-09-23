@@ -1162,6 +1162,9 @@ def _run(argv: list[str] | None) -> int:
                 err.print("[yellow]wins won't publish[/] — run `gh auth login` "
                           "(separate from `nethackers login`) — or run "
                           "`nethackers setup --for publish`")
+            elif _gh_state == "unknown":
+                err.print("[yellow]couldn't check GitHub publishing[/] — `gh` didn't answer "
+                          "in 10s (check your network)")
 
         # Preflight only when a model is pinned: harness-default has nothing to
         # validate, and this keeps the model=None path (the common case + every
@@ -1300,6 +1303,8 @@ def _run(argv: list[str] | None) -> int:
                 err.print("[yellow]gh not installed[/] — install the GitHub CLI "
                           "(`gh`), then run `gh auth login` — or run "
                           "`nethackers setup --for publish`")
+            elif gh_st == "unknown":
+                err.print("[yellow]gh didn't answer[/] — check your network and retry")
             else:  # unauthed
                 err.print("[yellow]gh not authed[/] — run `gh auth login` "
                           "(separate from `nethackers login`) — or run "

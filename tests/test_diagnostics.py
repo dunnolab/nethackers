@@ -526,6 +526,14 @@ def test_without_setup_support_gh_fixes_keep_the_direct_commands():
     assert "gh auth login" in next(r for r in unauthed if r.id == "gh").fix
 
 
+def test_gh_that_does_not_answer_is_a_warning_not_a_missing_install():
+    results = run_checks(**_healthy_kwargs(gh_state=lambda: (None, "unknown")))
+    gh = next(r for r in results if r.id == "gh")
+    assert gh.status == "warn"
+    assert "didn't answer" in gh.detail
+    assert "not installed" not in gh.detail
+
+
 def test_operator_check_uses_the_given_operator_name():
     seen = []
     results = run_checks(**_healthy_kwargs(
