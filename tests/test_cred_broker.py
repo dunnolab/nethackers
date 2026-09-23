@@ -175,6 +175,48 @@ def test_broker_refuses_offhost(fake_upstream):
     assert status == 403
 
 
+def test_broker_refuses_offhost_request_target(fake_upstream):
+    # The forward URL is `upstream + request-target`. A target that does not
+    # start with "/" lands in the URL's authority: "@127.0.0.1:<evil>/x"
+    # makes the upstream host the userinfo and the request goes to <evil>
+    # WITH the injected credential, and the Host check never sees it (the
+    # header is an allowed value). The broker must refuse the target, so
+    # neither server receives anything and the key never leaves.
+    evil = _FakeUpstream()
+    try:
+        # `x-api-key`, not `Authorization`: httpx turns URL userinfo into a
+        # Basic `Authorization` header that would mask the leak of THAT
+        # header, so a test injecting it could pass against a broker that
+        # still forwards to the client's host.
+        rewrite = HeaderRewrite(inject=(("x-api-key", "REALKEY"),))
+        broker = CredBroker(fake_upstream.url, rewrite)
+        base = broker.start()
+        try:
+            parsed = urlsplit(base)
+            evil_port = urlsplit(evil.url).port
+            conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=5)
+            try:
+                conn.putrequest(
+                    "POST", f"@127.0.0.1:{evil_port}/v1/messages", skip_host=True)
+                conn.putheader("Host", "host.docker.internal")
+                conn.putheader("Content-Length", "2")
+                conn.endheaders()
+                conn.send(b"{}")
+                status = conn.getresponse().status
+            finally:
+                conn.close()
+            # Refused, and counted: it did reach the broker, so the
+            # fail-loud firewall hint (zero requests seen) must not fire.
+            assert status == 403
+            assert broker.requests_seen == 1
+        finally:
+            broker.stop()
+    finally:
+        evil.stop()
+    assert evil.last_headers is None
+    assert fake_upstream.last_headers is None
+
+
 def test_broker_allows_host_docker_internal(fake_upstream):
     # The mutator container reaches the broker via `host.docker.internal`
     # (ContainerOperator's broker path: `--add-host host.docker.internal:
