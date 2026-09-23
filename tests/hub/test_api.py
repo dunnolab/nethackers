@@ -693,7 +693,7 @@ def test_hacker_deep_link_serves_an_unregistered_handle(tmp_path: Any) -> None:
 def test_hacker_deep_link_card_names_the_handle(tmp_path: Any) -> None:
     """The link preview (Twitter/X, Telegram, Slack, Discord) is personalized
     for a shared hacker link -- otherwise every /h/ link shows the generic site
-    card. Text only, like the rest of the head: no og:image."""
+    card. The og:image stays the site's shared card (test_social_preview.py)."""
     body = _app(tmp_path)[0].get("/h/sam").text
     assert '<title>@sam &mdash; NetHackers</title>' in body
     assert '<meta property="og:title" content="@sam on NetHackers">' in body

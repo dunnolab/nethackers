@@ -1,306 +1,267 @@
-# Deploying the NetHackers hub
+# Deploying the hub
 
-Operator (and agent) runbook for the global hub at `https://nethackers.dunnolab.ai`
-(VM `45.91.237.200`, Tailscale hostname `nethackers-hub`). Two containers: the
-FastAPI **hub** (internal only) behind **Caddy**, which terminates TLS and
-auto-provisions a Let's Encrypt certificate.
+The hub at `https://nethackers.dunnolab.ai` is one VM (`45.91.237.200`,
+tailnet name `nethackers-hub`) running two containers: the FastAPI hub,
+internal only, behind Caddy, which terminates TLS and keeps its own Let's
+Encrypt certificate. Prod always runs a named release pinned to an image
+digest, and every change goes through `deploy/deploy-hub.sh`: CI runs it on a
+tag push, a human or an agent runs it over the tailnet. Nothing is built on
+the VM. We host it; nobody else does. Last reviewed 2026-09-23, at v0.37.2.
 
-Prod always runs a **named release, pinned to an image digest**. Every change
-to what's running — deploy or rollback — goes through one script,
-`deploy/deploy-hub.sh`, run identically by CI (on a tag push) and by a human
-or agent by hand over the tailnet. Nothing is ever built on the VM.
+## Deploy
 
-## Public code, private infrastructure
-
-The governing rule for this repo: **we develop fully in public, but the
-infrastructure we run must stay private and not be accessible by everybody**
-— a security boundary (withhold operational access), not a business one
-(withhold code). The litmus test, verbatim from the Twelve-Factor App:
-
-> *"[The test is] whether the codebase could be made open source at any
-> moment, without compromising any credentials."* —
-> [12factor.net/config](https://12factor.net/config)
-
-That test passes today:
-
-- **No secrets live in this repo.** The only value the hub needs is
-  `NETHACKERS_CLIENT_ID`, the GitHub App's **public** client id. There's no
-  client secret and no App private key anywhere in this deployment — the hub
-  reads GitHub using the *caller's* token.
-- `*.env.example` is tracked; `.env` / `*.env` is gitignored. Every runtime
-  value is either public (the client id) or injected on the VM — never in
-  the tree.
-- The deploy SSH key and Tailscale OAuth credentials live in GitHub
-  **environment** secrets; the GitHub Container Registry (GHCR) pull token
-  is minted per CI job and expires when the job ends (see Network, below).
-  None of it is committed.
-- The container **image** is a private GHCR package — not to hide secrets
-  (image layers are trivially inspectable by anyone who can pull), but as a
-  deliberate control point on what actually runs in prod. Pulling it never
-  leaves a standing credential on the box.
-
-## How a deploy happens
-
-One action is the entire production lever:
+Runs as CI, on a `v*` tag.
 
 ```bash
-git tag vX.Y.Z && git push --tags
+git tag vX.Y.Z && git push origin vX.Y.Z
 ```
 
-That fans out in CI (`.github/workflows/hub-image.yml`):
+Watch the `Hub image` workflow. `build-push` builds `hub/Dockerfile` and
+pushes it to the private `ghcr.io/dunnolab/nethackers-hub` package, tagged
+by git commit (`sha-<short sha>`) and by version, never `latest`; the deploy
+uses the digest the build step outputs. `deploy` joins the tailnet as an
+ephemeral node, SSHes to the VM as `nethacker`, and sends
+`deploy ghcr.io/dunnolab/nethackers-hub@sha256:<digest> --yes` with the
+job's `GITHUB_TOKEN` on stdin; the CI key's forced command runs it as
+`deploy-hub.sh`. The script pulls the digest, boot-checks it on a throwaway
+port (up to 30 s), flips with `docker compose up -d --no-deps hub`,
+health-checks the new container (up to 60 s), curls the live URL, and rolls
+back to the previous digest if any of that fails. Expect a blip of a few
+seconds. Deploys serialize and never cancel each other. Every deploy that
+passes the boot-check is appended to `/srv/nethackers/deploy-history.log`
+before the flip; an automatic rollback adds no line, so after one the last
+line names the digest that failed. A `workflow_dispatch` run builds and
+pushes an image without deploying it.
 
-1. **`build-push`** builds the hub image from `hub/Dockerfile` and pushes it
-   to the private `ghcr.io/dunnolab/nethackers-hub` package, tagged
-   `@sha256:<digest>` and `vX.Y.Z`.
-2. **`deploy`** (needs `build-push`, environment `production`) joins the
-   tailnet as an ephemeral node, SSHes to the VM as `nethacker`, and runs
-   `deploy-hub.sh deploy ghcr.io/dunnolab/nethackers-hub@sha256:<digest> --yes`
-   — pull the digest, boot-check it on a throwaway port, flip with
-   `docker compose up -d --no-deps hub`, health-check the new container,
-   `curl` the live URL, and **auto-rollback** to the previous digest if the
-   post-flip health or URL check fails.
+> [!NOTE]
+> `[skip hub-deploy]` in the tagged commit's message skips the deploy job.
+> The check matches the whole message, and GitHub leaves the message field
+> empty on some tag pushes, in which case the job deploys anyway: it fails
+> open, and a needless deploy is a verified blip. Confirm with `status`.
 
-Every prod deploy is a versioned release, pinned to a digest, recorded in
-`/srv/nethackers/deploy-history.log`. No bare commits, no local tags, no
-on-VM builds.
+Verify: `deploy-hub.sh status` shows the new digest and `healthy`.
 
-**Every `v*` tag deploys the hub by default.** The hub reports its own
-package version in the masthead, and the public website *is*
-`src/nethackers/hub/web/index.html` — served by the hub — so even a
-client-looking release can be hub-relevant, and a missed one would leave
-prod quietly stale. The flip itself is a cheap, auto-verified blip. To skip
-a release you know doesn't need to touch prod (a pure client patch, or
-mid-incident), add **`[skip hub-deploy]`** to the release commit message.
-
-> **`[skip hub-deploy]` is best-effort, not a guarantee.** The deploy job's
-> `if:` checks `github.event.head_commit.message` for the marker, and GitHub
-> leaves that field **null** on some tag-push payloads — when it's null the
-> check can't see the marker and the job deploys anyway. This fails **open**
-> (deploy-by-default), which is the safe direction here: a needless deploy
-> is a few-second blip that's auto-verified and auto-rolled-back if anything
-> is actually wrong. Don't rely on `[skip hub-deploy]` to *guarantee* a
-> release stays off prod — if that ever matters, confirm with
-> `deploy-hub.sh status` after pushing the tag.
-
-## Agent runbook
-
-Imperative, copy-pasteable — this is the whole interface.
-
-**To deploy:** tag a release and push it.
-
-```bash
-git tag vX.Y.Z && git push --tags
-```
-
-Watch the `Hub image` workflow in Actions. The `deploy` job does everything
-else and reports pass/fail on the run itself.
-
-**To check what's running**, SSH over the tailnet and ask the box:
+## Status
 
 ```bash
 ssh nethacker@nethackers-hub deploy-hub.sh status
+curl --fail https://nethackers.dunnolab.ai/healthz    # {"status":"ok","auth":"github"}
 ```
 
-Prints the running image ref, container health, live-URL status, and the
-last 5 deploy-history entries.
+`status` prints the pinned image ref (read from `hub.env`), container
+health, the live URL's status, and the last five deploy-history lines.
 
-**To deploy or roll back by hand** — emergencies only; a normal deploy is a
-tag, above — SSH over the tailnet and run the same subcommands CI runs:
+## Roll back
+
+Runs as a human or an agent, over the tailnet.
 
 ```bash
-# deploy a specific digest (needs a GHCR token with read:packages on stdin)
-printf '%s' "<ghcr token>" | \
+ssh nethacker@nethackers-hub deploy-hub.sh rollback
+```
+
+Re-pins `NETHACKERS_HUB_IMAGE` to the digest recorded as "previous" in the
+last history line, one step back from what runs now, and re-ups with
+`--no-deps`, so Caddy is untouched. It does not pull: the previous image is
+already on the box, so this works with GHCR down. A deploy that fails its
+own health or URL check rolls back by itself; reach for this when a deploy
+passed those checks and is wrong in a way they can't see, such as a
+regression that still answers 200. Run it once: a rollback writes its own
+history line, so a second `rollback` re-pins the digest you just left.
+
+Verify: `status`, then the live site.
+
+## Deploy by hand
+
+Emergencies only; a normal deploy is a tag.
+
+```bash
+printf '%s' "<ghcr token with read:packages>" | \
   ssh nethacker@nethackers-hub deploy-hub.sh deploy \
   ghcr.io/dunnolab/nethackers-hub@sha256:<digest> --yes
-
-# roll back to whatever was running before the last deploy — no token
-# needed, it re-pins an image already on the box (works even if GHCR is down)
-ssh nethacker@nethackers-hub deploy-hub.sh rollback
 ```
 
-Add `--dry-run` to `deploy` to print the plan and change nothing — it still
-reads (and discards) stdin first, so pipe something or it'll sit waiting for
-input.
+`--dry-run` prints the plan and changes nothing; it still reads stdin first,
+so pipe something in. `--yes` is accepted for symmetry with CI; the script
+never prompts. Never `docker build`, `git archive | ssh`, or hand-edit
+`/etc/nethackers/hub.env` and re-up: `deploy` and `rollback` are the only
+ways the running hub changes. A change to `deploy-hub.sh` itself is not
+deployed by CI: install it by hand,
+`sudo install -m 0755 deploy/deploy-hub.sh /usr/local/bin/deploy-hub.sh`.
 
-**Never build on the VM.** No `docker build`, no `git archive | ssh`, no
-hand-editing `/etc/nethackers/hub.env` and re-upping. `deploy-hub.sh deploy
-<digest>` and `deploy-hub.sh rollback` are the only sanctioned ways to
-change what's running — the exact same script CI runs, whether a human
-types it or an agent does.
+## Back up and restore
 
-## Network: Tailscale
+There is no working automated backup. The database is one SQLite file in
+WAL mode at `/srv/nethackers/data/hub.sqlite3`, so a plain `cp` while the
+hub runs is not a consistent copy, and the `.bak-*` files next to it were
+taken that way. A script at `/srv/nethackers/backup.sh` on the VM (not in
+this repository) runs SQLite's online backup inside the hub container into
+`/srv/nethackers/backups/` and prunes copies older than 14 days, but
+`compose.yaml` does not mount that directory (the repository copy never
+has), nothing schedules the script, and its newest copy is from 2026-08-02.
+A working backup means adding that mount and scheduling the script.
 
-The VM is enrolled in a **Tailscale** tailnet as `nethackers-hub`. Public
-port **22 is closed** — UFW allows `:22` only from the `tailscale0`
-interface and denies it from the internet entirely. `:80`/`:443` stay
-public (that's the website).
-
-- **Humans** reach `nethacker@nethackers-hub` by enrolling their own machine
-  in the tailnet and using Tailscale's MagicDNS name (`nethackers-hub`) or
-  its stable `100.x` address.
-- **CI** joins via an **ephemeral node**: the `deploy` job authenticates
-  with a scoped Tailscale OAuth client (`tag:ci`), joins the tailnet just
-  for the job, SSHes over the private link, and leaves the tailnet when the
-  job ends. No standing CI machine, and `:22` never opens to the internet.
-- An internet port scan of `45.91.237.200` finds **no SSH port** at all —
-  nothing to brute-force, and a future OpenSSH CVE isn't reachable from
-  outside the tailnet.
-- The CI deploy key is **forced-command**: `authorized_keys` restricts it to
-  running only `/usr/local/bin/deploy-hub.sh`, so even a leaked key can't do
-  anything beyond what that script allows.
-
-## The Docker/UFW invariant
-
-**Never add `ports:` to the hub service in `compose.yaml`.** Docker inserts
-its own iptables rules *ahead of* UFW's, so a published container port
-(`ports: ["8000:8000"]`) is reachable from the internet **even with
-`ufw deny` in place** — the firewall never gets a vote
-([Docker packet filtering](https://docs.docker.com/engine/network/packet-filtering-firewalls/)).
-
-The hub stays on `expose: ["8000"]` — reachable from `caddy` over the
-compose network, never published to the host. Only `caddy` publishes ports
-(`80`, `443`, `443/udp`), deliberately, because it's the one thing meant to
-be public. If the hub ever needs to be reached directly, route it through
-Caddy — never through `ports:` on the hub service.
-
-## Rollback runbook
+Until then, a consistent copy by hand is the same call the script makes,
+into the mounted `/data`:
 
 ```bash
-ssh nethacker@nethackers-hub deploy-hub.sh rollback
+ssh nethacker@nethackers-hub 'docker compose --env-file /etc/nethackers/hub.env -f /srv/nethackers/compose.yaml \
+  exec -T hub python -c "import sqlite3, datetime
+src = sqlite3.connect(\"/data/hub.sqlite3\"); dst = sqlite3.connect(\"/data/hub-%s.sqlite3\" % datetime.date.today())
+src.backup(dst); dst.close(); src.close()"'
 ```
 
-`rollback` re-pins `NETHACKERS_HUB_IMAGE` to the digest recorded as
-"previous" in the last line of `/srv/nethackers/deploy-history.log` — one
-step back from whatever's running now — and re-ups with `--no-deps` (Caddy
-untouched). It doesn't pull: the previous image is already on the box from
-when it was deployed, so rollback works even if GHCR is unreachable.
+The copy lands next to the live file, root-owned; move it off the box. The
+hub image has Python and no `sqlite3` binary, and the host has no `sqlite3`
+either. There is no restore procedure. Restoring means stopping the hub,
+replacing the file and removing any stale `-wal` and `-shm` beside it, then
+re-upping the same image:
+`docker compose --env-file /etc/nethackers/hub.env -f /srv/nethackers/compose.yaml up -d --no-deps hub`
+(`rollback` would also change the image). It has not been exercised. Also
+worth a copy: `/etc/nethackers/hub.env`, the Caddyfile, and the
+`caddy_data` volume (certificates; Caddy re-issues them if lost).
 
-The deploy script also does this **automatically**: any failure in the
-post-flip health check or live-URL check inside `deploy-hub.sh deploy`
-triggers the same restore-and-re-up, so most bad deploys never need a manual
-rollback. Reach for the command above for a deploy that *passed* its own
-health check but is bad in a way the script can't detect (a logic
-regression that still returns 200 on `/healthz`, for example).
+## Upgrade with a schema change
 
-`deploy-hub.sh status` prints the last 5 history lines; the full log is
-plain tab-separated text (`timestamp`, `ref`, `previous ref`, `actor`) at
-`/srv/nethackers/deploy-history.log`.
+The hub migrates its schema at startup, in every worker
+(`src/nethackers/hub/store.py`, `init_schema`). Rolling back to an image
+older than a migration is untested. Before a release that changes the
+schema, take a backup, and treat `rollback` as a last resort.
 
-## Host layout
+## Rotate keys
 
-Everything the deploy touches, after provisioning:
+| Key | Lives in | Rotate by |
+|---|---|---|
+| the human SSH key | `/home/nethacker/.ssh/authorized_keys` on the VM | edit the file over the tailnet from a machine that still has access |
+| the CI deploy key | the same file, on a line prefixed `restrict,command="/usr/local/bin/deploy-hub.sh"` | replace the line; the private half is a GitHub environment secret |
+| the Tailscale OAuth client (`tag:ci`) | the GitHub `production` environment | issue a new client in the Tailscale admin console, update the secret |
+| the VM's tailnet address | the GitHub `production` environment, `HUB_TAILNET_HOST` | update it if the VM is re-enrolled |
+| the GHCR pull token | minted per CI job | nothing to rotate |
 
-```
-/srv/nethackers/
-├── data/                 # hub SQLite DB (hub.sqlite3); root-owned, written by the hub container
-├── backups/              # your DB snapshots (root:nethacker, mode 0750)
-├── Caddyfile             # copied from deploy/Caddyfile; mounted read-only into caddy
-└── deploy-history.log    # append-only deploy log (root:nethacker, mode 0664)
-/etc/nethackers/
-└── hub.env               # NETHACKERS_CLIENT_ID + NETHACKERS_HUB_IMAGE, mode 0640, owned
-                           # nethacker:nethacker — deploy-hub.sh rewrites the image line in
-                           # place on every deploy, so the deploy user must own the file
-/usr/local/bin/
-└── deploy-hub.sh          # the deploy script; installed by provision.sh, run by CI and by hand
-~nethacker/nethackers/deploy/   # a clone of this repo; compose.yaml lives here (COMPOSE_FILE default)
-```
+Root login with a key over the tailnet stays open (`PermitRootLogin
+prohibit-password`); the runbook only ever uses `nethacker`.
 
-Docker volumes `caddy_data` (certs) and `caddy_config` are managed by
-Compose.
+## Troubleshooting
 
-## First-time provisioning
+| You see | Do |
+|---|---|
+| `status` says unhealthy after a deploy | read `docker compose --env-file /etc/nethackers/hub.env -f /srv/nethackers/compose.yaml logs hub` first, then `deploy-hub.sh rollback`: the rollback recreates the container and discards its logs |
+| no certificate, or the site serves Caddy's default page | the DNS `A` record must resolve to this host before Caddy's first start; fix DNS, then `docker compose --env-file /etc/nethackers/hub.env -f /srv/nethackers/compose.yaml restart caddy` |
+| the deploy job cannot reach the VM | the Tailscale OAuth client, `HUB_TAILNET_HOST` or the CI key expired or was rotated; check the `production` environment secrets |
 
-Run once per VM. **Read this whole section before starting** — the lockout
-warning below is not optional.
+## Secrets
 
-1. **DNS.** Create an `A` record `nethackers.dunnolab.ai → 45.91.237.200`
-   and let it propagate *before* first start — Caddy needs the name to
-   resolve to this host to complete the ACME HTTP/TLS challenge.
+- Public: `NETHACKERS_CLIENT_ID`, the GitHub App's client id. There is no
+  client secret and no App private key; the hub reads GitHub with the
+  caller's own token.
+- On the VM only, in `/etc/nethackers/hub.env` (mode `0640`,
+  `nethacker:nethacker`): `NETHACKERS_HUB_IMAGE`, and the private tier's
+  `NETHACKERS_HIDDEN_SECRET`, `NETHACKERS_HIDDEN_SEEDS` and
+  `NETHACKERS_VERIFIER_TOKENS`. `hub.env.example` lists only
+  `NETHACKERS_CLIENT_ID` and `NETHACKERS_HUB_IMAGE`; the rest are optional
+  and, when set, live in the same file.
+- In GitHub environment secrets: the CI deploy key, the Tailscale OAuth
+  credentials, and the VM's tailnet address (`HUB_TAILNET_HOST`).
 
-2. **Provision the VM**, from a checkout (`deploy-hub.sh` must sit next to
-   `provision.sh` — the script installs it to `/usr/local/bin/`):
+Nothing in the repository is a secret; `.env` and `*.env` are gitignored.
+
+## Provision a new VM
+
+Once per machine. Read all five steps first.
+
+1. DNS: an `A` record `nethackers.dunnolab.ai → <ip>`, propagated. Caddy
+   needs the name to resolve here to pass the ACME challenge.
+2. From a checkout, with `deploy-hub.sh` next to `provision.sh`:
 
    ```bash
    sudo TS_AUTHKEY=<one-time tailnet auth key> ./provision.sh \
-     "<human ssh-ed25519 key>" "<CI deploy ssh-ed25519 key>"
+     "ssh-ed25519 AAAA… <label>" "ssh-ed25519 AAAA… ci"
    ```
 
-   It installs Docker Engine + Compose v2, UFW, unattended-upgrades, and
-   Tailscale; enrolls the box in the tailnet as `nethackers-hub`; creates
-   the `nethacker` deploy user with **two** keys in `authorized_keys` — the
-   human key (a normal shell) and the CI key (forced-command, restricted to
-   `deploy-hub.sh`); adds 2 GiB swap if none exists; disables SSH password
-   auth; and closes public `:22`, leaving SSH reachable **only over the
-   tailnet**. It's idempotent — safe to re-run.
+   The human key must carry a comment after its body, or the script exits
+   with its usage line. It installs Docker Engine and Compose v2, UFW,
+   unattended-upgrades and Tailscale; enrols the box as `nethackers-hub`;
+   creates the `nethacker` user with the two keys; adds 2 GiB of swap if
+   none; disables SSH password auth; sets UFW to deny incoming, with 22
+   only on `tailscale0` and 80, 443 and 443/udp public. Idempotent; unset
+   `TS_AUTHKEY` on a re-run, since a consumed one-time key fails.
 
-   > **Lockout warning.** This script closes public port 22. Run it
-   > **without `TS_AUTHKEY`**, or before you've confirmed the box is
-   > actually reachable over the tailnet, and you lose SSH access
-   > completely — there's no fallback path back in.
-   >
-   > - `TS_AUTHKEY` is **required**, not optional, for a box you intend to
-   >   keep using.
-   > - Run `provision.sh` from your cloud provider's **console** (serial or
-   >   VNC), not an SSH session over the public internet — if anything goes
-   >   wrong mid-script, a console session survives; an internet SSH session
-   >   dies along with the port it's using.
-   > - **Before doing anything else afterward**, verify `nethacker` SSH
-   >   works over the tailnet (`ssh nethacker@nethackers-hub`, from a
-   >   machine already enrolled) — only then drop console/root access.
+   > [!WARNING]
+   > The script closes public port 22. Run it from the provider's console,
+   > not an internet SSH session, with `TS_AUTHKEY` set, and confirm
+   > `ssh nethacker@nethackers-hub` works over the tailnet before you drop
+   > console access. There is no other way back in from the internet.
 
-3. **Get the deploy files onto the host** as `nethacker` — clone this repo
-   into `~/nethackers` (matches `deploy-hub.sh`'s default `COMPOSE_FILE`),
-   then place the Caddyfile where Compose expects it:
+3. Install the compose file and the Caddyfile where the script expects them
+   (`COMPOSE_FILE` defaults to `/srv/nethackers/compose.yaml`):
 
    ```bash
+   sudo install -m 0644 deploy/compose.yaml /srv/nethackers/compose.yaml
    sudo install -m 0644 deploy/Caddyfile /srv/nethackers/Caddyfile
    ```
 
-4. **Configure the environment file** (public client id + pinned image),
-   mode `0640`, owned `nethacker:nethacker`:
+   Deploys never touch this copy, so a change to `deploy/compose.yaml` in
+   the repository has to be installed again by hand.
+
+4. The environment file:
 
    ```bash
    sudo install -m 0640 -o nethacker -g nethacker deploy/hub.env.example /etc/nethackers/hub.env
-   sudo -e /etc/nethackers/hub.env   # set NETHACKERS_CLIENT_ID + a real digest-pinned NETHACKERS_HUB_IMAGE
+   sudo -e /etc/nethackers/hub.env   # the client id, a real digest-pinned image, the private-tier values
    ```
 
-5. **Bring up the stack once, by hand.** This is the one and only time you
-   run `docker compose` directly — it's what starts Caddy for the first
-   time (which `deploy-hub.sh` deliberately never touches) and lets it
-   obtain its certificate:
+5. Start the stack by hand, once. This is the only time `docker compose`
+   runs directly; it starts Caddy, which `deploy-hub.sh` never touches, and
+   lets it obtain the certificate:
 
    ```bash
-   cd ~/nethackers/deploy
-   docker compose --env-file /etc/nethackers/hub.env -f compose.yaml up -d
+   docker compose --env-file /etc/nethackers/hub.env -f /srv/nethackers/compose.yaml up -d
    ```
 
-   From here on, every change to the running hub goes through
-   `deploy-hub.sh` — tag a release, or run it by hand over the tailnet.
-   Don't run `docker compose up` again.
+Verify: `deploy-hub.sh status` and the `curl` above. From here on, every
+change goes through `deploy-hub.sh`.
 
-## Verify
+Access afterwards: humans reach `nethacker@nethackers-hub` from a machine
+enrolled in the tailnet; CI joins as an ephemeral node with a scoped OAuth
+client and leaves when the job ends. Public port 22 is closed by UFW, which
+allows it only on `tailscale0`.
 
-```bash
-ssh nethacker@nethackers-hub deploy-hub.sh status    # running ref, health, live URL
-curl --fail https://nethackers.dunnolab.ai/healthz    # -> {"status":"ok"}
+## Invariants
+
+- Never add `ports:` to the hub service in `compose.yaml`. Docker's iptables
+  rules run ahead of UFW's, so a published port is reachable from the
+  internet whatever UFW says
+  ([Docker's packet filtering page](https://docs.docker.com/engine/network/packet-filtering-firewalls/)).
+  The hub stays on `expose: ["8000"]`; only Caddy publishes ports.
+- The CI key can only run `deploy-hub.sh`, because its `authorized_keys`
+  line carries `restrict,command=` ([sshd(8)](https://man.openbsd.org/sshd#AUTHORIZED_KEYS_FILE_FORMAT)).
+  Keep that prefix.
+- Images are pinned by digest, never a moving tag; `deploy-hub.sh` refuses
+  anything else.
+- The hub container runs read-only with every capability dropped,
+  `no-new-privileges`, and a pid limit (`pids_limit: 512`, `compose.yaml`);
+  there is no CPU or memory cap on the hub by design, so it can size its
+  workers to the machine. Its writable paths are `/data` and a tmpfs at
+  `/tmp`. It runs as root inside that container, so `data/` stays
+  root-owned; a dedicated non-root user is a follow-up.
+- `nethacker` is in the `docker` group, which is root-equivalent on the host.
+  The privilege boundary is the CI key's forced command, not the user.
+
+## Host layout
+
+```
+/srv/nethackers/
+├── compose.yaml          # installed by hand from deploy/compose.yaml; what deploy-hub.sh re-ups
+├── .env -> /etc/nethackers/hub.env   # hand-made symlink so a bare `docker compose` works here
+├── Caddyfile             # from deploy/Caddyfile; mounted read-only into caddy
+├── data/                 # hub.sqlite3 (+ -wal, -shm); root-owned, written by the hub container
+├── backups/              # root-owned, readable by group nethacker; the backup script's target, unmounted today
+├── backup.sh             # the online-backup script; not in this repository, not scheduled
+└── deploy-history.log    # append-only: timestamp, ref, previous ref, actor (always `dunnolab` today)
+/etc/nethackers/
+└── hub.env               # client id, image pin, private-tier values; deploy-hub.sh rewrites the image line
+/usr/local/bin/
+└── deploy-hub.sh         # installed by provision.sh; run by CI and by hand
 ```
 
-The hub is never exposed directly; reach it only through Caddy on 443.
-Caddy also serves plain `:80` and redirects it to HTTPS.
-
-## Notes
-
-- The hub container runs read-only with all Linux capabilities dropped, no
-  new privileges, and tight CPU/memory/pids limits (see `compose.yaml`). Its
-  only writable paths are the `/data` volume and a small `tmpfs` at `/tmp`.
-- The hub image runs as **root** inside that locked-down container (all caps
-  dropped, no-new-privileges, read-only rootfs), so `data/`/`backups/` stay
-  root-owned and the SQLite DB is writable with no chown dance. Running the
-  hub as a dedicated nonroot user is a hardening follow-up (see the design
-  spec's public-launch gaps); if you switch, chown those directories to that
-  uid.
-- The `nethacker` deploy user is in the `docker` group, which is effectively
-  root-equivalent (a container can mount the host filesystem) — the real
-  privilege boundary is the forced-command restriction on the CI key, not
-  the user's non-root-ness. Don't relax that restriction.
-- Self-hosting is unsupported: you host it, you own it.
+Docker volumes `caddy_data` (certificates) and `caddy_config` are managed by
+Compose.
