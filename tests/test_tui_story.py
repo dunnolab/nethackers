@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from statistics import mean
 
 from rich.text import Text
 
@@ -878,3 +879,56 @@ def test_legend_lines_fit_the_progress_panes_content_width():
     assert len(lines) == 3
     for line in lines:
         assert cell_len(line) <= 78, (cell_len(line), line)
+
+
+# Real per-seed scores from run 20260922-224201 (Rogue, 4 identities), iteration 2's
+# eval of rog-hum-cha-fem. Iterations 3-5 of that run re-scored the SAME bot -- the
+# agent kept resubmitting a change that didn't take -- so every identity tied its
+# incumbent exactly and the loop kept nothing. These fifteen values are the ones
+# where `statistics.mean` and `sum()/len()` disagree by one ULP, which is what made
+# the tie read as a win. Keep them verbatim.
+_TIE_SCORES = [0.0, 0.0745362, 0.0368876, 0.0368876, 0.0745362, 0.1170499, 0.0745362,
+               0.0291086, 0.0745362, 0.0507584, 0.1790997, 0.0507584, 0.0291086,
+               0.0745362, 0.0291086]
+
+
+def _results(ident: str, scores: list[float]) -> list[dict]:
+    return [{"character": ident, "trajectory_id": s, "progress": p, "status": "completed",
+             "end_status": 1, "cause_of_death": "killed by a jackal", "max_depth": 3,
+             "turns": 900, "wall_seconds": 30.0} for s, p in enumerate(scores)]
+
+
+def test_an_iteration_that_only_ties_the_incumbent_is_not_a_new_best():
+    """An iteration the loop rejected must never be marked "▲ new best".
+
+    `CellArchive.insert` keeps a bot only when it STRICTLY beats the cell, so a
+    rejected iteration ties its incumbent exactly. The monitor used to average the
+    two sides of that comparison differently -- `Run.incumbent` with `sum()/len()`,
+    `story.this_cell` with `statistics.mean` -- and on real scores those differ by
+    one ULP, so three of four identities claimed a new best on an iteration that
+    improved nothing (run 20260922-224201, iterations 3-5).
+    """
+    clock = Clock()
+    run = _new(clock)
+    ident = IDS[0]
+    clock.t = 1006
+    # a seed cell well below the scores below, so the incumbent is iteration 1's
+    # own mean -- the comparison this test is about.
+    run.apply_state(_state("cold-start",
+                           cells=[{"identity": ident, "score": 0.04, "digest": "seed"}],
+                           coverage=(1, 3)))
+    clock.t = 1500
+    rows = _results(ident, _TIE_SCORES)
+    run.apply_iteration(1, IterationResult(True, "registered", dev_fitness=0.06,
+                                           improved=[ident], results=rows))
+    # iteration 2 re-scores the same bot: identical per-seed values, so the loop
+    # keeps nothing.
+    run.apply_iteration(2, IterationResult(False, "no-cell-improved", dev_fitness=0.06,
+                                           results=list(rows)))
+
+    best = run.incumbent(ident, 2)[0]
+    assert best == mean(_TIE_SCORES)        # the incumbent IS iteration 1's mean
+    markup, clickable = story.this_cell(run, ident, 2, best)
+    assert clickable
+    assert "new best" not in plain(markup), plain(markup)
+    assert plain(markup).startswith(f"{mean(_TIE_SCORES):.2f}  15/15 games")

@@ -44,7 +44,7 @@ from textual.widgets.option_list import Option
 
 from nethackers.harness.loop import IterationResult
 from nethackers.tui import status as S, story
-from nethackers.tui.run import EvalView, Run
+from nethackers.tui.run import EvalView, Run, progress_mean
 from nethackers.tui.screens._clicktable import ClickTable
 
 # The iteration's coding-agent transcript (``run.logs[tag]``), by prettified
@@ -246,7 +246,7 @@ class DetailView(Vertical):
             head = Text.from_markup("[dim]no games yet[/]")
         else:
             scores = [float(r["progress"]) for r in rows]
-            avg = sum(scores) / len(scores)
+            avg = progress_mean(scores)
             std = pstdev(scores) if len(scores) > 1 else 0.0
             more = self._still_playing_suffix(len(rows), total)
             head = Text.from_markup(
@@ -285,7 +285,7 @@ class DetailView(Vertical):
         rows = [(ident, row) for ident in self.run.identities() for row in evals[ident].rows]
         total = sum(view.total for view in evals.values())
         if rows:
-            avg = sum(float(r["progress"]) for _i, r in rows) / len(rows)
+            avg = progress_mean([float(r["progress"]) for _i, r in rows])
             more = self._still_playing_suffix(len(rows), total)
             head = f"avg [b #ffd54a]{avg:.2f}[/]   [b]{len(rows)}/{total}[/] games{more}"
         else:
