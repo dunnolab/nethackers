@@ -47,7 +47,10 @@ image CI published for this worktree's files, or builds it. Publishing goes
 to a throwaway public `github.com/<login>/nh-dev-<slug>` repository, one ref
 per run (`evo-harness-v1/<run-id>`). Nothing is stubbed in the mutator: the
 agent, the sandbox and the eval are real, because the bugs this path exists
-to catch live in that interaction.
+to catch live in that interaction. The mutator reaches your model
+credential through the host-side broker, as in production; on Linux with
+`ufw`, add the rule `nethackers setup` prints first
+([setup.md](setup.md)), or the run stops with it.
 
 ## Modes
 

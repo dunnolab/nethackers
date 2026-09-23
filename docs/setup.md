@@ -28,39 +28,46 @@ this:
 
 ```text
 nethackers will:
-  1 log you in to the hub                nethackers login (a GitHub code, in your browser)
-  2 install the GitHub CLI               brew install gh  (untested)
-  3 log you in to gh                     gh auth login --hostname github.com --git-protocol https --web
-  4 check gh and the hub are one account compares the two GitHub logins
-  5 install Codex                        curl -fsSL https://chatgpt.com/codex/install.sh | sh  (untested)
-  6 log you in to Codex                  codex login
-  7 install Colima + Docker              brew install colima docker  (untested)
-  8 start Colima with Rosetta            colima start --vm-type vz --vz-rosetta --cpu 6 --memory 12  (untested)
+  1 log you in to the hub                                nethackers login (a GitHub code, in your browser)
+  2 install the GitHub CLI                               brew install gh  (untested)
+  3 log you in to gh                                     gh auth login --hostname github.com --git-protocol https --web
+  4 check gh and the hub are one account                 compares the two GitHub logins
+  5 install Codex                                        curl -fsSL https://chatgpt.com/codex/install.sh | sh  (untested)
+  6 log you in to Codex                                  codex login
+  7 install Colima + Docker                              brew install colima docker  (untested)
+  8 start Colima with Rosetta                            colima start --vm-type vz --vz-rosetta --cpu 6 --memory 12  (untested)
   9 pull the sandbox images
- 10 install codex's TLS-impersonation helper (curl_cffi) uv pip install --python <this python> curl_cffi
+ 10 install codex's TLS-impersonation helper (curl_cffi) <uv> pip install --python <this python> curl_cffi
 Steps 1, 3, 6 need you at the keyboard; the rest run on their own. Nothing nethackers
 runs needs sudo.
 Steps marked (untested) come from vendor docs and haven't been run on a real Mac yet.
 ```
+
+`<uv>` and `<this python>` stand for the full paths the plan prints; with
+no `uv` the step is `<this python> -m pip install curl_cffi`.
 
 Logins come first so you can walk away afterwards. Installs happen only
 where one documented command does them without `sudo`. A runtime is started
 with its own command: `colima start`, `docker desktop start`, `orb start`,
 `podman machine start`; step 8 is sized to the Mac, at most 6 CPUs and 12 GB
 and never more than half its memory, and a Mac without Rosetta 2 is told to
-install it first and gets the VM on the next run. The images are up to about
-1 GB to download the first time (the plan shows the exact figure) and a few
-GB on disk; later releases fetch only what changed, with a progress bar and
-the time left. Step 10 appears for the `codex` operator only: its credential
-broker forwards through `curl_cffi`, which is installed into nethackers' own
-interpreter, never into the sandbox, and the broker installs it itself on
-first use if setup was skipped.
+install it first and gets the VM on the next run. The two images are about
+1.3 GB to download the first time (the plan shows the exact figure; v0.37.0
+is 443 MB for the arena and 897 MB for the mutator, compressed) and more on
+disk; later releases fetch only what changed, with a progress bar and the
+time left. Step 10 appears for the `codex` operator only, and only until
+`curl_cffi` is importable by nethackers' own interpreter: the credential
+broker forwards through it. It is installed there, never into the sandbox
+and never into `uv.lock`; if setup was skipped the broker installs it when
+it first starts, and if that fails the run stops with the command to run
+yourself.
 
 On Linux the runtime and `gh` need `sudo`, so they move to the list you run
 yourself, and setup ends with "Then run `nethackers setup` again. It picks
 up where it left off": the second run pulls the images and plans the `gh`
-login. On a host with `ufw`, the list also carries the one firewall rule the
-credential broker needs:
+login. On a host with `ufw` installed (Docker, not Podman), unless `--for`
+names eval, publish or browse, the list also carries the one firewall rule
+the credential broker needs:
 
 ```text
 You'll need to (nethackers never runs sudo):
@@ -73,6 +80,9 @@ You'll need to (nethackers never runs sudo):
     allow in on docker0 to "$(docker network inspect bridge -f '{{(index .IPAM.Config
     0).Gateway}}')" port 11700:11749 proto tcp`
 ```
+
+Without that rule the first `evolve` stops and prints it again
+([troubleshooting.md](troubleshooting.md#the-sandbox-never-reached-the-credential-broker)).
 
 ## Check it worked
 
@@ -101,15 +111,22 @@ or an unattended run leaves the coding agent for later.
 
 `evolve` needs one agent logged in on this machine. The login stays on the
 host: by default a credential broker on the host injects it on the wire, and
-the sandbox only ever sees a placeholder and the broker's address
-([harness.md](harness.md#the-coding-agent)). `--no-broker`, or the form's
+the sandbox sees a placeholder (Claude, OpenCode) or no credential at all
+(Codex), plus the broker's address
+([harness.md](harness.md#the-credential-broker)). `--no-broker`, or the form's
 Credential toggle, mounts the credential instead.
 
 | | log in with | what the sandbox sees by default | what `--no-broker` mounts |
 |---|---|---|---|
 | Claude Code | `claude auth login` | a placeholder token and a base URL to the broker | `~/.claude/.credentials.json` read-only on Linux; the Keychain OAuth token as `CLAUDE_CODE_OAUTH_TOKEN` on macOS |
-| Codex | `codex login` | a provider override in its command pointing at the broker | your real `~/.codex`, read-write, because its tokens rotate |
+| Codex | `codex login` | an empty `~/.codex` and a provider override in its command pointing at the broker | your real `~/.codex`, read-write, because its tokens rotate |
 | OpenCode 2 | nothing; providers come from `~/.config/opencode/opencode.json` (or `.jsonc`) | a copy of the `provider` section with each brokerable key replaced by a placeholder and the broker's URL | the copy with the keys, plus the environment variables it names |
+
+A provider is brokered only when its key is a literal or a set
+`{env:NAME}` and its upstream is known, an explicit `baseURL` or the name
+`anthropic` or `openai`. Any other provider keeps the mount behaviour, and
+a config with no brokerable provider takes the mount path without a
+message.
 
 The operator id is `opencode2`; the CLI inside the image is `opencode`,
 with an `opencode2` symlink. OpenCode is provider-agnostic, so a few things
@@ -126,11 +143,12 @@ differ:
 - Without a key, OpenCode serves a handful of free `opencode/*` models, and
   doctor says "free models only". Their availability is OpenCode's to
   decide; a model that never replies waits out the 8-hour sandbox timeout.
-- Custom providers appear in the model picker as `provider/model`. Under
-  Docker Desktop a model server on your own machine is
-  `http://host.docker.internal:PORT/v1`, since `localhost` inside the
-  sandbox is the container; on Linux Docker the sandbox has no name for the
-  host at all.
+- Custom providers appear in the model picker as `provider/model`. With
+  the broker on, a keyed provider's `baseURL` is dialled from the host.
+  Under `--no-broker` the sandbox dials it itself, and `localhost` inside
+  the sandbox is the container: a model server on your own machine is
+  `http://host.docker.internal:PORT/v1`, a name Docker Desktop always
+  resolves and Linux Docker only while the broker is on.
 - Reasoning effort is a variant of a pinned model, so `--effort` needs
   `--model`.
 

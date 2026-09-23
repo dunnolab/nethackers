@@ -160,7 +160,9 @@ for Claude Code; OpenCode has none and relies on the fresh container. An
 agent that remembers yesterday's run converges on the change it already
 made and keeps proposing variants of it. What it knows of the past is what
 `/refs/` shows it. This is not a hermetic boundary: `/workspace` is
-writable and the network is open.
+writable, the network is open, and Codex's `~/.codex` is a writable mount
+that outlives the iteration, the broker's cage by default and your real one
+under `--no-broker` ([Safety](#the-coding-agent)).
 
 **The agent experiments on the games it is scored on.** The mutator image
 is built from the same NLE base image as the arena, for `linux/amd64` only,
@@ -193,11 +195,16 @@ prompts off. Logins and OpenCode's provider rules are in
 `nethackers models --operator <name>` lists what each sandbox serves. For
 Claude the picker's list is your account's, and the CLI pinned inside the
 image resolves `--model` again against its own: an id newer than that CLI
-passes the picker and fails at the first iteration with `unrecognized model
-'<id>' — the sandbox's CLI doesn't know that id; use an alias like opus, or
-update the CLI in the mutator image`, and the run stops there. Aliases never
-go stale. For Codex and OpenCode a rejected model is an ordinary failure and
-takes three tries. The CLI versions are pinned in `Dockerfile.mutator`; a
+passes the picker and fails at the first iteration with ``unrecognized model
+'<id>' — the sandbox's CLI doesn't know that id; use an alias like `opus`, or
+update the CLI in the mutator image``, and the run stops there. Aliases never
+go stale. For Codex and OpenCode a pinned `--model` is checked against the
+sandbox's catalog before the run starts and refused there; a model whose
+catalog could not be read, or one the catalog lists and the CLI then
+rejects, is an ordinary failure and takes three tries. `nethackers models`,
+the picker and that check run the CLI's catalog command in a probe
+container with the credential mounted, broker or not; nothing of a program
+runs there. The CLI versions are pinned in `Dockerfile.mutator`; a
 bump re-pins the image. The operator id stays `opencode2` while the binary
 inside the image is `opencode`, with an `opencode2` symlink.
 
@@ -249,17 +256,20 @@ runtime for the number of episodes the box runs at once:
 ```
 
 `--platform` is passed only for the pin; an override image runs without it.
+Also `--name` and `--label`, as for the coding agent.
 
 - No network. The strongest single control.
 - A read-only root. Two paths are writable: a `noexec,nosuid` tmpfs at
-  `/tmp`, where nothing written can be executed, and the `/out` bind mount
-  that carries the result file back, created world-writable on the host so
-  `nobody` can write it on native Linux.
+  `/tmp`, where a written file cannot run as a binary (an interpreter can
+  still read it), and the `/out` bind mount that carries the result file
+  back, a directory under `~/.nethackers/tmp` created world-writable so
+  `nobody` can write it on native Linux and removed when the eval ends.
 - No capabilities, no privilege escalation, user `nobody`.
 - One core and 32 processes per concurrent episode, three quarters of the
   runtime's memory for the whole box (one GiB per episode is the budget that
-  decides how many run at once; 8 when the runtime cannot be asked), swap
-  capped to memory, so a fork bomb or a memory runaway stays bounded.
+  decides how many run at once; 8 episodes, and one GiB each, when the
+  runtime cannot be asked), swap capped to memory, so a fork bomb or a
+  memory runaway stays bounded.
   `timeout` runs as PID 1 inside the box and sends SIGTERM to the whole
   process group after 3600 s times the number of waves, with no
   `--kill-after`; workers and bots are armed with `PR_SET_PDEATHSIG`
@@ -304,14 +314,19 @@ docker run --rm --platform linux/amd64 \
   --pids-limit 512 --memory 8g --memory-swap 8g --cpus 4 \
   --security-opt no-new-privileges \
   -v <worktree>:/workspace -v <refs>:/refs:ro \
-  <a placeholder credential and the broker's base URL, from harness/auth_inject.py> \
+  <the operator's route to the broker, from harness/auth_inject.py> \
   <mutator-image> timeout 28800 <agent CLI …>
 ```
 
-Also `--name`, `--label` and `-w /workspace`; under Docker Desktop
-`--add-host host.docker.internal:host-gateway` so the sandbox can reach the
-broker; rootless Podman adds `--userns=keep-id --user 0`. These caps are
-fixed, unlike the arena's.
+The route is a placeholder token plus `ANTHROPIC_BASE_URL` for Claude, an
+empty writable `~/.codex` plus `CODEX_HOME` for Codex, whose route is a
+provider override in its own command, and a rewritten copy of the provider
+section for OpenCode. Also `--name`, `--label`, `-w /workspace`, and `-i`
+for OpenCode. On the broker path, on every host,
+`--add-host host.docker.internal:host-gateway`: native Linux needs it to
+name the host, Docker Desktop resolves the name anyway. `--platform` is
+passed only for the pin, as for the arena. Rootless Podman adds
+`--userns=keep-id --user 0`. These caps are fixed, unlike the arena's.
 
 - `--pids-limit` is the fork-bomb defence, and the reason this is a
   container rather than a process wrapper: process-level sandboxes cap
@@ -330,28 +345,19 @@ fixed, unlike the arena's.
   `.codex`, `.cursor`, `.vscode` and `.opencode` directories
   (`harness/refs.py`), so a pulled program's agent config files are not
   loaded. It is a list of names: a README or a code comment still reaches
-  the agent, and a file not on the list passes through. Each CLI also runs
-  with its own project config off.
-- Your model credential never enters the container. A credential broker on
-  the host (`harness/cred_broker.py`) is on by default for every operator:
-  the container gets a placeholder and a base URL back to the broker, and
-  the broker injects the real credential on the wire, per request, to the
-  one real provider. For Claude that is the OAuth bearer, and the broker
-  refreshes the eight-hour subscription token on the host, so you log in
-  once. For Codex the CLI's provider is overridden in its command to point
-  at the broker, which adds the bearer and the account id and forwards
-  through `curl_cffi` with Chrome TLS impersonation, because that upstream
-  refuses a plain client; `curl_cffi` is installed into nethackers' own
-  interpreter on demand, never into the sandbox or `uv.lock`. OpenCode gets
-  one broker per provider that names a key. The broker listens on the
-  loopback under Docker Desktop and on the Docker bridge gateway on Linux,
-  on a port in 11700 to 11749; a `ufw` host needs the one rule `setup`
-  prints, and if the sandbox never reaches the broker the run fails loud
-  with that rule rather than falling back to a mount. Verified live for
-  Claude and Codex on macOS and native Linux; `make broker-live` repeats
-  that with your own logins. `--no-broker`, or the form's Credential toggle,
-  opts back into mounting the credential, which is the exposure described
-  next.
+  the agent, and a file not on the list passes through. Codex also runs
+  with its user config and rules off, and OpenCode with its project config
+  off; Claude Code drops only its user settings layer, so for it the strip
+  is what keeps a tree's config out.
+- Your model credential never enters the agent's container, for Claude and
+  Codex and for the OpenCode providers the broker can take. A credential broker
+  on the host (`harness/cred_broker.py`) is on by default for every
+  operator: the container gets a placeholder, or for Codex no credential at
+  all, plus a route back to the broker, and the broker injects the real
+  credential on the wire, per request, to the one real provider. The
+  per-operator detail is under [The credential broker](#the-credential-broker)
+  below. `--no-broker`, or the form's Credential toggle, opts back into
+  mounting the credential, which is the exposure described next.
 
 Not contained by default:
 
@@ -359,9 +365,17 @@ Not contained by default:
   no `--network` flag in any mode, and no egress allow-list exists. The
   broker keeps the credential on the host; it does not keep the container
   off the network. This is the largest hole in the default sandbox.
+- The broker itself. It is an unauthenticated relay to one upstream whose
+  only check is the Host header, so while a run is live any process on the
+  host, and on Linux any container on the bridge the `ufw` rule opens, can
+  spend through it.
+- Codex's cage. On the broker path Codex gets `~/.nethackers/codex-cage`,
+  world-writable and mounted read-write at `~/.codex`; only its `auth.json`
+  and `config.toml` are cleared, so it persists across iterations and runs,
+  a writable channel from one iteration to the next.
 - Your coding-agent credentials, under `--no-broker`. Then Codex's real
-  `~/.codex` is mounted read-write, so code in the cage can influence your
-  next host-side `codex` run; Claude Code's credentials file is mounted
+  `~/.codex` is mounted read-write, so code in the container can influence
+  your next host-side `codex` run; Claude Code's credentials file is mounted
   read-only on Linux, and its OAuth token is passed as an environment
   variable on macOS, visible in `docker inspect` and in the host process
   list; OpenCode's provider keys arrive as forwarded environment variables,
@@ -373,6 +387,54 @@ Not contained by default:
   evaluated candidate is published unless the run is `--offline`, a symlink
   planted in the worktree at a host-readable file can end up in a public
   commit. Not seen in practice; it follows from the code.
+
+### The credential broker
+
+Per operator (`harness/auth_inject.py`):
+
+- Claude Code. The broker adds the OAuth bearer. A setup-token in
+  `NETHACKERS_CLAUDE_SETUP_TOKEN` or `~/.nethackers/claude/setup-token`
+  wins when present; otherwise the broker reads your `claude` login and, at
+  the start of an iteration with under 30 minutes left on the roughly
+  eight-hour token, refreshes it on the host and writes the rotated pair
+  back to the Keychain or `~/.claude/.credentials.json`, so you log in
+  once. A host whose refresh `platform.claude.com` refuses fails that
+  iteration and says to provision a setup-token.
+- Codex. Its provider is overridden in its own command to point at the
+  broker, which adds the bearer and the account id, refreshes the rotating
+  token on the host when it nears expiry and writes it back to
+  `~/.codex/auth.json`, and forwards through `curl_cffi` with Chrome TLS
+  impersonation, since that upstream sits behind Cloudflare. `curl_cffi` is
+  installed into nethackers' own interpreter on demand, never into the
+  sandbox or `uv.lock`.
+- OpenCode. One broker per provider whose key is a literal or a set
+  environment variable and whose upstream is known, an explicit `baseURL`
+  or a provider named `anthropic` or `openai`. Any other provider keeps the
+  mount behaviour, its key in the mounted copy or forwarded as an
+  environment variable, and a config with no brokerable provider mounts
+  without a message.
+
+Where it listens: on the loopback on macOS and, on any other host, on the
+gateway of the runtime's `bridge` network (172.17.0.1 by default), never on
+all interfaces, on a free port in 11700 to 11749, an ephemeral one when all
+fifty are busy. When
+that gateway cannot be read, under Podman for one, it falls back to the
+loopback and the run fails as below. A `ufw` host needs the one rule
+`nethackers setup` prints.
+
+When the sandbox cannot reach it: an agent that exits non-zero before one
+request reaches the broker makes the run print that, with the rule and
+`--no-broker` as the alternative; the loop counts it as an operator failure
+and stops after three. Nothing falls back to a mount. On macOS the hint is
+not printed, and an agent that exits 0 without ever calling the broker is
+not flagged.
+
+Claude and Codex ran through the broker live on macOS and on an Ubuntu box
+before release; OpenCode did not. `make broker-e2e` runs the real CLIs in
+the real image against a mock provider, with a probe that looks for the
+credential in the environment, the mounts and a direct call; `make
+broker-live` repeats the three round-trips with your own logins. Both are
+gated and never run in CI.
 
 ### Programs you pull
 
@@ -431,6 +493,10 @@ If it runs code you didn't write, the parts of ours to copy:
    concrete values over stdin, never through argv or the environment. And
    constrain what a fetch can be: parse the host, allow one transport,
    disable submodule and symlink checkout.
+7. Keep the model credential out of the agent's container: a host-side
+   proxy that injects it on the wire, a placeholder or nothing inside, and a
+   fixed port range you can firewall to. Ours checks only the Host header;
+   add a per-run secret if the host has other tenants.
 
 Skip the rest: three agent backends, model discovery, the TUI,
 provisioning. Those exist because this harness has to work for strangers.

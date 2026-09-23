@@ -32,7 +32,9 @@ order that works.
          re-measured (nothing is deleted; [verifier.md](verifier.md)). The
          entry's comment says what the rebuild changed and why scores did or
          did not move; no gate checks that judgment.
-      3. Write the pins and commit both files together:
+      3. Write the pins and commit them, with the classification in the
+         same commit or the one before it; the pins alone fail
+         `tests/test_arena_version.py`:
 
          ```bash
          PYTHONPATH=src python3 scripts/repin_images.py \
@@ -42,7 +44,10 @@ order that works.
 
 - [ ] The mutator re-pin, if CI made one, has landed on the branch as a bot
       commit (a PR from a fork gets none: its image is published and pinned
-      by the run on `main` after the merge). The publish job recomputes the
+      by the run on `main` after the merge). After a dispatch and a hand
+      re-pin there is usually none: that run already published the mutator
+      under its fingerprint tag, and the mutator-image run on the PR prints
+      `already in GHCR -- nothing to build`. The publish job recomputes the
       mutator fingerprint and refuses a pin that does not match the tree
       before anything is uploaded.
 - [ ] Both pinned image digests exist in GHCR; the publish job waits up to
@@ -79,8 +84,9 @@ order that works.
       `{"status":"ok","auth":"github"}` and the masthead shows the new
       version.
 - [ ] `uv tool install nethackers==X.Y.Z` in a clean environment, then
-      `nethackers --version`. The publish job runs the same canary and waits
-      up to five minutes for PyPI to serve the version.
+      `nethackers --version`. The publish job runs its own canary,
+      `uvx --isolated --no-cache nethackers@X.Y.Z --version`, and waits up
+      to five minutes for PyPI to serve the version.
 
 ## If it goes wrong
 
