@@ -319,6 +319,19 @@ ARENA_MAJOR_BY_DIGEST: dict[str, int] = {
     # nothing to disconfirm. The digest moves only because uv.lock's self-version
     # and the resolved python:3.11-slim base layer differ.
     "sha256:5ca707150654465d1795cb0cf0876f4255148b105907c27c82ae0e6bea6d7a3f": 2,
+    # v0.37.1 (the /sol permission fix), rebuilt because uv.lock is an arena
+    # input and the release moves the project's own version, 0.37.0 -> 0.37.1;
+    # not one package version moves, so the installed environment is identical.
+    # The only non-lock change since the digest above is host-side and never
+    # loaded by an episode -- eval/runner.py's o+rx on the /sol mount root
+    # (which makes THIS arena runnable at all under a 0700 solution clone).
+    # arena/ and contracts/ are untouched (`git diff v0.37.0...HEAD --
+    # src/nethackers/arena src/nethackers/contracts` is empty), and so are
+    # nle-base/Dockerfile and arena/Dockerfile. Also the linux/amd64 LEG, not an
+    # index (I7). Read from the diff, NOT measured: no scoring-path code changed.
+    # The digest moves only because uv.lock's self-version and the resolved
+    # python:3.11-slim base layer differ.
+    "sha256:0446ba18bd312fd589a53479092e5a76f45cf10e8795a6c21d3a7fcdb40c744c": 2,
 }
 
 
