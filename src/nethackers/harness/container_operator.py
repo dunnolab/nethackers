@@ -22,9 +22,19 @@ alternative to the credential mount above: when set, ``run`` starts one
 ``cred_broker.CredBroker`` per credential that needs brokering, for the
 container's whole lifetime, in place of ``auth_docker_args``. claude/codex
 each have exactly one upstream/credential, so that's a single broker via
-``auth_inject.auth_broker_args`` (base-URL env + placeholder key, no ``-v``
-mount). OpenCode 2 is multi-provider -- its base-URL override is a
-per-provider JSON field, not one env var -- so it starts one broker PER
+``auth_inject.auth_broker_args`` -- claude by a base-URL env + placeholder key
+(no ``-v`` mount), codex by a ``-c model_providers.…`` INVOCATION override
+(``operator._codex_cmd``, threaded through ``build_docker_argv``'s
+``broker_base``) pointing codex at a CUSTOM UNAUTHENTICATED provider. That
+override survives ``codex exec --ignore-user-config`` (which discards
+``~/.codex/config.toml`` -- why the earlier cage ``openai_base_url`` config
+was silently ignored), and, carrying no ``requires_openai_auth``/``env_key``,
+makes codex send its POST with NO credential -- the broker injects 100% of
+the auth host-side. codex's cage ``~/.codex`` is therefore just an EMPTY,
+writable dir + ``CODEX_HOME`` (it needs a writable ``$CODEX_HOME`` for its
+app-server socket/state); no token or config crosses the boundary. OpenCode 2
+is multi-provider -- its base-URL override
+is a per-provider JSON field, not one env var -- so it starts one broker PER
 BROKERABLE PROVIDER instead, via ``auth_inject.opencode2_broker_targets``
 (resolve) / ``opencode2_broker_docker_args`` (rewrite the cage config);
 ``auth_broker_args`` itself stays claude/codex-only and is never called for
@@ -54,7 +64,7 @@ from nethackers.harness.auth_inject import (
     opencode2_broker_docker_args,
     opencode2_broker_targets,
 )
-from nethackers.harness.cred_broker import CredBroker
+from nethackers.harness.cred_broker import BROKER_PORT_RANGE, CredBroker, HeaderRewrite
 from nethackers.harness.operator import (
     OperatorResult,
     _claude_cmd,
@@ -65,14 +75,21 @@ from nethackers.harness.operator import (
 from nethackers.harness.sandbox_preflight import mutator_platform_args
 
 # The provider API host CredBroker forwards to, per harness -- fixed at
-# construction (CredBroker is a single-upstream proxy, never open-relay).
-# Codex's real backend (a plain API-key host vs. a ChatGPT/ChatGPT-plan
-# backend behind the OAuth login docs/harness.md describes) is UNVERIFIED;
-# this is the standard public-API host, parked for live confirmation like
-# the rest of the broker path -- see auth_inject's module docstring.
+# construction (CredBroker is a single-upstream proxy, never open-relay). The
+# broker forwards `upstream_base + request.path`.
+# Codex's backend is the ChatGPT-SUBSCRIPTION one (`auth_mode: chatgpt`): a
+# subscription login talks to `chatgpt.com/backend-api/codex/responses`, NOT
+# the plain-API-key `api.openai.com`. This endpoint is VERIFIED via research
+# (codex-rs source + OpenCode's plugin + several third-party proxies), not a
+# guess. The upstream is the HOST ONLY (`https://chatgpt.com`): codex's `-c`
+# provider `base_url` already ends in `/backend-api/codex`, so codex POSTs
+# `/backend-api/codex/responses` and `upstream + path` reconstructs the full
+# `https://chatgpt.com/backend-api/codex/responses` -- doubling the prefix
+# here would 404. (See _codex_cmd for the `-c` routing and auth_inject's
+# "Codex broker" section for the injected Authorization/ChatGPT-Account-Id.)
 _BROKER_UPSTREAM_BASE = {
     "claude": "https://api.anthropic.com",
-    "codex": "https://api.openai.com",
+    "codex": "https://chatgpt.com",
 }
 
 
@@ -93,14 +110,46 @@ class _CredBrokerLike(Protocol):
 
 
 def _host_gateway_url(base_url: str) -> str:
-    """``http://127.0.0.1:<port>`` (what ``CredBroker.start()`` returns) --
-    reachable from the host, but 127.0.0.1 *inside* the container is the
-    container itself, not the host. Re-hosts the same port onto
-    ``host.docker.internal``, which ``build_docker_argv``'s ``--add-host
+    """``http://<broker-bind-host>:<port>`` (what ``CredBroker.start()``
+    returns) -- reachable from the host, but that host/loopback *inside* the
+    container is the container itself, not the host. Re-hosts the same port
+    onto ``host.docker.internal``, which ``build_docker_argv``'s ``--add-host
     host.docker.internal:host-gateway`` (added on the broker path) makes
     resolvable from inside the container."""
     parts = urlsplit(base_url)
     return urlunsplit(parts._replace(netloc=f"host.docker.internal:{parts.port}"))
+
+
+def _bridge_gateway_ip(runtime: str, *, run=subprocess.run) -> str | None:
+    """The default-bridge GATEWAY IP the sandbox's ``host.docker.internal``
+    resolves to on native Linux (docker0 is 172.17.0.1 by default). The broker
+    binds HERE on Linux so the container can reach it -- reachable from the
+    docker bridge, NOT the host's public interface (never 0.0.0.0). Docker
+    Desktop (macOS) routes ``host.docker.internal`` to the host loopback
+    instead, so there the broker keeps binding 127.0.0.1. Returns ``None`` if
+    the gateway can't be read; the caller then falls back to loopback (which
+    fails LOUD on Linux rather than silently exposing 0.0.0.0)."""
+    try:
+        result = run(
+            [runtime, "network", "inspect", "bridge",
+             "-f", "{{range .IPAM.Config}}{{.Gateway}}{{end}}"],
+            capture_output=True, text=True, timeout=10,
+        )
+    except (OSError, subprocess.SubprocessError):
+        return None
+    gateway = (getattr(result, "stdout", "") or "").strip()
+    return gateway or None
+
+
+def ufw_rule_hint(gateway: str) -> str:
+    """The exact, port-SCOPED ufw rule that lets a docker container reach the
+    host-side broker on a ufw-firewalled Linux host (ufw blocks docker0->host
+    by default). Scoped to the broker's own fixed port range on the gateway --
+    NOT a blanket ``ufw allow in on docker0``, which would open every host
+    service to the untrusted sandbox. Reusable by ``doctor`` and (when it
+    lands) ``nethackers setup``."""
+    lo, hi = BROKER_PORT_RANGE.start, BROKER_PORT_RANGE.stop - 1
+    return f"sudo ufw allow in on docker0 to {gateway} port {lo}:{hi} proto tcp"
 
 
 @dataclass(frozen=True)
@@ -135,6 +184,7 @@ def build_docker_argv(
     docker: str = "docker",
     extra_args: list[str] | None = None,
     userns_args: list[str] | None = None,
+    broker_base: str | None = None,
 ) -> list[str]:
     """Assemble ``docker run`` argv for one mutator iteration: fixed docker
     prefix (name + caps + security-opt + extra_args + workspace mount), then
@@ -166,6 +216,15 @@ def build_docker_argv(
     it, for ``--add-host host.docker.internal:host-gateway`` (the container
     needs a route to the host-side broker). ``None`` (the default) keeps the
     argv byte-identical to before this existed.
+
+    ``broker_base``, when given, is the host-gateway base URL of the codex
+    credential broker; it is threaded into the in-cage ``codex exec`` command
+    as the ``-c model_providers.…`` provider override that routes codex's
+    model endpoint at the broker (see ``operator._codex_cmd``). It is
+    consumed by the codex branch ONLY -- claude routes via an ``ANTHROPIC_BASE_URL``
+    env in ``auth_args`` and opencode2 via its per-provider cage config, so both
+    pass ``None`` here. ``None`` (the default, and every non-broker run) keeps
+    codex on its mounted-``~/.codex`` auth with a byte-identical argv.
     """
     argv = [
         docker, "run", *mutator_platform_args(image), "--rm",
@@ -188,19 +247,22 @@ def build_docker_argv(
     argv += auth_args
     argv += [image]
     argv += ["timeout", str(caps.timeout_s)]
-    argv += _in_cage_cmd(harness, cli, brief, model, effort)
+    argv += _in_cage_cmd(harness, cli, brief, model, effort, broker_base)
     return argv
 
 
 def _in_cage_cmd(
     harness: str, cli: str | None, brief: str, model: str | None, effort: str | None,
+    broker_base: str | None = None,
 ) -> list[str]:
     if harness == "claude":
         return _claude_cmd(cli or "claude", brief, model, effort) + [
             "--dangerously-skip-permissions",
         ]
     if harness == "codex":
-        cmd = _codex_cmd(cli or "codex", brief, model, effort)
+        # `broker_base` (broker path only) routes codex at the broker via a `-c`
+        # provider override; None (the mount path) leaves the codex argv as-is.
+        cmd = _codex_cmd(cli or "codex", brief, model, effort, broker_base=broker_base)
         return [
             "--dangerously-bypass-approvals-and-sandbox" if tok == "--approve-for-me" else tok
             for tok in cmd
@@ -251,8 +313,15 @@ class ContainerOperator:
         docker: str = "docker",
         run_id: str | None = None,
         broker: bool = False,
-        cred_broker_factory: Callable[[str, str, str], _CredBrokerLike] = CredBroker,
-        broker_credential: Callable[..., tuple[str, str]] = _default_broker_credential,
+        # `Callable[..., _CredBrokerLike]`, not a narrower
+        # `Callable[[str, HeaderRewrite], _CredBrokerLike]`: real
+        # `cred_broker.CredBroker` (the default) takes a third `impersonate`
+        # keyword (`_start_broker_auth` passes it for codex), and this
+        # mirrors `broker_credential` just below, an existing injectable
+        # seam with the identical "real signature has more than the two
+        # tests need to fake" shape.
+        cred_broker_factory: Callable[..., _CredBrokerLike] = CredBroker,
+        broker_credential: Callable[..., HeaderRewrite] = _default_broker_credential,
         userns_args: list[str] | None = None,
     ) -> None:
         self.harness = harness
@@ -325,8 +394,11 @@ class ContainerOperator:
                 # instead of a credential mount. Broker(s) are started here,
                 # before the docker argv is even built -- the auth args need
                 # each broker's (host-gateway) base URL, which only exists
-                # once `start()` has run.
-                auth, extra_args = self._start_broker_auth(broker_procs)
+                # once `start()` has run. `broker_base` is codex-only (the
+                # host-gateway URL its `-c` provider override needs baked into
+                # the in-cage command); None for claude/opencode2, which route
+                # via auth env / per-provider cage config instead.
+                auth, extra_args, broker_base = self._start_broker_auth(broker_procs)
             else:
                 # Resolve auth/config BEFORE shelling out to docker: login-only
                 # backends fail early instead of mounting an empty path. OpenCode 2
@@ -337,11 +409,12 @@ class ContainerOperator:
                     self.harness, system=self.system, home=self.home, _require_exists=True,
                 )
                 extra_args = None
+                broker_base = None
             argv = build_docker_argv(
                 harness=self.harness, image=self.image, name=name, worktree=worktree,
                 cli=self.cli, model=self.model, effort=self.effort, caps=self.caps,
                 auth_args=auth, brief=brief, refs=refs, docker=self.docker,
-                extra_args=extra_args, userns_args=self.userns_args,
+                extra_args=extra_args, userns_args=self.userns_args, broker_base=broker_base,
             )
             done = threading.Event()
             watcher: threading.Thread | None = None
@@ -367,6 +440,16 @@ class ContainerOperator:
                     popen=self._popen,
                     stdin_text=brief if self.harness == "opencode2" else None,
                 )
+            except RuntimeError as exc:
+                # Fail-loud firewall hint: a broker run that failed with ZERO
+                # requests ever reaching the broker means the sandbox never
+                # reached it -- on native Linux that's docker0->host blocked by
+                # a firewall (ufw), not a provider/agent bug. Re-raise with the
+                # exact scoped rule instead of a bare "operator exited".
+                hint = self._firewall_hint_or_none(broker_procs)
+                if hint is not None:
+                    raise RuntimeError(f"{hint}\n\nOriginal error: {exc}") from exc
+                raise
             finally:
                 done.set()
                 if watcher is not None:
@@ -403,15 +486,43 @@ class ContainerOperator:
             for proc in broker_procs:
                 proc.stop()
 
+    def _firewall_hint_or_none(self, broker_procs: list[_CredBrokerLike]) -> str | None:
+        """A fail-loud firewall hint when a broker run failed but NO request
+        ever reached any broker -- on native Linux that means the sandbox
+        couldn't reach the host broker (docker0->host blocked, e.g. by ufw),
+        which is a host-networking problem, not a provider/agent bug. Returns
+        ``None`` (re-raise the original error unchanged) on macOS, when the
+        broker path wasn't taken, or when a broker WAS reached (the failure is
+        then something else)."""
+        if self.system == "Darwin" or not broker_procs:
+            return None
+        if any(getattr(p, "requests_seen", 0) for p in broker_procs):
+            return None
+        gateway = _bridge_gateway_ip(self.docker, run=self._run) or "<docker-bridge-gateway>"
+        return (
+            "the sandbox never reached the credential broker -- on Linux the docker "
+            "bridge->host path is likely blocked by a firewall (ufw). Allow it with:\n"
+            f"    {ufw_rule_hint(gateway)}\n"
+            "(or re-run with --no-broker to mount the credential into the sandbox, which "
+            "exposes it to the untrusted code)."
+        )
+
     def _start_broker_auth(
         self, broker_procs: list[_CredBrokerLike],
-    ) -> tuple[list[str], list[str] | None]:
+    ) -> tuple[list[str], list[str] | None, str | None]:
         """Start whatever ``CredBroker``(s) this run's harness needs and
-        return the ``(auth_args, extra_args)`` pair ``run`` splices into the
-        docker argv -- the broker-path counterpart to the plain
-        ``auth_docker_args`` call in ``run``'s ``else`` branch. Every broker
-        started is appended to ``broker_procs`` (the caller's list) so its
-        ``finally`` stops all of them, however many there turned out to be.
+        return the ``(auth_args, extra_args, broker_base)`` triple ``run``
+        splices into the docker argv -- the broker-path counterpart to the
+        plain ``auth_docker_args`` call in ``run``'s ``else`` branch. Every
+        broker started is appended to ``broker_procs`` (the caller's list) so
+        its ``finally`` stops all of them, however many there turned out to be.
+
+        ``broker_base`` (the third element) is the codex broker's host-gateway
+        URL, needed by ``build_docker_argv`` to bake codex's ``-c`` provider
+        override into the in-cage command; it is ``None`` for claude and
+        opencode2, whose broker routing is entirely in ``auth_args`` (an
+        ``ANTHROPIC_BASE_URL`` env / the per-provider cage config) rather than
+        the codex command.
 
         claude/codex each have exactly one upstream/credential -- unchanged
         from before this method existed: one ``CredBroker``, one
@@ -425,18 +536,40 @@ class ContainerOperator:
         zero brokers and falls back to the credential mount wholesale,
         rather than mount an empty broker config behind an unused
         ``--add-host``.
+
+        codex's ``CredBroker`` (only) is constructed with ``impersonate=True``:
+        its upstream, ``chatgpt.com``, sits behind Cloudflare JA3/TLS
+        fingerprinting that 403s a plain forward, so that one broker forwards
+        via ``curl_cffi`` Chrome impersonation instead of ``httpx`` (see
+        ``cred_broker.CredBroker``'s docstring) -- ``curl_cffi`` is installed
+        host-side on demand (setup pre-installs it; the broker self-heals), so
+        it never enters ``uv.lock``. claude and every opencode2 broker stay
+        ``impersonate=False`` (the default) -- their upstreams aren't behind
+        the same fingerprinting.
         """
+        codex_broker_base: str | None = None
+        # Where the broker(s) LISTEN so the sandbox can reach them: loopback on
+        # macOS (Docker Desktop routes the container's host.docker.internal
+        # there), the docker BRIDGE GATEWAY on native Linux (the container
+        # reaches the host via that gateway, not loopback -- 127.0.0.1 was
+        # unreachable from a Linux container). NEVER 0.0.0.0: that exposes the
+        # credential-injecting proxy on the host's public interface. An
+        # undeterminable gateway falls back to loopback, which fails LOUD on
+        # Linux rather than silently exposing the broker.
+        bind_host = "127.0.0.1"
+        if self.system != "Darwin":
+            bind_host = _bridge_gateway_ip(self.docker, run=self._run) or "127.0.0.1"
         if self.harness == "opencode2":
             targets = opencode2_broker_targets(home=self.home, environ=os.environ)
             if not targets:
                 auth = auth_docker_args(
                     self.harness, system=self.system, home=self.home, _require_exists=True,
                 )
-                return auth, None
+                return auth, None, None
             broker_bases: dict[tuple[str, str], str] = {}
             for target in targets:
                 proc = self._cred_broker_factory(
-                    target["upstream"], target["header_name"], target["header_value"],
+                    target["upstream"], target["rewrite"], bind_host=bind_host,
                 )
                 broker_procs.append(proc)
                 broker_bases[(target["file"], target["name"])] = _host_gateway_url(proc.start())
@@ -444,22 +577,41 @@ class ContainerOperator:
                 self.home, environ=os.environ, broker_bases=broker_bases,
             )
         else:
-            header_name, header_value = self._broker_credential(
+            rewrite = self._broker_credential(
                 self.harness, system=self.system, home=self.home, run=self._run,
+                environ=os.environ,
             )
             proc = self._cred_broker_factory(
-                _broker_upstream_base(self.harness), header_name, header_value,
+                _broker_upstream_base(self.harness), rewrite,
+                # Only codex's upstream (chatgpt.com) is Cloudflare-fronted
+                # and JA3/TLS-fingerprinted; claude's isn't, so it stays on
+                # the plain httpx forward (impersonate's default, False).
+                impersonate=(self.harness == "codex"),
+                bind_host=bind_host,
             )
             broker_procs.append(proc)
             broker_base = _host_gateway_url(proc.start())
-            auth = auth_broker_args(self.harness, broker_base=broker_base)
+            # `home=` is required for the codex cage: an EMPTY, writable
+            # `~/.codex` dir + `CODEX_HOME` env (codex needs a writable
+            # $CODEX_HOME for its app-server socket/state) -- no token, no
+            # config crosses (routing is the `-c` override below; auth is
+            # broker-injected). The claude branch ignores `home`.
+            auth = auth_broker_args(self.harness, broker_base=broker_base, home=self.home)
+            # codex's model endpoint is routed by a `-c model_providers.…`
+            # INVOCATION override (it survives `codex exec --ignore-user-config`,
+            # which discards ~/.codex/config.toml), so the broker's host-gateway
+            # base URL must reach `build_docker_argv` too -- not just
+            # `auth_broker_args`. claude routes via the ANTHROPIC_BASE_URL env
+            # `auth_broker_args` already emits, so it needs nothing here.
+            if self.harness == "codex":
+                codex_broker_base = broker_base
         # The container needs a route to the host-side broker(s);
         # `host.docker.internal` only resolves with this on Linux docker
         # (Docker Desktop/macOS already provides it) -- one add-host serves
         # every broker above, since they all listen on loopback and share
         # the same host-gateway rewrite (`_host_gateway_url`).
         extra_args = ["--add-host", "host.docker.internal:host-gateway"]
-        return auth, extra_args
+        return auth, extra_args, codex_broker_base
 
     def _maybe_kill_on_stop(self, name: str, stop: threading.Event | None) -> None:
         """Single check-and-act step, kept separate from the watcher's poll

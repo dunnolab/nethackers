@@ -268,6 +268,17 @@ def test_eval_output_mount_uses_home_backed_managed_tmp(tmp_path, monkeypatch):
     assert not host_out.exists()  # TemporaryDirectory still cleans each run.
 
 
+def test_eval_temp_dir_is_world_writable_for_the_nobody_arena(tmp_path, monkeypatch):
+    # The arena container writes results.json into /out as uid 65534 (nobody);
+    # tempfile creates the dir 0700 owned by whoever launched the eval, which
+    # that uid can't write on native Linux (Docker Desktop's uid remap hides it
+    # on macOS). The ephemeral output dir must be world-writable, or the arena
+    # fails PermissionError and evolve crashes.
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    with eval_runner._eval_temp_dir() as td:
+        assert Path(td).stat().st_mode & 0o777 == 0o777, oct(Path(td).stat().st_mode)
+
+
 @pytest.mark.parametrize("unusable", ["root_blocked", "root_read_only"])
 def test_eval_output_mount_falls_back_to_system_temp(tmp_path, monkeypatch, unusable):
     # Both ways ~/.nethackers/tmp can be unusable: its root can't be created,

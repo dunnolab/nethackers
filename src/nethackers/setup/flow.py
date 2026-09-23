@@ -23,6 +23,7 @@ from rich.markup import escape
 
 from nethackers.containers import RuntimeReport
 from nethackers.diagnostics import CAPABILITIES, CheckResult, capability_ready, exit_code
+from nethackers.harness.impersonation import impersonation_available, install_argv
 from nethackers.hubclient.credentials import Credentials
 from nethackers.setup import host, render
 from nethackers.setup.host import HostFacts
@@ -78,6 +79,10 @@ class SetupDeps:
     ask_agent: Callable[[], str]
     confirm: Callable[[], bool]
     report: Callable[[list[CheckResult], render.Summary], None]
+    # Whether curl_cffi (codex's TLS-impersonation broker dep) is importable in
+    # this interpreter; when a codex setup finds it missing, setup pre-installs
+    # it so the first evolve run doesn't have to.
+    impersonation_ready: Callable[[], bool] = impersonation_available
 
 
 def resolve_exe(name: str, *, which: Callable[[str], str | None], home: Path) -> str | None:
@@ -141,6 +146,12 @@ def run_setup(opts: SetupOptions, deps: SetupDeps) -> int:
     pulls = tuple(k for k in ("arena", "mutator")
                   if f"{k}_image" in wanted and wanted[f"{k}_image"].status != "ok")
     emulation = plat.emulation(facts, read_text=deps.read_text)[2] if "rosetta" in wanted else None
+    firewall = plat.firewall_recipe(facts, runtime) if opts.scope in (None, "evolve") else None
+    # codex's broker needs curl_cffi (TLS impersonation), kept out of packaged
+    # deps -- pre-install it host-side so the first codex run is instant. The
+    # broker self-heals too, so this is a convenience, not a gate.
+    impersonation = (install_argv(which=deps.which)
+                     if agent == "codex" and evolve and not deps.impersonation_ready() else None)
     sit = Situation(
         checks=tuple(checks), facts=facts, runtime=runtime, scope=opts.scope, agent=agent,
         agent_installed=agent is not None and (agent == "opencode2"
@@ -151,6 +162,8 @@ def run_setup(opts: SetupOptions, deps: SetupDeps) -> int:
         gh_login=gh_login, gh_state=gh_state,
         pull_size=deps.pull_size(pulls) if pulls and runtime.runtime is not None else None,
         emulation=emulation,
+        firewall=firewall,
+        impersonation=impersonation,
     )
     plan = build_plan(sit, plat)
 

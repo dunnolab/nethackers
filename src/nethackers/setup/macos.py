@@ -258,3 +258,11 @@ def _colima(text: str | None) -> tuple[str, str, Recipe | None]:
     if _COLIMA_ROSETTA_ON.search(text):
         return "ok", "Colima runs amd64 with Rosetta", None
     return "warn", f"Colima runs amd64 under QEMU, not Rosetta ({COST})", ROSETTA_COLIMA
+
+
+def firewall_recipe(facts: HostFacts, report: RuntimeReport) -> Recipe | None:
+    """None: Docker Desktop routes the container's ``host.docker.internal`` to
+    the host loopback and puts no host firewall in the sandbox->broker path, so
+    the credential broker is reachable without a ufw rule -- the Linux docker0
+    firewall problem doesn't arise here."""
+    return None

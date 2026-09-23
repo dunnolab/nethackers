@@ -96,10 +96,17 @@ class EvolveParams:
         default_factory=lambda: resolve_image(load_stage().mutator_image, "mutator"))
     repo_name: str = field(default_factory=lambda: load_stage().repo_name)  # <owner>/<repo_name>
     # Opt into ContainerOperator's credential-broker path (§3d, INV2) instead
-    # of its default credential mount. False keeps every existing run
-    # byte-identical; live per-agent broker auth is unverified, so this isn't
-    # switched on by default -- see container_operator.py's module docstring.
-    broker: bool = False
+    # of its default credential mount. This is now the DEFAULT credential
+    # defense: it keeps the model credential host-side and injects it only on
+    # the wire to the one real provider, so untrusted in-container code can't
+    # read it -- even under today's open egress (INV5 isn't a gate yet). The
+    # credential MOUNT is the opt-out (`--no-broker` / the TUI toggle), for a
+    # host where the broker's wire contract doesn't hold. Per-agent broker
+    # correctness is covered by the unit tier's fail-loud/profile tests plus
+    # the opt-in `tests/e2e/` tier and a gated live smoke -- see
+    # container_operator.py's module docstring and the credential-broker
+    # design doc.
+    broker: bool = True
 
 
 @dataclass

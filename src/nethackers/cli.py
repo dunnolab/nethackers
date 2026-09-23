@@ -573,6 +573,14 @@ def _build_parser(stage: Stage) -> argparse.ArgumentParser:
         "default is the fast self-reported network. Either way, every pulled "
         "program runs in the sealed sandbox.",
     )
+    evolve.add_argument(
+        "--broker", action=argparse.BooleanOptionalAction, dest="broker", default=None,
+        help="Credential broker (default): the model credential stays host-side "
+        "and is injected only on the wire to the one real provider, so the "
+        "mutator's untrusted code never sees it -- even under today's open "
+        "egress. --no-broker mounts the real credential into the sandbox "
+        "instead (the older, opt-out behavior).",
+    )
 
     pl = sub.add_parser(
         "pull", parents=[common], formatter_class=RichHelpFormatter,
@@ -1112,6 +1120,12 @@ def _run(argv: list[str] | None) -> int:
         # run.json + run wiring live in prepare_evolve, shared with the in-app
         # form. The MAP-Elites loop seeds its cells from the hub itself, so
         # there's no pre-loop SELECT here anymore.
+        # --broker/--no-broker is tri-state (default=None): pass broker=
+        # through only when the caller actually gave the flag, so leaving it
+        # unspecified keeps EvolveParams' OWN default (True) as the single
+        # source of truth for "unspecified" -- unlike --verified's plain
+        # store_true/False, None here must not collapse to a hardcoded False.
+        broker_kwargs = {} if args.broker is None else {"broker": args.broker}
         params = EvolveParams(
             objective=args.objective, seed=str(args.seed), operator=args.operator,
             iterations=args.iterations,
@@ -1124,6 +1138,7 @@ def _run(argv: list[str] | None) -> int:
             model=args.model, effort=args.effort, mutator_image=mut,
             runtime=evolve_runtime,
             tier="verified" if args.verified else "self-reported",
+            **broker_kwargs,
         )
         # An anonymous run is offline by necessity (the owner==OFFLINE_OWNER
         # backstop in _publisher_for), but --offline is the only case that says

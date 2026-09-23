@@ -305,6 +305,20 @@ ARENA_MAJOR_BY_DIGEST: dict[str, int] = {
     # every rebuild, the base layer is whatever `python:3.11-slim` resolves to
     # today, which is why the digest moves at all.
     "sha256:689c4cee4ae8f66834b8555b52e3af37e3b8004ed276df4cd610c38bc04d2c33": 2,
+    # v0.37.0 (credential broker on by default), rebuilt because uv.lock is an
+    # arena input and the release moves the project's own version in it,
+    # 0.36.2 -> 0.37.0; not one package version moves, so the installed
+    # environment is identical. Everything else that differs from the digest
+    # above is host-side and never loaded by an episode -- the broker
+    # (cred_broker, harness/impersonation, container_operator, auth_inject), the
+    # setup module, tui/, eval/runner's /out chmod. arena/ and contracts/ are
+    # untouched (`git diff v0.36.2...HEAD -- src/nethackers/arena
+    # src/nethackers/contracts` is empty), and so are nle-base/Dockerfile and
+    # arena/Dockerfile. Also the linux/amd64 LEG, not an index (I7). Read from
+    # the diff, NOT measured: no scoring-path code changed, so a re-run has
+    # nothing to disconfirm. The digest moves only because uv.lock's self-version
+    # and the resolved python:3.11-slim base layer differ.
+    "sha256:5ca707150654465d1795cb0cf0876f4255148b105907c27c82ae0e6bea6d7a3f": 2,
 }
 
 

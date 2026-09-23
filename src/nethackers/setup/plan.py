@@ -79,6 +79,8 @@ class Situation:
     gh_state: str                     # "authed" | "unauthed" | "missing"
     pull_size: int | None = None      # bytes the pull will download, when known
     emulation: Recipe | None = None   # what turns Rosetta on, when it's off
+    firewall: Recipe | None = None    # the ufw allowance the broker needs (Linux)
+    impersonation: tuple[str, ...] | None = None  # curl_cffi install argv (codex broker dep)
 
 
 def in_scope(checks: Sequence[CheckResult], scope: str | None) -> dict[str, CheckResult]:
@@ -189,6 +191,12 @@ def build_plan(sit: Situation, plat: ModuleType) -> Plan:
         steps.append(Step("pull", title, "pull", size, needs=tuple(runtime_steps[-1:]),
                           images=pulls))
 
+    if sit.impersonation is not None:
+        steps.append(Step("impersonation",
+                          "install codex's TLS-impersonation helper (curl_cffi)",
+                          "captured", shown_command(sit.impersonation), sit.impersonation))
+    if sit.firewall is not None and sit.scope in (None, "evolve"):
+        yours.append(_todo(sit.firewall))
     advice = _todo(sit.emulation) if sit.emulation is not None and "rosetta" in wanted else None
     # Already a step before the run (installing Rosetta holds back a new VM): say it once.
     afterwards = (advice,) if advice is not None and advice not in yours else ()

@@ -7,11 +7,15 @@ from pathlib import Path
 
 import pytest
 
+from nethackers.harness.auth_inject import AuthUnavailable
 from nethackers.harness.container_operator import (
     ContainerCaps,
     ContainerOperator,
+    _bridge_gateway_ip,
     build_docker_argv,
+    ufw_rule_hint,
 )
+from nethackers.harness.cred_broker import HeaderRewrite
 
 
 def _argv(harness, **kw):
@@ -433,18 +437,33 @@ def test_stop_reliably_kills_even_when_run_operators_watcher_wins_the_race(
 # fakes -- no real server, no real Keychain/`.codex`/`.credentials.json`
 # touched by these tests.
 
+@pytest.fixture(autouse=True)
+def _stub_bridge_gateway(monkeypatch):
+    # The broker's Linux bind-host lookup shells out to `docker network
+    # inspect bridge` (these tests use system="Linux"); stub it so the unit
+    # tier never touches real docker and the Linux broker path binds the
+    # docker0 gateway deterministically.
+    monkeypatch.setattr(
+        "nethackers.harness.container_operator._bridge_gateway_ip",
+        lambda *a, **k: "172.17.0.1",
+    )
+
+
 class _FakeBroker:
     """Stands in for `cred_broker.CredBroker`: records ctor args, fakes
     start()/stop() so no real socket/thread is ever created in a test.
     `port` defaults to the single-broker tests' existing hardcoded 9999; the
     multi-broker (opencode2) tests further down pass a distinct one per
-    instance so two concurrently-"started" fakes are tellable apart."""
+    instance so two concurrently-"started" fakes are tellable apart.
+    `impersonate` (default False, matching the real `CredBroker`) is recorded
+    so a test can assert which harness's broker got constructed with it."""
 
-    def __init__(self, upstream_base, header_name, header_value, port=9999):
+    def __init__(self, upstream_base, rewrite, port=9999, impersonate=False, bind_host="127.0.0.1"):
         self.upstream_base = upstream_base
-        self.header_name = header_name
-        self.header_value = header_value
+        self.rewrite = rewrite
         self.port = port
+        self.impersonate = impersonate
+        self.bind_host = bind_host
         self.started = False
         self.stopped = False
 
@@ -456,19 +475,34 @@ class _FakeBroker:
         self.stopped = True
 
 
-def _broker_op(tmp_path, harness="claude", **kw):
+def _write_codex_cage_source(home: Path, account_id="acct-1"):
+    """A minimal host `~/.codex/auth.json` the codex broker cage login reads
+    its (non-secret) account_id out of. Real-looking tokens are present so a
+    test can assert they never cross into the container's argv."""
+    codex = home / ".codex"
+    codex.mkdir(parents=True, exist_ok=True)
+    (codex / "auth.json").write_text(json.dumps({
+        "OPENAI_API_KEY": "", "auth_mode": "chatgpt",
+        "tokens": {"access_token": "REAL-OAUTH", "refresh_token": "REAL-REF",
+                   "account_id": account_id, "id_token": "REAL-ID"},
+    }))
+
+
+def _broker_op(tmp_path, harness="claude", system="Linux", **kw):
     holder = {}
 
-    def fake_factory(upstream_base, header_name, header_value):
-        b = _FakeBroker(upstream_base, header_name, header_value)
+    def fake_factory(upstream_base, rewrite, impersonate=False, bind_host="127.0.0.1"):
+        b = _FakeBroker(upstream_base, rewrite, impersonate=impersonate, bind_host=bind_host)
         holder["broker"] = b
         return b
 
     op = ContainerOperator(
-        harness=harness, image="img:test", system="Linux", home=tmp_path,
+        harness=harness, image="img:test", system=system, home=tmp_path,
         broker=True,
         cred_broker_factory=fake_factory,
-        broker_credential=lambda *a, **kw: ("x-api-key", "REAL-SECRET-VALUE"),
+        broker_credential=lambda *a, **kw: HeaderRewrite(
+            inject=(("Authorization", "Bearer REAL-SECRET-VALUE"),)
+        ),
         **kw,
     )
     return op, holder
@@ -486,7 +520,7 @@ def test_broker_path_claude_env_and_add_host_no_mount(tmp_path):
     cmd = seen["cmd"]
     joined = " ".join(cmd)
     assert "ANTHROPIC_BASE_URL=http://host.docker.internal:9999" in joined
-    assert "ANTHROPIC_API_KEY=proxy-managed" in joined
+    assert "CLAUDE_CODE_OAUTH_TOKEN=proxy-managed" in joined   # OAuth mode, not x-api-key
     assert "--add-host" in cmd
     assert cmd[cmd.index("--add-host") + 1] == "host.docker.internal:host-gateway"
     assert "REAL-SECRET-VALUE" not in joined   # real key never reaches argv
@@ -494,15 +528,23 @@ def test_broker_path_claude_env_and_add_host_no_mount(tmp_path):
     v_values = [v for flag, v in zip(cmd, cmd[1:], strict=False) if flag == "-v"]
     assert v_values == [f"{wt}:/workspace"]
     assert holder["broker"].upstream_base == "https://api.anthropic.com"
-    assert holder["broker"].header_name == "x-api-key"
-    assert holder["broker"].header_value == "REAL-SECRET-VALUE"
+    assert ("Authorization", "Bearer REAL-SECRET-VALUE") in holder["broker"].rewrite.inject
     assert holder["broker"].started is True
     assert holder["broker"].stopped is True
+    # claude's upstream isn't Cloudflare-fronted -- stays on the plain httpx
+    # forward (impersonate=False), unlike codex's below.
+    assert holder["broker"].impersonate is False
+    # native Linux: the broker binds the docker0 gateway (stubbed 172.17.0.1),
+    # NOT 127.0.0.1 which is unreachable from a Linux container.
+    assert holder["broker"].bind_host == "172.17.0.1"
 
 
-def test_broker_path_codex_env_and_add_host_no_mount(tmp_path):
+def test_broker_path_codex_via_c_override_at_chatgpt_host_upstream(tmp_path):
     seen = {}
     op, holder = _broker_op(tmp_path, harness="codex")
+    # a host ~/.codex login exists (the broker reads it host-side) -- present
+    # here to prove its real tokens still never reach the container argv
+    _write_codex_cage_source(tmp_path, account_id="acct-777")
     wt = tmp_path / "work" / "iter-1"
     wt.mkdir(parents=True)
     op._popen = lambda cmd, **kw: seen.setdefault("cmd", cmd) and FakePopen(cmd, **kw)
@@ -511,19 +553,45 @@ def test_broker_path_codex_env_and_add_host_no_mount(tmp_path):
 
     cmd = seen["cmd"]
     joined = " ".join(cmd)
-    assert "OPENAI_BASE_URL=http://host.docker.internal:9999" in joined
-    assert "OPENAI_API_KEY=proxy-managed" in joined
+    # broker forwards to the ChatGPT-subscription HOST only -- codex's `-c`
+    # base_url adds /backend-api/codex, so `upstream + path` reconstructs the
+    # full endpoint (doubling the prefix here would 404)
+    assert holder["broker"].upstream_base == "https://chatgpt.com"
+    # routed by `-c` INVOCATION overrides (survive --ignore-user-config), not a
+    # cage config.toml or the OPENAI_BASE_URL env (chatgpt mode ignores it)
+    assert "OPENAI_BASE_URL" not in joined
+    assert "OPENAI_API_KEY=proxy-managed" not in joined
+    assert "model_provider=nethackers-broker" in cmd
+    provider_c = next(t for t in cmd if t.startswith("model_providers.nethackers-broker="))
+    # broker_base is the host-gateway URL (_FakeBroker's 9999 via host.docker.internal)
+    assert 'base_url = "http://host.docker.internal:9999/backend-api/codex"' in provider_c
+    assert "supports_websockets = false" in provider_c
+    # unauthenticated custom provider -> codex sends no auth; the broker injects it
+    assert "requires_openai_auth" not in provider_c
     assert "--add-host" in cmd
+    # writable cage dir + CODEX_HOME; no token/config crosses the boundary
+    assert "CODEX_HOME=/home/agent/.codex" in cmd
+    # real tokens never reach argv, nor the broker's held header value
+    assert "REAL-OAUTH" not in joined
+    assert "REAL-REF" not in joined
+    assert "REAL-ID" not in joined
     assert "REAL-SECRET-VALUE" not in joined
+    # workspace mount + the single writable cage DIR mount (not two :ro files:
+    # codex must be able to write its app-server state into ~/.codex)
     v_values = [v for flag, v in zip(cmd, cmd[1:], strict=False) if flag == "-v"]
-    assert v_values == [f"{wt}:/workspace"]
-    assert holder["broker"].upstream_base == "https://api.openai.com"
+    assert f"{wt}:/workspace" in v_values
+    assert any(v.endswith(":/home/agent/.codex") for v in v_values)
+    assert not any(v.endswith(":/home/agent/.codex/auth.json:ro") for v in v_values)
     assert holder["broker"].started is True
     assert holder["broker"].stopped is True
+    # codex's upstream (chatgpt.com) IS Cloudflare-fronted -- the only broker
+    # ever constructed with impersonate=True (curl_cffi Chrome TLS forward).
+    assert holder["broker"].impersonate is True
 
 
 def test_broker_stopped_even_if_the_run_raises(tmp_path):
     op, holder = _broker_op(tmp_path, harness="codex")
+    _write_codex_cage_source(tmp_path)   # so auth resolves; the raise is in _popen
     wt = tmp_path / "work" / "iter-1"
     wt.mkdir(parents=True)
 
@@ -555,6 +623,52 @@ def test_broker_off_by_default_keeps_the_mount_and_no_add_host(tmp_path):
     assert "--add-host" not in cmd
     assert f"{tmp_path}/.codex:/home/agent/.codex" in cmd
     assert "OPENAI_BASE_URL" not in " ".join(cmd)
+    # the broker-only `-c` provider override must never leak onto the mount path
+    assert "model_provider=nethackers-broker" not in cmd
+    assert "CODEX_HOME=/home/agent/.codex" not in cmd
+
+
+def test_broker_fails_loud_with_no_login_never_falls_back_to_mount(tmp_path):
+    """B3 / fail-loud (design §3.4): when the broker path can't resolve a
+    real credential for claude/codex -- no login on this host -- `run` must
+    raise `AuthUnavailable` straight through `_start_broker_auth`, never
+    silently swap to the credential-MOUNT path (`auth_docker_args`), which
+    would remount the very secret the broker exists to keep host-side.
+    `cred_broker_factory` is a fail-fast stub here: `broker_credential` is
+    called BEFORE it in `_start_broker_auth`'s claude/codex branch, so a
+    correct implementation never even reaches it. `_popen` is asserted
+    unreached too -- docker must never be shelled out to for either harness."""
+    def _no_login(*a, **kw):
+        raise AuthUnavailable("claude", "run `claude setup-token`, then retry")
+
+    def _boom_if_a_broker_starts(*a, **kw):
+        pytest.fail("a broker was started despite no resolvable credential")
+
+    popen_calls: list = []
+    for harness in ("claude", "codex"):
+        op = ContainerOperator(
+            harness=harness, image="img:test", system="Linux", home=tmp_path,
+            broker=True,
+            cred_broker_factory=_boom_if_a_broker_starts,
+            broker_credential=_no_login,
+        )
+        op._popen = lambda cmd, **kw: popen_calls.append(cmd) or FakePopen(cmd, **kw)
+        wt = tmp_path / "work" / f"iter-{harness}"
+        wt.mkdir(parents=True)
+
+        with pytest.raises(AuthUnavailable):
+            op.run(wt, "BRIEF-TEXT")
+
+    assert popen_calls == []   # docker never even ran -- no mount, no container
+
+
+# The other half of B3 -- opencode2's "no brokerable provider" fallback to the
+# credential mount is INTENTIONAL (nothing sensitive crosses there -- it's
+# OpenCode's own free-model path) and must survive Task 5 unchanged. Already
+# covered by `test_broker_path_opencode2_falls_back_to_mount_when_nothing_is_
+# brokerable` below (a real no-brokerable-provider config fixture, not a
+# stubbed resolver) -- that test is left as-is and re-run as a regression
+# check rather than duplicated here.
 
 
 def test_build_docker_argv_extra_args_precede_the_image():
@@ -598,8 +712,9 @@ def _numbered_broker_factory(holder: list):
     on a distinct port (9001, 9002, ...) so a test can tell which broker
     served which provider, and appends each to `holder` -- there's no single
     `holder["broker"]` slot once a run can start more than one."""
-    def factory(upstream_base, header_name, header_value):
-        b = _FakeBroker(upstream_base, header_name, header_value, port=9000 + len(holder) + 1)
+    def factory(upstream_base, rewrite, impersonate=False, bind_host="127.0.0.1"):
+        b = _FakeBroker(upstream_base, rewrite, port=9000 + len(holder) + 1,
+                         impersonate=impersonate, bind_host=bind_host)
         holder.append(b)
         return b
     return factory
@@ -634,12 +749,15 @@ def test_broker_path_opencode2_starts_one_broker_per_brokerable_provider(monkeyp
 
     assert len(brokers) == 2   # one per BROKERABLE provider -- "leftover" is not one
     by_upstream = {b.upstream_base: b for b in brokers}
-    assert by_upstream["https://api.anthropic.com"].header_name == "x-api-key"
-    assert by_upstream["https://api.anthropic.com"].header_value == "sk-ant-real"
-    assert by_upstream["https://api.custom.example/v1"].header_name == "Authorization"
-    assert by_upstream["https://api.custom.example/v1"].header_value == "Bearer sk-custom-real"
+    assert ("x-api-key", "sk-ant-real") in by_upstream["https://api.anthropic.com"].rewrite.inject
+    assert ("Authorization", "Bearer sk-custom-real") in (
+        by_upstream["https://api.custom.example/v1"].rewrite.inject
+    )
     assert all(b.started for b in brokers)
     assert all(b.stopped for b in brokers)
+    # opencode2's providers aren't Cloudflare-fronted the way codex's
+    # chatgpt.com is -- every opencode2 broker stays impersonate=False.
+    assert all(b.impersonate is False for b in brokers)
 
     cmd = seen["cmd"]
     joined = " ".join(cmd)
@@ -744,3 +862,75 @@ def test_operator_threads_its_userns_args_into_the_run_argv(tmp_path):
     op._popen = lambda cmd, **kw: seen.setdefault("cmd", cmd) and FakePopen(cmd, **kw)
     op.run(wt, "BRIEF-TEXT")
     assert "--userns=keep-id" in seen["cmd"]
+
+
+def test_bridge_gateway_ip_reads_the_docker_bridge_gateway():
+    def fake_run(cmd, **kw):
+        assert cmd[0] == "docker" and cmd[1:3] == ["network", "inspect"]
+        class R:
+            stdout = "172.17.0.1\n"
+        return R()
+    assert _bridge_gateway_ip("docker", run=fake_run) == "172.17.0.1"
+
+
+def test_bridge_gateway_ip_none_when_docker_unavailable():
+    def boom(cmd, **kw):
+        raise OSError("docker not found")
+    assert _bridge_gateway_ip("docker", run=boom) is None
+
+
+def test_bridge_gateway_ip_none_on_empty_output():
+    def empty(cmd, **kw):
+        class R:
+            stdout = "\n"
+        return R()
+    assert _bridge_gateway_ip("docker", run=empty) is None
+
+
+def test_broker_binds_loopback_on_darwin(tmp_path, monkeypatch):
+    # macOS: Docker Desktop routes the container's host.docker.internal to the
+    # host loopback, so the broker binds 127.0.0.1 and must NOT look up a
+    # docker bridge gateway.
+    monkeypatch.setattr(
+        "nethackers.harness.container_operator._bridge_gateway_ip",
+        lambda *a, **k: pytest.fail("must not look up the bridge gateway on Darwin"),
+    )
+    op, holder = _broker_op(tmp_path, harness="claude", system="Darwin")
+    wt = tmp_path / "work" / "iter-1"
+    wt.mkdir(parents=True)
+    op._popen = lambda cmd, **kw: FakePopen(cmd, **kw)
+    op.run(wt, "BRIEF")
+    assert holder["broker"].bind_host == "127.0.0.1"
+
+
+class _ReachedBroker:
+    requests_seen = 1
+
+
+class _UnreachedBroker:
+    requests_seen = 0
+
+
+def test_ufw_rule_hint_is_port_scoped_to_the_broker_range():
+    # scoped to the broker's fixed port range on the gateway, NOT a blanket
+    # `allow in on docker0` (which would open every host service to the sandbox)
+    assert ufw_rule_hint("172.17.0.1") == (
+        "sudo ufw allow in on docker0 to 172.17.0.1 port 11700:11749 proto tcp"
+    )
+
+
+def test_firewall_hint_fires_when_no_request_reached_the_broker(tmp_path):
+    op, _ = _broker_op(tmp_path, harness="claude")  # system="Linux"
+    hint = op._firewall_hint_or_none([_UnreachedBroker()])
+    assert hint is not None
+    assert "ufw allow in on docker0" in hint and "172.17.0.1" in hint and "--no-broker" in hint
+
+
+def test_no_firewall_hint_when_a_broker_was_reached(tmp_path):
+    op, _ = _broker_op(tmp_path, harness="claude")
+    assert op._firewall_hint_or_none([_ReachedBroker()]) is None
+
+
+def test_no_firewall_hint_on_darwin(tmp_path):
+    op, _ = _broker_op(tmp_path, harness="claude", system="Darwin")
+    assert op._firewall_hint_or_none([_UnreachedBroker()]) is None

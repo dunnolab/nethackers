@@ -9,16 +9,30 @@ reaches a real network.
 """
 from __future__ import annotations
 
+import gzip
 import http.client
 import json
+import sys
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlsplit
 
 import httpx
 import pytest
 
-from nethackers.harness.cred_broker import CredBroker
+from nethackers.harness.cred_broker import CredBroker, HeaderRewrite
+
+# A handful of SSE-style events the fake upstream's `/sse` endpoint writes
+# one at a time (see `_respond_sse`) rather than as a single blob -- shared
+# with the test so the expected concatenation can't drift from what the
+# handler actually sends.
+_SSE_EVENTS = tuple(f"data: {i}\n\n" for i in range(5))
+
+# The plain-JSON payload `/gzip` sends gzip-compressed -- shared with the
+# test so the decoded-body assertion can't drift from what the handler
+# actually compresses.
+_GZIP_PAYLOAD = {"ok": True, "compressed": True}
 
 
 class _FakeUpstreamHandler(BaseHTTPRequestHandler):
@@ -46,11 +60,48 @@ class _FakeUpstreamHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
+    def _respond_sse(self) -> None:
+        # Writes its body in pieces, flushing and pausing between them, so
+        # a request to `/sse` is genuinely produced over time -- unlike
+        # `_respond` above, which writes its whole (short) body in one shot
+        # and so can't tell a streaming broker apart from a buffering one.
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.end_headers()
+        for event in _SSE_EVENTS:
+            self.wfile.write(event.encode())
+            self.wfile.flush()
+            time.sleep(0.02)
+
+    def _respond_gzip(self) -> None:
+        # A real provider response can arrive `Content-Encoding: gzip`
+        # (httpx sends `Accept-Encoding` by default) -- built directly here
+        # rather than relying on real negotiated compression, so the
+        # regression is deterministic regardless of what this broker/httpx
+        # does with the client's own Accept-Encoding header.
+        body = gzip.compress(json.dumps(_GZIP_PAYLOAD).encode())
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Encoding", "gzip")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
     def do_GET(self) -> None:
-        self._respond()
+        if self.path == "/sse":
+            self._respond_sse()
+        elif self.path == "/gzip":
+            self._respond_gzip()
+        else:
+            self._respond()
 
     def do_POST(self) -> None:
-        self._respond()
+        if self.path == "/sse":
+            self._respond_sse()
+        elif self.path == "/gzip":
+            self._respond_gzip()
+        else:
+            self._respond()
 
     def log_message(self, *args: object) -> None:  # quiet the test output
         pass
@@ -86,8 +137,8 @@ def fake_upstream():
 
 
 def test_broker_injects_auth_and_forwards(fake_upstream):
-    with CredBroker(upstream_base=fake_upstream.url, header_name="Authorization",
-                     header_value="Bearer REALKEY") as base:
+    rewrite = HeaderRewrite(inject=(("Authorization", "Bearer REALKEY"),))
+    with CredBroker(upstream_base=fake_upstream.url, rewrite=rewrite) as base:
         r = httpx.post(f"{base}/v1/messages", json={"hi": 1},
                         headers={"Authorization": "Bearer PLACEHOLDER"})
     assert r.status_code == 200
@@ -107,7 +158,8 @@ def test_broker_injects_auth_and_forwards(fake_upstream):
 
 
 def test_broker_refuses_offhost(fake_upstream):
-    with CredBroker(fake_upstream.url, "Authorization", "Bearer REALKEY") as base:
+    rewrite = HeaderRewrite(inject=(("Authorization", "Bearer REALKEY"),))
+    with CredBroker(fake_upstream.url, rewrite) as base:
         parsed = urlsplit(base)
         conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=5)
         try:
@@ -131,7 +183,8 @@ def test_broker_allows_host_docker_internal(fake_upstream):
     # request arrives with `Host: host.docker.internal`. That must be
     # ALLOWED (forwarded, like the broker's own loopback addresses), not
     # rejected as a genuine off-host guess the way "evil.example" is above.
-    with CredBroker(fake_upstream.url, "Authorization", "Bearer REALKEY") as base:
+    rewrite = HeaderRewrite(inject=(("Authorization", "Bearer REALKEY"),))
+    with CredBroker(fake_upstream.url, rewrite) as base:
         parsed = urlsplit(base)
         conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=5)
         try:
@@ -145,3 +198,180 @@ def test_broker_allows_host_docker_internal(fake_upstream):
             conn.close()
     assert status == 200
     assert fake_upstream.last_headers["authorization"] == "Bearer REALKEY"
+
+
+# --- HeaderRewrite ops: inject / strip / merge_csv --------------------------
+
+
+def test_broker_inject_replaces_inbound_header_case_insensitively(fake_upstream):
+    # The client's own header can arrive in ANY case (RFC 9110 S:4.2); the
+    # rewrite's `inject` must still be the only one of that name upstream
+    # sees -- the client's differently-cased placeholder must not survive
+    # alongside it.
+    rewrite = HeaderRewrite(inject=(("Authorization", "Bearer REALKEY"),))
+    with CredBroker(fake_upstream.url, rewrite) as base:
+        parsed = urlsplit(base)
+        conn = http.client.HTTPConnection(parsed.hostname, parsed.port, timeout=5)
+        try:
+            conn.putrequest("POST", "/v1/messages")
+            conn.putheader("AUTHORIZATION", "Bearer client-placeholder-lower")
+            conn.putheader("Content-Length", "0")
+            conn.endheaders()
+            response = conn.getresponse()
+            status = response.status
+            response.read()
+        finally:
+            conn.close()
+    assert status == 200
+    assert fake_upstream.last_headers["authorization"] == "Bearer REALKEY"
+    assert "Bearer client-placeholder-lower" not in fake_upstream.last_headers.values()
+
+
+def test_broker_strip_removes_inbound_header(fake_upstream):
+    rewrite = HeaderRewrite(strip=("x-api-key",))
+    with CredBroker(fake_upstream.url, rewrite) as base:
+        r = httpx.post(f"{base}/v1/messages", json={"hi": 1},
+                        headers={"x-api-key": "leak"})
+    assert r.status_code == 200
+    assert "x-api-key" not in fake_upstream.last_headers
+    assert "leak" not in fake_upstream.last_headers.values()
+
+
+def test_broker_merge_csv_unions_client_values_and_dedupes(fake_upstream):
+    # merge_csv must keep the client's own beta flag ("foo") AND add the
+    # broker's ("oauth-2025-04-20") -- even though the client ALSO already
+    # sent the broker's value once, it must not be duplicated.
+    rewrite = HeaderRewrite(merge_csv=(("anthropic-beta", ("oauth-2025-04-20",)),))
+    with CredBroker(fake_upstream.url, rewrite) as base:
+        r = httpx.post(f"{base}/v1/messages", json={"hi": 1},
+                        headers={"anthropic-beta": "foo, oauth-2025-04-20"})
+    assert r.status_code == 200
+    assert fake_upstream.last_headers["anthropic-beta"] == "foo, oauth-2025-04-20"
+
+
+# --- Streaming passthrough ---------------------------------------------
+
+
+def test_broker_streams_sse_without_buffering(fake_upstream):
+    # `_respond_sse` writes `_SSE_EVENTS` one at a time, flushing and
+    # pausing between them -- not as a single blob. A broker that still
+    # buffered the whole response (e.g. via `.content`) before replying
+    # would produce the same concatenated text here (that's (a)), but it
+    # would also know the total size up front and send a Content-Length
+    # header for it. (b) is the actual proof this response was streamed
+    # rather than buffered whole.
+    rewrite = HeaderRewrite()
+    with CredBroker(fake_upstream.url, rewrite) as base:
+        r = httpx.get(f"{base}/sse")
+    assert r.status_code == 200
+    # (a) every chunk arrived, in order, concatenated back into the exact
+    # original text -- streaming didn't drop or reorder any bytes.
+    assert r.text == "".join(_SSE_EVENTS)
+    # (b) no Content-Length: the broker couldn't have known the total size
+    # up front, because it never held the whole response at once.
+    assert "content-length" not in r.headers
+
+
+def test_broker_decodes_gzip_response(fake_upstream):
+    # `_respond_gzip` returns a real gzip-compressed body labeled
+    # `Content-Encoding: gzip` -- the shape a real provider sends. Streaming
+    # the upstream's RAW wire bytes through (`iter_raw()`) would forward
+    # the still-compressed bytes to the client with no `Content-Encoding`
+    # header to say so (that header is one this broker always drops) --
+    # undecodable garbage. `iter_bytes()` yields httpx's already-decoded
+    # bytes instead, so what's written matches the (correctly headerless)
+    # response: plain JSON.
+    rewrite = HeaderRewrite()
+    with CredBroker(fake_upstream.url, rewrite) as base:
+        r = httpx.get(f"{base}/gzip")
+    assert r.status_code == 200
+    assert "content-encoding" not in r.headers
+    assert json.loads(r.content) == _GZIP_PAYLOAD
+
+
+# --- TLS-impersonation forward (curl_cffi, codex/chatgpt.com's transport) ---
+#
+# codex's broker is the only one ever constructed with `impersonate=True`
+# (container_operator._start_broker_auth) -- `curl_cffi` is a LAZY,
+# host-side-only import (never a packaged dependency; see
+# `CredBroker`'s docstring), so both tests below are gated/robust the same
+# way `@pytest.mark.nle` tests are: they skip or pass identically whether or
+# not curl_cffi happens to be installed on whatever host runs this suite.
+
+
+def test_broker_impersonate_forwards_injected_header_and_streams_intact(fake_upstream):
+    # Gated: this is the one test in the module that actually drives a real
+    # curl_cffi forward, so it must SKIP cleanly wherever curl_cffi isn't
+    # installed rather than fail collection/import. The fake upstream is
+    # plain HTTP on 127.0.0.1 -- curl_cffi forwards that fine; Chrome TLS
+    # impersonation only matters against a real Cloudflare handshake, which
+    # is what the gated live smoke (not this test) validates.
+    pytest.importorskip("curl_cffi")
+    rewrite = HeaderRewrite(inject=(("Authorization", "Bearer REALKEY"),))
+    with CredBroker(fake_upstream.url, rewrite, impersonate=True) as base:
+        # (1) the injected header reaches the fake upstream over the
+        # curl_cffi forward -- `/v1/messages` hits `_respond`, which records
+        # `last_headers`, exactly like `test_broker_injects_auth_and_forwards`
+        # above (`/sse` below never records headers, only body -- that's why
+        # this is a separate request rather than reusing its response).
+        r1 = httpx.get(f"{base}/v1/messages")
+        # (2) a streamed body comes back intact over the same forward --
+        # `_respond_sse` writes `_SSE_EVENTS` one at a time, the curl_cffi-
+        # forward counterpart to `test_broker_streams_sse_without_buffering`.
+        r2 = httpx.get(f"{base}/sse")
+    assert r1.status_code == 200
+    assert fake_upstream.last_headers["authorization"] == "Bearer REALKEY"
+    assert r2.status_code == 200
+    assert r2.text == "".join(_SSE_EVENTS)
+    assert "REALKEY" not in r2.text
+
+
+def test_broker_impersonate_decodes_gzip_response(fake_upstream):
+    # Parity with test_broker_decodes_gzip_response for the curl_cffi branch:
+    # curl_cffi's iter_content() must yield DECODED bytes (libcurl's
+    # ACCEPT_ENCODING), so a gzip upstream comes back as plain JSON with the
+    # (always-dropped) content-encoding header absent -- no double-decode.
+    pytest.importorskip("curl_cffi")
+    rewrite = HeaderRewrite()
+    with CredBroker(fake_upstream.url, rewrite, impersonate=True) as base:
+        r = httpx.get(f"{base}/gzip")
+    assert r.status_code == 200
+    assert "content-encoding" not in r.headers
+    assert json.loads(r.content) == _GZIP_PAYLOAD
+
+
+def test_broker_impersonate_self_heals_and_fails_loud_only_if_install_fails(monkeypatch):
+    # curl_cffi is installed host-side on demand, so a missing curl_cffi no
+    # longer fails outright: `start` self-heals via `impersonation.
+    # ensure_impersonation_dep`, and only fails loud if THAT can't make it
+    # available (offline, no uv/pip). `None` in `sys.modules` is CPython's
+    # documented way to force the lazy `from curl_cffi import requests` to raise
+    # ImportError, like a host that never installed it; stubbing
+    # `ensure_impersonation_dep` to report failure keeps any real subprocess
+    # from running. The broker fails loud rather than silently exposing the key.
+    monkeypatch.setitem(sys.modules, "curl_cffi", None)
+    monkeypatch.setattr("nethackers.harness.impersonation.ensure_impersonation_dep",
+                        lambda **kw: False)
+    broker = CredBroker("http://127.0.0.1:1", HeaderRewrite(), impersonate=True)
+    with pytest.raises(RuntimeError, match="TLS impersonation"):
+        broker.start()
+
+
+def test_broker_binds_a_port_from_the_fixed_range(fake_upstream):
+    from nethackers.harness.cred_broker import BROKER_PORT_RANGE
+    rewrite = HeaderRewrite(inject=(("Authorization", "Bearer t"),))
+    with CredBroker(fake_upstream.url, rewrite) as base:
+        # a fixed range (not an ephemeral OS port) so a ufw rule can scope to it
+        assert int(urlsplit(base).port) in BROKER_PORT_RANGE
+
+
+def test_broker_counts_requests_that_reach_it(fake_upstream):
+    rewrite = HeaderRewrite(inject=(("Authorization", "Bearer t"),))
+    broker = CredBroker(fake_upstream.url, rewrite)
+    base = broker.start()
+    try:
+        assert broker.requests_seen == 0
+        httpx.post(f"{base}/v1/messages", json={"hi": 1})
+        assert broker.requests_seen == 1
+    finally:
+        broker.stop()

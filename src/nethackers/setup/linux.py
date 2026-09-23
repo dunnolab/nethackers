@@ -13,12 +13,13 @@ Leaf module: imports only ``setup.host``, ``setup.support`` and
 """
 from __future__ import annotations
 
+import shutil
 from collections.abc import Callable
 from pathlib import Path
 
 from nethackers.containers import RuntimeReport
 from nethackers.setup.host import HostFacts
-from nethackers.setup.support import NotCovered, Recipe, Untested
+from nethackers.setup.support import NotCovered, Recipe, Tested, Untested
 
 _DOCKER_SCRIPT = ("https://docs.docker.com/engine/install/ubuntu/"
                   "#install-using-the-convenience-script")
@@ -93,10 +94,23 @@ CODEX_INSTALL = Recipe(
     argv=("sh", "-c", "curl -fsSL https://chatgpt.com/codex/install.sh | sh"),
     support=Untested(_CODEX))
 
+BROKER_UFW = Recipe(
+    id="linux.broker.ufw",
+    does="let the sandbox reach the credential broker (ufw)",
+    who="you",
+    say=("if ufw is active, allow the sandboxed agent to reach the credential broker "
+         "(on by default) with a PORT-SCOPED rule (not a blanket `allow in on "
+         "docker0`): `sudo ufw allow in on docker0 to "
+         "\"$(docker network inspect bridge -f '{{(index .IPAM.Config 0).Gateway}}')\" "
+         "port 11700:11749 proto tcp`"),
+    support=Tested(on="Ubuntu 26.04 x86_64, Docker 29.1.3", at="0.35.0", date="2026-09-23"),
+)
+
+
 RECIPES: tuple[Recipe, ...] = (
     DOCKER_INSTALL, DOCKER_INSTALL_ARCH, DOCKER_INSTALL_OTHER, DOCKER_WSL, DOCKER_START,
     DOCKER_GROUP, PODMAN_FIX, GH_APT, GH_DNF, GH_PACMAN, GH_OTHER, CLAUDE_INSTALL,
-    CODEX_INSTALL,
+    CODEX_INSTALL, BROKER_UFW,
 )
 
 _INSTALL_BY_FAMILY = {"debian": DOCKER_INSTALL, "fedora": DOCKER_INSTALL,
@@ -139,3 +153,23 @@ def emulation(
     if facts.machine in {"x86_64", "amd64"}:
         return "unknown", "amd64 runs natively here", None
     return "unknown", "amd64 emulation isn't checked on Linux", None
+
+
+def firewall_recipe(
+    facts: HostFacts, report: RuntimeReport, *,
+    which: Callable[[str], str | None] = shutil.which,
+) -> Recipe | None:
+    """The one-time ``ufw`` allowance the credential broker (on by default) needs
+    on Linux + Docker. On a ufw host the docker bridge->host path is blocked, so
+    the sandbox can't reach the host-side broker; this opens ONLY the broker's
+    own port range on the docker0 gateway -- PORT-SCOPED, never a blanket
+    ``allow in on docker0`` (which would expose every host service to the
+    untrusted sandbox). Emitted only when ``ufw`` is installed (a rootless
+    ``which`` check -- ``ufw status`` would need root); ``None`` without ufw, and
+    ``None`` under rootless podman (``pasta``, which has no docker0 bridge). The
+    port range matches ``cred_broker.BROKER_PORT_RANGE`` (11700-11749)."""
+    if report.runtime == "podman":
+        return None
+    if which("ufw") is None:
+        return None
+    return BROKER_UFW
