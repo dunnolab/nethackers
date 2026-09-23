@@ -149,6 +149,7 @@ img{ max-width:100%; }
 .counter .cap{  font-size:.68rem; color:var(--indigo-2); margin-top:3px; }
 .reg{ display:flex; flex-direction:column; gap:6px; margin:2px 0 14px; }
 .regrow{ display:flex; align-items:center; gap:8px; }
+.regrow[hidden]{ display:none; }
 .reg .od span{ font-size:.82rem; }
 .reglbl{  font-size:.72rem; color:var(--indigo-2); }
 .updated{  font-size:.72rem; color:#6b6b72; margin:10px 0 14px; }
@@ -632,8 +633,9 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 
       <h4>Registered</h4>
       <div class="reg">
-        <div class="regrow"><span class="od" id="odoProg" aria-label="programs registered"></span><span class="reglbl">programs</span></div>
         <div class="regrow"><span class="od" id="odoPlay" aria-label="hackers registered"></span><span class="reglbl">hackers</span></div>
+        <div class="regrow"><span class="od" id="odoProg" aria-label="programs registered"></span><span class="reglbl">programs reported</span></div>
+        <div class="regrow" id="regVerif" hidden><span class="od" id="odoVerif" aria-label="programs fully verified on the private dungeons"></span><span class="reglbl">programs verified</span></div>
       </div>
 
       <h4>Visitors</h4>
@@ -1133,6 +1135,15 @@ function marqueeStatsLine(s){
             : `${s.ascensions} ${s.ascensions===1?"has":"have"} ascended`;
   return `${progs}; ${asc}`;
 }
+/* sidebar "programs verified" row. /stats OMITS verified_programs on a hub with
+   no verifier configured -- which is not the same fact as "none verified" -- so the
+   row stays hidden unless a real count arrives. Same on a failed fetch. */
+function setVerified(n){
+  const row=$("#regVerif"); if(!row) return;
+  const live = typeof n === "number" && isFinite(n);
+  row.hidden = !live;
+  if(live) odo($("#odoVerif"), n, 5);
+}
 /* sidebar "last updated" stamp from /stats' newest registered_at (ISO-8601 UTC);
    null/absent/unparseable -> a neutral dash, never a fabricated date. */
 const _MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
@@ -1382,6 +1393,7 @@ function odo(el,n,digits){ if(!el) return; el.innerHTML=String(n).padStart(digit
   $("#odcap").textContent = mine>1 ? `you: visit #${mine}` : "welcome, traveler";
   odo($("#odoProg"), 0, 5);   /* programs -- set live from /stats in boot() */
   odo($("#odoPlay"), 0, 5);   /* hackers  -- set live from /stats in boot() */
+  odo($("#odoVerif"), 0, 5);  /* verified -- filled AND revealed from /stats in boot() */
 })();
 
 /* ===================== tier ===================== */
@@ -1934,8 +1946,9 @@ async function loadRecognition(tier){
 async function boot(){
   const statsP = jget("/stats")
     .then(s=>{ STATS=s; odo($("#odoProg"), s.programs, 5); odo($("#odoPlay"), s.hackers, 5);
+               setVerified(s.verified_programs);
                renderMarquee(marqueeStatsLine(s)); setUpdated(s.last_registered_at); })
-    .catch(()=>{ STATS=null; odo($("#odoProg"),0,5); odo($("#odoPlay"),0,5); });
+    .catch(()=>{ STATS=null; odo($("#odoProg"),0,5); odo($("#odoPlay"),0,5); setVerified(null); });
   const objP  = jget("/objectives").then(o=>{ OBJ_EP = Object.fromEntries(o.map(x=>[x.name, x.episodes])); }).catch(()=>{ OBJ_EP = {}; });
   // the fame tables only need /recognition -- drop their shimmer as soon as it
   // lands rather than holding them behind the frontier's two further fetches

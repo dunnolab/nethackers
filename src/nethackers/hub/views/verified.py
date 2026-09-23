@@ -54,6 +54,13 @@ def read_verified_baseline(
     )
 
 
+def _grid_total(seeds) -> int:
+    """Cells in one program's hidden grid: every identity on every live seed.
+    Shared so the per-program status and the platform-wide count can never
+    disagree about what "fully verified" means."""
+    return len(IDENTITIES) * len(seeds)
+
+
 def verification_status(
     store: Store,
     solution_digest: str,
@@ -65,7 +72,7 @@ def verification_status(
     """Report verification progress for a solution: state machine
     (not_attempted→attempted→verified), done/total counts, and failure_kind."""
     seed_set = frozenset(seeds)
-    total = len(IDENTITIES) * len(seeds)
+    total = _grid_total(seeds)
     done = len(
         [
             a
@@ -92,3 +99,49 @@ def verification_status(
             "failure_kind": latest["failure_kind"],
         }
     return {"state": "not_attempted", "done": done, "total": total, "failure_kind": None}
+
+
+# One program is verified when every cell of the hidden grid exists for it
+# under the current epoch. ``UNIQUE(solution_digest, identity, seed,
+# secret_fingerprint, arena_major)`` on ``verified_atoms`` means a cell can
+# appear at most once, so within one epoch a scoped ``COUNT(*)`` per program
+# IS its cell count -- no ``COUNT(DISTINCT identity || seed)`` needed. The
+# ``identity IN`` clause is not redundant with that: it keeps a row on an
+# identity the catalog no longer contains from padding a partial grid up to
+# the threshold.
+#
+# Deliberately one aggregate rather than ``verify_candidates``' per-solution
+# Python loop: ``/stats`` is read on every page load, and that loop is
+# O(programs x atoms).
+_COUNT_VERIFIED_PROGRAMS_SQL = """
+SELECT COUNT(*) FROM (
+    SELECT solution_digest FROM verified_atoms
+    WHERE secret_fingerprint = ? AND arena_major = ?
+      AND seed IN ({seeds}) AND identity IN ({identities})
+    GROUP BY solution_digest
+    HAVING COUNT(*) >= ?
+)
+"""
+
+
+def count_verified_programs(
+    store: Store, *, secret_fingerprint: str, arena_major: int, seeds
+) -> int:
+    """How many programs are fully verified under this epoch -- every identity
+    on every live hidden seed, the same ``done >= total`` bar
+    ``verification_status`` reports per program, counted across all of them.
+
+    Scoped, so the number means one thing: a rotated secret, a bumped arena
+    major, or a retired seed drops a program back out of the count rather than
+    pooling two measurements that were never comparable.
+
+    An epoch with no seeds can verify nothing, so it counts nothing -- also
+    keeps a misconfigured hub off a ``seed IN ()`` syntax error.
+    """
+    if not seeds:
+        return 0
+    sql = _COUNT_VERIFIED_PROGRAMS_SQL.format(
+        seeds=",".join("?" * len(seeds)), identities=",".join("?" * len(IDENTITIES)),
+    )
+    params = (secret_fingerprint, arena_major, *seeds, *IDENTITIES, _grid_total(seeds))
+    return int(store.conn.execute(sql, params).fetchone()[0])
