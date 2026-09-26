@@ -478,6 +478,8 @@ function checkDictvizRandomWiring() {
   // package (not installed for this harness -- see the header comment), so that
   // IIFE returns early and the passes above never reach the fetch. Guard the
   // envelope-unwrap at the source instead of behaviorally.
+  // (The wall's behaviour -- clicking a runner opens that hacker -- is covered
+  // in a real browser by runners.click.test.mjs, next to this file.)
   const line = html.split("\n").find((l) => l.includes('jget("/hackers/random'));
   ok(line != null, "index.html fetches /hackers/random for the @username wall runners");
   ok(line != null && /\.rows/.test(line), "the /hackers/random read unwraps .rows before use");
