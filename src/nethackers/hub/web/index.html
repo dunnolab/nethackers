@@ -48,6 +48,7 @@
   --orange:#ff9d2e;      /* badge hover */
   --red:#cc0000;         /* NEW! / alert */
   --red-2:#e11;
+  --rowhover:#fff3b0;    /* a clickable row under the pointer -- tables and the wall runners */
   --rule:#9c9ba3;
   --rule-soft:#cbcad0;
   --silver:#c4c4c0;      /* beveled chrome */
@@ -226,7 +227,7 @@ table.grid caption{ text-align:left; background:var(--indigo); color:#fff; font-
 .grid td{ border:1px solid #dcdce0; padding:3px 8px; text-align:right; color:#26262c; white-space:nowrap; }
 .grid tbody tr{ cursor:pointer; }
 .grid tbody tr:nth-child(even) td{ background:#f4f4f8; }
-.grid tbody tr:hover td{ background:#fff3b0; }
+.grid tbody tr:hover td{ background:var(--rowhover); }
 .rk{ color:#8a8a90; } .rk.top{ color:var(--indigo); font-weight:700; }
 .nm{ color:#111; } .nm .at{ color:#8a8a90; }
 .die{ color:var(--red); font-style:italic; text-align:left; }
@@ -419,7 +420,7 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
 .minicell{ display:flex; justify-content:space-between; gap:8px; font-size:.74rem; padding:2px 6px; border:1px solid #e2e2e8; }
 .minicell .mn{ color:#55555c; } .minicell.asc .mv{ color:var(--red); font-weight:700; }
 .hackerrow{ cursor:pointer; }
-.hackerrow:hover td,.hackerrow:focus td{ background:#fff2a8; }
+.hackerrow:hover td,.hackerrow:focus td{ background:var(--rowhover); }
 .hackerrow:focus{ outline:2px solid var(--indigo); outline-offset:-2px; }
 .clickhint{ color:#777780; font-size:.72rem; margin:-5px 0 10px; }
 .popupstatus{ color:#66666e; font-size:.8rem; }
@@ -2014,7 +2015,7 @@ boot().catch(()=>{ renderFrontier(); renderRecognition(); })
   function cssv(v){ return getComputedStyle(document.documentElement).getPropertyValue(v).trim(); }
   function hexRGB(h){ h=(h||"").replace("#",""); if(h.length===3) h=h.split("").map(c=>c+c).join("");
     return [parseInt(h.slice(0,2),16)||0,parseInt(h.slice(2,4),16)||0,parseInt(h.slice(4,6),16)||0]; }
-  let INDIGO,RED,GOLD,GROUND,PAL,GOLD_RGB,MONO;
+  let INDIGO,RED,GOLD,GROUND,PAL,GOLD_RGB,MONO,HOVER;
   // NetHack-flavoured colour per glyph, so the descent is colourful (deeper = more monsters, more colour)
   const PAL_LIGHT={gray:[92,92,104],red:[196,22,22],green:[26,120,26],brown:[140,88,16],blue:[40,40,190],
     magenta:[156,28,156],cyan:[18,126,134],orange:[208,104,0],yellow:[170,122,0],white:[56,56,66]};
@@ -2028,7 +2029,8 @@ boot().catch(()=>{ renderFrontier(); renderRecognition(); })
   function readTheme(){ INDIGO=hexRGB(cssv("--indigo")||"#2f3677"); RED=hexRGB(cssv("--red")||"#cc0000");
     GOLD=cssv("--gold")||"#e9c15a"; GROUND=cssv("--ground")||"#d8d6cc";
     const gb=hexRGB(GROUND), lum=(gb[0]*0.3+gb[1]*0.59+gb[2]*0.11)/255; PAL=lum<0.42?PAL_DARK:PAL_LIGHT;
-    GOLD_RGB=hexRGB(GOLD); MONO=hexRGB(cssv("--ink")||"#1d1d24"); }   // ink the wall wears at rest -- near-black, theme-aware
+    GOLD_RGB=hexRGB(GOLD); MONO=hexRGB(cssv("--ink")||"#1d1d24");   // ink the wall wears at rest -- near-black, theme-aware
+    HOVER=hexRGB(cssv("--rowhover")||"#fff3b0"); }                  // the wash a clickable row gets under the pointer
 
   function ensureAudio(){ if(actx) return;
     try{ actx=new (window.AudioContext||window.webkitAudioContext)();
@@ -2132,10 +2134,61 @@ boot().catch(()=>{ renderFrontier(); renderRecognition(); })
     // stratified start positions (evenly spread, small jitter) + distinct speeds -> always a
     // few in view, no fixed pattern, no permanent clumping.
     const m=(names||[]).slice(0,MAX_RUNNERS), L=Math.max(1,m.length);
-    RUNNERS=m.map(function(name,i){ return {name:name,
+    RUNNERS=m.map(function(name,i){ return {name:name, box:null,
       pos:(i+Math.random()*0.6)/L, vel:0, atRide:0, spd:0.75+0.5*(i/Math.max(1,L-1))}; });
   }
   jget("/hackers/random?n="+MAX_RUNNERS).then(function(env){ buildRunners(env.rows); }).catch(function(){ RUNNERS=[]; });
+
+  /* ---------- a handle is a link: clicking one opens that hacker's popup ----------
+     Same destination a Hackers-table row reaches -- openHacker() pushes /h/<username>,
+     so the popup, the page title and Back all behave identically.
+
+     The hit test runs off document-level listeners rather than on the canvas: the
+     canvas is fixed over the whole viewport and MUST stay pointer-events:none, or it
+     would swallow every click on the page. draw() lays down each visible runner's
+     box; these listeners read them. Mouse-only sugar -- the canvas stays decorative
+     and aria-hidden, and the keyboard-reachable path to the same hacker is the
+     Hackers table (or the /h/<username> URL itself). */
+  let HOT=null;                                  // the runner under the pointer, or null
+  function runnerAt(x,y){
+    let best=null,bd=Infinity;
+    for(let i=0;i<RUNNERS.length;i++){ const b=RUNNERS[i].box; if(!b) continue;
+      if(x<b.x||x>b.x+b.w||y<b.y||y>b.y+b.h) continue;
+      const d=Math.abs(x-(b.x+b.w/2))+Math.abs(y-(b.y+b.h/2));   // overlapping handles: nearer centre wins
+      if(d<bd){ bd=d; best=RUNNERS[i]; } }
+    return best;
+  }
+  // Whatever is really under the pointer keeps its click. A runner crawls the page
+  // perimeter, so sooner or later one sits over a link, a glossary term or the play
+  // button -- and the top and bottom walls run right along the page's own edge.
+  // [tabindex] catches the page's non-semantic controls (the .ref terms, the fame
+  // rows); canvas catches the two drag surfaces (the scratch chart, the AGI chart).
+  const CONTROLS="a,button,input,select,textarea,summary,label,canvas,[tabindex],"
+    +"[role=button],[role=radio],[data-v],[data-lens],[data-seg],[data-tier-group],.ref,.ownerlink";
+  function offLimits(e){
+    if(document.querySelector(".detailmodal")) return true;       // a popup is up: the wall is behind it
+    const t=e.target;
+    return !!(t&&t.closest&&t.closest(CONTROLS));
+  }
+  // the box scan comes first: the pointer is over bare margin nearly always, and
+  // that answer costs no DOM work at all
+  function hitRunner(e){ const r=runnerAt(e.clientX,e.clientY); return (r&&!offLimits(e))?r:null; }
+  function setHot(r){ if(HOT===r) return; HOT=r; document.body.style.cursor=r?"pointer":""; }
+  let hitQueued=false;
+  addEventListener("pointermove",function(e){
+    if(e.pointerType&&e.pointerType!=="mouse") return;            // hover is a mouse affordance; a tap just clicks
+    if(hitQueued) return; hitQueued=true;                         // one hit test per frame, not per event
+    requestAnimationFrame(function(){ hitQueued=false; setHot(hitRunner(e)); });
+  },{passive:true});
+  addEventListener("click",function(e){
+    const r=hitRunner(e); if(!r) return;
+    setHot(null);
+    if(typeof openHacker==="function") openHacker(r.name);
+  });
+  // dev/test hook: the offline harness needs a runner's on-screen box to click it --
+  // canvas text has no element a selector could target (cf. ?vizpreview above).
+  window.__wallRunnerBoxes=function(){ return RUNNERS.filter(function(r){ return !!r.box; })
+    .map(function(r){ return {name:r.name, box:r.box, hot:r===HOT}; }); };
   function draw(){
     // Two regimes. At rest the wall breathes gently in ink -- restrained, monochrome, never silent-frozen.
     // On play, COLOUR blooms in (`bloom`); how hard it reacts -- reach, brightness, tempo -- tracks the
@@ -2200,6 +2253,7 @@ boot().catch(()=>{ renderFrontier(); renderRecognition(); })
       const N=per.length;
       for(let k=0;k<RUNNERS.length;k++){
         const r=RUNNERS[k];
+        r.box=null;                                                                  // recomputed below; a runner that isn't drawn isn't clickable
         r.pos += 0.02*r.spd*idleAmt*TUNE.crawl/N;                                    // calm crawl at its own steady pace (normalized to perimeter length)
         if(Math.random() < 0.05*energy) r.vel += (Math.random()-0.5)*2.6*energy*TUNE.dart/N; // darts kick in with the MUSIC; calm when off
         r.vel *= 0.86;                                                               // friction -> pauses between darts
@@ -2214,13 +2268,22 @@ boot().catch(()=>{ renderFrontier(); renderRecognition(); })
         const label = dx<0 ? (r.name+"@") : ("@"+r.name);                           // left wall flips so the @ kisses the wall
         const n=label.length;
         const x0 = dx<0 ? ax-(n-1)*hcw : ax, x1 = dx<0 ? ax : ax+(n-1)*hcw;
+        const px=x0-hcw*0.72, pw=(x1-x0)+hcw*1.44;                                   // the handle's patch, and its click target
+        // the hit box is that patch grown to a comfortable target -- these are small
+        // type and the pointer arrives off a wide empty margin
+        const bh=Math.max(18,hch*1.44); r.box={x:px, y:ay-bh/2, w:pw, h:bh};
+        const hot=(r===HOT);
         // cleared floor: a parchment patch blooms in behind the handle so the descent parts for it;
         // dark ink text on top. At rest (bloom 0) there's no patch -- muted ink reads on the wall.
-        if(bloom>0.01){
-          g.fillStyle="rgba("+GR[0]+","+GR[1]+","+GR[2]+","+(0.9*bloom).toFixed(3)+")";
-          g.fillRect(x0-hcw*0.72, ay-hch*0.72, (x1-x0)+hcw*1.44, hch*1.44);
+        // Hovered, the patch comes in regardless and wears --rowhover, the same wash a clickable
+        // row gets in the tables, with the handle in indigo: the page's own "this opens something".
+        const wash=hot?HOVER:GR;
+        if(bloom>0.01||hot){
+          g.fillStyle="rgba("+wash[0]+","+wash[1]+","+wash[2]+","+(hot?1:0.9*bloom).toFixed(3)+")";
+          g.fillRect(px, ay-hch*0.72, pw, hch*1.44);
         }
-        g.fillStyle="rgba("+MONO[0]+","+MONO[1]+","+MONO[2]+",0.92)";
+        const ink=hot?INDIGO:MONO;
+        g.fillStyle="rgba("+ink[0]+","+ink[1]+","+ink[2]+","+(hot?1:0.92)+")";
         for(let j=0;j<n;j++){
           const cx = dx<0 ? ax-(n-1-j)*hcw : ax+j*hcw;
           if(cx<-cw||cx>W+cw) continue;
