@@ -3,7 +3,7 @@
 The `baseline.get(identity, 0.0)` default was invisible on the self-reported
 tier (AutoAscend covers all 73 identities). On the verified tier some
 identities have a program result and no floor yet, where that default would
-assert "the floor is zero" -- inflating combined lift by the program's whole
+assert "the floor is zero" -- inflating total impact by the program's whole
 score and claiming a breakthrough past 0.0."""
 
 import pytest
@@ -60,16 +60,16 @@ def _epoch():
     return Epoch(secret_fingerprint(SECRET), ARENA_MAJOR, SEEDS)
 
 
-def test_verified_keepers_lift_is_measured_against_the_verified_floor(store):
+def test_verified_impact_is_measured_against_the_verified_floor(store):
     out = read_recognition(store, tier="verified", epoch=_epoch())
-    assert len(out["keepers"]) == 1
-    keeper = out["keepers"][0]
-    assert keeper["owner"] == "sam"
-    assert keeper["identities"] == [FLOORED], (
+    assert len(out["contributors"]) == 1
+    contributor = out["contributors"][0]
+    assert contributor["owner"] == "sam"
+    assert contributor["identities"] == 1, (
         f"{UNFLOORED} has no verified floor and must be excluded, not credited"
     )
-    assert keeper["records"] == 1
-    assert keeper["total_lift"] == pytest.approx(0.30)
+    assert contributor["advances"] == 1
+    assert contributor["impact"] == pytest.approx(0.30)
 
 
 def test_an_identity_with_no_floor_produces_no_breakthrough(store):
@@ -83,8 +83,8 @@ def test_self_reported_recognition_is_unchanged(store):
     store.insert_baseline_atoms(
         [_atom("autoascend", "autoascend", FLOORED, 0, 0.1, tier="baseline")])
     out = read_recognition(store, tier="self-reported")
-    assert out["keepers"][0]["total_lift"] == pytest.approx(0.8)
-    assert set(out) == {"generated_at", "keepers", "breakthroughs"}
+    assert out["contributors"][0]["impact"] == pytest.approx(0.8)
+    assert set(out) == {"generated_at", "contributors", "breakthroughs", "recent"}
 
 
 def _client(store, *, verifier):
@@ -94,8 +94,9 @@ def _client(store, *, verifier):
 def test_route_tier_param(store):
     cfg = VerifierConfig(tokens=frozenset({"tok"}), secret=SECRET, seeds=SEEDS)
     client = _client(store, verifier=cfg)
-    assert client.get("/recognition?tier=verified").json()["keepers"][0]["owner"] == "sam"
-    assert client.get("/recognition").json()["keepers"] == []   # nothing self-reported
+    verified = client.get("/recognition?tier=verified").json()
+    assert verified["contributors"][0]["owner"] == "sam"
+    assert client.get("/recognition").json()["contributors"] == []  # nothing self-reported
     assert '"seed"' not in client.get("/recognition?tier=verified").text
 
 

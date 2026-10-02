@@ -101,12 +101,13 @@ def test_fixtures_populate_the_public_floor(store):
     )
 
 
-def test_fixtures_public_recognition_renders_keepers_and_breakthroughs(store):
+def test_fixtures_public_recognition_renders_every_ledger(store):
     # The actual regression guard: a floor that exists but sits too high
     # would reproduce the same empty-tables symptom just as silently as no
     # floor at all, so this asserts real rows, not merely a non-empty floor.
     body = read_recognition(store)
-    assert body["keepers"], "no public keepers -- Frontier Keepers would render empty"
+    assert body["contributors"], "no public contributors -- Total Impact would render empty"
     assert body["breakthroughs"], (
         "no public breakthroughs -- Greatest Breakthroughs would render empty"
     )
+    assert body["recent"], "no public advances -- Recent Improvements would render empty"

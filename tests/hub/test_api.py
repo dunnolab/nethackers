@@ -114,7 +114,7 @@ def test_root_serves_the_page(tmp_path: Any) -> None:
     assert "text/html" in resp.headers["content-type"]
     assert "NetHackers" in resp.text
     assert 'id="rolegrid"' in resp.text
-    assert 'id="recordholders"' in resp.text
+    assert 'id="impact"' in resp.text
     # The marquee count and the freshness stamp are live (JS from /stats); the
     # old hardcoded literals must never creep back into the served page. (The
     # full behavior lives in the manual jsdom harness tests/hub/web/wire.test.mjs.)
@@ -155,24 +155,30 @@ def test_site_uses_identity_boards_and_concrete_contributor_recognition(tmp_path
 
     assert 'data-view="programs"' not in body
     assert 'id="scBody"' not in body
-    assert 'id="recordholders"' in body
+    assert 'id="impact"' in body
+    assert 'id="recent"' in body
     assert 'id="breakthroughs"' in body
     assert 'id="hackers"' in body
     assert 'id="people"' not in body
-    assert 'data-fame-more="keepers"' in body
-    assert 'data-fame-more="breakthroughs"' in body
+    assert 'id="recordholders"' not in body     # the keeper ledger is gone
+    assert 'data-fame-more="${kind}"' in body     # one control, all three tables
+    for group in ("impact", "recent", "breakthroughs"):
+        assert f'data-tier-group="{group}"' in body
     assert 'id="activityfeed"' not in body
     assert 'class="frontierrow"' in body
     assert "async function openIdentity(identity)" in body
     assert "async function openHacker(owner, opts)" in body
-    assert "async function openBreakthrough(event)" in body
-    assert 'data-breakthrough="${i}"' in body
+    assert "async function openAdvance(event,tier)" in body
+    assert 'data-advance="${i}"' in body
     for detail in (
         "same canonical seed batch",
         "registered programs",
         "roles evaluated",
         "latest registration",
         "best identity",
+        "TOTAL IMPACT",
+        "RECENT IMPROVEMENTS",
+        "GREATEST BREAKTHROUGHS",
     ):
         assert detail in body
 
@@ -209,7 +215,7 @@ def test_recognition_reads_empty(tmp_path: Any) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body.pop("generated_at")  # ISO 8601 as-of, present on every response
-    assert body == {"keepers": [], "breakthroughs": []}
+    assert body == {"contributors": [], "breakthroughs": [], "recent": []}
 
 
 def test_register_link_ok(tmp_path: Any) -> None:
@@ -680,7 +686,7 @@ def test_hacker_deep_link_serves_the_same_page(tmp_path: Any) -> None:
     assert resp.status_code == 200
     assert "text/html" in resp.headers["content-type"]
     assert 'id="rolegrid"' in resp.text
-    assert 'id="recordholders"' in resp.text
+    assert 'id="impact"' in resp.text
 
 
 def test_hacker_deep_link_serves_an_unregistered_handle(tmp_path: Any) -> None:

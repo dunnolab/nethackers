@@ -831,19 +831,31 @@ footer{ border-top:1px solid var(--silver-lo); margin-top:6px; padding:16px 20px
       <!-- HACKERS -->
       <section id="hackers">
         <h2 class="sec"><span class="glyph">&amp;</span> Hackers moving the frontier</h2>
-        <p class="lead">Recognition is attached to concrete records, roles, and source commits &mdash; not collapsed into one global score.</p>
-        <div class="subh">Frontier Keepers</div>
+        <p class="lead">Recognition is attached to concrete advances, roles, and source commits &mdash; not collapsed into one global score.</p>
+        <div class="subh">Total Impact</div>
         <div class="controls">
           <span class="lbl">dungeons:</span>
           <span class="grp">
-            <button class="bevel" data-tier="self-reported" data-tier-group="keepers" aria-pressed="false">Public Dungeons (15)</button>
-            <button class="bevel" data-tier="verified" data-tier-group="keepers" aria-pressed="true">Private Dungeons (15)</button>
-            <span class="ref tierhelp" id="tierhelp-keepers" data-k="dungeons-private"
+            <button class="bevel" data-tier="self-reported" data-tier-group="impact" aria-pressed="false">Public Dungeons (15)</button>
+            <button class="bevel" data-tier="verified" data-tier-group="impact" aria-pressed="true">Private Dungeons (15)</button>
+            <span class="ref tierhelp" id="tierhelp-impact" data-k="dungeons-private"
               aria-label="What are Private Dungeons?">?</span>
           </span>
         </div>
-        <p class="famedesc">Current identity leaders above AutoAscend. Click a row for the hacker's complete contribution history.</p>
-        <div id="recordholders"><div class="emptyblock">Loading frontier keepers&hellip;</div></div>
+        <p class="famedesc">Every frontier advance a hacker has made, added up. Each one counts only the distance past <b>the best program registered before it</b> &mdash; AutoAscend is where the climb starts, not what every advance is measured against. Being overtaken later costs nothing: the ground you moved stays yours. Click a row for the hacker's programs.</p>
+        <div id="impact"><div class="emptyblock">Loading total impact&hellip;</div></div>
+        <div class="subh">Recent Improvements</div>
+        <div class="controls">
+          <span class="lbl">dungeons:</span>
+          <span class="grp">
+            <button class="bevel" data-tier="self-reported" data-tier-group="recent" aria-pressed="false">Public Dungeons (15)</button>
+            <button class="bevel" data-tier="verified" data-tier-group="recent" aria-pressed="true">Private Dungeons (15)</button>
+            <span class="ref tierhelp" id="tierhelp-recent" data-k="dungeons-private"
+              aria-label="What are Private Dungeons?">?</span>
+          </span>
+        </div>
+        <p class="famedesc" id="recentdesc"></p>
+        <div id="recent"><div class="emptyblock">Loading recent improvements&hellip;</div></div>
         <div class="subh">Greatest Breakthroughs</div>
         <div class="controls">
           <span class="lbl">dungeons:</span>
@@ -1033,10 +1045,13 @@ __)/\_//(\/(/\)/\//\/\|_)__</pre>
    Where an endpoint does not carry a field the render wants, we render "—" /
    omit it -- never a fabricated value (honest standings is the whole point). */
 let STATS=null;                      // live platform totals from /stats
-let keepersTier="verified", breakthroughsTier="verified";
+/* One tier per recognition table, switched independently -- the three read the
+   same cached /recognition response, so comparing one table's tiers never
+   refetches or disturbs the other two. */
+let impactTier="verified", recentTier="verified", breakthroughsTier="verified";
 const FAME_BY_TIER={};
 const FAME_PAGE_SIZE=5;
-const FAME_LIMITS={keepers:FAME_PAGE_SIZE,breakthroughs:FAME_PAGE_SIZE};
+const FAME_LIMITS={impact:FAME_PAGE_SIZE,recent:FAME_PAGE_SIZE,breakthroughs:FAME_PAGE_SIZE};
 const HACKER_PAGE=50;                 // rows in the hacker popup's program table (each costs a /identities fetch)
 let OBJ_EP={};                       // {objective: episodes} from /objectives (honest ep for tooltips)
 const ROLE_NAMES={arc:"Archeologist",bar:"Barbarian",cav:"Caveman",hea:"Healer",kni:"Knight",mon:"Monk",
@@ -1165,12 +1180,14 @@ function setVerified(n){
   if(live) odo($("#odoVerif"), n, 5);
 }
 /* sidebar "last updated" stamp from /stats' newest registered_at (ISO-8601 UTC);
-   null/absent/unparseable -> a neutral dash, never a fabricated date. */
+   null/absent/unparseable -> a neutral dash, never a fabricated date. Rendered in
+   the VIEWER's zone like every other date on the page (fmtDate, below) -- near
+   midnight that is a different calendar day from the UTC one, which is the point. */
 const _MON=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 function setUpdated(iso){
   const el=$("#updated"); if(!el) return;
   const d = iso ? new Date(iso) : null;
-  el.textContent = (d && !isNaN(d)) ? `${d.getUTCDate()} ${_MON[d.getUTCMonth()]} ${d.getUTCFullYear()}` : "—";
+  el.textContent = (d && !isNaN(d)) ? `${d.getDate()} ${_MON[d.getMonth()]} ${d.getFullYear()}` : "—";
 }
 renderMarquee(null);
 
@@ -1448,15 +1465,18 @@ document.querySelectorAll("[data-tier-group='frontier']").forEach(b=>b.addEventL
   if(!UNIVERSE_BY_TIER[curTier]||!BASELINE_BY_TIER[curTier]) renderFrontierSkeleton();
   await Promise.all([loadUniverse(curTier), loadBaseline(curTier)]);
   renderFrontier(); }));
-[["keepers",()=>keepersTier,v=>keepersTier=v],
- ["breakthroughs",()=>breakthroughsTier,v=>breakthroughsTier=v]].forEach(([group,get,set])=>{
+/* group -> its tier getter/setter, shared by the toggles and boot's tier help. */
+const FAME_TIER=[["impact",()=>impactTier,v=>impactTier=v],
+ ["recent",()=>recentTier,v=>recentTier=v],
+ ["breakthroughs",()=>breakthroughsTier,v=>breakthroughsTier=v]];
+FAME_TIER.forEach(([group,get,set])=>{
   document.querySelectorAll(`[data-tier-group='${group}']`).forEach(b=>b.addEventListener("click",async()=>{
     set(b.dataset.tier);
     document.querySelectorAll(`[data-tier-group='${group}']`).forEach(x=>x.setAttribute("aria-pressed", x.dataset.tier===get()?"true":"false"));
     tierHelp($(`#tierhelp-${group}`), get());
     if(!FAME_BY_TIER[get()]) showFameSkeleton(group);
     await loadRecognition(get());
-    renderRecognition();
+    renderFame(group);
   }));
 });
 
@@ -1487,7 +1507,7 @@ const SHIM_KIND={
   spct: ()=>`${Math.random()<.5?"+":"-"}${(Math.random()*9.9).toFixed(1)}%`,     // +N.N%
   pp:   ()=>`+${(Math.random()*9.9).toFixed(1)} pp`,   // always a gain: both columns that use it hardcode "+"
   int:  n=>{ let t=String(1+rnd(9)); for(let i=1;i<n;i++) t+=rnd(10); return t; },
-  date: ()=>`${pad2(1+rnd(28))} ${_MONS[rnd(12)]} 2026, ${pad2(rnd(24))}:${pad2(rnd(60))} UTC`,
+  date: ()=>`${pad2(1+rnd(28))} ${_MONS[rnd(12)]} 2026, ${pad2(rnd(24))}:${pad2(rnd(60))} ${tzLabel(new Date())}`,
 };
 const shim=(kind,n)=>`<span class="shim" data-t="${kind}"${n?` data-n="${n}"`:""} aria-hidden="true"></span>`;
 function shimRoll(){
@@ -1536,15 +1556,21 @@ function renderFrontierSkeleton(){
    shimmer. Cells carry alignment/width classes only; .owner and .dpos would
    underline and tint the placeholder glyphs as if they were data. */
 const FAME_SKEL={
-  keepers:{ el:"#recordholders", cls:"grid fametable",
-    cap:()=>`FRONTIER KEEPERS &middot; ${TIERS[keepersTier].caption}`,
-    head:()=>`<th>#</th><th class="l">hacker</th><th>frontiers</th><th class="l">roles represented</th><th>combined lift</th>`,
-    cells:[["","int",1],["l","text",9],["","int",1],["roles","text",14],["","pp"]] },
+  impact:{ el:"#impact", cls:"grid fametable",
+    cap:()=>`TOTAL IMPACT &middot; ${TIERS[impactTier].caption}`,
+    head:()=>`<th>#</th><th class="l">hacker</th><th>impact</th><th>advances</th>`
+      +`<th>identities</th><th class="l">roles represented</th>`,
+    cells:[["","int",1],["l","text",9],["","pp"],["","int",1],["","int",1],["roles","text",14]] },
+  recent:{ el:"#recent", cls:"grid fametable famelog",
+    cap:()=>`RECENT IMPROVEMENTS &middot; ${TIERS[recentTier].caption}`,
+    head:()=>`<th class="l">registered</th><th class="l">hacker</th>`
+      +`<th class="l">identity</th><th>advance</th><th>result</th><th>before</th>`,
+    cells:[["l","date"],["l","text",9],["l","text",13],["","pp"],["","pct"],["","pct"]] },
   breakthroughs:{ el:"#breakthroughs", cls:"grid fametable famelog",
     cap:()=>`GREATEST BREAKTHROUGHS &middot; ${TIERS[breakthroughsTier].caption}`,
-    head:()=>`<th class="l">${breakthroughsTier==="verified"?"verified":"registered"}</th><th class="l">hacker</th>`
-      +`<th class="l">identity</th><th>before</th><th>result</th><th>advance</th>`,
-    cells:[["l","date"],["l","text",9],["l","text",13],["","pct"],["","pct"],["","pp"]] },
+    head:()=>`<th>#</th><th class="l">hacker</th>`
+      +`<th class="l">identity</th><th>advance</th><th>result</th><th>before</th>`,
+    cells:[["","int",1],["l","text",9],["l","text",13],["","pp"],["","pct"],["","pct"]] },
 };
 function showFameSkeleton(kind){
   const s=FAME_SKEL[kind], host=$(s.el); if(!host) return;
@@ -1649,63 +1675,107 @@ function renderFrontier(){
 (function(){ const r=$("#ramp"); for(let i=0;i<22;i++){ const s=document.createElement("i"); s.style.background=tint(i/21); r.appendChild(s);} })();
 
 /* ===================== recognition ===================== */
-function renderRecognition(){
-  const holders=$("#recordholders"), breakthroughs=$("#breakthroughs");
-  [holders,breakthroughs].forEach(el=>el&&el.removeAttribute("aria-busy"));  // set by showFameSkeleton
-  const kFame=FAME_BY_TIER[keepersTier]||{keepers:[]};
-  const bFame=FAME_BY_TIER[breakthroughsTier]||{breakthroughs:[]};
-  /* "newest first" means something different per tier: public breakthroughs
-     replay achievement order (created_at = when the hacker's result landed);
-     private breakthroughs replay VERIFICATION order (created_at = when our
-     worker got around to running it). Presenting verification order as an
-     achievement timeline would be a false claim, so the description flips
-     with the tier instead of asserting one story for both. */
-  const bkdesc=$("#bkdesc");
-  if(bkdesc) bkdesc.innerHTML = breakthroughsTier==="verified"
-    ? `Every submission that advanced an identity frontier, <b>ordered by when our verifier reached it</b> &mdash; not by when the hacker got there. Click a row for the exact submission.`
-    : `A newest-first log of every submission that advanced an identity frontier. Click a row for the exact submission.`;
-  if(holders){
-    const people=kFame.keepers||[];
-    const visible=people.slice(0,FAME_LIMITS.keepers);
-    holders.innerHTML=people.length?`<div class="tablewrap"><table class="grid fametable"><caption>FRONTIER KEEPERS &middot; ${TIERS[keepersTier].caption}</caption>
-      <thead><tr><th>#</th><th class="l">hacker</th><th>frontiers</th><th class="l">roles represented</th><th>combined lift</th></tr></thead>
-      <tbody>${visible.map((p,i)=>`<tr style="--d:${i*35}ms" data-owner="${esc(p.owner)}" tabindex="0" role="button" aria-label="Open contributions by @${esc(p.owner)}">
-        <td class="rk ${i<3?'top':''}">${i+1}</td><td class="l owner">@${esc(p.owner)}</td><td>${p.records}</td>
-        <td class="roles">${p.roles.map(r=>esc(ROLE_NAMES[r]||r)).join(', ')}</td><td class="dpos">+${(p.total_lift*100).toFixed(1)} pp</td></tr>`).join("")}</tbody></table></div>
-        ${visible.length<people.length?`<div class="more" data-fame-more="keepers" role="button" tabindex="0">[ --More-- ]</div>`:""}`
-      :`<div class="emptyblock">No hacker is above AutoAscend yet.</div>`;
-    holders.querySelectorAll("tbody tr").forEach(row=>{
-      const open=()=>openHacker(row.dataset.owner);
-      row.addEventListener("click",open);
-      row.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } });
-    });
-    settle(holders,"keepers");
-    const more=holders.querySelector('[data-fame-more="keepers"]');
-    if(more){ const expand=()=>{ FAME_LIMITS.keepers+=FAME_PAGE_SIZE; renderRecognition(); };
-      more.addEventListener("click",expand);
-      more.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); expand(); } }); }
-  }
-  if(breakthroughs){
-    const people=bFame.breakthroughs||[];
-    const visible=people.slice(0,FAME_LIMITS.breakthroughs);
-    breakthroughs.innerHTML=people.length?`<div class="tablewrap"><table class="grid fametable famelog"><caption>GREATEST BREAKTHROUGHS &middot; ${TIERS[breakthroughsTier].caption}</caption>
-      <thead><tr><th class="l">${breakthroughsTier==="verified"?"verified":"registered"}</th><th class="l">hacker</th><th class="l">identity</th><th>before</th><th>result</th><th>advance</th></tr></thead>
-      <tbody>${visible.map((p,i)=>`<tr style="--d:${i*35}ms" data-breakthrough="${i}" tabindex="0" role="button" aria-label="Open breakthrough submission by @${esc(p.owner)}">
-        <td class="l">${esc(fmtDate(p.at))}</td><td class="l owner">@${esc(p.owner)}</td><td class="l">${esc(p.identity)}</td>
-        <td>${(p.previous*100).toFixed(1)}%</td><td>${(p.score*100).toFixed(1)}%</td><td class="dpos">+${(p.gain*100).toFixed(1)} pp</td></tr>`).join("")}</tbody></table></div>
-        ${visible.length<people.length?`<div class="more" data-fame-more="breakthroughs" role="button" tabindex="0">[ --More-- ]</div>`:""}`
-      :`<div class="emptyblock">No breakthroughs above AutoAscend yet.</div>`;
-    breakthroughs.querySelectorAll("tbody tr").forEach(row=>{
-      const open=()=>openBreakthrough(people[Number(row.dataset.breakthrough)]);
-      row.addEventListener("click",open);
-      row.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } });
-    });
-    settle(breakthroughs,"breakthroughs");
-    const more=breakthroughs.querySelector('[data-fame-more="breakthroughs"]');
-    if(more){ const expand=()=>{ FAME_LIMITS.breakthroughs+=FAME_PAGE_SIZE; renderRecognition(); };
-      more.addEventListener("click",expand);
-      more.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); expand(); } }); }
-  }
+/* Three readings of ONE ledger of frontier advances, each with its own tier
+   toggle and its own [ --More-- ]: who has moved the frontier furthest in total
+   (`contributors`), what moved lately (`recent`), and what moved most in one
+   step (`breakthroughs`). Every table's caption and column shape comes from
+   FAME_SKEL, so the skeleton and the real header can never drift apart. */
+function renderRecognition(){ Object.keys(FAME_SKEL).forEach(renderFame); }
+function renderFame(kind){ (kind==="impact"?renderImpact:renderLog)(kind); }
+
+/* An advance is credited to the moment the hacker REGISTERED the program, so
+   both logs tell the same story on either tier. What the private tier cannot
+   promise is completeness: our verifier works through the queue in its own
+   order, so an older registration can still arrive and rewrite what sits below
+   it. Saying that is the difference between an honest log and a false claim. */
+function tierCaveat(tier,brief){
+  if(tier!=="verified") return "";
+  return brief
+    ? ` Private rows can still be restated as our verifier works through the queue.`
+    : ` Private rows appear as our verifier reaches them, so an <b>older registration can still arrive</b> and restate the rows below it.`;
+}
+
+/* A hacker who has moved a dozen roles would otherwise wrap this cell to four
+   lines and tower over every other row -- and at phone width the column is
+   scrolled off, so the row became a tall gap with no visible cause. The server
+   orders `roles` by how much of that hacker's impact each one carries, so the
+   first few ARE the story; the rest are counted, and the full list is the cell's
+   tooltip and the hacker's own page. */
+const ROLES_SHOWN=3;
+function rolesCell(roles){
+  const names=(roles||[]).map(r=>ROLE_NAMES[r]||r);
+  const rest=names.length-ROLES_SHOWN;
+  return `<td class="roles" title="${esc(names.join(", "))}">${esc(names.slice(0,ROLES_SHOWN).join(", "))}`
+    +`${rest>0?` <span class="dz">+${rest} more</span>`:""}</td>`;
+}
+function renderImpact(){
+  const host=$("#impact"); if(!host) return;
+  host.removeAttribute("aria-busy");          // set by showFameSkeleton
+  const skel=FAME_SKEL.impact;
+  const people=(FAME_BY_TIER[impactTier]||{}).contributors||[];
+  const visible=people.slice(0,FAME_LIMITS.impact);
+  host.innerHTML=people.length?`<div class="tablewrap"><table class="${skel.cls}"><caption>${skel.cap()}</caption>
+    <thead><tr>${skel.head()}</tr></thead>
+    <tbody>${visible.map((p,i)=>`<tr style="--d:${i*35}ms" data-owner="${esc(p.owner)}" tabindex="0" role="button" aria-label="Open contributions by @${esc(p.owner)}">
+      <td class="rk ${i<3?'top':''}">${i+1}</td><td class="l owner">@${esc(p.owner)}</td>
+      <td class="dpos">+${(p.impact*100).toFixed(1)} pp</td><td>${p.advances}</td><td>${p.identities}</td>
+      ${rolesCell(p.roles)}</tr>`).join("")}</tbody></table></div>
+      ${visible.length<people.length?`<div class="more" data-fame-more="impact" role="button" tabindex="0">[ --More-- ]</div>`:""}`
+    :`<div class="emptyblock">No hacker is above AutoAscend yet.</div>`;
+  host.querySelectorAll("tbody tr").forEach(row=>{
+    const open=()=>openHacker(row.dataset.owner);
+    row.addEventListener("click",open);
+    row.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } });
+  });
+  settle(host,"impact");
+  wireFameMore(host,"impact");
+}
+
+/* The two logs are the same rows in two orders, so one renderer drives both:
+   they differ in the leading column (the registration date, or the rank) and in
+   what the blurb above them claims. */
+const FAME_LOGS={
+  recent:{ desc:"#recentdesc",
+    story:tier=>`A newest-first log of every submission that advanced an identity frontier, dated by <b>when the hacker registered it</b> &mdash; not by when a scorer reached it. Click a row for the exact submission.`+tierCaveat(tier),
+    lead:(p,i)=>`<td class="l">${esc(fmtDate(p.at))}</td>`,
+    empty:"No submission has advanced a frontier yet." },
+  breakthroughs:{ desc:"#bkdesc",
+    story:tier=>`The same advances, <b>ranked by how far each one moved the frontier</b>. Click a row for the exact submission.`+tierCaveat(tier,true),
+    lead:(p,i)=>`<td class="rk ${i<3?'top':''}">${i+1}</td>`,
+    empty:"No breakthroughs above AutoAscend yet." },
+};
+function renderLog(kind){
+  const cfg=FAME_LOGS[kind], skel=FAME_SKEL[kind], host=$(skel.el); if(!host) return;
+  host.removeAttribute("aria-busy");          // set by showFameSkeleton
+  const tier=FAME_TIER.find(([group])=>group===kind)[1]();
+  const desc=$(cfg.desc);
+  if(desc) desc.innerHTML=cfg.story(tier);
+  const events=(FAME_BY_TIER[tier]||{})[kind]||[];
+  const visible=events.slice(0,FAME_LIMITS[kind]);
+  host.innerHTML=events.length?`<div class="tablewrap"><table class="${skel.cls}"><caption>${skel.cap()}</caption>
+    <thead><tr>${skel.head()}</tr></thead>
+    <tbody>${visible.map((p,i)=>`<tr style="--d:${i*35}ms" data-advance="${i}" tabindex="0" role="button" aria-label="Open the frontier advance by @${esc(p.owner)}">
+      ${cfg.lead(p,i)}<td class="l owner">@${esc(p.owner)}</td><td class="l">${esc(p.identity)}</td>
+      <td class="dpos">+${(p.gain*100).toFixed(1)} pp</td><td>${(p.score*100).toFixed(1)}%</td><td>${(p.previous*100).toFixed(1)}%</td></tr>`).join("")}</tbody></table></div>
+      ${visible.length<events.length?`<div class="more" data-fame-more="${kind}" role="button" tabindex="0">[ --More-- ]</div>`:""}`
+    :`<div class="emptyblock">${cfg.empty}</div>`;
+  host.querySelectorAll("tbody tr").forEach(row=>{
+    const open=()=>openAdvance(events[Number(row.dataset.advance)], tier);
+    row.addEventListener("click",open);
+    row.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); open(); } });
+  });
+  settle(host,kind);
+  wireFameMore(host,kind);
+}
+
+/* [ --More-- ] reveals the next page of THIS table only: each table keeps its
+   own limit, so expanding one never reshuffles another. */
+function wireFameMore(host,kind){
+  const more=host.querySelector(`[data-fame-more="${kind}"]`);
+  if(!more) return;
+  const expand=()=>{ FAME_LIMITS[kind]+=FAME_PAGE_SIZE; renderFame(kind); };
+  more.addEventListener("click",expand);
+  more.addEventListener("keydown",e=>{ if(e.key==="Enter"||e.key===" "){ e.preventDefault(); expand(); } });
 }
 
 /* ===================== identity + hacker popups ===================== */
@@ -1800,10 +1870,25 @@ async function openIdentity(identity){
     pbody.querySelectorAll(".ownerlink").forEach(x=>x.addEventListener("click",()=>openHacker(x.dataset.owner)));
   }catch(e){ pbody.innerHTML=`<div class="popupstatus">Could not load this identity leaderboard.</div>`; }
 }
+/* Every timestamp the hub sends is ISO-8601 UTC; every timestamp the page PRINTS
+   is in the viewer's own zone, because "did this land before mine?" is a question
+   people answer against the clock on their wall. The zone is named on each stamp
+   so it is never mistaken for UTC, and resolved PER DATE rather than once at load:
+   a single cached label would print "PDT" against a date that happened in PST.
+   The month/day shape stays hand-rolled (not toLocaleDateString) so the column
+   width is the same in every locale. */
+const _TZFMT=(()=>{ try{ return new Intl.DateTimeFormat(undefined,{year:"numeric",timeZoneName:"short"}); }
+                    catch(e){ return null; } })();
+function tzLabel(d){
+  if(_TZFMT){ const part=_TZFMT.formatToParts(d).find(x=>x.type==="timeZoneName");
+              if(part&&part.value) return part.value; }
+  const off=-d.getTimezoneOffset(), abs=Math.abs(off);       // minutes east of UTC
+  return `UTC${off<0?"-":"+"}${pad2((abs/60)|0)}${abs%60?":"+pad2(abs%60):""}`;
+}
 function fmtDate(iso){
   const d=iso?new Date(iso):null;
   if(!d||isNaN(d)) return "date unknown";
-  return `${d.getUTCDate()} ${_MON[d.getUTCMonth()]} ${d.getUTCFullYear()}, ${String(d.getUTCHours()).padStart(2,"0")}:${String(d.getUTCMinutes()).padStart(2,"0")} UTC`;
+  return `${d.getDate()} ${_MON[d.getMonth()]} ${d.getFullYear()}, ${pad2(d.getHours())}:${pad2(d.getMinutes())} ${tzLabel(d)}`;
 }
 function sourceLink(s){
   // repo/commit now arrive inside reference{repo,commit}; the arena hard-codes the
@@ -1855,8 +1940,10 @@ function programRow(s){
     <td>${best?`${esc(best.identity)} &middot; ${best.progression.toFixed(3)}`:"&mdash;"}</td>
     <td>${esc(fmtDate(s.registered_at))}</td></tr>`;
 }
-async function openBreakthrough(event){
-  const pbody=pushDetail(`${event.identity} - breakthrough submission`);
+/* Opened from either log table, so it is named for what it SHOWS -- the submission
+   that advanced this identity -- rather than for the table it was clicked in. */
+async function openAdvance(event,tier){
+  const pbody=pushDetail(`${event.identity} - frontier advance`);
   pbody.innerHTML=`<div class="popupstatus">Loading the exact registered submission&hellip;</div>`;
   try{
     const solution=await jget("/programs/"+encodeURIComponent(event.program_id));
@@ -1866,19 +1953,19 @@ async function openBreakthrough(event){
       <span class="k">hacker</span><span class="v">@${esc(event.owner)}</span>
       <span class="k">source</span><span class="v">${sourceLink(solution)}</span>
       <span class="k">registered</span><span class="v">${esc(fmtDate(solution.registered_at||event.at))}</span>
-      <span class="k">breakthrough identity</span><span class="v">${esc(event.identity)}</span>
+      <span class="k">identity advanced</span><span class="v">${esc(event.identity)}</span>
       <span class="k">frontier before</span><span class="v">${(event.previous*100).toFixed(1)}%</span>
       <span class="k">submission result</span><span class="v">${(event.score*100).toFixed(1)}%</span>
       <span class="k">frontier advance</span><span class="v dpos">+${(event.gain*100).toFixed(1)} pp</span>
       <span class="k">roles evaluated</span><span class="v">${roles.length?roles.map(r=>esc(ROLE_NAMES[r]||r)).join(", "):"—"}</span>
       <span class="k">identities evaluated</span><span class="v">${frontier.length} of 73</span>
       <span class="k">evaluation episodes</span><span class="v">${episodes}</span>
-      <span class="k">tier</span><span class="v">${TIERS[breakthroughsTier].label}</span>
+      <span class="k">tier</span><span class="v">${TIERS[tier].label}</span>
     </div>
-    <div class="clickhint">This submission moved ${esc(event.identity)} from ${(event.previous*100).toFixed(1)}% to ${(event.score*100).toFixed(1)}%, measured against the community frontier that existed ${breakthroughsTier==="verified"?"when our verifier reached it":"when it was registered"}.</div>
+    <div class="clickhint">This submission moved ${esc(event.identity)} from ${(event.previous*100).toFixed(1)}% to ${(event.score*100).toFixed(1)}%, measured against the community frontier that existed when it was registered.</div>
     <div class="clickhint">Roles evaluated, identities evaluated and episodes above are always read from the public dungeons, regardless of tier.</div>`;
   }catch(e){
-    pbody.innerHTML=`<div class="popupstatus">Could not load this breakthrough submission.</div>`;
+    pbody.innerHTML=`<div class="popupstatus">Could not load this submission.</div>`;
   }
 }
 async function openHacker(owner, opts){
@@ -1957,7 +2044,7 @@ async function loadBaseline(tier){
 async function loadRecognition(tier){
   if(FAME_BY_TIER[tier]) return FAME_BY_TIER[tier];
   try{ FAME_BY_TIER[tier]=await jget(`/recognition?tier=${encodeURIComponent(tier)}`); }
-  catch(e){ FAME_BY_TIER[tier]={keepers:[],breakthroughs:[]}; }
+  catch(e){ FAME_BY_TIER[tier]={contributors:[],breakthroughs:[],recent:[]}; }
   return FAME_BY_TIER[tier];
 }
 
@@ -1978,17 +2065,16 @@ async function boot(){
   await Promise.all([loadUniverse(curTier), loadBaseline(curTier)]);
   HONOR_UNIVERSE = await loadUniverse("self-reported");
   tierHelp($("#tierhelp-frontier"), curTier);
-  tierHelp($("#tierhelp-keepers"), keepersTier);
-  tierHelp($("#tierhelp-breakthroughs"), breakthroughsTier);
+  FAME_TIER.forEach(([group,get])=>tierHelp($(`#tierhelp-${group}`), get()));
   renderFrontier(); renderRecognition();
 }
 /* Draw the placeholders synchronously, before boot()'s first await, so the
-   grid and both fame tables are in the FIRST paint rather than appearing
+   grid and all three fame tables are in the FIRST paint rather than appearing
    whenever the slowest fetch returns. boot() is internally guarded per fetch,
    but a throw anywhere else would otherwise leave the page shimmering forever
    -- claiming "still loading" when nothing is -- so it falls back to the same
    honest empty states a failed fetch produces. */
-renderFrontierSkeleton(); showFameSkeleton("keepers"); showFameSkeleton("breakthroughs");
+renderFrontierSkeleton(); Object.keys(FAME_SKEL).forEach(showFameSkeleton);
 /* The deep-linked popup opens once boot has settled (either way): it reads the
    honors universe for its records column, and an empty one would quietly print
    a dash against every program. */

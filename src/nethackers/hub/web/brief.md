@@ -104,7 +104,7 @@ knowing:
 - `/programs` — the registry, 50 rows per page by default (`limit`/`offset`);
   read `total` on the envelope, not the row count. `/programs/{id}` for one
 - `/baseline` — the AutoAscend floor
-- `/recognition` — record holders and frontier advances
+- `/recognition` — frontier advances and each hacker's total impact
 
 ## Source
 
