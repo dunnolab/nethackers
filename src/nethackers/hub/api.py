@@ -404,8 +404,9 @@ def create_app(
 
     @app.get("/recognition")
     def recognition(tier: str = "self-reported") -> dict[str, Any]:
-        # Compound object -- {generated_at, keepers, breakthroughs} -- for the
-        # website's Frontier Keepers and Greatest Breakthroughs tables.
+        # Compound object -- {generated_at, contributors, breakthroughs, recent}
+        # -- three readings of one advance log, for the website's Total Impact,
+        # Recent Improvements and Greatest Breakthroughs tables.
         _source_guard(tier)
         return read_recognition(store, tier=tier, epoch=_epoch())
 

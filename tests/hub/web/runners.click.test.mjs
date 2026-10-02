@@ -60,7 +60,7 @@ const RANDOM_HACKERS = ["dungeondelver", "amuletseeker", "sokobanwalker", "gnomi
   "astralplane", "wandofdeath", "luckystone", "ringofcon", "magicmarker", "bagofholding",
   "scrollofmail", "cockatrice", "elberethfan", "gravedigger", "medusagaze", "sokoprize",
   "vaultguard", "wraithcorpse", "candelabrum", "blessedtins"];
-const KEEPER = "frontierkeeper";        // the one Hackers-table row, for the side-by-side check
+const MOVER = "frontiermover";          // the one Hackers-table row, for the side-by-side check
 const PROGRAM = {
   program_id: "prog_abc123", owner: "dungeondelver", role: "valkyrie",
   reference: { repo: "dungeondelver/nethack-solver", commit: "a".repeat(40) },
@@ -71,10 +71,11 @@ function canned(route, params) {
   if (route === "/hackers/random") return { n: Number(params.get("n")), rows: RANDOM_HACKERS };
   if (route === "/stats") return { programs: 3, hackers: 3, verified_programs: 1, last_registered_at: PROGRAM.registered_at };
   if (route === "/objectives") return [];
-  // one keeper, so the Hackers table has a row to compare the runners against
+  // one contributor, so the Hackers table has a row to compare the runners against
   if (route === "/recognition") return {
-    keepers: [{ owner: KEEPER, records: 2, identities: ["val-hum-neu-mal"], roles: ["val"], total_lift: 0.04 }],
+    contributors: [{ owner: MOVER, impact: 0.04, advances: 2, identities: 1, roles: ["val"] }],
     breakthroughs: [],
+    recent: [],
   };
   if (route === "/baseline") return { per_identity: {}, progression: null };
   if (route === "/elites" || route === "/board" || route === "/programs") return { rows: [PROGRAM], total: 1 };
@@ -243,12 +244,12 @@ async function run() {
     // pointer-events:auto it would swallow every click on the page.
     eq(await page.evaluate(() => getComputedStyle(document.getElementById("dictviz")).pointerEvents),
       "none", "the wall canvas still lets clicks through");
-    await page.click("#recordholders tbody tr", { timeout: 3000 }).catch(() => {});
+    await page.click("#impact tbody tr", { timeout: 3000 }).catch(() => {});
     await page.waitForTimeout(250);
     eq(await page.evaluate(() => {
       const m = document.querySelector(".detailmodal[data-hacker]");
       return m ? m.dataset.hacker : null;
-    }), KEEPER, "a Frontier-keepers row still opens its popup");
+    }), MOVER, "a Total-Impact row still opens its popup");
     await page.keyboard.press("Escape");
     await page.waitForTimeout(250);
     eq(await page.evaluate(() => document.querySelectorAll(".detailmodal").length), 0,

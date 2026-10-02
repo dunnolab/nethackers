@@ -11,7 +11,7 @@
  * endpoint shapes -- every collection enveloped as {..., rows:[...]}, program
  * rows carrying the opaque program_id + reference{repo,commit}:
  *   /stats, /baseline (single objects), /objectives (bare array),
- *   /recognition (single object: {keepers, breakthroughs}),
+ *   /recognition (single object: {contributors, breakthroughs, recent}),
  *   /elites?scope=generalist (enveloped, program_id rows),
  *   /board?scope=<identity> (enveloped, program_id rows, no episodes),
  *   /programs (enveloped list), /programs/{id} (single), /programs/{id}/identities
@@ -19,9 +19,9 @@
  * It runs the page's boot() and asserts the reworked render:
  *   pass 1 (populated): the frontier with the AutoAscend floor painted into
  *     untouched cells (73 cells), the two
- *     recognition tables (5 rows each, independent [ --More-- ] paging), and the
+ *     three recognition tables (5 rows each, independent [ --More-- ] paging), and the
  *     three click-through popups -- identity leaderboard (/board?scope=), a
- *     breakthrough submission (/programs/{id} + /identities), and a hacker's
+ *     frontier advance (/programs/{id} + /identities), and a hacker's
  *     contributions (/programs?owner= + /identities).
  *   pass 2 (private tier): the frontier POPULATES from the verified
  *     side-tables, using a distinct canned fixture from pass 1's public one
@@ -29,7 +29,7 @@
  *     showing a stale public fetch"); the tier toggle is ROUND-TRIPPED
  *     Public then back to Private, since curTier now defaults to "verified"
  *     and a single click would be a same-value no-op; recognition stays
- *     visible on the private tier too, and the frontier/keepers/
+ *     visible on the private tier too, and the frontier/impact/recent/
  *     breakthroughs tier switches are asserted INDEPENDENT of each other.
  *   pass 3 (every fetch rejects): friendly empty states, console clean.
  *   pass 5 (loading shimmer): with every fetch parked on a gate, the frontier
@@ -41,6 +41,7 @@
  * can't pass without the native `canvas` package (not installed here), so the
  * passes never reach it; a source-level check guards its .rows unwrap instead.
  */
+process.env.TZ = "Asia/Tokyo";   // see "local time" below; must precede the first Date
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
@@ -113,17 +114,27 @@ const IDENTITY_BOARD = { rows: [
 // /programs/{id}/identities -> enveloped per-identity frontier (has episodes)
 const FRONTIER = { rows: TOUCHED.map((id) => ({ identity: id, progression: 0.2, episodes: 15 })) };
 
-// /recognition -> {keepers, breakthroughs}; breakthroughs are program-bearing
+// /recognition -> {contributors, breakthroughs, recent}: one ledger of frontier
+// advances read three ways. Advance rows are program-bearing. The three lists are
+// deliberately DIFFERENT LENGTHS (6 / 7 / 6) so each table's [ --More-- ] can be
+// shown to page on its own without moving the other two.
+const advance = (i, owner) => ({
+  owner, identity: TOUCHED[i], gain: 0.12 - i * 0.01, score: 0.2, previous: 0.08,
+  program_id: i % 2 ? "prog_bbb" : "prog_aaa", reference: i % 2 ? REF_BBB : REF_AAA,
+  at: `2026-08-${String(27 - i).padStart(2, "0")}T09:30:00+00:00`,
+});
 const RECOGNITION = {
   generated_at: "2026-08-27T09:30:00+00:00",
-  keepers: Array.from({ length: 6 }, (_, i) => ({
-    owner: `keeper${i + 1}`, records: 7 - i, identities: [TOUCHED[i]], roles: [i % 2 ? "bar" : "arc"], total_lift: 0.8 - i * 0.1,
+  contributors: Array.from({ length: 6 }, (_, i) => ({
+    owner: `mover${i + 1}`, impact: 0.8 - i * 0.1, advances: 7 - i, identities: 3 - (i % 3),
+    // mover1 has moved every role -- the worst case for the roles cell, which the
+    // page caps rather than wrapping to four lines (and to a tall gap on a phone,
+    // where the column is scrolled off). Server order is by impact, not alphabet.
+    roles: i ? [i % 2 ? "bar" : "arc"] : ["wiz", "val", "sam", "rog", "ran", "pri",
+                                          "mon", "kni", "hea", "cav", "bar", "arc", "tou"],
   })),
-  breakthroughs: Array.from({ length: 7 }, (_, i) => ({
-    owner: `breaker${i + 1}`, identity: TOUCHED[i], gain: 0.12 - i * 0.01, score: 0.2, previous: 0.08,
-    program_id: i % 2 ? "prog_bbb" : "prog_aaa", reference: i % 2 ? REF_BBB : REF_AAA,
-    at: `2026-08-${String(27 - i).padStart(2, "0")}T09:30:00+00:00`,
-  })),
+  breakthroughs: Array.from({ length: 7 }, (_, i) => advance(i, `breaker${i + 1}`)),
+  recent: Array.from({ length: 6 }, (_, i) => advance(i, `recent${i + 1}`)),
 };
 
 const RANDOM_HACKERS = ["dun", "ako", "sam"];
@@ -222,20 +233,54 @@ async function pass1() {
   const mq = q("#mq").textContent;
   ok(/2 programs registered/.test(mq), "marquee shows the live program count (2)");
   ok(/none has ascended/.test(mq), "marquee: 'none has ascended' when ascensions=0");
-  ok(/27 Aug 2026/.test(q("#updated").textContent), "last-updated shows the formatted registered_at (UTC)");
+  ok(/27 Aug 2026/.test(q("#updated").textContent), "last-updated shows the formatted registered_at");
+  // Every stamp the hub sends is UTC; every stamp the page prints is the viewer's
+  // own clock, named so it cannot be misread. TZ is pinned to Asia/Tokyo above,
+  // so the fixture's 09:30Z is 18:30 here -- and a UTC render would read 09:30.
+  const firstDate = q("#recent tbody tr td").textContent;
+  ok(/^27 Aug 2026, 18:30 /.test(firstDate), `the log prints 09:30Z on the viewer's clock (got "${firstDate}")`);
+  ok(/GMT\+9|UTC\+09/.test(firstDate), `...and names the zone rather than leaving it ambiguous (got "${firstDate}")`);
 
   // sidebar "programs verified" row: painted from /stats' verified_programs
   ok(!q("#regVerif").hidden, "the verified row is shown when /stats reports a count");
   ok(q("#odoVerif").textContent === "00001", "the verified odometer shows the live count (1)");
 
   // Recognition tables start compact and expand independently in five-row pages.
-  ok(qa("#recordholders tbody tr").length === 5, "frontier keepers initially shows the top 5");
-  ok(qa("#breakthroughs tbody tr").length === 5, "breakthrough log initially shows the latest 5");
-  q('[data-fame-more="keepers"]').click();
-  ok(qa("#recordholders tbody tr").length === 6, "keepers More control reveals the next page");
-  ok(qa("#breakthroughs tbody tr").length === 5, "keepers expansion does not alter breakthroughs");
+  ok(qa("#impact tbody tr").length === 5, "total impact initially shows the top 5");
+  ok(qa("#recent tbody tr").length === 5, "recent improvements initially shows the latest 5");
+  ok(qa("#breakthroughs tbody tr").length === 5, "breakthrough log initially shows the biggest 5");
+  q('[data-fame-more="impact"]').click();
+  ok(qa("#impact tbody tr").length === 6, "impact More control reveals the next page");
+  ok(qa("#recent tbody tr").length === 5 && qa("#breakthroughs tbody tr").length === 5,
+     "impact expansion does not alter either log");
+  q('[data-fame-more="recent"]').click();
+  ok(qa("#recent tbody tr").length === 6, "recent More control reveals the next page");
+  ok(qa("#breakthroughs tbody tr").length === 5, "recent expansion does not alter breakthroughs");
   q('[data-fame-more="breakthroughs"]').click();
   ok(qa("#breakthroughs tbody tr").length === 7, "breakthroughs More control reveals the next page");
+  ok(qa("#recent tbody tr").length === 6, "...and does not alter recent");
+  // A 13-role hacker is shown as its leading roles plus a count, on ONE line,
+  // with the whole list kept in the cell's tooltip.
+  const rolesCell = q("#impact tbody tr .roles");
+  ok(/^Wizard, Valkyrie, Samurai \+10 more$/.test(rolesCell.textContent.trim()),
+     `the roles cell caps at three and counts the rest (got "${rolesCell.textContent.trim()}")`);
+  ok(/Tourist/.test(rolesCell.title) && rolesCell.title.split(", ").length === 13,
+     "...and the full list stays reachable as the cell's tooltip");
+  ok(qa("#impact tbody tr").every((r) => r.querySelectorAll(".roles").length === 1),
+     "every impact row has exactly one roles cell");
+
+  // Both logs lead with the advance -- the number the table is about -- then what
+  // it reached and what it beat.
+  const headers = (sel) => qa(`${sel} thead th`).map((th) => th.textContent.trim());
+  ok(["#recent", "#breakthroughs"].every((sel) =>
+       headers(sel).slice(-3).join(",") === "advance,result,before"),
+     `both logs order the numbers advance, result, before (got ${headers("#recent").join("|")})`);
+  ok(/^\+\d+\.\d pp$/.test(qa("#breakthroughs tbody tr")[0].querySelectorAll("td")[3].textContent.trim()),
+     "...and the first number in a row IS the advance");
+
+  // The two logs are the same ledger in two orders, so each must read its OWN list.
+  ok(/@recent1/.test(q("#recent").textContent) && !/@recent1/.test(q("#breakthroughs").textContent),
+     "each log table renders its own ordering of the ledger, not a shared slice");
 
   // Detail popups are dynamic + STACKABLE: each open pushes a fresh .detailmodal on top.
   const top = () => [...document.querySelectorAll(".detailmodal")].pop();
@@ -266,14 +311,15 @@ async function pass1() {
   // click-through 2: a breakthrough row opens a popup (/programs/{id} + /identities)
   q("#breakthroughs tbody tr").click();
   await sleep(40);
-  ok(/breakthrough/i.test(top().querySelector(".win__title span").textContent), "breakthrough popup titled for the identity");
-  ok(/frontier advance/i.test(top().querySelector(".win__body").textContent), "breakthrough submission shows the advance");
+  ok(/frontier advance/i.test(top().querySelector(".win__title span").textContent),
+     "the popup is titled for the ADVANCE, not for the table it was opened from -- both logs open it");
+  ok(/identity advanced/i.test(top().querySelector(".win__body").textContent), "the submission names the identity it advanced");
   top().querySelector(".x").click();
 
-  // click-through 3: a keeper row opens the hacker popup (/programs?owner= + /identities)
-  q("#recordholders tbody tr").click();
+  // click-through 3: a Total Impact row opens the hacker popup (/programs?owner= + /identities)
+  q("#impact tbody tr").click();
   await sleep(40);
-  ok(/^@keeper/.test(top().querySelector(".win__title span").textContent.trim()), "keeper row opens the hacker popup titled just @username");
+  ok(/^@mover/.test(top().querySelector(".win__title span").textContent.trim()), "impact row opens the hacker popup titled just @username");
   const hkText = top().querySelector(".win__body").textContent.replace(/\s+/g, " ");
   ok(/registered programs/i.test(hkText), "hacker popup lists registered programs");
   // the bug: this printed 50 (the page length) for anyone with more than 50
@@ -338,12 +384,14 @@ async function pass2() {
   // Distinct from RECOGNITION (router()'s default, used for the "verified"
   // tier below) so a bug that dropped the ?tier= param, or reused the cached
   // private rows for every tier, would show up as wrong row content -- not
-  // just a caption, which is computed from local state (`keepersTier`)
+  // just a caption, which is computed from local state (`impactTier`)
   // rather than from the response body either way.
   const RECOGNITION_PUBLIC = {
     generated_at: "2026-08-27T09:30:00+00:00",
-    keepers: [{ owner: "pubkeeper1", records: 3, identities: [TOUCHED[0]], roles: ["arc"], total_lift: 0.5 }],
+    contributors: [{ owner: "pubmover1", impact: 0.5, advances: 3, identities: 1, roles: ["arc"] }],
     breakthroughs: [{ owner: "pubbreaker1", identity: TOUCHED[0], gain: 0.1, score: 0.2, previous: 0.1,
+      program_id: "prog_aaa", reference: REF_AAA, at: "2026-08-20T09:30:00+00:00" }],
+    recent: [{ owner: "pubbreaker1", identity: TOUCHED[0], gain: 0.1, score: 0.2, previous: 0.1,
       program_id: "prog_aaa", reference: REF_AAA, at: "2026-08-20T09:30:00+00:00" }],
   };
   const fetchImpl = (p) => Promise.resolve({ ok: true, status: 200, json: async () => {
@@ -397,7 +445,8 @@ async function pass2() {
      "clicking Private re-presses the private frontier button and releases Public");
   ok(/9\.1%/.test(q("#gridnote").textContent), "gridnote's AutoAscend overall returns to the private baseline (9.1%) -- a real transition, not a same-value no-op");
   ok(q("#tierhelp-frontier").dataset.k === "dungeons-private", "frontier ? marker returns to the private tier's explanation");
-  ok(qa("#recordholders tbody tr").length >= 5, "recognition keepers stay visible on the private tier");
+  ok(qa("#impact tbody tr").length >= 5, "recognition impact stays visible on the private tier");
+  ok(qa("#recent tbody tr").length >= 5, "recent improvements stay visible on the private tier");
   ok(qa("#breakthroughs tbody tr").length >= 5, "recognition breakthroughs stay visible on the private tier");
   const progCells = qa("#rolegrid td.vv:not(.hval):not(.floor):not(.empty)").length;
   ok(progCells > 0, `private tier paints program cells (${progCells}), not a blanked grid`);
@@ -439,16 +488,25 @@ async function pass2() {
   ok(!!kniHeadDelta.querySelector(".aachip"),
      `Knight's role header (every cell at the floor) must show the 'aa' chip, not a fabricated "+0.0%" (class="${kniHeadDelta.className}", text="${kniHeadDelta.textContent.trim()}")`);
 
-  // The three dungeon switches are independent: flipping Keepers to Public
-  // must not move Breakthroughs or the Frontier. RECOGNITION_PUBLIC (stubbed
+  // The four dungeon switches are independent: flipping Total Impact to Public
+  // must not move either log or the Frontier. RECOGNITION_PUBLIC (stubbed
   // above) is distinct from RECOGNITION, so this also confirms the tier
   // actually reached the fetch instead of reusing a cached/leftover response.
-  q("[data-tier-group='keepers'][data-tier='self-reported']").click();
+  q("[data-tier-group='impact'][data-tier='self-reported']").click();
   await sleep(60);
-  ok(/pubkeeper1/.test(q("#recordholders").textContent), "keepers table loads the distinct public-tier fixture, not a leftover private fetch");
-  ok(/PUBLIC DUNGEONS/.test(q("#recordholders caption").textContent), "keepers caption switches to PUBLIC DUNGEONS");
-  ok(/PRIVATE DUNGEONS/.test(q("#breakthroughs caption").textContent), "breakthroughs caption is untouched by the keepers switch: still PRIVATE DUNGEONS");
-  ok(verifiedBtn.getAttribute("aria-pressed") === "true", "the frontier's Private button is still pressed after flipping Keepers alone");
+  ok(/pubmover1/.test(q("#impact").textContent), "impact table loads the distinct public-tier fixture, not a leftover private fetch");
+  ok(/PUBLIC DUNGEONS/.test(q("#impact caption").textContent), "impact caption switches to PUBLIC DUNGEONS");
+  ok(/PRIVATE DUNGEONS/.test(q("#breakthroughs caption").textContent), "breakthroughs caption is untouched by the impact switch: still PRIVATE DUNGEONS");
+  ok(/PRIVATE DUNGEONS/.test(q("#recent caption").textContent), "...and so is the recent log's");
+  ok(verifiedBtn.getAttribute("aria-pressed") === "true", "the frontier's Private button is still pressed after flipping Total Impact alone");
+  // A log table on the private tier must SAY it can still be restated, since an
+  // older registration can arrive from the verifier after the fact.
+  ok(/older registration can still arrive/i.test(q("#recentdesc").textContent),
+     "the private recent log states that it can still be restated");
+  q("[data-tier-group='recent'][data-tier='self-reported']").click();
+  await sleep(60);
+  ok(!/older registration can still arrive/i.test(q("#recentdesc").textContent),
+     "...and the public log, which is complete, makes no such caveat");
 
   ok(errors.length === 0, "no console/jsdom errors" + (errors.length ? ": " + errors.join(" | ") : ""));
   dom.window.close();
@@ -461,7 +519,8 @@ async function pass3() {
   const { document } = dom.window;
   await sleep(200);
   const q = (s) => document.querySelector(s);
-  ok(/No hacker is above AutoAscend/i.test(q("#recordholders").textContent), "keepers show the empty recognition state offline");
+  ok(/No hacker is above AutoAscend/i.test(q("#impact").textContent), "impact shows the empty recognition state offline");
+  ok(/No submission has advanced a frontier/i.test(q("#recent").textContent), "recent shows the empty recognition state offline");
   ok(/No breakthroughs above AutoAscend/i.test(q("#breakthroughs").textContent), "breakthroughs show the empty recognition state offline");
   // honesty: /stats failed -> the marquee omits the count line and the freshness stamp stays a neutral dash
   ok(!/programs registered/.test(q("#mq").textContent), "marquee omits the stats line when /stats fails");
@@ -499,8 +558,8 @@ async function pass4() {
   } }), errors);
   const { document } = dom.window;
   await sleep(200);
-  document.querySelector('[data-fame-more="keepers"]');
-  document.querySelector("#recordholders tbody tr").click();
+  document.querySelector('[data-fame-more="impact"]');
+  document.querySelector("#impact tbody tr").click();
   await sleep(60);
   const body = [...document.querySelectorAll(".detailmodal")].pop().querySelector(".win__body");
   const text = body.textContent.replace(/\s+/g, " ");
@@ -537,22 +596,26 @@ async function pass5() {
      "skeleton labels carry the real role + variant names");
   ok(qa("#rolegrid tr.frontierrow").length === 0, "skeleton rows are inert -- no leaderboard to open yet");
 
-  ok(qa("#recordholders tbody tr").length === 5 && qa("#breakthroughs tbody tr").length === 5,
-     "both fame tables show FAME_PAGE_SIZE (5) placeholder rows");
-  ok(qa("#recordholders tbody td").length === qa("#recordholders tbody td .shim").length &&
-     qa("#breakthroughs tbody td").length === qa("#breakthroughs tbody td .shim").length,
+  const FAME = ["#impact", "#recent", "#breakthroughs"];
+  ok(FAME.every((sel) => qa(`${sel} tbody tr`).length === 5),
+     "all three fame tables show FAME_PAGE_SIZE (5) placeholder rows");
+  ok(FAME.every((sel) => qa(`${sel} tbody td`).length === qa(`${sel} tbody td .shim`).length),
      "every fame placeholder cell shimmers -- the row COUNT is unknown, unlike the frontier's");
-  ok(/PRIVATE DUNGEONS/.test(q("#recordholders caption").textContent) &&
-     /hacker/.test(q("#recordholders thead").textContent),
-     "fame skeleton keeps the real caption + column headers");
-  ok(!/Loading frontier keepers/.test(document.body.textContent), "the pre-JS 'Loading...' block is replaced");
-  ok(!qa("#recordholders .more, #breakthroughs .more").length, "no [ --More-- ] control on a skeleton");
+  ok(FAME.every((sel) => /PRIVATE DUNGEONS/.test(q(`${sel} caption`).textContent)
+                      && /hacker/.test(q(`${sel} thead`).textContent)),
+     "fame skeletons keep the real caption + column headers");
+  ok(/TOTAL IMPACT/.test(q("#impact caption").textContent)
+     && /RECENT IMPROVEMENTS/.test(q("#recent caption").textContent)
+     && /GREATEST BREAKTHROUGHS/.test(q("#breakthroughs caption").textContent),
+     "...and each names its own table");
+  ok(!/Loading total impact/.test(document.body.textContent), "the pre-JS 'Loading...' block is replaced");
+  ok(!qa(FAME.map((sel) => `${sel} .more`).join(", ")).length, "no [ --More-- ] control on a skeleton");
 
   // 227 cells of random glyphs would be read out as noise, so they are hidden
   // from assistive tech and the three regions announce themselves as busy.
   ok(qa(".shim").every((e) => e.getAttribute("aria-hidden") === "true"), "placeholder glyphs are aria-hidden");
-  ok(["#rolegrid", "#recordholders", "#breakthroughs"].every((sel) => q(sel).getAttribute("aria-busy") === "true"),
-     "all three loading regions are marked aria-busy");
+  ok(["#rolegrid", "#impact", "#recent", "#breakthroughs"].every((sel) => q(sel).getAttribute("aria-busy") === "true"),
+     "all four loading regions are marked aria-busy");
 
   // (b) the glyphs actually churn, and come from the avatar's NetHack pool
   const before = glyphs(".shim");
@@ -566,14 +629,16 @@ async function pass5() {
      "text/name cells churn NetHack glyphs, same pool as the avatar");
   ok(qa('#rolegrid .shim[data-t="pct"]').length === 86 && kind("pct").every((t) => /^\d\d\.\d%$/.test(t)),
      "frontier value cells churn well-formed percentages, not glyphs");
-  ok(qa('#breakthroughs .shim[data-t="pct"]').length === 10, "the log's before/result columns churn percentages too");
+  ok(qa('#breakthroughs .shim[data-t="pct"]').length === 10
+     && qa('#recent .shim[data-t="pct"]').length === 10, "both logs' before/result columns churn percentages too");
   ok(kind("spct").length === 86 && kind("spct").every((t) => /^[+-]\d\.\d%$/.test(t)),
      "frontier delta cells churn SIGNED percentages");
   // lift and advance are gains by construction (both renders hardcode "+"), so a
   // placeholder that flickered negative would promise a value the column cannot hold
   ok(kind("pp").length > 0 && kind("pp").every((t) => /^\+\d\.\d pp$/.test(t)), "lift/advance cells churn positive pp only");
-  ok(kind("date").length === 5 && kind("date").every((t) => /^\d\d [A-Z][a-z]{2} 2026, \d\d:\d\d UTC$/.test(t)),
-     "the breakthrough log's date column churns well-formed dates");
+  ok(kind("date").length === 5 && qa('#recent .shim[data-t="date"]').length === 5
+     && kind("date").every((t) => /^\d\d [A-Z][a-z]{2} 2026, \d\d:\d\d \S+$/.test(t)),
+     "the recent log's date column churns well-formed dates -- and it is the only dated table");
   ok(kind("int").length > 0 && kind("int").every((t) => /^\d$/.test(t)), "count columns churn single digits");
   // a placeholder that changed LENGTH between frames would jitter the text under it
   const widths = (sel) => qa(sel).map((e) => e.textContent.length).join(",");
@@ -590,18 +655,18 @@ async function pass5() {
   ok(qa(".shim").length === 0, "no placeholder survives the real render");
   ok(qa("#rolegrid td.vv:not(.hval)").length === 73, "frontier renders its 73 real cells after boot");
   ok(qa("#rolegrid tr.frontierrow").length === 73, "rows become clickable once there is a leaderboard behind them");
-  ok(qa("#recordholders tbody tr").length === 5 && /@keeper1/.test(q("#recordholders").textContent),
+  ok(qa("#impact tbody tr").length === 5 && /@mover1/.test(q("#impact").textContent),
      "fame tables show real rows");
   ok(dom.window.eval("SHIM_TIMER") === 0, "the ticker stops itself once the last placeholder is gone");
-  ok(["#rolegrid", "#recordholders", "#breakthroughs"].every((sel) => !q(sel).hasAttribute("aria-busy")),
+  ok(["#rolegrid", "#impact", "#recent", "#breakthroughs"].every((sel) => !q(sel).hasAttribute("aria-busy")),
      "aria-busy is cleared once the real values are in -- never left asserting a finished load is pending");
 
   // shimmer -> real dissolves rather than pops, staggered so the table develops
-  ok(["#rolegrid", "#recordholders", "#breakthroughs"].every((sel) => q(sel).classList.contains("settle")),
+  ok(["#rolegrid", "#impact", "#recent", "#breakthroughs"].every((sel) => q(sel).classList.contains("settle")),
      "the regions that were shimmering animate their new values in");
   ok(/--d:\s*\d+ms/.test(q("#rolegrid table.fr").getAttribute("style") || ""),
      "real role tables carry the stagger offset the fade reads");
-  ok(/--d:\s*\d+ms/.test(q("#recordholders tbody tr").getAttribute("style") || ""),
+  ok(/--d:\s*\d+ms/.test(q("#impact tbody tr").getAttribute("style") || ""),
      "real fame rows carry the stagger offset too");
 
   // (d) an UNCACHED tier flips back to the skeleton; a cached one must not flash
@@ -702,7 +767,7 @@ async function pass7() {
   const errors = [];
   const dom = makeDom(
     (p) => Promise.resolve({ ok: true, status: 200, json: async () => router(p) }),
-    errors, "https://hub.test/h/keeper1");
+    errors, "https://hub.test/h/mover1");
   const { document, history, location } = dom.window;
   await sleep(250);
   const q = (s) => document.querySelector(s);
@@ -712,11 +777,11 @@ async function pass7() {
   const bodyText = () => (top() ? top().querySelector(".win__body").textContent : "");
 
   // 1. the shared link opens the popup by itself, on the entry it arrived on
-  ok(modals().length === 1, "/h/keeper1 opens the hacker popup on load");
-  ok(title() === "@keeper1", "...for the handle in the path");
+  ok(modals().length === 1, "/h/mover1 opens the hacker popup on load");
+  ok(title() === "@mover1", "...for the handle in the path");
   ok(/registered programs/i.test(bodyText()), "...and it is the real popup, not an empty shell");
-  ok(location.pathname === "/h/keeper1", "a deep link does not push a duplicate entry");
-  ok(document.title === "@keeper1 \u2014 NetHackers", "the tab says whose page this is");
+  ok(location.pathname === "/h/mover1", "a deep link does not push a duplicate entry");
+  ok(document.title === "@mover1 \u2014 NetHackers", "the tab says whose page this is");
 
   // 2. closing a deep-linked popup walks the path back to the front page
   if (top()) top().querySelector(".x").click();
@@ -726,11 +791,11 @@ async function pass7() {
   ok(document.title === "NetHackers", "...and the tab goes back to the site title");
 
   // 3. opening one by click writes the shareable path
-  document.querySelectorAll("#recordholders tbody tr")[1].click();
+  document.querySelectorAll("#impact tbody tr")[1].click();
   await sleep(40);
-  ok(title() === "@keeper2", "clicking a keeper row opens that hacker");
-  ok(location.pathname === "/h/keeper2", "...and the URL becomes its deep link");
-  ok(document.title === "@keeper2 \u2014 NetHackers", "...and the tab follows it");
+  ok(title() === "@mover2", "clicking a Total Impact row opens that hacker");
+  ok(location.pathname === "/h/mover2", "...and the URL becomes its deep link");
+  ok(document.title === "@mover2 \u2014 NetHackers", "...and the tab follows it");
 
   // 4. Back closes it; Forward brings it back -- the popup IS the history entry
   history.back();
@@ -738,8 +803,8 @@ async function pass7() {
   ok(modals().length === 0 && location.pathname === "/", "Back closes the popup");
   history.forward();
   await sleep(60);
-  ok(location.pathname === "/h/keeper2", "Forward returns to the hacker path");
-  ok(modals().length === 1 && title() === "@keeper2", "...and reopens that popup");
+  ok(location.pathname === "/h/mover2", "Forward returns to the hacker path");
+  ok(modals().length === 1 && title() === "@mover2", "...and reopens that popup");
 
   // 5. Escape closes through the same door the x does
   dom.window.document.dispatchEvent(new dom.window.KeyboardEvent("keydown", { key: "Escape", bubbles: true }));

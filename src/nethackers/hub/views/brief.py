@@ -3,7 +3,7 @@
 Design 2026-09-16. A second representation of the same resource, not a
 transcription of the page. It carries the three things the website cannot
 give a fetcher: the live numbers (the page loads them with JS, so a fetcher
-sees `Loading frontier keepers...`), the install commands (the page has
+sees `Loading total impact...`), the install commands (the page has
 none), and the reset explanation (the page never mentions it -- four separate
 agents read the resulting zeros as data loss).
 

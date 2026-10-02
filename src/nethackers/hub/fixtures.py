@@ -50,7 +50,7 @@ Those atoms are a separate, deliberately asymmetric set: IDENTITY_A and
 IDENTITY_B each get a verified AutoAscend floor, IDENTITY_C gets a verified
 result and NO floor -- reproducing production's real "verified on more
 identities than the floor covers yet" state, which is the case that must be
-EXCLUDED from keepers/breakthroughs rather than credited against a floor of
+EXCLUDED from the advance log rather than credited against a floor of
 0.0. They are inserted under ``secret_fingerprint(DEV_HIDDEN_SECRET)`` and
 ``arena_major=ARENA_MAJOR`` -- the hub filters every verified read on
 exactly that secret/major pair, so getting either wrong makes the fixture
@@ -248,7 +248,7 @@ def load_fixtures(store: Store, *, now: str = "2026-01-01T00:00:00Z") -> None:
     # --- Private tier (hidden seeds). IDENTITY_A and IDENTITY_B get a floor;
     # IDENTITY_C deliberately gets a result with NO floor, reproducing
     # production's "program result, no AutoAscend floor yet" state -- the case
-    # that must be EXCLUDED from keepers/breakthroughs rather than credited
+    # that must be EXCLUDED from the advance log rather than credited
     # against 0.0. ---
     fingerprint = secret_fingerprint(DEV_HIDDEN_SECRET)
     verified = [
